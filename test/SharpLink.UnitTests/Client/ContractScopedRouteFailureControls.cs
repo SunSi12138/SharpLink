@@ -68,10 +68,14 @@ public sealed partial class ContractScopedRouteFailureControls
             ? new TimeoutException("R23 original construction timeout, not a Prepare wait timeout")
             : new InvalidOperationException("R23 exact " + stage + " prebuild marker");
         var cleanupOutput = fixture.NewBarrier();
+        Task<Exception?>? failureNotification = null;
         var hits = 0;
         fixture.Client.ContractRouteBuildForTesting = (site, actualStage) =>
         {
             if (!ReferenceEquals(site, fixture.Site) || actualStage != buildStage || Interlocked.Increment(ref hits) != 1) return;
+            failureNotification = site.CaptureBindingSignal();
+            Ensure(!failureNotification.IsCompleted,
+                "the fault boundary must capture its current pending notification, not an earlier completed generation");
             fixture.HoldNextPeerOutput(0, cleanupOutput);
             throw marker;
         };
@@ -81,7 +85,7 @@ public sealed partial class ContractScopedRouteFailureControls
         var after = fixture.CaptureAttempt(first);
         Ensure(ReferenceEquals(fixture.View, prior) && ReferenceEquals(before.Attempt, after.Attempt) &&
                !after.Completed && after.Failure is null && ReferenceEquals(after.PublicationFailure, marker) &&
-               before.Signal.IsCompletedSuccessfully && ReferenceEquals(before.Signal.Result, marker),
+               failureNotification is { IsCompletedSuccessfully: true } && ReferenceEquals(failureNotification.Result, marker),
             "failed prebuild preserves view/attempt completion but immediately publishes the exact cold failure on the existing typed signal");
         await fixture.ExpectOriginalPrepareFailureAsync(marker);
         await fixture.ExpectPrepareFailureAsync(marker);
@@ -95,7 +99,7 @@ public sealed partial class ContractScopedRouteFailureControls
         Ensure(first.Binding.CandidateCount == 0 && first.Binding.CleanupOwnerCount == 0,
             "the failed exact candidate and its one cleanup owner are both physically released");
         await fixture.RetryFirstAndPrepareAsync();
-        fixture.AssertCapturedNotificationStillFails(before.Signal, marker);
+        fixture.AssertCapturedNotificationStillFails(failureNotification!, marker);
         await fixture.CallFirstAsync(53);
         fixture.AssertSecondStillUnconfirmed();
     });

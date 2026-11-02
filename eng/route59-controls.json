@@ -31,7 +31,7 @@
   "sourcePins": {
     "test/SharpLink.UnitTests/Client/ContractScopedRouteAdmissionRetirementControls.cs": "d89d78e16a381d05f72e6e6aeba55cd7c6c4943ef521506f1351d54b2fe564d1",
     "test/SharpLink.UnitTests/Client/ContractScopedRouteExhaustionControls.cs": "11d7ce820c2d4b8194de30f583a652fbb0b2c145c2d8b96bdac293254213845e",
-    "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs": "b4bc9844ea8f47bd0a08db290e4305026d25fcc324b03c348c6cf4608e5ca97f",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs": "de1e0217562144fa8d2b427e72d321aa71928d5007cd28ac37aae19a2438ab2f",
     "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureFixture.cs": "1ecb51b1ebc4c880a927e9c94c27522a151efbd4fe67f049ecb2903a3cb45191",
     "test/SharpLink.UnitTests/Client/ContractScopedRouteProtocolControls.cs": "10c82db692cc17ea5129d4928cacdf0dd82658ff7e45fda52fcc43b22dcf0f80",
     "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationControls.cs": "93e5c33293a1ff634b4aa6b2daadbf3759d786a195b5ef395768f3a997378639",
@@ -710,7 +710,7 @@
       "span": {
         "attributeLine": 50,
         "signatureLine": 57,
-        "endLine": 101,
+        "endLine": 105,
         "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
         "endText": "    });"
       },
@@ -733,7 +733,7 @@
       "span": {
         "attributeLine": 50,
         "signatureLine": 57,
-        "endLine": 101,
+        "endLine": 105,
         "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
         "endText": "    });"
       },
@@ -756,7 +756,7 @@
       "span": {
         "attributeLine": 50,
         "signatureLine": 57,
-        "endLine": 101,
+        "endLine": 105,
         "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
         "endText": "    });"
       },
@@ -779,7 +779,7 @@
       "span": {
         "attributeLine": 50,
         "signatureLine": 57,
-        "endLine": 101,
+        "endLine": 105,
         "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
         "endText": "    });"
       },
@@ -802,7 +802,7 @@
       "span": {
         "attributeLine": 50,
         "signatureLine": 57,
-        "endLine": 101,
+        "endLine": 105,
         "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
         "endText": "    });"
       },
@@ -825,7 +825,7 @@
       "span": {
         "attributeLine": 50,
         "signatureLine": 57,
-        "endLine": 101,
+        "endLine": 105,
         "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
         "endText": "    });"
       },
@@ -844,9 +844,9 @@
       "returnType": "System.Threading.Tasks.Task",
       "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
       "span": {
-        "attributeLine": 103,
-        "signatureLine": 104,
-        "endLine": 132,
+        "attributeLine": 107,
+        "signatureLine": 108,
+        "endLine": 136,
         "signatureText": "    public Task PendingBuildFailureDoesNotImposeAllBoundOnFreshPrepare() => WithFixture(async fixture =>",
         "endText": "    });"
       },

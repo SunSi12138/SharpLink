@@ -119,6 +119,24 @@ def verify_refresh_capability_sources(sources):
               'Refresh injection must check actual negotiated source session capability')
 
 
+def verify_failed_notification_source(source):
+    # Exact selected fixture source shape; no claim of C# runtime execution.
+    start = source.index('public Task SitePrebuildFailuresAreAtomic(string stage)')
+    body = re.sub(r'\s+', '', source[start:source.index('\n    });', start) + 8])
+    gate = 'if(!ReferenceEquals(site,fixture.Site)||actualStage!=buildStage||Interlocked.Increment(refhits)!=1)return;'
+    ordered = (gate, 'failureNotification=site.CaptureBindingSignal();',
+               'Ensure(!failureNotification.IsCompleted,', 'fixture.HoldNextPeerOutput(0,cleanupOutput);', 'throwmarker;')
+    positions = [body.index(part) for part in ordered]
+    r.require(positions == sorted(positions) and body.count('failureNotification=site.CaptureBindingSignal();') == 1,
+              'Capture the exact pending notification inside the selected once-only fault boundary')
+    r.require('!before.Signal.IsCompleted&&fixture.OriginalPrepareIsPending' in body and
+              'ReferenceEquals(fixture.View,prior)&&ReferenceEquals(before.Attempt,after.Attempt)&&!after.Completed&&after.Failureisnull&&ReferenceEquals(after.PublicationFailure,marker)&&failureNotificationis{IsCompletedSuccessfully:true}&&ReferenceEquals(failureNotification.Result,marker)' in body,
+              'Atomicity and exact raw marker checks must remain strict')
+    r.require('fixture.AssertCapturedNotificationStillFails(failureNotification!,marker);' in body and
+              'before.Signal.Result' not in body,
+              'Later recovery must retain that exact failed generation, not the pre-reply signal')
+
+
 class Route59Tests(unittest.TestCase):
     def setUp(self):
         self.base = accepted.ClassifierTests()
@@ -236,6 +254,32 @@ class Route59Tests(unittest.TestCase):
                 changed = fixture_configuration_sources(); key = 'ContractScopedRouteHandoffFixture.cs'
                 self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
                 with self.assertRaises(ValueError): verify_refresh_capability_sources(changed)
+
+    def test_failed_notification_is_captured_at_exact_pending_fault_boundary(self):
+        verify_failed_notification_source(fixture_configuration_sources()['ContractScopedRouteFailureControls.cs'])
+
+    def test_failed_notification_rejects_old_generation_or_completed_capture(self):
+        source = fixture_configuration_sources()['ContractScopedRouteFailureControls.cs']
+        source = source[source.index('public Task SitePrebuildFailuresAreAtomic(string stage)'):]
+        for old, new in (
+                ('failureNotification = site.CaptureBindingSignal();', 'failureNotification = before.Signal;'),
+                ('Ensure(!failureNotification.IsCompleted,', 'Ensure(true,'),
+                ('fixture.AssertCapturedNotificationStillFails(failureNotification!, marker);',
+                 'fixture.AssertCapturedNotificationStillFails(before.Signal, marker);')):
+            with self.subTest(mutation=old):
+                self.assertIn(old, source)
+                with self.assertRaises(ValueError): verify_failed_notification_source(source.replace(old, new, 1))
+
+    def test_failed_notification_rejects_marker_or_atomicity_weakening(self):
+        source = fixture_configuration_sources()['ContractScopedRouteFailureControls.cs']
+        source = source[source.index('public Task SitePrebuildFailuresAreAtomic(string stage)'):]
+        for old, new in (
+                ('ReferenceEquals(failureNotification.Result, marker)', 'failureNotification.Result is null'),
+                ('ReferenceEquals(after.PublicationFailure, marker)', 'after.PublicationFailure is not null'),
+                ('ReferenceEquals(fixture.View, prior)', 'true')):
+            with self.subTest(mutation=old):
+                self.assertIn(old, source)
+                with self.assertRaises(ValueError): verify_failed_notification_source(source.replace(old, new, 1))
 
     def test_actual_catalog_source_spans_graph_budget_and_pins(self):
         r.verify_catalog(ROOT, CATALOG)
