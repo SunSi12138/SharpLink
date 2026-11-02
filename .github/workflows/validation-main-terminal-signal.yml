@@ -59,4 +59,4 @@ jobs:
           python3 payload/eng/terminal-signal-regression/run.py
           --baseline "$GITHUB_WORKSPACE/baseline"
           --fixed "$GITHUB_WORKSPACE/fixed"
-          --ci-manifest-sha256 8dd6edbb6396123b805ea5e9b77f5396852ef7bde85667a158c5acdbd037e148
+          --ci-manifest-sha256 45595c34c84c0dcc5da2be09353bc94e0431c3835dbba202a1d8d4eeb2a4d7bc

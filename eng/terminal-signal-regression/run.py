@@ -150,7 +150,7 @@ def workload_inputs(lane, sdk_root, version):
         track(override);c.require(not override.exists(), 'Unsupported user-local/MSI workload selection')
     install=sdk_root/'metadata/workloads/X64'/band/'InstallState/default.json'
     file(install)
-    state=c.read_json(install) if install.exists() else {}
+    state=audit.read_workload_metadata(install,sdk_root,'install-state') if install.exists() else {}
     c.require(isinstance(state,dict), 'Invalid workload install state')
     parent(manifest_root)
     c.require((manifest_root/band).is_dir(), 'Selected workload feature band missing')
@@ -181,7 +181,7 @@ def workload_inputs(lane, sdk_root, version):
         tree(sets)
         if sets.exists():
             for spec in sorted(sets.glob('*/*.workloadset.json')):
-                specs.append((c.read_json(spec),set_band))
+                specs.append((audit.read_workload_metadata(spec,sdk_root,'workload-set'),set_band))
     if state.get('manifests') is not None: specs.append((state['manifests'],band))
     for spec,default_band in specs:
         c.require(isinstance(spec,dict), 'Invalid workload-set manifest map')
@@ -522,6 +522,9 @@ def failure_leaves(errors, stage, scope=None, uid=None):
             diagnostic=getattr(error,'origin_diagnostics',None)
             if type(diagnostic) is audit.ImportDiagnostics:
                 row['importOrigins']=diagnostic.public()
+        metadata=getattr(error,'metadata_diagnostics',None)
+        if type(metadata) is audit.MetadataDiagnostics:
+            row['workloadMetadata']=metadata.public()
         rows.append(row)
     return rows
 

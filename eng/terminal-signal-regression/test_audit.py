@@ -190,6 +190,106 @@ def closure_controls():
     return passed
 
 
+
+def metadata_controls():
+    from types import SimpleNamespace
+    import os
+    passed=[]
+    def reject(label, action, expected=(ValueError,OSError,UnicodeError)):
+        try:action()
+        except expected:passed.append(label)
+        else:raise AssertionError('Unexpected metadata acceptance: '+label)
+    # Exact C# raw literal from SDKv10.0.114 provider test; no claim that this
+    # sample is the actual failed CI file. Whitespace follows raw-string trim.
+    official='{\n"ios": "11.0.2/8.0.100",\n"android": "33.0.2-rc.1/8.0.200",\n"maui": "15.0.1-rc.456/8.0.200-rc.2",\n}\n'
+    expected={'ios':'11.0.2/8.0.100','android':'33.0.2-rc.1/8.0.200','maui':'15.0.1-rc.456/8.0.200-rc.2'}
+    assert audit.metadata_json(official,'workload-set')==expected
+    assert audit.metadata_json(official,'install-state')==expected
+    passed.append('official-exact-trailing-comma-literal-accepted')
+    reject('original-strict-reader-still-rejects-extension',lambda:json.loads(official))
+    text='{"url":"https://example.invalid/a//b", "literal":"/*not comment*/,}", "quote":"\\\"", "slash":"\\\\", /*comment*/ "array":[1,true,null,], //line\n}'
+    value=audit.metadata_json(text,'workload-set')
+    assert value=={'url':'https://example.invalid/a//b','literal':'/*not comment*/,}','quote':'"','slash':'\\','array':[1,True,None]}
+    passed.append('quoted-delimiters-escapes-and-jsonc-preserved')
+    reject('install-state-comments-still-rejected',lambda:audit.metadata_json(text,'install-state'))
+    assert audit.metadata_json('{"manifests":{},"useWorkloadSets":true,}', 'install-state')=={'manifests':{},'useWorkloadSets':True}
+    passed.append('install-state-trailing-comma-only')
+    for label,text in [('lone-object-comma','{,}'),('lone-array-comma','[,]'),
+                       ('double-comma','{"x":1,,}'),('missing-value','{"x":,}'),
+                       ('unterminated-comment','{"x":1,/*'),('unterminated-string','{"x":"missing}'),
+                       ('invalid-slash','{"x":1/2}'),('duplicate-key','{"x":1,"x":2,}'),
+                       ('nonfinite-number','{"x":NaN,}'),('unknown-token','{"x":bad,}'),
+                       ('comment-only','/* nothing */'),('invalid-escape','{"x":"\\q"}')]:
+        reject(label,lambda text=text:audit.metadata_json(text,'workload-set'))
+    text='/*first*/\n{"é":"value", // comment\n "x": broken,}'
+    try:audit.metadata_json(text,'workload-set')
+    except json.JSONDecodeError as error:
+        assert error.doc==text and error.pos==text.index('broken') and error.lineno==3 and error.colno==7
+        passed.append('decoded-text-codepoint-position-preserved')
+    else:raise AssertionError('Malformed token accepted')
+    with tempfile.TemporaryDirectory(prefix='sl971-metadata-synthetic-') as temporary:
+        root=Path(temporary);sdk=root/'sdk';sdk.mkdir();folder=sdk/'sdk-manifests/10.0.100/workloadsets/10.0.114';folder.mkdir(parents=True)
+        path=folder/'baseline.workloadset.json';path.write_bytes(b'\xef\xbb\xbf'+official.encode())
+        assert audit.read_workload_metadata(path,sdk,'workload-set')==expected
+        passed.append('utf8-bom-existing-policy-preserved')
+        reject('strict-report-reader-remains-strict',lambda:c.read_json(path))
+        text='{"SECRET_TOKEN": /*SECRET_COMMENT*/ broken,}'
+        path.write_text(text)
+        try:audit.read_workload_metadata(path,sdk,'workload-set')
+        except json.JSONDecodeError as original:
+            rows=runner.failure_leaves([original],'runtime-inventory')
+            public=json.dumps(rows)
+            assert 'SECRET' not in public and str(root) not in public
+            receipt=rows[0]['workloadMetadata']
+            assert receipt['sdkRelativePath']=='sdk-manifests/10.0.100/workloadsets/10.0.114/baseline.workloadset.json'
+            assert receipt['position']==text.index('broken') and receipt['fileSHA256']==audit.digest(path)
+            assert receipt['coordinateUnit']=='decoded-text-codepoints-after-UTF8-BOM-removal'
+            assert 'message' not in rows[0]
+            context=SimpleNamespace(work=root,manifest_sha='synthetic',stage='runtime-inventory',results=[],active_scope=None,active_uid=None)
+            sent=[];errors=[original]
+            def broken_writer(*args,**kwargs):raise RuntimeError('SECRET_CONSOLE')
+            assert runner.finish(context,errors,writer=broken_writer,fallback=lambda fd,b:sent.append(b))==1
+            assert errors[0] is original and len(errors)>1 and b'SECRET' not in b''.join(sent)
+            assert json.loads((root/'RESULT.json').read_text())['status']=='FAILED'
+            passed.extend(['safe-known-relative-decode-receipt','console-fault-original-body-preserved'])
+            saved_public=audit.MetadataDiagnostics.public
+            def broken_public(self):raise RuntimeError('SECRET_METADATA_FORMATTER')
+            audit.MetadataDiagnostics.public=broken_public
+            try:
+                errors=[original];sent=[]
+                assert runner.finish(context,errors,writer=lambda *a,**kw:None,fallback=lambda fd,b:sent.append(b))==1
+                assert errors[0] is original and len(errors)>1 and b'SECRET' not in b''.join(sent)
+                assert json.loads((root/'RESULT.json').read_text())['status']=='FAILED'
+                passed.append('metadata-formatter-fault-original-body-preserved')
+            finally:audit.MetadataDiagnostics.public=saved_public
+
+        else:raise AssertionError('Malformed actual file accepted')
+        saved=audit.metadata_diagnostic
+        def broken_diagnostic(*args):raise RuntimeError('SECRET_DIAGNOSTIC')
+        audit.metadata_diagnostic=broken_diagnostic
+        try:
+            try:audit.read_workload_metadata(path,sdk,'workload-set')
+            except ExceptionGroup as error:
+                assert type(error.exceptions[0]) is json.JSONDecodeError and type(error.exceptions[1]) is RuntimeError
+                assert 'SECRET' not in json.dumps(runner.failure_leaves([error],'runtime-inventory'))
+                passed.append('diagnostic-fault-original-body-first')
+            else:raise AssertionError('Diagnostic failure swallowed original')
+        finally:audit.metadata_diagnostic=saved
+        path.write_bytes(b'\xff\xfeinvalid')
+        try:audit.read_workload_metadata(path,sdk,'workload-set')
+        except UnicodeDecodeError as error:
+            receipt=runner.failure_leaves([error],'stage')[0]['workloadMetadata']
+            assert receipt['line'] is None and receipt['column'] is None and receipt['position'] is None
+            passed.append('unknown-encoding-fails-no-fabricated-text-position')
+        else:raise AssertionError('Unknown encoding silently decoded')
+        path.unlink();path.symlink_to(root/'SECRET_OUTSIDE')
+        reject('symlink-metadata-not-followed',lambda:audit.read_workload_metadata(path,sdk,'workload-set'));path.unlink()
+        os.mkfifo(path)
+        reject('special-metadata-not-read',lambda:audit.read_workload_metadata(path,sdk,'workload-set'));path.unlink()
+        reject('outside-sdk-metadata-rejected',lambda:audit.read_workload_metadata(root/'SECRET_OUTSIDE',sdk,'workload-set'))
+    return passed
+
+
 def main():
     counts = dict(positive=0, negative=0)
     def reject(label, action):
@@ -301,7 +401,8 @@ def main():
         counts['positive']+=1
     diagnostic=diagnostic_controls()
     closure=closure_controls()
-    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' closureControls='+json.dumps(closure)+' runtimeTests=0')
+    metadata=metadata_controls()
+    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' closureControls='+json.dumps(closure)+' metadataControls='+json.dumps(metadata)+' runtimeTests=0')
 
 
 if __name__=='__main__':main()

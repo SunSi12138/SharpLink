@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
-from classify import require, read_json
+from classify import require, read_json, unique_object
 
 NAMES = ('SharpLink.Abstractions', 'SharpLink.Runtime', 'SharpLink.Server', 'SharpLink.TerminalSignal.Focused')
 PROJECTS = {name: ('test/' if name.endswith('Focused') else 'src/') + name + '/' + name + '.csproj' for name in NAMES}
@@ -17,6 +17,117 @@ PROJECTS = {name: ('test/' if name.endswith('Focused') else 'src/') + name + '/'
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+
+@dataclass(frozen=True)
+class MetadataDiagnostics:
+    category: str
+    relative_path: str | None
+    file_sha256: str | None
+    line: int | None
+    column: int | None
+    position: int | None
+
+    def public(self):
+        result={'category':self.category,'fileSHA256':self.file_sha256,
+                'line':self.line,'column':self.column,'position':self.position,
+                'coordinateUnit':'decoded-text-codepoints-after-UTF8-BOM-removal'}
+        if self.relative_path is not None: result['sdkRelativePath']=self.relative_path
+        return result
+
+
+def metadata_json(text, kind):
+    """Official per-type JSON extensions; all other JSON rules remain strict.
+
+    Equal-length whitespace replacement preserves original decoded-text error
+    positions. Strings/escapes are not rewritten. No regex comment removal.
+    """
+    require(kind in ('workload-set','install-state'), 'Unknown workload metadata category')
+    masked=list(text);i=0;tokens=[]
+    while i<len(text):
+        ch=text[i]
+        if ch in ' \t\r\n': i+=1;continue
+        if ch=='"':
+            start=i;i+=1
+            while i<len(text):
+                if text[i]=='\\': i+=2;continue
+                if text[i]=='"':i+=1;break
+                i+=1
+            else: raise json.JSONDecodeError('Unterminated string',text,start)
+            tokens.append(('value',start));continue
+        if ch=='/' and i+1<len(text) and text[i+1] in '/*':
+            start=i
+            if kind!='workload-set':
+                raise json.JSONDecodeError('Comments not permitted for install-state metadata',text,start)
+            if text[i+1]=='/':
+                i+=2
+                while i<len(text) and text[i] not in '\r\n':i+=1
+            else:
+                end=text.find('*/',i+2)
+                if end<0:raise json.JSONDecodeError('Unterminated comment',text,start)
+                i=end+2
+            for offset in range(start,i):
+                if masked[offset] not in '\r\n':masked[offset]=' '
+            continue
+        if ch in '{}[],:':
+            tokens.append((ch,i));i+=1;continue
+        # Preserve any primitive/malformed lexeme for the strict JSON decoder.
+        start=i
+        while i<len(text) and text[i] not in ' \t\r\n{}[],:":/':i+=1
+        if i==start:i+=1
+        tokens.append(('value',start))
+    for index,(token,position) in enumerate(tokens):
+        if (token==',' and index>0 and index+1<len(tokens)
+                and tokens[index-1][0] in ('value',']','}') and tokens[index+1][0] in (']','}')):
+            masked[position]=' '
+    try:
+        return json.loads(''.join(masked),object_pairs_hook=unique_object,
+                          parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Nonfinite JSON number')))
+    except json.JSONDecodeError as error:
+        # Keep the original decoded document in the private exception, not the
+        # transformed text. Equal-length masking keeps line/column/pos exact.
+        raise json.JSONDecodeError(error.msg,text,error.pos) from error
+
+
+def metadata_diagnostic(path,sdk_root,kind,raw,error):
+    relative=path.relative_to(sdk_root).as_posix()
+    safe=relative if len(relative)<=512 and re.fullmatch(r'[A-Za-z0-9_./+ @(),=-]+',relative) else None
+    decoded=isinstance(error,json.JSONDecodeError)
+    return MetadataDiagnostics(kind,safe,hashlib.sha256(raw).hexdigest() if raw is not None else None,
+                               error.lineno if decoded else None,error.colno if decoded else None,
+                               error.pos if decoded else None)
+
+
+def read_workload_metadata(path,sdk_root,kind):
+    require(kind in ('workload-set','install-state'), 'Unknown workload metadata category')
+    require(path.is_relative_to(sdk_root) and '..' not in path.relative_to(sdk_root).parts,
+            'Workload metadata outside known SDK container')
+    raw=None
+    try:
+        # No-follow traversal ensures metadata diagnostics never read a symlink
+        # target or arbitrary external file. Source callers have sealed selectors.
+        fd=os.open(sdk_root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        try:
+            parts=path.relative_to(sdk_root).parts
+            require(parts, 'Workload metadata path is not a file')
+            for part in parts[:-1]:
+                next_fd=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+                os.close(fd);fd=next_fd
+            content_fd=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+            try:
+                require(stat.S_ISREG(os.fstat(content_fd).st_mode), 'Workload metadata is not regular')
+                with os.fdopen(content_fd,'rb',closefd=False) as stream:raw=stream.read()
+            finally:os.close(content_fd)
+        finally:os.close(fd)
+        # Existing UTF8/UTF8-BOM support only. Unknown encoding fails closed;
+        # UnicodeDecodeError has no fabricated decoded-text coordinates.
+        return metadata_json(raw.decode('utf-8-sig'),kind)
+    except BaseException as original:
+        try:original.metadata_diagnostics=metadata_diagnostic(path,sdk_root,kind,raw,original)
+        except BaseException as reporting_error:
+            raise BaseExceptionGroup('Metadata read failure and diagnostic failure',[original,reporting_error])
+        raise
 
 
 def static_graph(root):
