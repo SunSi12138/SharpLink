@@ -188,6 +188,35 @@ class Lifecycle(unittest.TestCase):
    for variant,key,scope in [('baseline','target','baseline'),('fixed','target','fixed'),('fixed','control','control')]:
     with self.assertRaises(Halt):lane.filtered('case',variant,key,scope=scope,ledger=sample(scope)[2])
    self.assertEqual([x[2]['expected_exit'] for x in seen],[2,0,0]);self.assertTrue(all(x[1]==120 and '--fail-on-unobserved-task-exceptions' in x[0] for x in seen))
+ def test_explicit_detailed_only_three_bodies_exact_argv_delta(self):
+  class Halt(Exception):pass
+  with tempfile.TemporaryDirectory() as tmp:
+   lane=self.make_lane(tmp);lane.baseline_reproduced=True;seen=[]
+   def capture(label,variant,argv,seconds,**kwargs):seen.append((label,variant,argv,seconds,kwargs));raise Halt()
+   lane.command=capture
+   selections=[('baseline','target','baseline'),('fixed','target','fixed'),('fixed','control','control')]
+   for listing in (False,True):
+    for variant,key,scope in selections:
+     label=('list-' if listing else 'body-')+variant+'-'+key
+     with self.assertRaises(Halt):lane.filtered(label,variant,key,listing=listing,scope=None if listing else scope,ledger=sample(scope)[2])
+   for index,(label,variant,argv,seconds,kwargs) in enumerate(seen):
+    key='control' if label.endswith('control') else 'target';directory=lane.work/label;listing=index>=3
+    base=[str(lane.dotnet),str(lane.roots[variant]/run.FOCUSED/'bin/Release/net10.0/SharpLink.IntegrationTests.dll'),
+          '--treenode-filter',run.FILTERS[key],'--maximum-parallel-tests','1','--no-progress','--results-directory',str(directory/'reports')]
+    old_tail=['--list-tests','json'] if listing else ['--report-html','--report-html-filename',str(directory/'reports/session.html'),
+                       '--junit-output-path',str(directory/'reports/junit.xml'),'--fail-on-unobserved-task-exceptions']
+    expected=base+([] if listing else ['--output','Detailed'])+old_tail
+    self.assertEqual(argv,expected);self.assertEqual(seconds,120);self.assertTrue(kwargs['filtered'])
+    self.assertEqual(kwargs['expected_exit'],2 if index==0 else 0)
+    self.assertEqual(argv.count('--output'),0 if listing else 1)
+    mutants=[]
+    if listing:mutants.append(argv+['--output','Detailed'])
+    else:
+     pos=argv.index('--output');mutants.extend([argv[:pos]+argv[pos+2:],argv[:pos+1]+['Normal']+argv[pos+2:],argv+['--output','Detailed']])
+     mutants.append([x for x in argv if x!='--fail-on-unobserved-task-exceptions'])
+    pos=argv.index('--maximum-parallel-tests');mutants.append(argv[:pos+1]+['2']+argv[pos+2:])
+    for mutant in mutants:
+     with self.assertRaises(AssertionError):self.assertEqual(mutant,expected)
  def test_body_and_formatter_failure_remain_nonzero_private_graph(self):
   with tempfile.TemporaryDirectory() as tmp:
    lane=SimpleNamespace(work=Path(tmp),manifest_sha='synthetic',stage='baseline',results=[],active_scope='baseline',active_uid='actual-uid')

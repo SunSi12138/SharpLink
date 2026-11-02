@@ -473,7 +473,7 @@ class Lane:
         argv=[str(self.dotnet),str(assembly),'--treenode-filter',FILTERS[filter_key],
               '--maximum-parallel-tests','1','--no-progress','--results-directory',str(directory/'reports')]
         if listing:argv+=['--list-tests','json']
-        else:argv+=['--report-html','--report-html-filename',str(directory/'reports/session.html'),
+        else:argv+=['--output','Detailed','--report-html','--report-html-filename',str(directory/'reports/session.html'),
                     '--junit-output-path',str(directory/'reports/junit.xml'),'--fail-on-unobserved-task-exceptions']
         expected=2 if scope=='baseline' and not listing else 0
         try:
@@ -508,7 +508,7 @@ class Lane:
         if scope=='baseline':
             c.require(result['classification']=='ORIGINAL_ACCEPT_EVENT_REPRODUCED','Wrong originalaccept baseline qualification')
             self.paired_runtime=result['runtime'];self.baseline_reproduced=True
-        result['stage']=label;result['strictOption']=True
+        result['stage']=label;result['strictOption']=True;result['outputPolicy']='Detailed (explicit body CLI; not default-mode qualification)'
         self.results.append(result);print(json.dumps(result),flush=True)
         return result
 

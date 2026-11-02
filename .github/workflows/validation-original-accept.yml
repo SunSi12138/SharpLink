@@ -58,4 +58,4 @@ jobs:
           python3 payload/eng/integration-accept-regression/run.py
           --baseline "$GITHUB_WORKSPACE/baseline"
           --fixed "$GITHUB_WORKSPACE/fixed"
-          --ci-manifest-sha256 5d4f0e308ffae4ff5806b403757357d894f498bd66e6f3d30577fde862b1104f
+          --ci-manifest-sha256 6cedc4415493040aaded91a814c58306f3e4a72905c589a3b50a6c178f4bfc8a
