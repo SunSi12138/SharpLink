@@ -1,0 +1,225 @@
+{
+  "namespace": "SharpLink.Generator.Tests",
+  "class": "RpcAnalyzerTests",
+  "assembly": "SharpLink.Generator.Tests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "return": "System.Threading.Tasks.Task",
+  "methods": 5,
+  "caseCount": 8,
+  "cases": [
+    {
+      "method": "ReferencedManifestBootstrapGeneratedOutputShouldMatchFixture",
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "arguments": [],
+      "parameterTypes": [],
+      "expectedDisplayName": "ReferencedManifestBootstrapGeneratedOutputShouldMatchFixture",
+      "spanKey": "ReferencedManifestBootstrapGeneratedOutputShouldMatchFixture",
+      "key": "G1"
+    },
+    {
+      "method": "ReferencedAssemblyManifestsShouldEmitDeterministicStaticBootstrapCalls",
+      "source": "test/SharpLink.Generator.Tests/RpcAnalyzerContractTests.cs",
+      "arguments": [],
+      "parameterTypes": [],
+      "expectedDisplayName": "ReferencedAssemblyManifestsShouldEmitDeterministicStaticBootstrapCalls",
+      "spanKey": "ReferencedAssemblyManifestsShouldEmitDeterministicStaticBootstrapCalls",
+      "key": "G2"
+    },
+    {
+      "method": "Issue899AliasOnlyReferencedManifestsMustBeBootstrappedWithExternAlias",
+      "source": "test/SharpLink.Generator.Tests/RpcIssue899RegressionTests.cs",
+      "arguments": [],
+      "parameterTypes": [],
+      "expectedDisplayName": "Issue899AliasOnlyReferencedManifestsMustBeBootstrappedWithExternAlias",
+      "spanKey": "Issue899AliasOnlyReferencedManifestsMustBeBootstrappedWithExternAlias",
+      "key": "G3"
+    },
+    {
+      "method": "Issue899MultipleAliasesAndInstanceFallbackMustStayDeterministic",
+      "source": "test/SharpLink.Generator.Tests/RpcIssue899RegressionTests.cs",
+      "arguments": [],
+      "parameterTypes": [],
+      "expectedDisplayName": "Issue899MultipleAliasesAndInstanceFallbackMustStayDeterministic",
+      "spanKey": "Issue899MultipleAliasesAndInstanceFallbackMustStayDeterministic",
+      "key": "G4"
+    },
+    {
+      "method": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "arguments": [
+        4,
+        3,
+        "sharplink-3.0-api5-contract-channel-complete-method-facts-v1"
+      ],
+      "parameterTypes": [
+        "System.Int32",
+        "System.Int32",
+        "System.String"
+      ],
+      "expectedDisplayName": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity(4, 3, sharplink-3\u00b70-api5-contract-channel-complete-method-facts-v1)",
+      "spanKey": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "key": "G5"
+    },
+    {
+      "method": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "arguments": [
+        6,
+        3,
+        "sharplink-3.0-api5-contract-channel-complete-method-facts-v1"
+      ],
+      "parameterTypes": [
+        "System.Int32",
+        "System.Int32",
+        "System.String"
+      ],
+      "expectedDisplayName": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity(6, 3, sharplink-3\u00b70-api5-contract-channel-complete-method-facts-v1)",
+      "spanKey": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "key": "G6"
+    },
+    {
+      "method": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "arguments": [
+        5,
+        2,
+        "sharplink-3.0-api5-contract-channel-complete-method-facts-v1"
+      ],
+      "parameterTypes": [
+        "System.Int32",
+        "System.Int32",
+        "System.String"
+      ],
+      "expectedDisplayName": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity(5, 2, sharplink-3\u00b70-api5-contract-channel-complete-method-facts-v1)",
+      "spanKey": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "key": "G7"
+    },
+    {
+      "method": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "arguments": [
+        5,
+        3,
+        "SHARPLINK-3.0-api5-contract-channel-complete-method-facts-v1"
+      ],
+      "parameterTypes": [
+        "System.Int32",
+        "System.Int32",
+        "System.String"
+      ],
+      "expectedDisplayName": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity(5, 3, SHARPLINK-3\u00b70-api5-contract-channel-complete-method-facts-v1)",
+      "spanKey": "ReferencedManifestBootstrapMustRejectIncompatibleIdentity",
+      "key": "G8"
+    }
+  ],
+  "schemaVersion": 1,
+  "project": "test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj",
+  "projects": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj"
+  ],
+  "tunitPackageVersion": "1.73.19",
+  "tunitRuntimeVersion": "1.73.19.0",
+  "sourceSpans": {
+    "ReferencedManifestBootstrapGeneratedOutputShouldMatchFixture": {
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "sourceSha256": "2a75704163842576a7584457eabca4752520062b3abc79acf287dcf3c21bc219",
+      "sourceBytes": 2619,
+      "attributeStartLine": 8,
+      "signatureStartLine": 9,
+      "signatureEndLine": 9,
+      "methodEndLine": 26,
+      "methodBytesSha256": "b6d4663b3e15b6b76f6f01c27b14c2ad4a3dc0161a8f1092661d73ee02f7ebe1",
+      "methodBytes": 730,
+      "attributeText": "    [Test]",
+      "signatureText": "    public Task ReferencedManifestBootstrapGeneratedOutputShouldMatchFixture()\n",
+      "closingText": "    }",
+      "nextNonemptyLine": 28,
+      "nextNonemptyText": "    [Test]",
+      "reportedStartRule": "inclusive attributeStartLine through signatureStartLine; exact integer",
+      "reportedEndRule": "exact methodEndLine; no end scanning or suffix tolerance"
+    },
+    "ReferencedAssemblyManifestsShouldEmitDeterministicStaticBootstrapCalls": {
+      "source": "test/SharpLink.Generator.Tests/RpcAnalyzerContractTests.cs",
+      "sourceSha256": "ce40f6a9000e00a2a6b699f6142a16edb7e2869a23feedcde2ce7d6b494d40ed",
+      "sourceBytes": 13528,
+      "attributeStartLine": 148,
+      "signatureStartLine": 149,
+      "signatureEndLine": 149,
+      "methodEndLine": 202,
+      "methodBytesSha256": "5454b47437399922558356a4e7582a8348ecfb37a912a3c84b8714848ce1f381",
+      "methodBytes": 3263,
+      "attributeText": "    [Test]",
+      "signatureText": "    public Task ReferencedAssemblyManifestsShouldEmitDeterministicStaticBootstrapCalls()\n",
+      "closingText": "    }",
+      "nextNonemptyLine": 204,
+      "nextNonemptyText": "    [Test]",
+      "reportedStartRule": "inclusive attributeStartLine through signatureStartLine; exact integer",
+      "reportedEndRule": "exact methodEndLine; no end scanning or suffix tolerance"
+    },
+    "Issue899AliasOnlyReferencedManifestsMustBeBootstrappedWithExternAlias": {
+      "source": "test/SharpLink.Generator.Tests/RpcIssue899RegressionTests.cs",
+      "sourceSha256": "cb444b8d68701ce565121b6503c83ffcaed1d752fc79f3fe60ef6ecd8cdcea0e",
+      "sourceBytes": 4306,
+      "attributeStartLine": 11,
+      "signatureStartLine": 12,
+      "signatureEndLine": 12,
+      "methodEndLine": 45,
+      "methodBytesSha256": "36d4fea5bfc576d8c4177e042b407cac8601f32589242e079cba656a478e92d1",
+      "methodBytes": 2157,
+      "attributeText": "    [Test]",
+      "signatureText": "    public Task Issue899AliasOnlyReferencedManifestsMustBeBootstrappedWithExternAlias()\n",
+      "closingText": "    }",
+      "nextNonemptyLine": 47,
+      "nextNonemptyText": "    [Test]",
+      "reportedStartRule": "inclusive attributeStartLine through signatureStartLine; exact integer",
+      "reportedEndRule": "exact methodEndLine; no end scanning or suffix tolerance"
+    },
+    "Issue899MultipleAliasesAndInstanceFallbackMustStayDeterministic": {
+      "source": "test/SharpLink.Generator.Tests/RpcIssue899RegressionTests.cs",
+      "sourceSha256": "cb444b8d68701ce565121b6503c83ffcaed1d752fc79f3fe60ef6ecd8cdcea0e",
+      "sourceBytes": 4306,
+      "attributeStartLine": 47,
+      "signatureStartLine": 48,
+      "signatureEndLine": 48,
+      "methodEndLine": 80,
+      "methodBytesSha256": "7f5c5560161e89213e06683000b2d242be87856ac3bd4c308cd9347c08203866",
+      "methodBytes": 1938,
+      "attributeText": "    [Test]",
+      "signatureText": "    public Task Issue899MultipleAliasesAndInstanceFallbackMustStayDeterministic()\n",
+      "closingText": "    }",
+      "nextNonemptyLine": 81,
+      "nextNonemptyText": "}",
+      "reportedStartRule": "inclusive attributeStartLine through signatureStartLine; exact integer",
+      "reportedEndRule": "exact methodEndLine; no end scanning or suffix tolerance"
+    },
+    "ReferencedManifestBootstrapMustRejectIncompatibleIdentity": {
+      "source": "test/SharpLink.Generator.Tests/ReferencedManifestBootstrapFixtureTests.cs",
+      "sourceSha256": "2a75704163842576a7584457eabca4752520062b3abc79acf287dcf3c21bc219",
+      "sourceBytes": 2619,
+      "attributeStartLine": 28,
+      "signatureStartLine": 33,
+      "signatureEndLine": 34,
+      "methodEndLine": 52,
+      "methodBytesSha256": "ff6f53e8b2ab6c45b0106c6cbda0be97f6fd19f6adc9aed96e1ceca947a0eaef",
+      "methodBytes": 1762,
+      "attributeText": "    [Test]",
+      "signatureText": "    public Task ReferencedManifestBootstrapMustRejectIncompatibleIdentity(\n        int apiVersion, int protocolVersion, string abiIdentity)\n",
+      "closingText": "    }",
+      "nextNonemptyLine": 54,
+      "nextNonemptyText": "}",
+      "reportedStartRule": "inclusive attributeStartLine through signatureStartLine; exact integer",
+      "reportedEndRule": "exact methodEndLine; no end scanning or suffix tolerance"
+    }
+  },
+  "limits": {
+    "commandBudgetSeconds": 1500,
+    "restoreSeconds": 600,
+    "buildSeconds": 600,
+    "discoverySeconds": 60,
+    "caseSeconds": 120,
+    "engineTimeout": "90s"
+  },
+  "nativeFilterPolicy": "diagnostic-only: selection authority is exact recorded UID argv plus discovery/native.id; not reporter filter",
+  "qualification": "Eight Generator bootstrap controls only; no full Generator/Unit/route/performance acceptance."
+}

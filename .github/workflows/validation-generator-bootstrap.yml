@@ -1,0 +1,43 @@
+name: Finite Generator bootstrap identity controls
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['wip/775-code-recovery-20261102']
+    paths:
+      - '.github/workflows/validation-generator-bootstrap.yml'
+      - 'eng/run-generator-bootstrap-controls.py'
+      - 'eng/generator-bootstrap-results.py'
+      - 'eng/generator-bootstrap-controls.json'
+      - 'eng/tests/test_generator_bootstrap_results.py'
+      - 'eng/package-smoke-process.py'
+      - 'eng/retirement-results.py'
+      - 'src/SharpLink.Generator/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Shared/RpcBuiltinCollectionWireCatalog.cs'
+      - 'test/SharpLink.Generator.Tests/**'
+      - 'Directory.Build.props'
+      - 'src/Directory.Build.props'
+      - 'test/Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+concurrency:
+  group: generator-bootstrap-controls-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  selected-generator-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup repository SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Build Generator graph and validate eight isolated actual UIDs
+        run: python3 eng/run-generator-bootstrap-controls.py
+# Reports and raw logs remain private to the disposable runner. No artifact upload.
+# GitHub itself retains only the necessary bounded stage/case/failure console output.
