@@ -381,6 +381,38 @@ class FullGraphAudit(unittest.TestCase):
    with patch.object(audit.RidAssetDiagnostics,'public',side_effect=RuntimeError('format failure')):
     self.assertEqual(run.finish(lane,errors,writer=lambda *args,**kwargs:None,fallback=lambda *args:None),1)
    self.assertIs(errors[0],original);self.assertIsInstance(errors[1],RuntimeError)
+ def test_raw_output_diagnostic_keeps_zero_and_extra_headers_failed(self):
+  prefix='Unobserved task exception: '
+  for text,expected in [('',0),(prefix+'System.AggregateException: SECRET\n'+prefix+'System.IO.IOException: SECRET\n',2)]:
+   with self.assertRaises(ValueError) as caught:run.validate_stderr('baseline',text,lambda:prefix+'System.IO.IOException: OTHER-SECRET')
+   diagnostic=caught.exception.raw_events.public()
+   self.assertEqual(diagnostic['stderr']['exactPrefixOccurrences'],expected)
+   self.assertEqual(diagnostic['stdout']['exactPrefixOccurrences'],1)
+   self.assertNotIn('SECRET',json.dumps(run.failure_leaves([caught.exception],'baseline')))
+  run.validate_stderr('baseline',prefix+'one',lambda:(_ for _ in ()).throw(AssertionError('success must not read diagnostics')))
+  for scope in ('fixed','control','baseline-green'):
+   with self.assertRaises(ValueError):run.validate_stderr(scope,prefix+'event')
+ def test_raw_output_header_classes_hashes_and_bounds(self):
+  prefix='Unobserved task exception: '
+  text='SECRET-prefix '+prefix+'System.AggregateException: SECRET\n'+prefix+'System.IO.IOException: SECRET\n'+prefix+'UNKNOWN SECRET\n'+('x '+prefix+'unknown\n')*17
+  with self.assertRaises(ValueError) as caught:run.validate_stderr('baseline',text)
+  data=caught.exception.raw_events.public()['stderr']
+  self.assertEqual(data['exactPrefixOccurrences'],20);self.assertEqual(data['lineStartExactPrefixCount'],2)
+  self.assertEqual([r['headerCategory'] for r in data['headerLines'][:3]],['aggregate-exception','ioexception','other-or-empty'])
+  self.assertEqual(len(data['headerLines']),16);self.assertTrue(data['headerLinesTruncated'])
+  self.assertEqual(data['decodedTextSHA256'],hashlib.sha256(text.encode()).hexdigest())
+  self.assertNotIn('SECRET',json.dumps(data));self.assertNotIn('UNKNOWN',json.dumps(data))
+ def test_raw_output_loader_formatter_failure_after_original(self):
+  def fail():raise OSError('SECRET read failure')
+  with self.assertRaises(BaseExceptionGroup) as caught:run.validate_stderr('baseline','',fail)
+  self.assertIsInstance(caught.exception.exceptions[0],ValueError);self.assertIsInstance(caught.exception.exceptions[1],OSError)
+  with self.assertRaises(ValueError) as caught:run.validate_stderr('baseline','')
+  original=caught.exception
+  with tempfile.TemporaryDirectory() as tmp:
+   lane=SimpleNamespace(work=Path(tmp),manifest_sha='synthetic',stage='baseline',results=[],active_scope='baseline',active_uid='uid');errors=[original]
+   with patch.object(run.RawEventDiagnostics,'public',side_effect=RuntimeError('SECRET format failure')):
+    self.assertEqual(run.finish(lane,errors,writer=lambda *args,**kwargs:None,fallback=lambda *args:None),1)
+   self.assertIs(errors[0],original);self.assertIsInstance(errors[1],RuntimeError)
  def synthetic_build(self,root,packages):
   output=root/Path(audit.PROJECTS[a.ASSEMBLY]).parent/'bin/Release/net10.0';output.mkdir(parents=True)
   assets={'libraries':{},'targets':{'net10.0':{}}};libs={};targets={}

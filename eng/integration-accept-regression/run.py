@@ -6,6 +6,7 @@ fixed successes. Every unexpected command/schema/cleanup/guard failure stops.
 import sys
 sys.dont_write_bytecode = True
 import argparse
+from dataclasses import dataclass
 import ast
 import traceback
 import hashlib
@@ -280,11 +281,50 @@ def environment(state):
     return env
 
 
-def validate_stderr(scope,text):
-    c.require('Unhandled exception in AppDomain' not in text,'Originalaccept unhandled process exception')
-    if scope=='baseline':
-        c.require(text.count('Unobserved task exception: ')==1,'Wrong originalaccept raw event-header count')
-    else:c.require(not re.search('unobserved',text,re.I),'Unexpected originalaccept fixed/green stderr event')
+@dataclass(frozen=True)
+class RawEventDiagnostics:
+    scope: str
+    stderr_text: str
+    stdout_text: str | None
+
+    def public(self):
+        def stream(text):
+            prefix='Unobserved task exception: '
+            lines=text.splitlines();matches=[]
+            for index,line in enumerate(lines):
+                if prefix not in line:continue
+                offset=line.index(prefix);tail=line[offset+len(prefix):]
+                category=('aggregate-exception' if tail.startswith('System.AggregateException:') else
+                          'ioexception' if tail.startswith('System.IO.IOException:') else 'other-or-empty')
+                if len(matches)<16:
+                    matches.append({'lineNumber':index+1,'lineLength':len(line),'firstPrefixOffset':offset,
+                                    'prefixesOnLine':line.count(prefix),'headerCategory':category,
+                                    'decodedLineSHA256':hashlib.sha256(line.encode()).hexdigest()})
+            count=sum(prefix in line for line in lines)
+            return {'decodedTextSHA256':hashlib.sha256(text.encode()).hexdigest(),'characterCount':len(text),
+                    'lineCount':len(lines),'exactPrefixOccurrences':text.count(prefix),
+                    'caseInsensitivePrefixOccurrences':len(re.findall(re.escape(prefix),text,re.I)),
+                    'linesContainingExactPrefix':count,'lineStartExactPrefixCount':sum(line.startswith(prefix) for line in lines),
+                    'unhandledAppDomainOccurrences':text.count('Unhandled exception in AppDomain'),
+                    'replacementCharacterCount':text.count('\ufffd'),'headerLines':matches,'headerLinesTruncated':count>16}
+        return {'scope':self.scope if self.scope in ('baseline','baseline-green','fixed','control') else 'unknown',
+                'qualification':'diagnostic only; unchanged raw-output rejection; decoded UTF8 text hashes, not raw-byte hashes',
+                'stderr':stream(self.stderr_text),'stdout':stream(self.stdout_text) if self.stdout_text is not None else None}
+
+
+def validate_stderr(scope,text,stdout_loader=None):
+    try:
+        c.require('Unhandled exception in AppDomain' not in text,'Originalaccept unhandled process exception')
+        if scope=='baseline':
+            c.require(text.count('Unobserved task exception: ')==1,'Wrong originalaccept raw event-header count')
+        else:c.require(not re.search('unobserved',text,re.I),'Unexpected originalaccept fixed/green stderr event')
+    except ValueError as original:
+        try:
+            stdout=stdout_loader() if stdout_loader is not None else None
+            original.raw_events=RawEventDiagnostics(scope,text,stdout)
+        except BaseException as diagnostic:
+            raise BaseExceptionGroup('Original raw output rejection and diagnostic failure',[original,diagnostic])
+        raise
 
 
 class Lane:
@@ -446,7 +486,7 @@ class Lane:
                     self.inputs_guard();self.current_guard();self.root_guard()
                     outcome=self.read_outcome(directory,ledger,'baseline-green',variant)
                     stderr=(directory/(label+'.stderr')).read_text(errors='replace')
-                    validate_stderr('baseline-green',stderr)
+                    validate_stderr('baseline-green',stderr,lambda:(directory/(label+'.stdout')).read_text(errors='replace'))
                     c.require(outcome['classification']=='INCONCLUSIVE_BASELINE_NO_EVENT','Wrong originalaccept inconclusive qualifier')
                 except BaseException as diagnostic:
                     raise BaseExceptionGroup('Original baseline outcome and qualification failure',[original,diagnostic]) from None
@@ -461,7 +501,7 @@ class Lane:
             return actual
         result=self.read_outcome(directory,ledger,scope,variant)
         stderr=output[1].read_text(errors='replace')
-        validate_stderr(scope,stderr)
+        validate_stderr(scope,stderr,lambda:output[0].read_text(errors='replace'))
         engine_uid=result.pop('engineUID')
         if engine_uid:self.seen_engine_uids.add(engine_uid)
         self.seen_publications.add(result['publicationGeneration'])
@@ -628,6 +668,9 @@ def failure_leaves(errors, stage, scope=None, uid=None):
             diagnostic=getattr(error,'origin_diagnostics',None)
             if type(diagnostic) is audit.ImportDiagnostics:
                 row['importOrigins']=diagnostic.public()
+        raw_events=getattr(error,'raw_events',None)
+        if type(raw_events) is RawEventDiagnostics:
+            row['rawEventOutput']=raw_events.public()
         rid_asset=getattr(error,'rid_asset',None)
         if type(rid_asset) is audit.RidAssetDiagnostics:
             row['ridAsset']=rid_asset.public()
