@@ -1,0 +1,54 @@
+name: Validation default PackageSmoke
+
+# No release, package publication, secrets, or raw log/report artifact uploads.
+# GitHub retains its normal CI console, limited by the runner to stage identity
+# and bounded necessary diagnostics. This is not the Trim/AOT composite gate.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 'wip/775-code-recovery-20261102'
+    paths:
+      - '.github/workflows/validation-default-package-smoke.yml'
+      - 'eng/run-default-package-smoke.py'
+      - 'eng/package-smoke-process.py'
+      - 'eng/verify-packages.sh'
+      - 'eng/verify-package-identities.py'
+      - 'src/**'
+      - 'test/SharpLink.PackageSmoke/**'
+      - 'test/SharpLink.SdkOnlyPackageSmoke/**'
+      - 'test/SharpLink.ReferenceRooting.PackageClient/**'
+      - 'test/SharpLink.ReferenceRooting.PackageServer/**'
+      - 'test/SharpLink.ReferenceRooting.PackageContracts/**'
+      - 'test/SharpLink.ReferenceRooting.PackageServices/**'
+      - 'test/Directory.Build.props'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+      - 'README.md'
+      - 'assets/sharplink-icon.png'
+
+concurrency:
+  group: validation-default-package-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  default-package-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup repository SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Verify local packages and finite default consumer
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: python3 eng/run-default-package-smoke.py
