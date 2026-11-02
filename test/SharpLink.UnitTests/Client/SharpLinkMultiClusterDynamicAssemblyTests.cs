@@ -128,14 +128,17 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
     [NotInParallel("rollback-plugin")]
     public async Task RuntimeReplaceShouldMigrateDynamicAssemblyBeforeSwitchingRoute(CancellationToken testCancellationToken)
     {
+        var owner = new MutationFixture();
         await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
-        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         try
         {
-            var oldTransport = new ControlledMutationTransportFactory();
-            var replacementTransport = new ControlledMutationTransportFactory();
-            await using var client = CreateStaticBuilder()
-                .AddCluster("orders", child => child.UseTransport(oldTransport),
+            owner.Initialize(useManifestGate: false);
+            var oldFactory = owner.OldFactory = new OwnedMutationFactory();
+            var replacementFactory = owner.ReplacementFactory = new OwnedMutationFactory();
+            var oldTransport = oldFactory.Factory;
+            var replacementTransport = replacementFactory.Factory;
+            var client = owner.Client = CreateStaticBuilder()
+                .AddCluster("orders", child => child.UseTransport(oldFactory.OfferToBuilder()),
                     slot => slot.AllowDynamicContracts = true)
                 .Build();
             var dynamicAssembly = typeof(RollbackMarker).Assembly;
@@ -143,10 +146,12 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
             Ensure(registration.Succeeded, $"dynamic setup registration must succeed: {registration.Error}");
             var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
-            await client.ReplaceClusterAsync(
+            var replacement = client.ReplaceClusterAsync(
                 "orders",
-                child => child.UseTransport(replacementTransport),
-                TimeSpan.FromSeconds(2));
+                child => child.UseTransport(replacementFactory.OfferToBuilder()),
+                TimeSpan.FromSeconds(2)).AsTask();
+            owner.Replacement = new MutationSource(replacement);
+            await replacement;
             var replacementProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
             var duplicate = client.RegisterAssembly("orders", dynamicAssembly);
             var coordinator = (SharpLinkMultiClusterClient)client;
@@ -171,11 +176,9 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
             Ensure(replacementTransport.DisposeCount == 0,
                 "the replacement child must remain owned by the coordinator");
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
-            RollbackState.TestIsolation.Release();
-        }
+        catch (Exception failure) { owner.Failures.Add(failure); }
+        finally { await owner.FinishAsync(); }
+        owner.ThrowIfFailed();
     }
 
     [Test]
@@ -183,33 +186,44 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
     [NotInParallel("rollback-plugin")]
     public async Task DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads(CancellationToken testCancellationToken)
     {
+        var owner = new MutationFixture();
         await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
-        var manifestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var manifestRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        RollbackState.ManifestConstructionStarted = manifestStarted;
-        RollbackState.ManifestConstructionRelease = manifestRelease;
-        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-        SharpLinkClusterKey cluster = "plugins";
-        var child = new BlockingRetiredClient();
-        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
-        var client = new SharpLinkMultiClusterClient(
-            new SharpLinkMultiClusterOptions(),
-            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
-                .ToFrozenDictionary(),
-            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
-            []);
         try
         {
+            owner.Initialize(useManifestGate: true);
+            var manifestStarted = owner.ManifestStarted;
+            var manifestRelease = owner.ManifestRelease;
+            SharpLinkClusterKey cluster = "plugins";
+            var child = owner.Child = new BlockingRetiredClient();
+            // Exact fixture Stop source, captured without calling Stop or changing its counters.
+            var stopSignal = (TaskCompletionSource)(typeof(BlockingRetiredClient)
+                .GetField("_stop", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(child) ?? throw new InvalidOperationException("missing original child Stop source"));
+            owner.ChildStop = new MutationSource(stopSignal.Task);
+            var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+            var client = owner.Client = new SharpLinkMultiClusterClient(
+                new SharpLinkMultiClusterOptions(),
+                new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                    .ToFrozenDictionary(),
+                FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+                []);
             var registration = LongRunningTestWorker.Run(() =>
                 client.RegisterAssembly(cluster, typeof(RollbackMarker).Assembly));
-            await manifestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            owner.Registration = new MutationSource(registration);
+            var startedWaiter = manifestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            owner.ManifestWaiter = new MutationSource(startedWaiter);
+            await startedWaiter;
 
-            var removal = await client.RemoveClusterAsync(cluster, TimeSpan.Zero);
+            var removalSource = client.RemoveClusterAsync(cluster, TimeSpan.Zero).AsTask();
+            owner.Removal = new MutationSource(removalSource);
+            var removal = await removalSource;
             Ensure(removal is { Succeeded: true, ForcedStop: true },
                 "the concurrent remove must publish while manifest loading is paused");
             manifestRelease.TrySetResult();
 
-            var result = await registration.WaitAsync(TimeSpan.FromSeconds(2));
+            var registrationWaiter = registration.WaitAsync(TimeSpan.FromSeconds(2));
+            owner.RegistrationWaiter = new MutationSource(registrationWaiter);
+            var result = await registrationWaiter;
             var registrations = (List<DynamicAssemblyRegistration>)typeof(SharpLinkMultiClusterClient)
                 .GetField("_dynamicRegistrations", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(client)!;
@@ -220,17 +234,11 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
                 "registration must not reach or retain the retired child");
 
             child.ReleaseStop();
-            await client.StopAsync();
+            await owner.StartStop();
         }
-        finally
-        {
-            manifestRelease.TrySetResult();
-            child.ReleaseStop();
-            RollbackState.ManifestConstructionStarted = null;
-            RollbackState.ManifestConstructionRelease = null;
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
-            RollbackState.TestIsolation.Release();
-        }
+        catch (Exception failure) { owner.Failures.Add(failure); }
+        finally { await owner.FinishAsync(); }
+        owner.ThrowIfFailed();
     }
 
     [Test]
@@ -439,6 +447,249 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
                 System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>()
             => throw new InvalidOperationException("The selected factory fails before requesting a scope Codec.");
         public void Dispose() => Interlocked.Increment(ref state.ScopeDisposeCount);
+    }
+
+    // Sources have fixed roles in the two controls above, not an extensible task registry.
+    private sealed class MutationSource
+    {
+        internal readonly Task Source;
+        internal readonly Task<Exception?> Outcome;
+        internal MutationSource(Task source)
+        {
+            Source = source;
+            Outcome = ReadOutcome(source); // Also consumes a late fault/cancellation while retained.
+        }
+        private static async Task<Exception?> ReadOutcome(Task source)
+        {
+            try { await source; return null; }
+            catch (Exception failure) { return source.Exception is { } all ? all : failure; }
+        }
+        internal async Task<bool> Join(List<Exception> failures)
+        {
+            try { await Source.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (Exception failure) { failures.Add(failure); }
+            var ended = Source.IsCompleted;
+            if (!ended) return false;
+            try { await Outcome.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (Exception failure) { failures.Add(failure); }
+            if (!Outcome.IsCompletedSuccessfully) return false;
+            if (await Outcome is { } outcome) failures.Add(outcome);
+            return true;
+        }
+    }
+
+    private sealed class OwnedMutationFactory : IClientTransportFactory
+    {
+        private readonly object _gate = new();
+        internal readonly ControlledMutationTransportFactory Factory = new();
+        private int _offered;
+        private readonly List<MutationSource> _disposals = [];
+        private readonly List<Exception> _synchronousDisposalFailures = [];
+        internal bool Offered => Volatile.Read(ref _offered) != 0;
+        internal (MutationSource[] Sources, Exception[] Failures) CaptureDisposals()
+        {
+            lock (_gate) return (_disposals.ToArray(), _synchronousDisposalFailures.ToArray());
+        }
+        internal OwnedMutationFactory OfferToBuilder()
+        {
+            Volatile.Write(ref _offered, 1); // Even a throwing UseTransport leaves transfer conservative.
+            return this;
+        }
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => Factory.ConnectAsync(cancellationToken);
+        public ValueTask DisposeAsync()
+        {
+            lock (_gate)
+            {
+                // Do not cache away a duplicate invocation: the original inner
+                // DisposeCount oracle must still see every real production call.
+                try
+                {
+                    var original = Factory.DisposeAsync().AsTask();
+                    _disposals.Add(new MutationSource(original));
+                    return new ValueTask(original);
+                }
+                catch (Exception failure) { _synchronousDisposalFailures.Add(failure); throw; }
+            }
+        }
+    }
+
+    private sealed class MutationFixture
+    {
+        private static readonly List<MutationFixture> Retained = [];
+        internal readonly List<Exception> Failures = [];
+        internal readonly TaskCompletionSource ManifestStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ManifestRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal ISharpLinkMultiClusterClient? Client;
+        internal OwnedMutationFactory? OldFactory;
+        internal OwnedMutationFactory? ReplacementFactory;
+        internal BlockingRetiredClient? Child;
+        internal MutationSource? Replacement;
+        internal MutationSource? Registration;
+        internal MutationSource? Removal;
+        internal MutationSource? ManifestWaiter;
+        internal MutationSource? RegistrationWaiter;
+        internal MutationSource? ChildStop;
+        private MutationSource? _stop;
+        private MutationSource? _dispose;
+        private MutationSource? _untransferredChildDispose;
+        private bool _stopInvoked;
+        private string? _previousCodec;
+        private bool _codecSnapshot;
+        private bool _codecMutation;
+        private TaskCompletionSource? _previousStarted;
+        private TaskCompletionSource? _previousRelease;
+        private bool _gateMutation;
+
+        internal void Initialize(bool useManifestGate)
+        {
+            _previousCodec = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC");
+            _codecSnapshot = true;
+            _codecMutation = true;
+            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+            if (!useManifestGate) return;
+            _previousStarted = RollbackState.ManifestConstructionStarted;
+            _previousRelease = RollbackState.ManifestConstructionRelease;
+            _gateMutation = true;
+            RollbackState.ManifestConstructionStarted = ManifestStarted;
+            RollbackState.ManifestConstructionRelease = ManifestRelease;
+        }
+
+        internal Task StartStop()
+        {
+            if (_stopInvoked)
+                return _stop?.Source ?? throw new InvalidOperationException("original Stop invocation failed synchronously");
+            _stopInvoked = true;
+            _stop = new MutationSource(Client!.StopAsync().AsTask());
+            return _stop.Source;
+        }
+
+        private async Task<bool> Join(MutationSource? source)
+            => source is null || await source.Join(Failures);
+
+        private async Task<bool> FinishFactory(OwnedMutationFactory? factory, bool operationsEnded)
+        {
+            if (factory is null) return true;
+            // A pending replacement may still configure/publish this exact factory.
+            // Never dispose it based only on a timeout or absence of a counter.
+            if (!factory.Offered && operationsEnded)
+            {
+                try { _ = factory.DisposeAsync(); }
+                catch (Exception failure) { Failures.Add(failure); }
+            }
+            var disposal = factory.CaptureDisposals();
+            Failures.AddRange(disposal.Failures);
+            if (disposal.Sources.Length == 0)
+            {
+                Failures.Add(new InvalidOperationException("factory disposal/transfer is not proved"));
+                return false;
+            }
+            var ended = disposal.Failures.Length == 0;
+            foreach (var original in disposal.Sources)
+            {
+                var joined = await original.Join(Failures);
+                ended &= joined && original.Source.IsCompletedSuccessfully;
+            }
+            return ended;
+        }
+
+        internal async Task FinishAsync()
+        {
+            // Only this fixture's barriers: signalling is never mistaken for joining.
+            ManifestRelease.TrySetResult();
+            try { Child?.ReleaseStop(); } catch (Exception failure) { Failures.Add(failure); }
+            try { OldFactory?.Factory.ReleaseConnect(); } catch (Exception failure) { Failures.Add(failure); }
+            try { ReplacementFactory?.Factory.ReleaseConnect(); } catch (Exception failure) { Failures.Add(failure); }
+
+            var operationsEnded = await Join(Replacement);
+            operationsEnded &= await Join(Registration);
+            operationsEnded &= await Join(Removal);
+            operationsEnded &= await Join(ManifestWaiter);
+            operationsEnded &= await Join(RegistrationWaiter);
+
+            var coordinatorEnded = Client is null;
+            if (Client is { } client)
+            {
+                if (!_stopInvoked)
+                {
+                    try { _ = StartStop(); } catch (Exception failure) { Failures.Add(failure); }
+                }
+                var stopJoined = await Join(_stop);
+                try { _dispose = new MutationSource(client.DisposeAsync().AsTask()); }
+                catch (Exception failure) { Failures.Add(failure); }
+                var disposeJoined = await Join(_dispose);
+                coordinatorEnded = stopJoined && disposeJoined &&
+                    _stop?.Source.IsCompletedSuccessfully == true &&
+                    _dispose?.Source.IsCompletedSuccessfully == true &&
+                    client.LifecycleState == SharpLinkClientLifecycleState.Stopped;
+            }
+            else if (Child is { } child)
+            {
+                // The direct, synchronous coordinator constructor did not return;
+                // it starts no workers and never invokes the child. Caller still owns it.
+                try { _untransferredChildDispose = new MutationSource(child.DisposeAsync().AsTask()); }
+                catch (Exception failure) { Failures.Add(failure); }
+                coordinatorEnded = await Join(_untransferredChildDispose) &&
+                    _untransferredChildDispose?.Source.IsCompletedSuccessfully == true;
+            }
+
+            var childEnded = Child is null;
+            if (Child is { } ownedChild)
+            {
+                var childJoined = await Join(ChildStop);
+                childEnded = childJoined &&
+                    (ChildStop?.Source.IsCompletedSuccessfully == true ||
+                     _untransferredChildDispose?.Source.IsCompletedSuccessfully == true) &&
+                    ownedChild.StopStarted.Task.IsCompletedSuccessfully;
+            }
+            // Require actual successful disposal, not terminal fault or DisposeCount.
+            var oldEnded = await FinishFactory(OldFactory, operationsEnded);
+            var replacementEnded = await FinishFactory(ReplacementFactory, operationsEnded);
+            var ended = operationsEnded && coordinatorEnded && childEnded && oldEnded && replacementEnded;
+            if (!ended)
+            {
+                Failures.Add(new InvalidOperationException("mutation fixture retains unknown/unfinished owners and isolation"));
+                lock (Retained) Retained.Add(this);
+                return;
+            }
+
+            var restored = true;
+            if (_gateMutation)
+            {
+                // Never overwrite a different owner's unexpected replacement gates.
+                if (!ReferenceEquals(RollbackState.ManifestConstructionStarted, ManifestStarted) ||
+                    !ReferenceEquals(RollbackState.ManifestConstructionRelease, ManifestRelease))
+                {
+                    Failures.Add(new InvalidOperationException("manifest gate ownership changed unexpectedly"));
+                    lock (Retained) Retained.Add(this);
+                    return;
+                }
+                else
+                {
+                    try { RollbackState.ManifestConstructionStarted = _previousStarted; }
+                    catch (Exception failure) { Failures.Add(failure); restored = false; }
+                    try { RollbackState.ManifestConstructionRelease = _previousRelease; }
+                    catch (Exception failure) { Failures.Add(failure); restored = false; }
+                }
+            }
+            if (_codecSnapshot && _codecMutation)
+            {
+                try { Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", _previousCodec); }
+                catch (Exception failure) { Failures.Add(failure); restored = false; }
+            }
+            if (!restored)
+            {
+                lock (Retained) Retained.Add(this);
+                return;
+            }
+            try { RollbackState.TestIsolation.Release(); }
+            catch (Exception failure) { Failures.Add(failure); }
+        }
+
+        internal void ThrowIfFailed()
+        {
+            if (Failures.Count != 0) throw new AggregateException(Failures);
+        }
     }
 
 }
