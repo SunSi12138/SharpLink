@@ -1,0 +1,14 @@
+{
+  "classification": "NEW reconstructed source; historical runtime qualification does not transfer",
+  "base": "9d1635c8988870ee295098fe9e65cb49924013d2",
+  "tunit": "1.73.19",
+  "expectedRegularCases": 7,
+  "expectedIsolatedExplicitCases": 1,
+  "files": {
+    "FocusedGlobalUsings.cs": "d0fe91c70cb3416964b1a2465e551803038bed77cce54d80e5e8bbd269e3e07b",
+    "ServerTerminalSignalObservationTests.cs": "f2bf615cc01cab31a45382825138cf47aac5de7b87da3ccf8e38ba4a437e0d2a",
+    "SharpLink.TerminalSignal.Focused.csproj": "e817c15d3d457adaac7b3c767ec1e555f009c95d5db09887fcdd8a27bf95e615",
+    "prepare.py": "3e0718afa690c2ebd57c71b4af54bbd46e0def3ba69a0bf6b5ab09d0a8a4412a",
+    "terminal-signal.patch": "2b5dc7af1e2c7a406103fac2991b271958169f2caf71e9ff08207270b3b15e93"
+  }
+}
