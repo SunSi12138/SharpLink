@@ -33,9 +33,10 @@
     "B2a": 2,
     "B2c": 1,
     "B3a": 3,
-    "B3b": 2
+    "B3b": 2,
+    "B3c": 2
   },
-  "expectedCaseCount": 14,
+  "expectedCaseCount": 16,
   "scopes": [
     {
       "group": "ABScope",
@@ -256,8 +257,44 @@
           ]
         }
       ]
+    },
+    {
+      "group": "B3c",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "DynamicRollbackTests",
+      "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
+      "sourceSha256": "a8cce485c0fb0078289cb7571c143bc7213029b10adf5dafc9069a7cc26f6413",
+      "discovery": "methods",
+      "methods": [
+        {
+          "name": "ClientReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "exact-public-synchronous-replacement-rollback-with-three-instance-receipts-and-two-module-physical-cleanup-client-Stopped-server-Faulted",
+          "expectedSpan": [
+            58,
+            59,
+            62
+          ]
+        },
+        {
+          "name": "ServerReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "exact-public-synchronous-replacement-rollback-with-three-instance-receipts-and-two-module-physical-cleanup-client-Stopped-server-Faulted",
+          "expectedSpan": [
+            64,
+            65,
+            68
+          ]
+        }
+      ]
     }
   ],
-  "qualification": "Exactly fourteen actual UIDs: original twelve plus B3b2. Original47 separate. B3b validates exact public-registration conflict plus per-instance rollback scope failure and independent known old-scope cleanup with physical/accounting exit (Client Stopped, Server Faulted). No generic failure acceptance. Original retained-fake safety is not quota-zero; B3a frozen clock is not elapsed-entry proof. B3c, D2 and other Unit bodies excluded. Existing command/engine budgets unchanged.",
+  "qualification": "Exactly sixteen actual UIDs: original fourteen plus B3c2. Original47 separate. B3c validates true public synchronous replacement rollback with exact retained/incoming codec conflict and instance scope failures, failed preparation leaves two exact modules Running without retirement/cancellation, and both module cleanup outcomes are joined (retained fault plus codec-free success; Client Stopped, Server Faulted). No generic failure acceptance. Original retained-fake safety is not quota-zero; B3a frozen clock is not elapsed-entry proof. Production D2 and other Unit bodies excluded. Existing command/engine budgets unchanged.",
   "rollbackPluginSourceSha256": "4189b9131e664ccb3b544f2205f78719b324004d0c6f2385bae1186b077aa431"
 }

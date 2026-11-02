@@ -19,23 +19,23 @@ def load(name, path):
     result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
     return result
 
-lane = load('isolation_fourteen_runner', ROOT / 'eng/run-isolation-boundary-controls.py')
+lane = load('isolation_sixteen_runner', ROOT / 'eng/run-isolation-boundary-controls.py')
 previous = load('existing_retirement_synthetics', ROOT / 'eng/tests/test_retirement_results.py')
 
 
 def summary():
     return {group: dict(PASS=count, FAILED_OR_INCOMPLETE=0, INCOMPLETE=0, UNRUN=0)
-            for group, count in [('ABScope', 6), ('B2a', 2), ('B2c', 1), ('B3a', 3), ('B3b', 2)]}
+            for group, count in [('ABScope', 6), ('B2a', 2), ('B2c', 1), ('B3a', 3), ('B3b', 2), ('B3c', 2)]}
 
 
 class CatalogTests(unittest.TestCase):
     def setUp(self):
         self.catalog = lane.results.read_json(ROOT / 'eng/isolation-boundary-controls.json')
 
-    def test_exact_fourteen_and_static_spans(self):
+    def test_exact_sixteen_and_static_spans(self):
         lane.verify_graph(ROOT, self.catalog)
-        self.assertEqual([len(s['methods']) for s in self.catalog['scopes']], [6, 2, 1, 3, 2])
-        self.assertEqual([s['discovery'] for s in self.catalog['scopes']], ['class', 'methods', 'methods', 'methods', 'methods'])
+        self.assertEqual([len(s['methods']) for s in self.catalog['scopes']], [6, 2, 1, 3, 2, 2])
+        self.assertEqual([s['discovery'] for s in self.catalog['scopes']], ['class', 'methods', 'methods', 'methods', 'methods', 'methods'])
 
     def test_catalog_extra_missing_duplicate_or_wrong_method(self):
         for change in ('extra', 'missing', 'duplicate', 'different'):
@@ -46,14 +46,14 @@ class CatalogTests(unittest.TestCase):
             else: methods[0]['name'] = 'Unselected'
             with self.subTest(change=change), self.assertRaises(ValueError): lane.verify_graph(ROOT, value)
 
-    def test_actual_eight_token_signatures_cannot_be_erased(self):
-        for scope in (1, 2, 3, 4):
+    def test_actual_ten_token_signatures_cannot_be_erased(self):
+        for scope in (1, 2, 3, 4, 5):
             for method in range(len(self.catalog['scopes'][scope]['methods'])):
                 value = copy.deepcopy(self.catalog); value['scopes'][scope]['methods'][method]['parameters'] = []
                 with self.subTest(scope=scope, method=method), self.assertRaises(ValueError): lane.verify_graph(ROOT, value)
 
     def test_no_broad_b2_or_b3_class_selector(self):
-        for scope in (1, 2, 3, 4):
+        for scope in (1, 2, 3, 4, 5):
             value = copy.deepcopy(self.catalog); value['scopes'][scope]['discovery'] = 'class'
             with self.assertRaises(ValueError): lane.verify_graph(ROOT, value)
 
@@ -76,18 +76,18 @@ class CatalogTests(unittest.TestCase):
             else: scope['methods'][0]['expectedSpan'][2] += 1
             with self.subTest(change=change), self.assertRaises(ValueError): lane.verify_graph(ROOT, value)
 
-    def test_fourteen_safe_stages_and_summary_are_bounded(self):
+    def test_sixteen_safe_stages_and_summary_are_bounded(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            for stage in ('list-3-0', 'list-3-1', 'list-3-2', 'case-9', 'case-10', 'case-11', 'list-4-0', 'list-4-1', 'case-12', 'case-13'):
+            for stage in ('list-3-0', 'list-3-1', 'list-3-2', 'case-9', 'case-10', 'case-11', 'list-4-0', 'list-4-1', 'case-12', 'case-13', 'list-5-0', 'list-5-1', 'case-14', 'case-15'):
                 lane.emit('stage', stage=stage, status='PASS')
             lane.emit('summary', counts=summary(), integrity='VERIFIED', count=0)
         self.assertEqual(json.loads(output.getvalue().splitlines()[-1])['counts']['B3a']['PASS'], 3)
-        for stage in ('list-3-3', 'list-4-2', 'list-5-0', 'case-14'):
+        for stage in ('list-3-3', 'list-4-2', 'list-5-2', 'list-6-0', 'case-16'):
             with self.assertRaises(ValueError): lane.emit('stage', stage=stage, status='PASS')
-        for group in ('B3c', 'B3d', 'D2'):
+        for group in ('B3d', 'D2', 'unselected'):
             with self.assertRaises(ValueError): lane.emit('case', group=group, status='PASS')
-        value = summary(); del value['B3b']
+        value = summary(); del value['B3c']
         with self.assertRaises(ValueError): lane.emit('summary', counts=value)
 
     def test_expansion_preserves_existing_budgets(self):
@@ -108,6 +108,24 @@ class CatalogTests(unittest.TestCase):
             elif change == 'span': scope['methods'][0]['expectedSpan'][2] += 1
             elif change == 'plugin': value['rollbackPluginSourceSha256'] = '0' * 64
             else: del value['rollbackPluginSourceSha256']
+            with self.subTest(change=change), self.assertRaises(ValueError): lane.verify_graph(ROOT, value)
+
+
+    def test_b3c_exact_two_token_methods_and_existing_source_pin(self):
+        scope = self.catalog['scopes'][5]
+        self.assertEqual(scope['discovery'], 'methods')
+        self.assertEqual(scope['sourceSha256'], self.catalog['scopes'][3]['sourceSha256'])
+        self.assertEqual(scope['sourceSha256'], self.catalog['scopes'][4]['sourceSha256'])
+        self.assertEqual(summary()['B3c']['PASS'], 2)
+        for change in ('missing', 'extra', 'duplicate', 'wrong-name', 'hash', 'span', 'plugin'):
+            value = copy.deepcopy(self.catalog); scope = value['scopes'][5]
+            if change == 'missing': scope['methods'].pop()
+            elif change == 'extra': scope['methods'].append(copy.deepcopy(scope['methods'][0]))
+            elif change == 'duplicate': scope['methods'][1] = copy.deepcopy(scope['methods'][0])
+            elif change == 'wrong-name': scope['methods'][0]['name'] = 'ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure'
+            elif change == 'hash': scope['sourceSha256'] = '0' * 64
+            elif change == 'span': scope['methods'][0]['expectedSpan'][2] += 1
+            else: value['rollbackPluginSourceSha256'] = '0' * 64
             with self.subTest(change=change), self.assertRaises(ValueError): lane.verify_graph(ROOT, value)
 
 
