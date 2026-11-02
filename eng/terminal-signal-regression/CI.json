@@ -10,9 +10,9 @@
     "classify.py": "4255d3dad8c6f67a3718257a1eccff082d2efecffbe1d38fd788a65413ce1c23",
     "prepare.py": "3e0718afa690c2ebd57c71b4af54bbd46e0def3ba69a0bf6b5ab09d0a8a4412a",
     "process_owner.py": "44d66d88933b21d525241ac76e0dbe421a10682dba461fe784e4706cc578a9b5",
-    "run.py": "e03c7af3e31b41d3d4a738a248ea1e780ed527a3712cee8a476caa6d2bbd8ebc",
+    "run.py": "108b4f19e90ae7c58e8e6685e80fa01c5b530ce5d0efc7bae6213818c0e6774f",
     "terminal-signal.patch": "2b5dc7af1e2c7a406103fac2991b271958169f2caf71e9ff08207270b3b15e93",
-    "test_audit.py": "d2c876cff5fbf97490a63656992352f5404408b49c27463a52ca2c5a179563e3",
+    "test_audit.py": "845a6957570a927292c78463ebb3080f91891d4e33a786f65b3a6d3135272f5d",
     "test_classify.py": "ff8db67e776316df1ed09d4b8c79c4b916ae1faf6a41c0142cf266ac8aeffaf8"
   }
 }

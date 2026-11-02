@@ -25,8 +25,8 @@ SOURCE_SHA = '9cdb79b3be5a3e4e191759316931421741f5df5db7001d5dbfdba2ddc6541538'
 BASE = '9d1635c8988870ee295098fe9e65cb49924013d2'
 FOCUSED = 'test/SharpLink.TerminalSignal.Focused'
 SOURCE_FILE = 'ServerTerminalSignalObservationTests.cs'
-VIRTUAL_ROOT = '/_/terminal-main'
-REPORTED_SOURCE = VIRTUAL_ROOT+'/'+FOCUSED+'/'+SOURCE_FILE
+VIRTUAL_ROOT = '/_/'
+REPORTED_SOURCE = VIRTUAL_ROOT+FOCUSED+'/'+SOURCE_FILE
 PAYLOAD = Path(__file__).resolve().parent
 FILTERS = {'regular': f'/*/{c.NS}/{c.REGULAR}/*', 'positive': f'/*/{c.NS}/{c.POSITIVE}/{c.POS_METHOD}',
            'start': f'/*/{c.NS}/{c.REGULAR}/{c.START}', 'stop': f'/*/{c.NS}/{c.REGULAR}/{c.STOP}'}
@@ -34,6 +34,63 @@ FILTERS = {'regular': f'/*/{c.NS}/{c.REGULAR}/*', 'positive': f'/*/{c.NS}/{c.POS
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+
+def compiler_path_map(root):
+    """One selected physical root, normalized directory separators on both sides.
+    This is a requested input policy, never proof of the emitted compiler paths.
+    """
+    text = str(root)
+    c.require(root.is_absolute() and text != '/' and '..' not in root.parts and
+              not any(x in text for x in ('=', ',', ';', '\\', '\n', '\r')), 'Invalid selected PathMap root')
+    return '-p:PathMap='+text.rstrip('/')+'/='+VIRTUAL_ROOT
+
+
+class DiscoveryPathDiagnostics:
+    """Data-only allowlist. Never open or resolve a path supplied by the report."""
+    def __init__(self, document, source):
+        rows = []
+        mismatches = 0
+        for test in document.get('tests', []):
+            if not isinstance(test, dict): continue
+            location = test.get('location', {})
+            if not isinstance(location, dict): continue
+            actual = location.get('file')
+            if actual == REPORTED_SOURCE: continue
+            mismatches += 1
+            if len(rows) >= 8: continue
+            uid = test.get('uid')
+            category = ('non-string' if not isinstance(actual, str) else
+                        'exact-selected-physical-fixture' if actual == str(source) else
+                        'legacy-terminal-virtual-fixture' if actual == '/_/terminal-main/'+FOCUSED+'/'+SOURCE_FILE else
+                        'other-underscore-virtual-root' if actual.startswith('/_/') else 'unbound-path')
+            row = {'pathClass':category,
+                   'actualPathSHA256':hashlib.sha256(actual.encode()).hexdigest() if isinstance(actual,str) else None,
+                   'actualUidSHA256':hashlib.sha256(uid.encode()).hexdigest() if isinstance(uid,str) else None}
+            for field in ('lineStart','lineEnd'):
+                if type(location.get(field)) is int: row[field] = location[field]
+            rows.append(row)
+        self.data = {'expectedReportedPath':REPORTED_SOURCE,
+                     'selectedGitRelativeSource':FOCUSED+'/'+SOURCE_FILE,
+                     'selectedSourceSHA256':sha(source), 'mismatchCount':mismatches,
+                     'rows':rows, 'truncated':mismatches>len(rows),
+                     'qualification':'diagnostic-only; strict path rejection unchanged'}
+
+    def public(self):
+        return self.data
+
+
+def discover_with_path_receipt(document, scope, source):
+    try:
+        return c.discovery(document, scope, REPORTED_SOURCE)
+    except ValueError as original:
+        if original.args != ('Wrong discovered source file',): raise
+        try:
+            original.discovery_paths = DiscoveryPathDiagnostics(document, source)
+        except BaseException as reporting:
+            raise BaseExceptionGroup('Discovery failure and diagnostic failure', [original, reporting]) from None
+        raise
 
 
 def files(root, excluded=()):
@@ -355,7 +412,7 @@ class Lane:
         if listing:
             document = c.read_json(output[0])
             discovery_scope = {'regular':'regular','positive':'positive','start':c.START,'stop':c.STOP}[filter_key]
-            actual = c.discovery(document, discovery_scope, REPORTED_SOURCE)
+            actual = discover_with_path_receipt(document, discovery_scope, source)
             print(json.dumps({'stage':label,'classification':'ACTUAL_UID_DISCOVERY','count':len(actual),
                               'uidSetSHA256':hashlib.sha256(json.dumps(sorted(actual)).encode()).hexdigest(),'testsExecuted':False}), flush=True)
             return actual
@@ -441,7 +498,7 @@ def execute(lane):
             label=f'preprocess-{variant}-{index}'
             expanded_path=lane.work/label/'expanded.xml'
             lane.command(label,variant,[str(lane.dotnet),'msbuild',str(root/path),'-nologo','-nodeReuse:false',
-                         '-p:Configuration=Release','-p:PathMap='+str(root)+'='+VIRTUAL_ROOT,'-preprocess:'+str(expanded_path)],60)
+                         '-p:Configuration=Release',compiler_path_map(root),'-preprocess:'+str(expanded_path)],60)
             origins=audit.expanded(expanded_path,root,packages,lane.sdk_pins,diagnostic_sdk_root=lane.dotnet.parent,
                                    source_pins=lane.current_sources[variant],cache_pins=lane.current_packages[variant])
             text=expanded_path.read_text(encoding='utf-8-sig').replace(str(root),'<SOURCE>').replace(str(packages),'<PACKAGES>')
@@ -455,7 +512,7 @@ def execute(lane):
                          if p.is_file() and '/obj/' in str(p) and (p.name.startswith('project.') or '.nuget.' in p.name)}
         lane.sealed.update(restore_files)
         lane.command('build-'+variant,variant,[str(lane.dotnet),'build',str(root/audit.PROJECTS[audit.NAMES[-1]]),
-                     '-c','Release','--no-restore','-m:1','-nodeReuse:false','-p:UseSharedCompilation=false','-p:PathMap='+str(root)+'='+VIRTUAL_ROOT,'--verbosity','minimal'],600,phase='build')
+                     '-c','Release','--no-restore','-m:1','-nodeReuse:false','-p:UseSharedCompilation=false',compiler_path_map(root),'--verbosity','minimal'],600,phase='build')
         result=audit.built(root,Path(lane.env[variant]['NUGET_PACKAGES']),restored[variant]['packages'])
         print(json.dumps({'stage':'build-audit-'+variant,**result}),flush=True)
     ledgers={}
@@ -522,6 +579,9 @@ def failure_leaves(errors, stage, scope=None, uid=None):
             diagnostic=getattr(error,'origin_diagnostics',None)
             if type(diagnostic) is audit.ImportDiagnostics:
                 row['importOrigins']=diagnostic.public()
+        paths=getattr(error,'discovery_paths',None)
+        if type(paths) is DiscoveryPathDiagnostics:
+            row['discoveryPaths']=paths.public()
         metadata=getattr(error,'metadata_diagnostics',None)
         if type(metadata) is audit.MetadataDiagnostics:
             row['workloadMetadata']=metadata.public()

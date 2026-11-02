@@ -12,6 +12,68 @@ from test_classify import specimen, SOURCE
 import xml.etree.ElementTree as ET
 
 
+
+def path_policy_controls():
+    import copy
+    controls=[]
+    def reject(name, action):
+        try: action()
+        except (ValueError, BaseExceptionGroup): controls.append(name)
+        else: raise AssertionError('Path policy accepted invalid input: '+name)
+    assert runner.VIRTUAL_ROOT == '/_/'
+    for name in ('baseline','fixed'):
+        assert runner.compiler_path_map(Path('/owned/'+name+'/')) == '-p:PathMap=/owned/'+name+'/=/_/'
+    controls.append('both-variants-normalized-one-policy')
+    for value in ('relative','/','/owned/../other','/owned/a=b','/owned/a,b','/owned/a;b','/owned/a\\b','/owned/a\nb'):
+        reject('invalid-map-'+repr(value),lambda v=value:runner.compiler_path_map(Path(v)))
+    _,_,ledger,_=specimen()
+    doc={'schemaVersion':1,'tests':list(ledger.values())}
+    doc['tests'][0]['location']['file']=runner.REPORTED_SOURCE
+    assert len(runner.discover_with_path_receipt(doc,c.START,SOURCE))==1
+    controls.append('exact-standard-root-accepted')
+    for value in (str(SOURCE), '/_/terminal-main/'+runner.FOCUSED+'/'+runner.SOURCE_FILE,
+                  '/other/'+runner.FOCUSED+'/'+runner.SOURCE_FILE, '/_//'+runner.FOCUSED+'/'+runner.SOURCE_FILE,
+                  runner.REPORTED_SOURCE+'/suffix', '/_/test/../'+runner.FOCUSED+'/'+runner.SOURCE_FILE,
+                  runner.REPORTED_SOURCE.upper(), 'SECRET_PATH_TOKEN', None):
+        wrong=copy.deepcopy(doc);wrong['tests'][0]['location']['file']=value
+        try:runner.discover_with_path_receipt(wrong,c.START,SOURCE)
+        except ValueError as original:
+            assert original.args==('Wrong discovered source file',)
+            public=json.dumps(runner.failure_leaves([original],'list-baseline-regular'))
+            assert 'discoveryPaths' in public and 'SECRET_PATH_TOKEN' not in public
+            assert str(SOURCE) not in public and original.discovery_paths.public()['mismatchCount']==1
+        else:raise AssertionError('Wrong discovered path accepted')
+        controls.append('strict-reject-'+str(len(controls)))
+    wrong=copy.deepcopy(doc);wrong['tests'][0]['location']['file']='SECRET_PATH_TOKEN'
+    wrong['tests']*=20
+    diag=runner.DiscoveryPathDiagnostics(wrong,SOURCE).public()
+    assert diag['mismatchCount']==20 and len(diag['rows'])==8 and diag['truncated']
+    controls.append('bounded-eight-rows-no-untrusted-path-read')
+    wrong['tests']=wrong['tests'][:1]
+    saved=runner.DiscoveryPathDiagnostics
+    def broken(*args):raise OSError('SECRET_DIAGNOSTIC')
+    runner.DiscoveryPathDiagnostics=broken
+    try:
+        try:runner.discover_with_path_receipt(wrong,c.START,SOURCE)
+        except BaseExceptionGroup as group:
+            assert group.exceptions[0].args==('Wrong discovered source file',)
+            assert isinstance(group.exceptions[1],OSError)
+        else:raise AssertionError('Diagnostic failure swallowed source rejection')
+    finally:runner.DiscoveryPathDiagnostics=saved
+    controls.append('original-body-before-reporting-failure')
+    # Fresh standard-root native reports and exact GC stack retain strict policy.
+    n,xml,rows,scope=specimen();virtual=runner.REPORTED_SOURCE
+    t=n['groups'][0]['tests'][0];t['filePath']=virtual
+    t['exception']['stackTrace']=t['exception']['stackTrace'].replace(str(SOURCE),virtual)
+    next(iter(rows.values()))['location']['file']=virtual
+    xml[0][0][0].text=xml[0][0][0].text.replace(str(SOURCE),virtual)
+    c.classify(n,ET.tostring(xml,encoding='unicode'),rows,scope,SOURCE,reported_source_file=virtual)
+    controls.append('native-and-gc-stack-exact-standard-root')
+    t['filePath']='/_/terminal-main/'+runner.FOCUSED+'/'+runner.SOURCE_FILE
+    reject('native-legacy-prefix-rejected',lambda:c.classify(n,ET.tostring(xml,encoding='unicode'),rows,scope,SOURCE,reported_source_file=virtual))
+    return controls
+
+
 def diagnostic_controls():
     import os
     from types import SimpleNamespace
@@ -344,7 +406,7 @@ def main():
     reject('malformed publication',lambda:c.check_publication(None,set()))
     # Same actual source bytes/line anchors, explicitly different reported PathMap.
     n,xml,rows,scope=specimen()
-    virtual='/_/terminal-main/test/SharpLink.TerminalSignal.Focused/ServerTerminalSignalObservationTests.cs'
+    virtual=runner.REPORTED_SOURCE
     t=n['groups'][0]['tests'][0];t['filePath']=virtual
     t['exception']['stackTrace']=t['exception']['stackTrace'].replace(str(SOURCE),virtual)
     next(iter(rows.values()))['location']['file']=virtual
@@ -399,10 +461,11 @@ def main():
         assert runner.finish(context,errors,writer=broken_writer,fallback=lambda fd,b:None)==1 and errors
         assert json.loads((context.work/'RESULT.json').read_text())['status']=='FAILED'
         counts['positive']+=1
+    path_policy=path_policy_controls()
     diagnostic=diagnostic_controls()
     closure=closure_controls()
     metadata=metadata_controls()
-    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' closureControls='+json.dumps(closure)+' metadataControls='+json.dumps(metadata)+' runtimeTests=0')
+    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' closureControls='+json.dumps(closure)+' metadataControls='+json.dumps(metadata)+' pathPolicyControls='+json.dumps(path_policy)+' runtimeTests=0')
 
 
 if __name__=='__main__':main()
