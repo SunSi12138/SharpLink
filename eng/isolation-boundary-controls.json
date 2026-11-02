@@ -31,9 +31,10 @@
   "expectedGroups": {
     "ABScope": 6,
     "B2a": 2,
-    "B2c": 1
+    "B2c": 1,
+    "B3a": 3
   },
-  "expectedCaseCount": 9,
+  "expectedCaseCount": 12,
   "scopes": [
     {
       "group": "ABScope",
@@ -169,7 +170,56 @@
           ]
         }
       ]
+    },
+    {
+      "group": "B3a",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "DynamicRollbackTests",
+      "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
+      "sourceSha256": "4bfa101a10a62ebc35ea5b5fe5e48144f1cc7120a45f16d48862c20947220660",
+      "discovery": "methods",
+      "methods": [
+        {
+          "name": "HugeDynamicDrainTimeoutShouldRemainPendingUntilLeaseRelease",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "Created-host-normal-physical-and-accounting-exit-System-huge-or-exact-manual-Change-deadline-not-elapsed-entry-proof",
+          "expectedSpan": [
+            16,
+            17,
+            32
+          ]
+        },
+        {
+          "name": "ClientUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "Created-host-normal-physical-and-accounting-exit-System-huge-or-exact-manual-Change-deadline-not-elapsed-entry-proof",
+          "expectedSpan": [
+            34,
+            35,
+            38
+          ]
+        },
+        {
+          "name": "ServerUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "Created-host-normal-physical-and-accounting-exit-System-huge-or-exact-manual-Change-deadline-not-elapsed-entry-proof",
+          "expectedSpan": [
+            40,
+            41,
+            44
+          ]
+        }
+      ]
     }
   ],
-  "qualification": "Exactly nine newly selected actual UIDs; original47 separate. B2c intentionally Faulted is exact internal oracle, not generic failure acceptance. D2 and other Unit bodies excluded."
+  "qualification": "Exactly twelve actual UIDs: prior nine plus three B3a. Original47 separate. B2c intentionally Faulted and ABScope retained fake safety keep their exact internal oracles, not generic failure acceptance or quota-zero. B3a normal physical/accounting exit; frozen-clock arm consistency does not prove elapsed-entry consumption. D2, B3b/c and other Unit bodies excluded. All existing command/engine budgets unchanged."
 }

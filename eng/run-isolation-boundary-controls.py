@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One ordinary Unit graph; nine selected actual UIDs, each in its own process.
+"""One ordinary Unit graph; twelve selected actual UIDs, each in its own process.
 
 No SDK invocation is authorized by importing this file. Raw reports/receipts stay
 in a private disposable runner directory; console contains bounded summaries only.
@@ -79,10 +79,14 @@ def validate_catalog(catalog):
             'RuntimeReplaceShouldMigrateDynamicAssemblyBeforeSwitchingRoute',
             'DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads']),
         ('B2c', 'Server', 'ServiceRegistrationTests', 'methods', ['System.Threading.CancellationToken'], [
-            'RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures'])]
-    require(catalog['schemaVersion'] == 1 and catalog['expectedCaseCount'] == 9 and
-            catalog['expectedGroups'] == {'ABScope': 6, 'B2a': 2, 'B2c': 1} and len(catalog['scopes']) == 3,
-            'Invalid independent nine-control catalog')
+            'RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures']),
+        ('B3a', 'Runtime', 'DynamicRollbackTests', 'methods', ['System.Threading.CancellationToken'], [
+            'HugeDynamicDrainTimeoutShouldRemainPendingUntilLeaseRelease',
+            'ClientUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider',
+            'ServerUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider'])]
+    require(catalog['schemaVersion'] == 1 and catalog['expectedCaseCount'] == 12 and
+            catalog['expectedGroups'] == {'ABScope': 6, 'B2a': 2, 'B2c': 1, 'B3a': 3} and len(catalog['scopes']) == 4,
+            'Invalid independent twelve-control catalog')
     for scope, (group, suffix, cls, mode, parameters, names) in zip(catalog['scopes'], expected):
         require((scope['group'], scope['namespace'], scope['class'], scope['source'], scope['discovery']) ==
                 (group, 'SharpLink.UnitTests.' + suffix, cls, 'test/SharpLink.UnitTests/' + suffix + '/' + cls + '.cs', mode),
@@ -117,7 +121,7 @@ def verify_graph(source, catalog):
             require(sha(source / scope['source']) == scope['sourceSha256'], 'Selected source hash changed')
             require(list(results.source_span(source / scope['source'], item['name'])) == item['expectedSpan'], 'Selected source span changed')
             counts[scope['group']] += 1
-    require(counts == catalog['expectedGroups'] and sum(counts.values()) == 9 and counts == {'ABScope': 6, 'B2a': 2, 'B2c': 1}, 'Candidate catalog mismatch')
+    require(counts == catalog['expectedGroups'] and sum(counts.values()) == 12 and counts == {'ABScope': 6, 'B2a': 2, 'B2c': 1, 'B3a': 3}, 'Candidate catalog mismatch')
 
 
 def asset_identity(source, catalog, packages, expected_package_identity):
@@ -163,11 +167,11 @@ def emit(event, **fields):
             fixed = {'head', 'tree', 'clean', 'tracked', 'clone', 'checkout', 'cloned-head', 'classifier-checks', 'catalog-checks',
                      'sdk-version', 'sdk-info', 'runtimes', 'restore', 'build', 'execution', 'failed-report-seal', 'final-source',
                      'final-evidence', 'summary-write', 'graph-format', 'graph-write', 'terminal-evidence', 'terminal-graph', 'console', 'entry'}
-            require(value in fixed or value in {'list-0-0', 'list-1-0', 'list-1-1', 'list-2-0'} or value in {f'case-{n}' for n in range(9)}, 'Invalid stage')
+            require(value in fixed or value in {'list-0-0', 'list-1-0', 'list-1-1', 'list-2-0', 'list-3-0', 'list-3-1', 'list-3-2'} or value in {f'case-{n}' for n in range(12)}, 'Invalid stage')
         elif key == 'status':
             require(value in {'PASS', 'FAILED_OR_INCOMPLETE', 'INCOMPLETE', 'UNRUN', 'REJECTED', 'STANDARD_SOURCE_ROOT'}, 'Invalid status')
         elif key == 'group':
-            require(value in {'ABScope', 'B2a', 'B2c'}, 'Invalid group')
+            require(value in {'ABScope', 'B2a', 'B2c', 'B3a'}, 'Invalid group')
         elif key == 'integrity':
             require(value in {'VERIFIED', 'FAILED'}, 'Invalid integrity')
         elif key == 'category':
@@ -175,10 +179,10 @@ def emit(event, **fields):
         elif key == 'count':
             require(type(value) is int and 0 <= value <= 100000, 'Invalid count')
         elif key == 'counts':
-            require(type(value) is dict and set(value) == {'ABScope', 'B2a', 'B2c'}, 'Invalid groups')
+            require(type(value) is dict and set(value) == {'ABScope', 'B2a', 'B2c', 'B3a'}, 'Invalid groups')
             for row in value.values():
                 require(type(row) is dict and set(row) == {'PASS', 'FAILED_OR_INCOMPLETE', 'INCOMPLETE', 'UNRUN'} and
-                        all(type(n) is int and 0 <= n <= 9 for n in row.values()), 'Invalid counters')
+                        all(type(n) is int and 0 <= n <= 12 for n in row.values()), 'Invalid counters')
     print(json.dumps(dict(event=event, **fields), sort_keys=True), flush=True)
 
 
@@ -472,7 +476,7 @@ def main():
         require(re.fullmatch(r'10\.0\.1\d\d', sdk) is not None, 'global.json selected an unexpected SDK feature band')
         run('sdk-info', [dotnet, '--info'], source)
         runtimes = run('runtimes', [dotnet, '--list-runtimes'], source).read_text()
-        emit('identity', head=head, tree=tree, version=sdk, sha256=built[dotnet], count=9)
+        emit('identity', head=head, tree=tree, version=sdk, sha256=built[dotnet], count=12)
         config = work / 'NuGet.Config'
         config.write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3"/></packageSources></configuration>\n')
         project = source / catalog['project']
@@ -580,7 +584,7 @@ def bootstrap_failure_exit():
         work = Path(tempfile.mkdtemp(prefix='sli9-boot-'))
         seals = EvidenceSeals(work)
         summary = {group: dict(PASS=0, FAILED_OR_INCOMPLETE=0, INCOMPLETE=0, UNRUN=count)
-                   for group, count in [('ABScope', 6), ('B2a', 2), ('B2c', 1)]}
+                   for group, count in [('ABScope', 6), ('B2a', 2), ('B2c', 1), ('B3a', 3)]}
         persist_final(work, seals, BOOTSTRAP_FAILURES, [], summary)
     except BaseException as reporting:
         BOOTSTRAP_FAILURES.add('graph-write', reporting)
