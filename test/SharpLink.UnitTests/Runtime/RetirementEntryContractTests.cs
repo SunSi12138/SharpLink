@@ -798,6 +798,7 @@ public sealed class RetirementEntryContractTests
     {
         public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
         { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); throw new InvalidOperationException("unreachable"); }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static T Read<T>(object instance, string name)
