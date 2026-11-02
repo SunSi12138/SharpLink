@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace SharpLink.UnitTests.Runtime;
 
 // Private permits and in-memory environment only. These negative controls never
