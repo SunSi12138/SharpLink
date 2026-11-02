@@ -2,6 +2,9 @@
 import base64
 import hashlib
 import json
+import os
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
@@ -118,23 +121,137 @@ def restored(root, packages):
     return {'packages': sorted(active_packages), 'projectEdges': edges, 'cache': cache}
 
 
-def expanded(path, root, packages, sdk_pins):
+
+@dataclass(frozen=True)
+class ImportDiagnostics:
+    # Constructed only at the original rejection; never changes acceptance.
+    candidate_count: int
+    rejected_count: int
+    categories: dict
+    rejected: tuple
+
+    def public(self):
+        return {'candidateCount': self.candidate_count, 'rejectedCount': self.rejected_count,
+                'categoryCounts': self.categories, 'rejected': list(self.rejected),
+                'truncated': self.rejected_count > len(self.rejected)}
+
+
+def origin_candidates(text):
+    # Deliberately preserve the old broad candidate rule for this diagnostic run.
+    for comment in re.findall(r'<!--(.*?)-->', text, re.S):
+        for line in comment.splitlines():
+            line = line.strip()
+            if line.startswith('/') and line.endswith(('.props', '.targets', '.csproj', '.proj')):
+                yield Path(line), comment
+
+
+def header_role(comment, candidate):
+    # Diagnostic only: exact MSBuild 18.0.35 Preprocessor delimiters/positions.
+    lines = comment.strip().splitlines()
+    if len(lines) < 3 or lines[0] != '=' * 140 or lines[-1] != '=' * 140:
+        return 'other-comment'
+    middle = lines[1:-1]
+    if middle == [str(candidate)]: return 'root'
+    if middle == ['  </Import>', '', str(candidate)]: return 'import-close'
+    if (len(middle) in (3, 4) and middle[0].startswith('  <Import Project="')
+            and middle[0].endswith('>') and middle[-2:] == ['', str(candidate)]
+            and (len(middle) == 3 or middle[1].startswith('  This import was added implicitly because '))):
+        return 'import-open'
+    return 'other-comment'
+
+
+def origin_class(candidate, root, packages, sdk_root, sdk_pins):
+    # Lexical normalization does not follow external symlinks or read external files.
+    normalized = Path(os.path.normpath(str(candidate)))
+    for category, base in (('source', root), ('cache', packages), ('sdk-container-unsealed', sdk_root)):
+        if normalized.is_relative_to(base):
+            if category == 'sdk-container-unsealed' and str(normalized) in sdk_pins:
+                category = 'sdk-sealed'
+            return category, base, normalized
+    return 'outside-known-roots', None, normalized
+
+
+def origin_detail(candidate, comment, root, packages, sdk_root, sdk_pins):
+    category, base, normalized = origin_class(candidate, root, packages, sdk_root, sdk_pins)
+    row = {'category': category, 'headerRole': header_role(comment, candidate),
+           'pathSHA256': hashlib.sha256(str(candidate).encode()).hexdigest(),
+           'normalizedSpellingDiffers': str(normalized) != str(candidate),
+           'normalizedExactSealedMember': str(normalized) in sdk_pins,
+           'exists': None, 'regular': None, 'symlink': None}
+    if base is None: return row  # No stat/open/read of any unknown external path.
+    relative = normalized.relative_to(base).as_posix()
+    # Only bounded conventional relative paths are public, never absolute roots.
+    if len(relative) <= 512 and re.fullmatch(r'[A-Za-z0-9_./+ @(),=-]+', relative):
+        row['relativePath'] = relative
+    # Traverse beneath the trusted container with no-follow dirfds. A symlink,
+    # special node, missing parent, or race never causes an external content read.
+    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parts = normalized.relative_to(base).parts
+        for index, part in enumerate(parts):
+            try: info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                row.update(exists=False, regular=False, symlink=False); return row
+            if stat.S_ISLNK(info.st_mode):
+                row.update(exists=True, regular=False, symlink=True); return row
+            if index < len(parts) - 1:
+                if not stat.S_ISDIR(info.st_mode):
+                    row.update(exists=False, regular=False, symlink=False); return row
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd); fd = next_fd
+                continue
+            regular = stat.S_ISREG(info.st_mode)
+            row.update(exists=True, regular=regular, symlink=False)
+            if regular and info.st_size <= 16 * 1024 * 1024:
+                content_fd = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                try:
+                    actual = os.fstat(content_fd)
+                    if (not stat.S_ISREG(actual.st_mode) or
+                            (actual.st_dev, actual.st_ino, actual.st_size) != (info.st_dev, info.st_ino, info.st_size)):
+                        raise ValueError('Diagnostic file identity changed')
+                    with os.fdopen(content_fd, 'rb', closefd=False) as stream:
+                        raw = stream.read(16 * 1024 * 1024 + 1)
+                    if len(raw) != info.st_size: raise ValueError('Diagnostic file size changed')
+                    row['fileSHA256'] = hashlib.sha256(raw).hexdigest()
+                finally: os.close(content_fd)
+    finally: os.close(fd)
+    return row
+
+
+def import_diagnostics(candidates, root, packages, sdk_root, sdk_pins):
+    categories = {}; rejected = []; count = 0
+    for candidate, comment in candidates:
+        category, _, _ = origin_class(candidate, root, packages, sdk_root, sdk_pins)
+        categories[category] = categories.get(category, 0) + 1
+        # Exactly the unchanged original rejection predicate, not header_role.
+        if not (any(candidate.is_relative_to(base) for base in (root, packages)) or str(candidate) in sdk_pins):
+            count += 1
+            if len(rejected) < 16:
+                rejected.append(origin_detail(candidate, comment, root, packages, sdk_root, sdk_pins))
+    return ImportDiagnostics(len(candidates), count, categories, tuple(rejected))
+
+
+def expanded(path, root, packages, sdk_pins, diagnostic_sdk_root=None):
     text = path.read_text(encoding='utf-8-sig')
     xml = ET.fromstring(text)
     require(not any(e.tag.split('}')[-1] == 'Import' for e in xml.iter()), 'Unexpanded MSBuild Import')
     origins = {}
-    for comment in re.findall(r'<!--(.*?)-->', text, re.S):
-        for line in comment.splitlines():
-            line = line.strip()
-            if not line.startswith('/') or not line.endswith(('.props', '.targets', '.csproj', '.proj')):
-                continue
-            candidate = Path(line)
+    candidates = list(origin_candidates(text))
+    for candidate, comment in candidates:
+        try:
             require(any(candidate.is_relative_to(base) for base in (root, packages)) or str(candidate) in sdk_pins, 'Import outside exact source/official cache/sealed selected SDK')
-            require(not candidate.is_symlink() and candidate.is_file(), 'Import origin unavailable')
-            current_digest = digest(candidate)
-            if str(candidate) in sdk_pins:
-                require(current_digest == sdk_pins[str(candidate)][0], 'Expanded SDK origin differs from sealed input')
-            origins[str(candidate)] = current_digest
+        except ValueError as original:
+            if diagnostic_sdk_root is not None:
+                try:
+                    original.origin_diagnostics = import_diagnostics(candidates, root, packages, diagnostic_sdk_root, sdk_pins)
+                except BaseException as diagnostic_error:
+                    raise BaseExceptionGroup('Import rejection and diagnostic failure', [original, diagnostic_error])
+            raise
+        require(not candidate.is_symlink() and candidate.is_file(), 'Import origin unavailable')
+        current_digest = digest(candidate)
+        if str(candidate) in sdk_pins:
+            require(current_digest == sdk_pins[str(candidate)][0], 'Expanded SDK origin differs from sealed input')
+        origins[str(candidate)] = current_digest
     require(origins and any('Microsoft.NET.Sdk' in p for p in origins), 'Actual import origins missing')
     return origins
 

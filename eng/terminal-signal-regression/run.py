@@ -301,7 +301,10 @@ def execute(lane):
             expanded_path=lane.work/label/'expanded.xml'
             lane.command(label,variant,[str(lane.dotnet),'msbuild',str(root/path),'-nologo','-nodeReuse:false',
                          '-p:Configuration=Release','-p:PathMap='+str(root)+'='+VIRTUAL_ROOT,'-preprocess:'+str(expanded_path)],60)
-            origins=audit.expanded(expanded_path,root,packages,lane.sdk_pins)
+            origins=audit.expanded(expanded_path,root,packages,lane.sdk_pins,diagnostic_sdk_root=lane.dotnet.parent)
+            # This successor is diagnostic-only: no Build, discovery or test body.
+            lane.diagnostic_complete=True
+            return
             text=expanded_path.read_text(encoding='utf-8-sig').replace(str(root),'<SOURCE>').replace(str(packages),'<PACKAGES>')
             expansions[variant][name]=hashlib.sha256(text.encode()).hexdigest()
             print(json.dumps({'stage':label+'-audit','actualImportOrigins':len(origins)}),flush=True)
@@ -377,6 +380,9 @@ def failure_leaves(errors, stage, scope=None, uid=None):
             queue[0:0] = list(error.causes)
         elif type(error) is ValueError and len(error.args)==1 and isinstance(error.args[0],str) and error.args[0] in allowed:
             row['message']=error.args[0]
+            diagnostic=getattr(error,'origin_diagnostics',None)
+            if type(diagnostic) is audit.ImportDiagnostics:
+                row['importOrigins']=diagnostic.public()
         rows.append(row)
     return rows
 
@@ -414,6 +420,7 @@ def private_receipt(lane, errors):
         graph.extend(exception_graph(e,seen,[]) for e in formatting_errors)
         receipt={'base':BASE,'sourceManifest':SOURCE_SHA,'ciManifest':lane.manifest_sha,
                  'lastStage':lane.stage,'qualifiedScopes':lane.results,
+                 'diagnosticOnly':True,'diagnosticComplete':getattr(lane,'diagnostic_complete',False),
                  'status':'FAILED' if errors else 'PASSED','errors':graph}
         (lane.work/'RESULT.json').write_text(json.dumps(receipt,indent=2)+'\n')
     except BaseException as failure: errors.append(failure)
@@ -423,8 +430,9 @@ def finish(lane, errors, writer=print, fallback=os.write):
     private_receipt(lane, errors)
     if not errors:
         try:
-            writer(json.dumps({'classification':'FINITE_PROTOCOL_PASS','baselineExpectedFailures':4,
-                               'independentPositive':1,'fixedRegularPassed':7,'rawArtifactsUploaded':False}),flush=True)
+            c.require(getattr(lane,'diagnostic_complete',False), 'Diagnostic completion missing')
+            writer(json.dumps({'classification':'DIAGNOSTIC_COMPLETE_NOT_RUNTIME_QUALIFICATION',
+                               'qualifiedScopes':0,'rawArtifactsUploaded':False}),flush=True)
             return 0
         except BaseException as failure: errors.append(failure)
     try:

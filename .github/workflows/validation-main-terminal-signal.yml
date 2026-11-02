@@ -54,9 +54,9 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: baseline/global.json
-      - name: Qualify actual environment and run finite isolated controls
+      - name: Diagnose first baseline preprocess only (no runtime qualification)
         run: >-
           python3 payload/eng/terminal-signal-regression/run.py
           --baseline "$GITHUB_WORKSPACE/baseline"
           --fixed "$GITHUB_WORKSPACE/fixed"
-          --ci-manifest-sha256 3cf9afed47ef6d6cc62214ae9943b33c2c9ca973ef703e3b158c68c69a1a1dae
+          --ci-manifest-sha256 9570450848c149e0aa72dc32f5ad9972507f69b24e687d8afd7cf4842a2e3933

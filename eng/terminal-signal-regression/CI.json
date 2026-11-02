@@ -6,13 +6,13 @@
     "SOURCE.json": "9cdb79b3be5a3e4e191759316931421741f5df5db7001d5dbfdba2ddc6541538",
     "ServerTerminalSignalObservationTests.cs": "f2bf615cc01cab31a45382825138cf47aac5de7b87da3ccf8e38ba4a437e0d2a",
     "SharpLink.TerminalSignal.Focused.csproj": "e817c15d3d457adaac7b3c767ec1e555f009c95d5db09887fcdd8a27bf95e615",
-    "audit.py": "cf1e66c374f35c5cd92f137df69afc95a7dde28a8937f4275cb3c3f8b424ae53",
+    "audit.py": "e3355762c0417bdd0ecf2d59f14f0a8581e8c72a9cd44b372acfad6252ed286a",
     "classify.py": "4255d3dad8c6f67a3718257a1eccff082d2efecffbe1d38fd788a65413ce1c23",
     "prepare.py": "3e0718afa690c2ebd57c71b4af54bbd46e0def3ba69a0bf6b5ab09d0a8a4412a",
     "process_owner.py": "44d66d88933b21d525241ac76e0dbe421a10682dba461fe784e4706cc578a9b5",
-    "run.py": "7821f564fa61b332eae5c01a88ce3807445cfdefff97561238139b9b0c334d89",
+    "run.py": "59e2d8de2c1a558275d9bd84e9d07a8dc55433c50c11d3322f1e587f924b8cf8",
     "terminal-signal.patch": "2b5dc7af1e2c7a406103fac2991b271958169f2caf71e9ff08207270b3b15e93",
-    "test_audit.py": "f78ee8d87460a94cb78f824acc0fec260e5d145503fb48c2b5d1623962de0ea5",
+    "test_audit.py": "4c4195618b990e0f875c92205c76a1df8e5a20e25740c9f4139634a81017fabe",
     "test_classify.py": "ff8db67e776316df1ed09d4b8c79c4b916ae1faf6a41c0142cf266ac8aeffaf8"
   }
 }

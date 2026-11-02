@@ -12,6 +12,85 @@ from test_classify import specimen, SOURCE
 import xml.etree.ElementTree as ET
 
 
+def diagnostic_controls():
+    import os
+    from types import SimpleNamespace
+    with tempfile.TemporaryDirectory(prefix='sl971-origin-synthetic-') as temporary:
+        base=Path(temporary); source=base/'source'; packages=base/'cache'; sdk=base/'sdk'
+        for folder in (source,packages,sdk): folder.mkdir()
+        manifest=sdk/'sdk-manifests/10.0.100/example/WorkloadManifest.targets'
+        manifest.parent.mkdir(parents=True);manifest.write_text('<Project/>')
+        delimiter='='*140
+        def root_header(path): return '\n'+delimiter+'\n'+str(path)+'\n'+delimiter+'\n'
+        detail=audit.origin_detail(manifest,root_header(manifest),source,packages,sdk,{})
+        assert detail['category']=='sdk-container-unsealed' and detail['headerRole']=='root'
+        assert detail['relativePath']=='sdk-manifests/10.0.100/example/WorkloadManifest.targets'
+        assert detail['regular'] is True and detail['fileSHA256']==audit.digest(manifest)
+        assert str(base) not in json.dumps(detail)
+        assert audit.header_role('\n'+delimiter+'\n  <Import Project="x">\n\n'+str(manifest)+'\n'+delimiter+'\n',manifest)=='import-open'
+        assert audit.header_role('\n'+delimiter+'\n  </Import>\n\n'+str(manifest)+'\n'+delimiter+'\n',manifest)=='import-close'
+        assert audit.header_role(str(manifest),manifest)=='other-comment'
+        pp=base/'pp.xml';pp.write_text('<Project><!--'+root_header(manifest)+'--></Project>')
+        try:audit.expanded(pp,source,packages,{},diagnostic_sdk_root=sdk)
+        except ValueError as failure:
+            assert str(failure)=='Import outside exact source/official cache/sealed selected SDK'
+            rows=runner.failure_leaves([failure],'preprocess-baseline-0')
+            assert rows[0]['importOrigins']['rejectedCount']==1
+            assert rows[0]['importOrigins']['rejected'][0]==detail
+        else:raise AssertionError('Diagnostic must not accept unsealed manifest')
+        # Unknown path and normalized escape do not invoke open/stat/content read.
+        saved_open=audit.os.open; saved_stat=audit.os.stat
+        def forbidden(*args,**kwargs):raise AssertionError('Unknown external filesystem access')
+        audit.os.open=forbidden;audit.os.stat=forbidden
+        try:
+            outside=base/'SECRET_OUTSIDE.targets'
+            unknown=audit.origin_detail(outside,str(outside),source,packages,sdk,{})
+            escape=audit.origin_detail(sdk/'../SECRET_OUTSIDE.targets','',source,packages,sdk,{})
+            assert unknown['category']==escape['category']=='outside-known-roots'
+            assert unknown['exists'] is None and 'relativePath' not in unknown and 'fileSHA256' not in unknown
+            assert 'SECRET' not in json.dumps([unknown,escape])
+            assert escape['normalizedSpellingDiffers'] is True
+        finally:audit.os.open=saved_open;audit.os.stat=saved_stat
+        alias=manifest.parent/'child/../WorkloadManifest.targets'
+        alias_row=audit.origin_detail(alias,'',source,packages,sdk,{str(manifest):(audit.digest(manifest),0)})
+        assert alias_row['normalizedExactSealedMember'] and alias_row['normalizedSpellingDiffers']
+        diag=audit.import_diagnostics([(alias,'')],source,packages,sdk,{str(manifest):(audit.digest(manifest),0)})
+        assert diag.rejected_count==1  # Normalization does not widen acceptance.
+        linked=sdk/'link';linked.symlink_to(base/'SECRET_OUTSIDE')
+        row=audit.origin_detail(linked/'outside.targets','',source,packages,sdk,{})
+        assert row['symlink'] and not row['regular'] and 'fileSHA256' not in row
+        fifo=sdk/'pipe.targets';os.mkfifo(fifo)
+        row=audit.origin_detail(fifo,'',source,packages,sdk,{})
+        assert row['regular'] is False and 'fileSHA256' not in row
+        missing=sdk/'missing.targets'
+        assert audit.origin_detail(missing,'',source,packages,sdk,{})['exists'] is False
+        diagnostics=audit.import_diagnostics([(manifest,'')]*20,source,packages,sdk,{})
+        assert diagnostics.candidate_count==20 and diagnostics.rejected_count==20 and len(diagnostics.rejected)==16 and diagnostics.public()['truncated']
+        # Formatter failure preserves original rejection as first leaf/fullgraph.
+        saved=audit.import_diagnostics
+        def broken(*args):raise RuntimeError('SECRET_DIAGNOSTIC')
+        audit.import_diagnostics=broken
+        try:
+            try:audit.expanded(pp,source,packages,{},diagnostic_sdk_root=sdk)
+            except ExceptionGroup as group:
+                assert type(group.exceptions[0]) is ValueError and type(group.exceptions[1]) is RuntimeError
+                assert str(group.exceptions[0])=='Import outside exact source/official cache/sealed selected SDK'
+                assert 'SECRET' not in json.dumps(runner.failure_leaves([group],'preprocess-baseline-0'))
+            else:raise AssertionError('Diagnostic failure must not mask or accept body failure')
+        finally:audit.import_diagnostics=saved
+        # A no-rejection diagnostic run is explicitly not runtime qualification.
+        context=SimpleNamespace(work=base,manifest_sha='synthetic',stage='preprocess-baseline-0',
+                                results=[],active_scope=None,active_uid=None,diagnostic_complete=True)
+        emitted=[];errors=[]
+        assert runner.finish(context,errors,writer=lambda line,**kw:emitted.append(json.loads(line)))==0
+        assert emitted==[dict(classification='DIAGNOSTIC_COMPLETE_NOT_RUNTIME_QUALIFICATION',qualifiedScopes=0,rawArtifactsUploaded=False)]
+        assert json.loads((base/'RESULT.json').read_text())['diagnosticOnly'] is True
+    return ['known-root-safe-hash', 'header-role-only', 'unsealed-still-rejected',
+            'unknown-no-filesystem-access', 'escape-no-filesystem-access', 'alias-still-rejected',
+            'symlink-no-follow', 'fifo-no-read', 'missing-file', 'bounded-16-total-count',
+            'diagnostic-error-body-first', 'complete-not-runtime-qualification']
+
+
 def main():
     counts = dict(positive=0, negative=0)
     def reject(label, action):
@@ -121,7 +200,8 @@ def main():
         assert runner.finish(context,errors,writer=broken_writer,fallback=lambda fd,b:None)==1 and errors
         assert json.loads((context.work/'RESULT.json').read_text())['status']=='FAILED'
         counts['positive']+=1
-    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' runtimeTests=0')
+    diagnostic=diagnostic_controls()
+    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' runtimeTests=0')
 
 
 if __name__=='__main__':main()
