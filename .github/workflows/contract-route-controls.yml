@@ -1,0 +1,41 @@
+name: Contract-scoped route 59 isolated controls
+
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['wip/775-code-recovery-20261102']
+    paths:
+      - '.github/workflows/contract-route-controls.yml'
+      - 'eng/route59-controls.json'
+      - 'eng/route59-results.py'
+      - 'eng/run-route59-controls.py'
+      - 'eng/tests/test_route59_results.py'
+      - 'eng/package-smoke-process.py'
+      - 'eng/retirement-results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.Build.props'
+      - 'Directory.Build.targets'
+      - 'Directory.Packages.props'
+      - 'global.json'
+concurrency:
+  group: contract-route59-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  route59:
+    runs-on: ubuntu-24.04
+    # 59*120 body + 11*120 discovery + build/restore/metadata + owned cleanup.
+    # 12600s inner budget; outer timeout is never proof of an owned join.
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup repository SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Build Unit14 and execute 59 distinct actual UIDs
+        run: python3 eng/run-route59-controls.py

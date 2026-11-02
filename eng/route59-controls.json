@@ -1,0 +1,1375 @@
+{
+  "schemaVersion": 1,
+  "scope": "contract-route59",
+  "sourceCheckpoint": "9ae3632e2ce938449ef3a7587321c65366368661",
+  "sourceQualification": "37 design IDs / 40 methods / 59 source cases. Actual UIDs discovered fresh per invocation. Process isolation does not prove retained fixture Tasks joined or quota-zero.",
+  "project": "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj",
+  "projects": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "src/SharpLink.Hosting/SharpLink.Hosting.csproj",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+    "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+    "src/SharpLink.Server/SharpLink.Server.csproj",
+    "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj",
+    "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj",
+    "test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj",
+    "test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj",
+    "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+  ],
+  "assemblyFullName": "SharpLink.UnitTests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "tunitPackageVersion": "1.73.19",
+  "tunitRuntimeVersion": "1.73.19.0",
+  "mtpPackageVersion": "2.5.1",
+  "expectedCaseCount": 59,
+  "expectedMethodCount": 40,
+  "expectedClassCount": 11,
+  "expectedDesignCount": 37,
+  "sourcePins": {
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteAdmissionRetirementControls.cs": "d89d78e16a381d05f72e6e6aeba55cd7c6c4943ef521506f1351d54b2fe564d1",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteExhaustionControls.cs": "11d7ce820c2d4b8194de30f583a652fbb0b2c145c2d8b96bdac293254213845e",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs": "b4bc9844ea8f47bd0a08db290e4305026d25fcc324b03c348c6cf4608e5ca97f",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureFixture.cs": "1ecb51b1ebc4c880a927e9c94c27522a151efbd4fe67f049ecb2903a3cb45191",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteProtocolControls.cs": "7db50c62784d41a6f1d2cc7590489ec1f7853749a268ef87c0f7b52e269e95bc",
+    "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationControls.cs": "93e5c33293a1ff634b4aa6b2daadbf3759d786a195b5ef395768f3a997378639",
+    "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationFixture.cs": "4037e22eba0a281a8324b7b03f19f0acedd1eebdad5f73ec81676836eca93c55",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteStorageControls.cs": "2af18f21ffd0f6aeaeb02ebce5abe4a45dd12978d72625cc2b13c4b9e7228d6e",
+    "test/SharpLink.UnitTests/Client/DynamicClusterConnectionStateTests.cs": "35450ddd0498d490c2619ace9da30db1dc3ea8985add1059c0e1c003dd8db3f1",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs": "af2defb24faea91b9ae2abaf6a5c1ea60ab71e7a61d7f486fa03ff9132f2d816",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionFixture.cs": "4af9b7e1f1f50fae23bd3808bea34a2af1ab9a8c35a929c412dd5e1b8f3ecc1a",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteLoadControls.cs": "7342fc1d89b3192b6387d8d5a0578584bd672af84f9e1268717bae2b676a9956",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteLoadFixture.cs": "c5cd370a19e7570330c17082bc595a04fe1b9fa83039de9e6aa217e6f0101be7",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteHandoffControls.cs": "90f1767828a12663922710ddea488b435c9a7ac3b08bf34ebd40c6c2e3f0b0e9",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteHandoffFixture.cs": "c427113885976c1ecc5c4f9029f281ba4aa758228230b64eafcf053a62c7dddc",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteIncarnationControls.cs": "8d57b0441b1dcd16e1b1426cea7ae88d86cde0f3600bdbc28093e23d907070ca",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteGenerationControls.cs": "871572e4d7ac77d5a59e315396c892e2b8a6efdbee4dfad5300604df6f690835",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs": "f95352d52077da689921deb713e05b0e04f4dd1a7c66cb6688030fe9b9ac34cf",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryFixture.cs": "90e762c2c52ac87d051bb4b1444a149187b0d40a4d18dc3d59e58bbb7cbd52b1",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteCommittedOwnerControls.cs": "2d2c5e16d7659f7712d89035a15eac0646671baddd7a152d5f25693018d5b3bc",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteFanoutOwnerControls.cs": "50d8c23f53bb7e0c9075f634593d6d1cc3ffc80a907035c8d37585a403701de0",
+    "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureControls.cs": "f637780056915c29c441db10dcfe2ad839105d6cd9aec3030ef0935b1424f2a2",
+    "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureFixture.cs": "398c7339002a2a947f1ea5343346938f228a33ea13f3d99e2f2ec3da48eb3ebb",
+    "test/SharpLink.UnitTests/Client/ContractScopedRouteCandidateFailureControls.cs": "63836fec9cd1bf115e64bc6215a0638fc66d025b5c5a6c9cc63e47d193bda834"
+  },
+  "helperPins": {
+    "eng/package-smoke-process.py": "ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3",
+    "eng/retirement-results.py": "6774c8bdd8bd8b3f618c01aee34e429d8a3b8218cdb169e752cd81ab6a9e79eb",
+    "eng/tests/test_retirement_results.py": "47a46c4c575690d54b3e2e143b5690ab8e3459031f415059a214d536adb8946b"
+  },
+  "cases": [
+    {
+      "designId": "R01",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteProtocolControls",
+      "methodName": "StaticTwoReadyOneBound",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "StaticTwoReadyOneBound",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteProtocolControls.cs",
+      "span": {
+        "attributeLine": 14,
+        "signatureLine": 15,
+        "endLine": 15,
+        "signatureText": "    public Task StaticTwoReadyOneBound() => TwoReadyOneBound(dynamicResolver: false);",
+        "endText": "    public Task StaticTwoReadyOneBound() => TwoReadyOneBound(dynamicResolver: false);"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R02",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteProtocolControls",
+      "methodName": "DynamicTwoReadyOneBound",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "DynamicTwoReadyOneBound",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteProtocolControls.cs",
+      "span": {
+        "attributeLine": 17,
+        "signatureLine": 18,
+        "endLine": 18,
+        "signatureText": "    public Task DynamicTwoReadyOneBound() => TwoReadyOneBound(dynamicResolver: true);",
+        "endText": "    public Task DynamicTwoReadyOneBound() => TwoReadyOneBound(dynamicResolver: true);"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R03",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "RoundRobinTwoEligibleOneUnbound",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RoundRobinTwoEligibleOneUnbound",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "endLine": 28,
+        "signatureText": "    public Task RoundRobinTwoEligibleOneUnbound() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R04",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "RandomTwoEligibleOneUnbound",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RandomTwoEligibleOneUnbound",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 30,
+        "signatureLine": 31,
+        "endLine": 47,
+        "signatureText": "    public Task RandomTwoEligibleOneUnbound() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R05",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteLoadControls",
+      "methodName": "LeastPendingLoadsAndTieCursor",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "LeastPendingLoadsAndTieCursor",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteLoadControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "endLine": 32,
+        "signatureText": "    public Task LeastPendingLoadsAndTieCursor() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R06",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteLoadControls",
+      "methodName": "PowerOfTwoUsesEligibleDenominator",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "PowerOfTwoUsesEligibleDenominator",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteLoadControls.cs",
+      "span": {
+        "attributeLine": 34,
+        "signatureLine": 35,
+        "endLine": 55,
+        "signatureText": "    public Task PowerOfTwoUsesEligibleDenominator() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R07",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "LiveCapacityZeroBeforeSelector",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "LiveCapacityZeroBeforeSelector(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 49,
+        "signatureLine": 52,
+        "endLine": 73,
+        "signatureText": "    public Task LiveCapacityZeroBeforeSelector(bool allZero) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R07",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "LiveCapacityZeroBeforeSelector",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "LiveCapacityZeroBeforeSelector(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 49,
+        "signatureLine": 52,
+        "endLine": 73,
+        "signatureText": "    public Task LiveCapacityZeroBeforeSelector(bool allZero) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R08",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "LiveCapacityZeroInsideCustomCallback",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "LiveCapacityZeroInsideCustomCallback",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 75,
+        "signatureLine": 76,
+        "endLine": 101,
+        "signatureText": "    public Task LiveCapacityZeroInsideCustomCallback() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R09",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteLoadControls",
+      "methodName": "CustomFullIndicesAndProviders",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "CustomFullIndicesAndProviders",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteLoadControls.cs",
+      "span": {
+        "attributeLine": 57,
+        "signatureLine": 58,
+        "endLine": 102,
+        "signatureText": "    public Task CustomFullIndicesAndProviders() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R10",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "CustomInvalidAndThrow",
+      "argumentExpression": "-1",
+      "argumentValue": -1,
+      "displayName": "CustomInvalidAndThrow(-1)",
+      "parameterTypes": [
+        "System.Int32"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 103,
+        "signatureLine": 108,
+        "endLine": 125,
+        "signatureText": "    public Task CustomInvalidAndThrow(int result) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R10",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "CustomInvalidAndThrow",
+      "argumentExpression": "1",
+      "argumentValue": 1,
+      "displayName": "CustomInvalidAndThrow(1)",
+      "parameterTypes": [
+        "System.Int32"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 103,
+        "signatureLine": 108,
+        "endLine": 125,
+        "signatureText": "    public Task CustomInvalidAndThrow(int result) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R10",
+      "caseIndex": 2,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "CustomInvalidAndThrow",
+      "argumentExpression": "3",
+      "argumentValue": 3,
+      "displayName": "CustomInvalidAndThrow(3)",
+      "parameterTypes": [
+        "System.Int32"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 103,
+        "signatureLine": 108,
+        "endLine": 125,
+        "signatureText": "    public Task CustomInvalidAndThrow(int result) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R10",
+      "caseIndex": 3,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "CustomInvalidAndThrow",
+      "argumentExpression": "99",
+      "argumentValue": 99,
+      "displayName": "CustomInvalidAndThrow(99)",
+      "parameterTypes": [
+        "System.Int32"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 103,
+        "signatureLine": 108,
+        "endLine": 125,
+        "signatureText": "    public Task CustomInvalidAndThrow(int result) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R11",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "AdmissionGrantThenOwnerCut",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "AdmissionGrantThenOwnerCut",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 127,
+        "signatureLine": 128,
+        "endLine": 155,
+        "signatureText": "    public Task AdmissionGrantThenOwnerCut() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R12",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteSelectionControls",
+      "methodName": "AdmissionDenialNoReservation",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "AdmissionDenialNoReservation",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteSelectionControls.cs",
+      "span": {
+        "attributeLine": 157,
+        "signatureLine": 158,
+        "endLine": 177,
+        "signatureText": "    public Task AdmissionDenialNoReservation() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R13",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteHandoffControls",
+      "methodName": "ReservedBeforePlannedRefresh",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "ReservedBeforePlannedRefresh",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteHandoffControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "endLine": 39,
+        "signatureText": "    public Task ReservedBeforePlannedRefresh() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R14",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteHandoffControls",
+      "methodName": "RefreshBeforeReserveNoBorrow",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RefreshBeforeReserveNoBorrow",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteHandoffControls.cs",
+      "span": {
+        "attributeLine": 41,
+        "signatureLine": 42,
+        "endLine": 61,
+        "signatureText": "    public Task RefreshBeforeReserveNoBorrow() => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R15",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteHandoffControls",
+      "methodName": "FatalAndLocalRetirementAfterReserve",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "FatalAndLocalRetirementAfterReserve(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteHandoffControls.cs",
+      "span": {
+        "attributeLine": 63,
+        "signatureLine": 66,
+        "endLine": 95,
+        "signatureText": "    public Task FatalAndLocalRetirementAfterReserve(bool localRetirement) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R15",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteHandoffControls",
+      "methodName": "FatalAndLocalRetirementAfterReserve",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "FatalAndLocalRetirementAfterReserve(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteHandoffControls.cs",
+      "span": {
+        "attributeLine": 63,
+        "signatureLine": 66,
+        "endLine": 95,
+        "signatureText": "    public Task FatalAndLocalRetirementAfterReserve(bool localRetirement) => RunAsync(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R16",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteIncarnationControls",
+      "methodName": "NewIncarnationCannotReviveOldToken",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "NewIncarnationCannotReviveOldToken",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteIncarnationControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "endLine": 21,
+        "signatureText": "    public async Task NewIncarnationCannotReviveOldToken()",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R17",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteGenerationControls",
+      "methodName": "ResolverGenerationAndAttributes",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "ResolverGenerationAndAttributes(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteGenerationControls.cs",
+      "span": {
+        "attributeLine": 10,
+        "signatureLine": 13,
+        "endLine": 77,
+        "signatureText": "    public async Task ResolverGenerationAndAttributes(bool attributesOnly)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R17",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteGenerationControls",
+      "methodName": "ResolverGenerationAndAttributes",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "ResolverGenerationAndAttributes(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteGenerationControls.cs",
+      "span": {
+        "attributeLine": 10,
+        "signatureLine": 13,
+        "endLine": 77,
+        "signatureText": "    public async Task ResolverGenerationAndAttributes(bool attributesOnly)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R18",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePublicationControls",
+      "methodName": "TopologyLateWriterVersusNewBind",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "TopologyLateWriterVersusNewBind",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationControls.cs",
+      "span": {
+        "attributeLine": 10,
+        "signatureLine": 11,
+        "endLine": 51,
+        "signatureText": "    public Task TopologyLateWriterVersusNewBind() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R19",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePublicationControls",
+      "methodName": "BindLateWriterVersusNewTopology",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "BindLateWriterVersusNewTopology",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationControls.cs",
+      "span": {
+        "attributeLine": 53,
+        "signatureLine": 54,
+        "endLine": 90,
+        "signatureText": "    public Task BindLateWriterVersusNewTopology() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R20",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePublicationControls",
+      "methodName": "RegisterBeforeUniqueTopologyCapture",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RegisterBeforeUniqueTopologyCapture",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationControls.cs",
+      "span": {
+        "attributeLine": 92,
+        "signatureLine": 93,
+        "endLine": 134,
+        "signatureText": "    public Task RegisterBeforeUniqueTopologyCapture() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R21",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePublicationControls",
+      "methodName": "RegisterAfterUniqueTopologyCapture",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RegisterAfterUniqueTopologyCapture",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePublicationControls.cs",
+      "span": {
+        "attributeLine": 136,
+        "signatureLine": 137,
+        "endLine": 172,
+        "signatureText": "    public Task RegisterAfterUniqueTopologyCapture() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R22",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "PrepareColdReconcile",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "PrepareColdReconcile(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 12,
+        "endLine": 48,
+        "signatureText": "    public Task PrepareColdReconcile(bool keepConstructionFailure) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R22",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "PrepareColdReconcile",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "PrepareColdReconcile(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 12,
+        "endLine": 48,
+        "signatureText": "    public Task PrepareColdReconcile(bool keepConstructionFailure) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "argumentExpression": "\"targets\"",
+      "argumentValue": "targets",
+      "displayName": "SitePrebuildFailuresAreAtomic(targets)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 50,
+        "signatureLine": 57,
+        "endLine": 101,
+        "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "argumentExpression": "\"buckets\"",
+      "argumentValue": "buckets",
+      "displayName": "SitePrebuildFailuresAreAtomic(buckets)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 50,
+        "signatureLine": 57,
+        "endLine": 101,
+        "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 2,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "argumentExpression": "\"providers\"",
+      "argumentValue": "providers",
+      "displayName": "SitePrebuildFailuresAreAtomic(providers)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 50,
+        "signatureLine": 57,
+        "endLine": 101,
+        "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 3,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "argumentExpression": "\"state\"",
+      "argumentValue": "state",
+      "displayName": "SitePrebuildFailuresAreAtomic(state)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 50,
+        "signatureLine": 57,
+        "endLine": 101,
+        "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 4,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "argumentExpression": "\"signal\"",
+      "argumentValue": "signal",
+      "displayName": "SitePrebuildFailuresAreAtomic(signal)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 50,
+        "signatureLine": 57,
+        "endLine": 101,
+        "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 5,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "argumentExpression": "\"state-timeout\"",
+      "argumentValue": "state-timeout",
+      "displayName": "SitePrebuildFailuresAreAtomic(state-timeout)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 50,
+        "signatureLine": 57,
+        "endLine": 101,
+        "signatureText": "    public Task SitePrebuildFailuresAreAtomic(string stage) => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "PendingBuildFailureDoesNotImposeAllBoundOnFreshPrepare",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "PendingBuildFailureDoesNotImposeAllBoundOnFreshPrepare",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "span": {
+        "attributeLine": 103,
+        "signatureLine": 104,
+        "endLine": 132,
+        "signatureText": "    public Task PendingBuildFailureDoesNotImposeAllBoundOnFreshPrepare() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteCandidateFailureControls.cs",
+      "span": {
+        "attributeLine": 14,
+        "signatureLine": 17,
+        "endLine": 77,
+        "signatureText": "    public Task SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(bool observerHandoffFails)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R23",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteCandidateFailureControls.cs",
+      "span": {
+        "attributeLine": 14,
+        "signatureLine": 17,
+        "endLine": 77,
+        "signatureText": "    public Task SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(bool observerHandoffFails)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R24",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "FirstSiteFanoutFailureStillCommitsSecondAndAttemptsAllRemovalOwners",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "FirstSiteFanoutFailureStillCommitsSecondAndAttemptsAllRemovalOwners",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFanoutOwnerControls.cs",
+      "span": {
+        "attributeLine": 10,
+        "signatureLine": 11,
+        "endLine": 63,
+        "signatureText": "    public Task FirstSiteFanoutFailureStillCommitsSecondAndAttemptsAllRemovalOwners() => Run(async fixture =>",
+        "endText": "    }, holdSecond: true);"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R25",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "ExternalFatalCutSurvivesTopologyPrebuildFailure",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "ExternalFatalCutSurvivesTopologyPrebuildFailure",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureControls.cs",
+      "span": {
+        "attributeLine": 10,
+        "signatureLine": 11,
+        "endLine": 37,
+        "signatureText": "    public Task ExternalFatalCutSurvivesTopologyPrebuildFailure() => Run(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R26",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "DisconnectCallbackRetainsFanoutAndIndependentDisposeGraph",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "DisconnectCallbackRetainsFanoutAndIndependentDisposeGraph",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureControls.cs",
+      "span": {
+        "attributeLine": 39,
+        "signatureLine": 40,
+        "endLine": 59,
+        "signatureText": "    public Task DisconnectCallbackRetainsFanoutAndIndependentDisposeGraph() => Run(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R27",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "RouteCancellationAndDisposeFaultSurviveSealedShutdown",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RouteCancellationAndDisposeFaultSurviveSealedShutdown",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureControls.cs",
+      "span": {
+        "attributeLine": 61,
+        "signatureLine": 62,
+        "endLine": 83,
+        "signatureText": "    public Task RouteCancellationAndDisposeFaultSurviveSealedShutdown() => Run(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R28",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "DeferredDrainFailureMovesToOriginalDetachCleanup",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "DeferredDrainFailureMovesToOriginalDetachCleanup",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureControls.cs",
+      "span": {
+        "attributeLine": 85,
+        "signatureLine": 86,
+        "endLine": 125,
+        "signatureText": "    public Task DeferredDrainFailureMovesToOriginalDetachCleanup() => Run(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R29",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "ConnectPostcommitFanoutFaultKeepsTheCommittedPoolOwner",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "ConnectPostcommitFanoutFaultKeepsTheCommittedPoolOwner",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteCommittedOwnerControls.cs",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "endLine": 34,
+        "signatureText": "    public Task ConnectPostcommitFanoutFaultKeepsTheCommittedPoolOwner() => Run(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R30",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "methodName": "RefreshPostcommitFaultKeepsReplacementAndReleasesOnlyItsCommitReservation",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RefreshPostcommitFaultKeepsReplacementAndReleasesOnlyItsCommitReservation",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteCommittedOwnerControls.cs",
+      "span": {
+        "attributeLine": 36,
+        "signatureLine": 37,
+        "endLine": 60,
+        "signatureText": "    public Task RefreshPostcommitFaultKeepsReplacementAndReleasesOnlyItsCommitReservation() => Run(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R31",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "RetrySameIndexMapBindingAndPolicy",
+      "argumentExpression": "\"binding\"",
+      "argumentValue": "binding",
+      "displayName": "RetrySameIndexMapBindingAndPolicy(binding)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 5,
+        "signatureLine": 9,
+        "endLine": 9,
+        "signatureText": "    public Task RetrySameIndexMapBindingAndPolicy(string change) => RunAsync(fixture => fixture.ExerciseSameMapRetryAsync(change));",
+        "endText": "    public Task RetrySameIndexMapBindingAndPolicy(string change) => RunAsync(fixture => fixture.ExerciseSameMapRetryAsync(change));"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R31",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "RetrySameIndexMapBindingAndPolicy",
+      "argumentExpression": "\"policy\"",
+      "argumentValue": "policy",
+      "displayName": "RetrySameIndexMapBindingAndPolicy(policy)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 5,
+        "signatureLine": 9,
+        "endLine": 9,
+        "signatureText": "    public Task RetrySameIndexMapBindingAndPolicy(string change) => RunAsync(fixture => fixture.ExerciseSameMapRetryAsync(change));",
+        "endText": "    public Task RetrySameIndexMapBindingAndPolicy(string change) => RunAsync(fixture => fixture.ExerciseSameMapRetryAsync(change));"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R31",
+      "caseIndex": 2,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "RetrySameIndexMapBindingAndPolicy",
+      "argumentExpression": "\"replacement\"",
+      "argumentValue": "replacement",
+      "displayName": "RetrySameIndexMapBindingAndPolicy(replacement)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 5,
+        "signatureLine": 9,
+        "endLine": 9,
+        "signatureText": "    public Task RetrySameIndexMapBindingAndPolicy(string change) => RunAsync(fixture => fixture.ExerciseSameMapRetryAsync(change));",
+        "endText": "    public Task RetrySameIndexMapBindingAndPolicy(string change) => RunAsync(fixture => fixture.ExerciseSameMapRetryAsync(change));"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R32",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "RetryTrueTopologyChange",
+      "argumentExpression": "\"reorder\"",
+      "argumentValue": "reorder",
+      "displayName": "RetryTrueTopologyChange(reorder)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 11,
+        "signatureLine": 15,
+        "endLine": 15,
+        "signatureText": "    public Task RetryTrueTopologyChange(string change) => RunAsync(fixture => fixture.ExerciseChangedMapRetryAsync(change));",
+        "endText": "    public Task RetryTrueTopologyChange(string change) => RunAsync(fixture => fixture.ExerciseChangedMapRetryAsync(change));"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R32",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "RetryTrueTopologyChange",
+      "argumentExpression": "\"attributes\"",
+      "argumentValue": "attributes",
+      "displayName": "RetryTrueTopologyChange(attributes)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 11,
+        "signatureLine": 15,
+        "endLine": 15,
+        "signatureText": "    public Task RetryTrueTopologyChange(string change) => RunAsync(fixture => fixture.ExerciseChangedMapRetryAsync(change));",
+        "endText": "    public Task RetryTrueTopologyChange(string change) => RunAsync(fixture => fixture.ExerciseChangedMapRetryAsync(change));"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R32",
+      "caseIndex": 2,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "RetryTrueTopologyChange",
+      "argumentExpression": "\"generation\"",
+      "argumentValue": "generation",
+      "displayName": "RetryTrueTopologyChange(generation)",
+      "parameterTypes": [
+        "System.String"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 11,
+        "signatureLine": 15,
+        "endLine": 15,
+        "signatureText": "    public Task RetryTrueTopologyChange(string change) => RunAsync(fixture => fixture.ExerciseChangedMapRetryAsync(change));",
+        "endText": "    public Task RetryTrueTopologyChange(string change) => RunAsync(fixture => fixture.ExerciseChangedMapRetryAsync(change));"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R32",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteRetryControls",
+      "methodName": "SelectionLoopDoesNotRestartAfterLiveReorder",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "SelectionLoopDoesNotRestartAfterLiveReorder",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteRetryControls.cs",
+      "span": {
+        "attributeLine": 17,
+        "signatureLine": 18,
+        "endLine": 18,
+        "signatureText": "    public Task SelectionLoopDoesNotRestartAfterLiveReorder() => RunAsync(fixture => fixture.ExerciseStableSelectionLoopAsync());",
+        "endText": "    public Task SelectionLoopDoesNotRestartAfterLiveReorder() => RunAsync(fixture => fixture.ExerciseStableSelectionLoopAsync());"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R33",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "WeakCandidateCannotRootSite",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "WeakCandidateCannotRootSite",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteStorageControls.cs",
+      "span": {
+        "attributeLine": 11,
+        "signatureLine": 12,
+        "endLine": 32,
+        "signatureText": "    public Task WeakCandidateCannotRootSite() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R34",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "StorageAndDuplicateDrainBounds",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "StorageAndDuplicateDrainBounds",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteStorageControls.cs",
+      "span": {
+        "attributeLine": 38,
+        "signatureLine": 39,
+        "endLine": 71,
+        "signatureText": "    public Task StorageAndDuplicateDrainBounds() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R35",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteProtocolControls",
+      "methodName": "NoConfirmedTarget",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "NoConfirmedTarget(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteProtocolControls.cs",
+      "span": {
+        "attributeLine": 20,
+        "signatureLine": 23,
+        "endLine": 37,
+        "signatureText": "    public async Task NoConfirmedTarget(bool dynamicResolver)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R35",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteProtocolControls",
+      "methodName": "NoConfirmedTarget",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "NoConfirmedTarget(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteProtocolControls.cs",
+      "span": {
+        "attributeLine": 20,
+        "signatureLine": 23,
+        "endLine": 37,
+        "signatureText": "    public async Task NoConfirmedTarget(bool dynamicResolver)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R36",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteFailureControls",
+      "methodName": "RevisionExhaustionTerminal",
+      "argumentExpression": null,
+      "argumentValue": null,
+      "displayName": "RevisionExhaustionTerminal",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteExhaustionControls.cs",
+      "span": {
+        "attributeLine": 10,
+        "signatureLine": 11,
+        "endLine": 36,
+        "signatureText": "    public Task RevisionExhaustionTerminal() => WithFixture(async fixture =>",
+        "endText": "    });"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R37",
+      "caseIndex": 0,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteAdmissionRetirementControls",
+      "methodName": "DynamicGenerationRetiresBetweenCapacityAndAdmission",
+      "argumentExpression": "false",
+      "argumentValue": false,
+      "displayName": "DynamicGenerationRetiresBetweenCapacityAndAdmission(False)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteAdmissionRetirementControls.cs",
+      "span": {
+        "attributeLine": 8,
+        "signatureLine": 11,
+        "endLine": 66,
+        "signatureText": "    public async Task DynamicGenerationRetiresBetweenCapacityAndAdmission(bool retirementThrows)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    },
+    {
+      "designId": "R37",
+      "caseIndex": 1,
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "ContractScopedRouteAdmissionRetirementControls",
+      "methodName": "DynamicGenerationRetiresBetweenCapacityAndAdmission",
+      "argumentExpression": "true",
+      "argumentValue": true,
+      "displayName": "DynamicGenerationRetiresBetweenCapacityAndAdmission(True)",
+      "parameterTypes": [
+        "System.Boolean"
+      ],
+      "returnType": "System.Threading.Tasks.Task",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteAdmissionRetirementControls.cs",
+      "span": {
+        "attributeLine": 8,
+        "signatureLine": 11,
+        "endLine": 66,
+        "signatureText": "    public async Task DynamicGenerationRetiresBetweenCapacityAndAdmission(bool retirementThrows)",
+        "endText": "    }"
+      },
+      "actualUID": null
+    }
+  ],
+  "limits": {
+    "commandBudgetSeconds": 12600,
+    "restoreSeconds": 600,
+    "buildSeconds": 600,
+    "discoverySeconds": 120,
+    "caseSeconds": 120,
+    "engineTimeout": "90s",
+    "workflowMinutes": 240,
+    "ownedCommandCount": 83,
+    "activeMaximumSeconds": 10470,
+    "ownedCleanupAllowanceSeconds": 1328
+  }
+}
