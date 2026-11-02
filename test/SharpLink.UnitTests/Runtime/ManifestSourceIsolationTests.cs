@@ -378,7 +378,66 @@ public sealed class ManifestSourceIsolationTests
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static CollectibleRuntimeReferences CreateAndDisposeCollectibleSnapshotRuntime()
+        => CreateAndDisposeCollectibleSnapshotRuntime(null, out _);
+
+    [Test]
+    [NotInParallel("rollback-plugin")]
+    public async Task CollectibleSetupFailureShouldPreserveBodyAndJoinActualCleanupBeforeUnload(
+        CancellationToken testCancellationToken)
     {
+        List<Exception> failures = [];
+        CollectibleRuntimeReferences references = default;
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
+        try { references = ObserveCollectibleSetupFailure(); }
+        catch (Exception failure) { failures.Add(failure); }
+        finally
+        {
+            try { RollbackState.TestIsolation.Release(); }
+            catch (Exception failure) { failures.Add(failure); }
+        }
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count != 0) throw new AggregateException(failures);
+
+        for (var attempt = 0;
+             attempt < 12 && (references.Manifest.IsAlive || references.LoadContext.IsAlive);
+             attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Yield();
+        }
+        Ensure(!references.Manifest.IsAlive && !references.LoadContext.IsAlive,
+            "a setup failure must not retain the physically disposed collectible manifest or its ALC");
+        GC.KeepAlive(references.Context);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static CollectibleRuntimeReferences ObserveCollectibleSetupFailure()
+    {
+        // Neither this exact marker nor any plugin cleanup/reflection receipt leaves this frame.
+        var marker = new InvalidOperationException("selected collectible body failure after codec creation");
+        CollectibleRuntimeReferences references = default;
+        try
+        {
+            _ = CreateAndDisposeCollectibleSnapshotRuntime(marker, out references);
+            throw new Exception("the selected real collectible body did not throw its original marker");
+        }
+        catch (Exception failure) when (ReferenceEquals(failure, marker))
+        {
+            // The out value is assigned only after exact scope cleanup and actual Unload exit.
+            Ensure(references.Context is not null && references.Manifest is not null && references.LoadContext is not null,
+                "expected setup failure cannot authorize GC assertions without actual cleanup receipts");
+            return references;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static CollectibleRuntimeReferences CreateAndDisposeCollectibleSnapshotRuntime(
+        Exception? selectedBodyFailure, out CollectibleRuntimeReferences joinedReferences)
+    {
+        joinedReferences = default;
         ManifestPluginLoadContext? loadContext = null;
         SharpLinkRuntimeContext? context = null;
         ISharpLinkGeneratedAssemblyManifest? manifest = null;
@@ -403,6 +462,7 @@ public sealed class ManifestSourceIsolationTests
                 .UseGeneratedManifestSource(source)
                 .Build();
             _ = context.Codecs.GetCodec<string>();
+            if (selectedBodyFailure is not null) throw selectedBodyFailure;
         }
         catch (Exception failure) { failures.Add(failure); }
 
@@ -437,8 +497,13 @@ public sealed class ManifestSourceIsolationTests
 
         // Unload is attempted even after an earlier completed body/Dispose/receipt failure.
         // Every strong diagnostic reference remains inside this NoInlining frame, never static.
-        try { loadContext?.Unload(); }
+        var unloadCompleted = false;
+        try { loadContext?.Unload(); unloadCompleted = loadContext is not null; }
         catch (Exception failure) { failures.Add(failure); }
+        if (disposalAccepted && unloadCompleted && context is not null &&
+            manifestReference is not null && loadContextReference is not null &&
+            (failures.Count == 0 || (failures.Count == 1 && ReferenceEquals(failures[0], selectedBodyFailure))))
+            joinedReferences = new CollectibleRuntimeReferences(context, manifestReference, loadContextReference);
         source = null;
         manifest = null;
         assembly = null;

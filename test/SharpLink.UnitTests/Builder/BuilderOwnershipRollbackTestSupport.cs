@@ -379,6 +379,14 @@ internal sealed class RollbackBuildFixture
     private Exception? _buildFailure;
     private ISharpLinkServer? _server;
     private Task? _serverDisposal;
+    internal ISharpLinkServer? UnexpectedServer => _server;
+    internal Task? UnexpectedServerDisposal => _serverDisposal;
+    internal int ServerDisposalCalls { get; private set; }
+    internal bool ServerDisposalOutcomeObserved { get; private set; }
+    internal bool IsolationReleased { get; private set; }
+    internal bool IsQuarantined { get; private set; }
+    internal string? OriginalSchema => _oldSchema;
+    internal int OriginalScopeCount => _oldScopeCount;
     internal Exception? LateDisposalFailure { get; private set; }
     private RollbackBuildTransport? _transport;
     private RollbackBuildLogger? _logger;
@@ -396,8 +404,9 @@ internal sealed class RollbackBuildFixture
         Manifest = new RollbackManifest();
     }
 
-    internal RollbackBuildTransport CreateTransport(string? cleanupFailure = null, string? bindingFailure = null)
-        => _transport = new RollbackBuildTransport(cleanupFailure, bindingFailure);
+    internal RollbackBuildTransport CreateTransport(string? cleanupFailure = null, string? bindingFailure = null,
+        Exception? independentCleanupFailure = null)
+        => _transport = new RollbackBuildTransport(cleanupFailure, bindingFailure, independentCleanupFailure);
     internal RollbackBuildLogger CreateLogger(string failure)
         => _logger = new RollbackBuildLogger(failure);
 
@@ -426,6 +435,7 @@ internal sealed class RollbackBuildFixture
         {
             try
             {
+                ServerDisposalCalls++;
                 _serverDisposal = _server.DisposeAsync().AsTask();
                 try { await _serverDisposal.WaitAsync(testCancellationToken); }
                 catch (Exception waiterFailure) { _failures.Add(waiterFailure); }
@@ -449,6 +459,7 @@ internal sealed class RollbackBuildFixture
 
         if (!joined)
         {
+            IsQuarantined = true;
             lock (Quarantined) Quarantined.Add(this);
             if (_serverDisposal is { } source)
                 _ = source.ContinueWith(task =>
@@ -476,11 +487,12 @@ internal sealed class RollbackBuildFixture
         catch (Exception failure) { _failures.Add(failure); restored = false; }
         if (!restored)
         {
+            IsQuarantined = true;
             lock (Quarantined) Quarantined.Add(this);
             _failures.Add(new Exception("global restoration failed; isolation remains retained"));
             return;
         }
-        try { RollbackState.TestIsolation.Release(); }
+        try { RollbackState.TestIsolation.Release(); IsolationReleased = true; }
         catch (Exception failure) { _failures.Add(failure); }
         GC.KeepAlive(Manifest);
     }
@@ -493,6 +505,7 @@ internal sealed class RollbackBuildFixture
             try { source.GetAwaiter().GetResult(); }
             catch (Exception failure) { _failures.Add(failure); }
         }
+        ServerDisposalOutcomeObserved = true;
     }
 
     internal void ThrowIfFailed()
@@ -503,7 +516,8 @@ internal sealed class RollbackBuildFixture
     }
 }
 
-internal sealed class RollbackBuildTransport(string? cleanupFailure, string? bindingFailure)
+internal sealed class RollbackBuildTransport(string? cleanupFailure, string? bindingFailure,
+    Exception? independentCleanupFailure = null)
     : IServerTransportListener, IPerformanceProfileAwareTransport
 {
     internal Exception? CleanupFailure { get; } = cleanupFailure is null ? null : new InvalidOperationException(cleanupFailure);
@@ -519,6 +533,10 @@ internal sealed class RollbackBuildTransport(string? cleanupFailure, string? bin
     public ValueTask DisposeAsync()
     {
         DisposeCount++;
+        if (independentCleanupFailure is not null)
+            return ValueTask.FromException(new AggregateException(
+                CleanupFailure ?? throw new InvalidOperationException("An independent sibling requires the original cleanup marker."),
+                independentCleanupFailure));
         return CleanupFailure is null ? ValueTask.CompletedTask : ValueTask.FromException(CleanupFailure);
     }
 }
