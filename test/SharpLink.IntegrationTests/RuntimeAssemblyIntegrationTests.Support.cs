@@ -211,6 +211,37 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         private readonly Dictionary<Assembly, PreparedRegistration> _registeredAssemblies =
             new(ReferenceEqualityComparer.Instance);
         private bool _disposed;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _lifecycle = (int)SharpLinkClientLifecycleState.Running;
+        public SharpLinkClientLifecycleState LifecycleState =>
+            (SharpLinkClientLifecycleState)Volatile.Read(ref _lifecycle);
+        public SharpLinkReadinessState Readiness => LifecycleState == SharpLinkClientLifecycleState.Running
+            ? SharpLinkReadinessState.Ready : SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => LifecycleState switch
+        {
+            SharpLinkClientLifecycleState.Running => SharpLinkClusterState.Ready,
+            SharpLinkClientLifecycleState.Draining => SharpLinkClusterState.Draining,
+            SharpLinkClientLifecycleState.Stopped => SharpLinkClusterState.Stopped,
+            _ => SharpLinkClusterState.Unavailable
+        };
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LifecycleState != SharpLinkClientLifecycleState.Running)
+                throw new InvalidOperationException("This prepared-metadata fixture cannot restart.");
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LifecycleState != SharpLinkClientLifecycleState.Running)
+                throw new InvalidOperationException("This prepared-metadata fixture is not ready.");
+            return ValueTask.CompletedTask;
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         private sealed class PreparedRegistration : IDisposable
         {
@@ -371,8 +402,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             PreparedRegistration[] owners;
             lock (_gate)
             {
-                if (_disposed) return ValueTask.CompletedTask;
+                if (_disposed) return new ValueTask(_shutdown.Task);
                 _disposed = true;
+                Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Draining);
                 owners = _registeredAssemblies.Values.ToArray();
                 _registeredAssemblies.Clear();
             }
@@ -382,7 +414,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 try { owner.Dispose(); }
                 catch (Exception error) { (errors ??= []).Add(error); }
             }
-            return errors is null ? ValueTask.CompletedTask : ValueTask.FromException(new AggregateException(errors));
+            if (errors is null)
+            {
+                Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Stopped);
+                _shutdown.TrySetResult();
+            }
+            else
+            {
+                Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Faulted);
+                _shutdown.TrySetException(new AggregateException(errors));
+            }
+            return new ValueTask(_shutdown.Task);
         }
 
         public bool IsDynamicAssemblyRegistered(Assembly assembly)
@@ -427,6 +469,35 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         private readonly TaskCompletionSource _connectRelease =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _state = (int)SharpLinkConnectionState.Created;
+        private int _lifecycle = (int)SharpLinkClientLifecycleState.Created;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public SharpLinkClientLifecycleState LifecycleState =>
+            (SharpLinkClientLifecycleState)Volatile.Read(ref _lifecycle);
+        public SharpLinkReadinessState Readiness => LifecycleState == SharpLinkClientLifecycleState.Running &&
+            State == SharpLinkConnectionState.Ready ? SharpLinkReadinessState.Ready : SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => LifecycleState == SharpLinkClientLifecycleState.Stopped
+            ? SharpLinkClusterState.Stopped
+            : State == SharpLinkConnectionState.Ready ? SharpLinkClusterState.Ready : SharpLinkClusterState.Inactive;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var previous = Interlocked.CompareExchange(ref _lifecycle,
+                (int)SharpLinkClientLifecycleState.Running, (int)SharpLinkClientLifecycleState.Created);
+            if (previous == (int)SharpLinkClientLifecycleState.Stopped)
+                throw new InvalidOperationException("The blocked connection fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+        public async ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            await StartAsync(cancellationToken);
+            await ConnectAsync(cancellationToken);
+            if (Readiness != SharpLinkReadinessState.Ready)
+                throw new InvalidOperationException("The blocked connection fixture stopped before readiness.");
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         internal BlockingConnectClient(bool releaseWhenStopped = true, bool ignoreCancellation = false)
         {
@@ -455,6 +526,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             if (_releaseWhenStopped)
                 _connectRelease.TrySetResult();
             Volatile.Write(ref _state, (int)SharpLinkConnectionState.Stopped);
+            Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Stopped);
+            _shutdown.TrySetResult();
             return ValueTask.CompletedTask;
         }
 

@@ -14,36 +14,13 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     SharpLinkConnectionState State { get; }
 
     /// <summary>Gets the lifecycle of the local client runtime.</summary>
-    /// <remarks>Legacy custom implementations receive a projection of <see cref="State"/> by default.</remarks>
-    SharpLinkClientLifecycleState LifecycleState => State switch
-    {
-        SharpLinkConnectionState.Created => SharpLinkClientLifecycleState.Created,
-        SharpLinkConnectionState.Connecting => SharpLinkClientLifecycleState.Starting,
-        SharpLinkConnectionState.Ready => SharpLinkClientLifecycleState.Running,
-        SharpLinkConnectionState.Reconnecting => SharpLinkClientLifecycleState.Running,
-        SharpLinkConnectionState.Draining => SharpLinkClientLifecycleState.Draining,
-        SharpLinkConnectionState.Stopped => SharpLinkClientLifecycleState.Stopped,
-        SharpLinkConnectionState.Faulted => SharpLinkClientLifecycleState.Faulted,
-        _ => SharpLinkClientLifecycleState.Faulted
-    };
+    SharpLinkClientLifecycleState LifecycleState { get; }
 
     /// <summary>Gets current remote-call readiness independently of the local lifecycle.</summary>
-    SharpLinkReadinessState Readiness => State == SharpLinkConnectionState.Ready
-        ? SharpLinkReadinessState.Ready
-        : SharpLinkReadinessState.NotReady;
+    SharpLinkReadinessState Readiness { get; }
 
     /// <summary>Gets current connectivity state of this client's configured cluster.</summary>
-    SharpLinkClusterState ClusterState => State switch
-    {
-        SharpLinkConnectionState.Created => SharpLinkClusterState.Inactive,
-        SharpLinkConnectionState.Connecting => SharpLinkClusterState.Connecting,
-        SharpLinkConnectionState.Ready => SharpLinkClusterState.Ready,
-        SharpLinkConnectionState.Draining => SharpLinkClusterState.Draining,
-        SharpLinkConnectionState.Reconnecting => SharpLinkClusterState.Reconnecting,
-        SharpLinkConnectionState.Stopped => SharpLinkClusterState.Stopped,
-        SharpLinkConnectionState.Faulted => SharpLinkClusterState.Unavailable,
-        _ => SharpLinkClusterState.Unavailable
-    };
+    SharpLinkClusterState ClusterState { get; }
 
     /// <summary>
     /// Gets an immutable point-in-time observation of the active endpoint topology without waiting,
@@ -399,13 +376,8 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <summary>
     /// Starts locally owned client supervisors and returns without waiting for remote readiness.
     /// </summary>
-    /// <remarks>
-    /// Built-in SharpLink clients provide non-blocking local startup. Legacy custom implementations fall back to
-    /// <see cref="ConnectAsync(CancellationToken)"/> until they override this member.
-    /// </remarks>
     /// <param name="cancellationToken">Cancels only this caller's wait for the shared start operation.</param>
-    ValueTask StartAsync(CancellationToken cancellationToken = default)
-        => ConnectAsync(cancellationToken);
+    ValueTask StartAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Runs or joins the legacy explicit connection attempt and completes after a usable remote connection exists.
@@ -419,17 +391,11 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
 
     /// <summary>Waits until this client's configured cluster has a usable remote connection.</summary>
     /// <param name="cancellationToken">Cancels only this caller's readiness wait.</param>
-    ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
-        => ConnectAsync(cancellationToken);
+    ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Waits for an independently requested shutdown to finish without initiating shutdown itself.</summary>
-    /// <remarks>Legacy custom implementations must override this member to expose a termination signal while running.</remarks>
     /// <param name="cancellationToken">Cancels only this caller's wait.</param>
-    Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
-        => State == SharpLinkConnectionState.Stopped
-            ? Task.CompletedTask
-            : Task.FromException(new NotSupportedException(
-                "This custom client does not expose a shutdown completion signal."));
+    Task WaitForShutdownAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Stops reconnecting, fails pending work, and releases all owned resources.</summary>
     /// <param name="cancellationToken">Cancels only this caller's wait for the shared stop operation.</param>

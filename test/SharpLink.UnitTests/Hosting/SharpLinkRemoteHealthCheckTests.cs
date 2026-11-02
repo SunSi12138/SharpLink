@@ -94,12 +94,43 @@ public class SharpLinkRemoteHealthCheckTests
     private sealed class FixedHealthClient(SharpLinkHealthCheckResult result) : ISharpLinkClient
     {
         public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // This fixture represents an already running, ready runtime supplied to the accessor.
+        public SharpLinkClientLifecycleState LifecycleState => _shutdown.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped : SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => _shutdown.Task.IsCompleted
+            ? SharpLinkReadinessState.NotReady : SharpLinkReadinessState.Ready;
+        public SharpLinkClusterState ClusterState => _shutdown.Task.IsCompleted
+            ? SharpLinkClusterState.Stopped : SharpLinkClusterState.Ready;
+
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This ready fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This ready fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        {
+            _shutdown.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             CancellationToken cancellationToken = default)
@@ -138,7 +169,7 @@ public class SharpLinkRemoteHealthCheckTests
                 ReferencesReleased = true
             });
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() => StopAsync();
     }
 
     private sealed class FailingConnectTransportFactory : IClientTransportFactory

@@ -97,12 +97,42 @@ public sealed class SharpLinkMultiClusterStatusQueryTests : SharpLinkMultiCluste
         internal int GetClusterStateCalls { get; private set; }
 
         public SharpLinkMultiClusterState State => SharpLinkMultiClusterState.Created;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public SharpLinkClientLifecycleState LifecycleState { get; private set; } = SharpLinkClientLifecycleState.Created;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LifecycleState == SharpLinkClientLifecycleState.Stopped)
+                throw new InvalidOperationException("This local test runtime has stopped.");
+            LifecycleState = SharpLinkClientLifecycleState.Running;
+            return ValueTask.CompletedTask;
+        }
+
+        // This metadata/capability fixture has no remote connectivity owner.
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new NotSupportedException("This fixture has no remote readiness operation."));
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+        public ValueTask WaitForReadyAsync(SharpLinkClusterKey cluster, CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new NotSupportedException("This fixture has no remote readiness operation."));
+        public SharpLinkClusterState GetClusterRuntimeState(SharpLinkClusterKey cluster)
+            => throw new ArgumentException("Implementation-specific cluster precondition failed.", nameof(cluster));
+        public SharpLinkReadinessState GetClusterReadiness(SharpLinkClusterKey cluster)
+            => throw new ArgumentException("Implementation-specific cluster precondition failed.", nameof(cluster));
+
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        {
+            LifecycleState = SharpLinkClientLifecycleState.Stopped;
+            _shutdown.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
 
         public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
             => throw new NotSupportedException();
@@ -142,6 +172,6 @@ public sealed class SharpLinkMultiClusterStatusQueryTests : SharpLinkMultiCluste
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() => StopAsync();
     }
 }

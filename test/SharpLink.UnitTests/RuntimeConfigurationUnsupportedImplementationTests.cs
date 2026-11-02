@@ -73,12 +73,38 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
     private sealed class CustomClient : ISharpLinkClient
     {
         public SharpLinkConnectionState State => SharpLinkConnectionState.Created;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public SharpLinkClientLifecycleState LifecycleState { get; private set; } = SharpLinkClientLifecycleState.Created;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => LifecycleState == SharpLinkClientLifecycleState.Stopped
+            ? SharpLinkClusterState.Stopped : SharpLinkClusterState.Inactive;
+
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LifecycleState == SharpLinkClientLifecycleState.Stopped)
+                throw new InvalidOperationException("This local test runtime has stopped.");
+            LifecycleState = SharpLinkClientLifecycleState.Running;
+            return ValueTask.CompletedTask;
+        }
+
+        // This metadata/capability fixture has no remote connectivity owner.
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new NotSupportedException("This fixture has no remote readiness operation."));
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        {
+            LifecycleState = SharpLinkClientLifecycleState.Stopped;
+            _shutdown.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             CancellationToken cancellationToken = default)
@@ -110,7 +136,7 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromException<SharpLinkAssemblyReplacementResult>(new NotSupportedException());
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() => StopAsync();
     }
 
     private sealed class CustomServer : ISharpLinkServer

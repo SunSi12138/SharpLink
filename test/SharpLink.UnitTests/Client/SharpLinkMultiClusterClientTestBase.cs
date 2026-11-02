@@ -447,6 +447,31 @@ public abstract class SharpLinkMultiClusterClientTestBase
 
         public SharpLinkConnectionState State { get; private set; } = SharpLinkConnectionState.Ready;
         public TimeProvider TimeProvider { get; }
+        public SharpLinkClientLifecycleState LifecycleState => _stop.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped
+            : Volatile.Read(ref _stopCount) != 0 ? SharpLinkClientLifecycleState.Draining : SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => Volatile.Read(ref _stopCount) == 0
+            ? SharpLinkReadinessState.Ready : SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => _stop.Task.IsCompleted
+            ? SharpLinkClusterState.Stopped
+            : Volatile.Read(ref _stopCount) != 0 ? SharpLinkClusterState.Draining : SharpLinkClusterState.Ready;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Volatile.Read(ref _stopCount) != 0)
+                throw new InvalidOperationException("The retired fixture is stopping.");
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Volatile.Read(ref _stopCount) != 0)
+                throw new InvalidOperationException("The retired fixture is stopping.");
+            return ValueTask.CompletedTask;
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _stop.Task.WaitAsync(cancellationToken);
+
         int ISharpLinkClientDrainInspector.ActiveCallCount => Volatile.Read(ref _activeCalls);
         int ISharpLinkClientDrainInspector.ActiveStreamCount => 0;
 
@@ -515,6 +540,37 @@ public abstract class SharpLinkMultiClusterClientTestBase
         private readonly TaskCompletionSource _stopRelease =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private Task? _stopOperation;
+        private readonly TaskCompletionSource<Task> _shutdownOperation =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public SharpLinkClientLifecycleState LifecycleState { get; private set; } = SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => LifecycleState == SharpLinkClientLifecycleState.Running
+            ? SharpLinkReadinessState.Ready : SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => LifecycleState switch
+        {
+            SharpLinkClientLifecycleState.Running => SharpLinkClusterState.Ready,
+            SharpLinkClientLifecycleState.Draining => SharpLinkClusterState.Draining,
+            _ => SharpLinkClusterState.Unavailable
+        };
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LifecycleState != SharpLinkClientLifecycleState.Running)
+                throw new InvalidOperationException("The faulting retired fixture cannot restart.");
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LifecycleState != SharpLinkClientLifecycleState.Running)
+                throw new InvalidOperationException("The faulting retired fixture is not ready.");
+            return ValueTask.CompletedTask;
+        }
+        public async Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+        {
+            var operation = await _shutdownOperation.Task.WaitAsync(cancellationToken);
+            await operation.WaitAsync(cancellationToken);
+        }
+
 
         internal TaskCompletionSource StopStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -530,6 +586,7 @@ public abstract class SharpLinkMultiClusterClientTestBase
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
             _stopOperation ??= StopCoreAsync();
+            _shutdownOperation.TrySetResult(_stopOperation);
             return cancellationToken.CanBeCanceled
                 ? new ValueTask(_stopOperation.WaitAsync(cancellationToken))
                 : new ValueTask(_stopOperation);
@@ -575,9 +632,11 @@ public abstract class SharpLinkMultiClusterClientTestBase
         private async Task StopCoreAsync()
         {
             State = SharpLinkConnectionState.Draining;
+            LifecycleState = SharpLinkClientLifecycleState.Draining;
             StopStarted.TrySetResult();
             await _stopRelease.Task;
             State = SharpLinkConnectionState.Faulted;
+            LifecycleState = SharpLinkClientLifecycleState.Faulted;
             throw new InvalidOperationException("retired cleanup failed");
         }
     }
@@ -590,10 +649,41 @@ public abstract class SharpLinkMultiClusterClientTestBase
 
         internal CoordinatedUnregisterClient(
             SharpLinkConnectionState state = SharpLinkConnectionState.Created)
-            => State = state;
+        {
+            if (state is not (SharpLinkConnectionState.Created or SharpLinkConnectionState.Ready))
+                throw new ArgumentOutOfRangeException(nameof(state));
+            State = state;
+            LifecycleState = state == SharpLinkConnectionState.Ready
+                ? SharpLinkClientLifecycleState.Running : SharpLinkClientLifecycleState.Created;
+        }
 
         internal int UnregisterCallCount => Volatile.Read(ref _unregisterCallCount);
         public SharpLinkConnectionState State { get; private set; }
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public SharpLinkClientLifecycleState LifecycleState { get; private set; }
+        public SharpLinkReadinessState Readiness => LifecycleState == SharpLinkClientLifecycleState.Running &&
+            State == SharpLinkConnectionState.Ready ? SharpLinkReadinessState.Ready : SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => _shutdown.Task.IsCompleted ? SharpLinkClusterState.Stopped :
+            State == SharpLinkConnectionState.Ready ? SharpLinkClusterState.Ready : SharpLinkClusterState.Inactive;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This metadata fixture has stopped.");
+            LifecycleState = SharpLinkClientLifecycleState.Running;
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Readiness != SharpLinkReadinessState.Ready)
+                throw new InvalidOperationException("This metadata fixture has no ready remote endpoint.");
+            return ValueTask.CompletedTask;
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => SharpLinkAssemblyRegistrationResult.Success();
@@ -623,6 +713,8 @@ public abstract class SharpLinkMultiClusterClientTestBase
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
             State = SharpLinkConnectionState.Stopped;
+            LifecycleState = SharpLinkClientLifecycleState.Stopped;
+            _shutdown.TrySetResult();
             return ValueTask.CompletedTask;
         }
 

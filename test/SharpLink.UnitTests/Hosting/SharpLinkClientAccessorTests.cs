@@ -344,16 +344,48 @@ public class SharpLinkClientAccessorTests
     private class FakeSharpLinkClient : ISharpLinkClient
     {
         public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // This fixture represents an already running, ready runtime supplied to the accessor.
+        public SharpLinkClientLifecycleState LifecycleState => _shutdown.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped : SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => _shutdown.Task.IsCompleted
+            ? SharpLinkReadinessState.NotReady : SharpLinkReadinessState.Ready;
+        public SharpLinkClusterState ClusterState => _shutdown.Task.IsCompleted
+            ? SharpLinkClusterState.Stopped : SharpLinkClusterState.Ready;
+
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This ready fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This ready fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
-        public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            _shutdown.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
-        public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public virtual ValueTask DisposeAsync() => StopAsync();
 
         public RpcProxy<T> CreateProxy<T>(RpcProxyOptions? options = null) where T : IService
             => throw new NotSupportedException();
@@ -393,7 +425,7 @@ public class SharpLinkClientAccessorTests
         public override ValueTask DisposeAsync()
         {
             DisposeCount++;
-            return ValueTask.CompletedTask;
+            return base.DisposeAsync();
         }
     }
 
@@ -442,6 +474,18 @@ public class SharpLinkClientAccessorTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public SharpLinkConnectionState State => SharpLinkConnectionState.Draining;
+        public SharpLinkClientLifecycleState LifecycleState => _release.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped : SharpLinkClientLifecycleState.Draining;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => _release.Task.IsCompleted
+            ? SharpLinkClusterState.Stopped : SharpLinkClusterState.Draining;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _release.Task.WaitAsync(cancellationToken);
+
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
@@ -483,6 +527,20 @@ public class SharpLinkClientAccessorTests
     private sealed class CancellationSensitiveClient : ISharpLinkClient
     {
         private int _disposeCount;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public SharpLinkClientLifecycleState LifecycleState => _shutdown.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped : SharpLinkClientLifecycleState.Draining;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public SharpLinkClusterState ClusterState => _shutdown.Task.IsCompleted
+            ? SharpLinkClusterState.Stopped : SharpLinkClusterState.Draining;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+
 
         internal int DisposeCount => Volatile.Read(ref _disposeCount);
         public SharpLinkConnectionState State => SharpLinkConnectionState.Draining;
@@ -491,11 +549,13 @@ public class SharpLinkClientAccessorTests
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            _shutdown.TrySetResult();
             return ValueTask.CompletedTask;
         }
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
+            _shutdown.TrySetResult();
             return ValueTask.CompletedTask;
         }
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(

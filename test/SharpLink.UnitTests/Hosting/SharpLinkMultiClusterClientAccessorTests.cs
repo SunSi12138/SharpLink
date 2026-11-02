@@ -100,10 +100,45 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     private class FakeMultiClusterClient : ISharpLinkMultiClusterClient
     {
         public SharpLinkMultiClusterState State => SharpLinkMultiClusterState.Ready;
+        private readonly TaskCompletionSource _shutdown =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // This fixture represents an already running, ready runtime supplied to the accessor.
+        public SharpLinkClientLifecycleState LifecycleState => _shutdown.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped : SharpLinkClientLifecycleState.Running;
+        public SharpLinkReadinessState Readiness => _shutdown.Task.IsCompleted
+            ? SharpLinkReadinessState.NotReady : SharpLinkReadinessState.Ready;
+
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This ready fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_shutdown.Task.IsCompleted)
+                throw new InvalidOperationException("This ready fixture has stopped.");
+            return ValueTask.CompletedTask;
+        }
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _shutdown.Task.WaitAsync(cancellationToken);
+        public ValueTask WaitForReadyAsync(SharpLinkClusterKey cluster, CancellationToken cancellationToken = default)
+            => WaitForReadyAsync(cancellationToken);
+        public SharpLinkClusterState GetClusterRuntimeState(SharpLinkClusterKey cluster)
+            => _shutdown.Task.IsCompleted ? SharpLinkClusterState.Stopped : SharpLinkClusterState.Ready;
+        public SharpLinkReadinessState GetClusterReadiness(SharpLinkClusterKey cluster) => Readiness;
+
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
-        public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            _shutdown.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
 
         public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
             => throw new NotSupportedException();
@@ -141,7 +176,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
                 ReferencesReleased = true
             });
 
-        public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public virtual ValueTask DisposeAsync() => StopAsync();
     }
 
     private sealed class DisposalTrackingMultiClusterClient : FakeMultiClusterClient
@@ -151,7 +186,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
         public override ValueTask DisposeAsync()
         {
             DisposeCount++;
-            return ValueTask.CompletedTask;
+            return base.DisposeAsync();
         }
     }
 
@@ -164,6 +199,20 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public SharpLinkMultiClusterState State => SharpLinkMultiClusterState.Draining;
+        public SharpLinkClientLifecycleState LifecycleState => _release.Task.IsCompleted
+            ? SharpLinkClientLifecycleState.Stopped : SharpLinkClientLifecycleState.Draining;
+        public SharpLinkReadinessState Readiness => SharpLinkReadinessState.NotReady;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
+            => _release.Task.WaitAsync(cancellationToken);
+        public ValueTask WaitForReadyAsync(SharpLinkClusterKey cluster, CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("This fixture is already draining."));
+        public SharpLinkClusterState GetClusterRuntimeState(SharpLinkClusterKey cluster) => SharpLinkClusterState.Stopped;
+        public SharpLinkReadinessState GetClusterReadiness(SharpLinkClusterKey cluster) => SharpLinkReadinessState.NotReady;
+
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)

@@ -144,6 +144,13 @@ public sealed partial class BuildPlanBuilderTests
         public SharpLinkConnectionState State
         { get { Entered.Set(); Release.Wait(); return inner.State; } }
         public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
+        public SharpLinkClientLifecycleState LifecycleState => inner.LifecycleState;
+        public SharpLinkReadinessState Readiness => inner.Readiness;
+        public SharpLinkClusterState ClusterState => inner.ClusterState;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => inner.StartAsync(cancellationToken);
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => inner.WaitForReadyAsync(cancellationToken);
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => inner.WaitForShutdownAsync(cancellationToken);
+
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => inner.ConnectAsync(cancellationToken);
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => inner.StopAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
