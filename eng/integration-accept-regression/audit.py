@@ -540,9 +540,28 @@ class RidAssetDiagnostics:
         return output
 
 
+def sdk_derived_version(value):
+    # Version.ToString canonical four UInt16 components. These are descriptive
+    # SDK output fields, NOT an independent Python extraction from the PE file.
+    return (isinstance(value,str) and re.fullmatch(r'(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}',value) is not None
+            and all(int(part)<=65535 for part in value.split('.')))
+
+
+def rid_metadata_matches(relative,entry,restored_targets):
+    if relative not in restored_targets:return False
+    restored=restored_targets[relative]
+    if type(entry) is not dict or type(restored) is not dict:return False
+    identity_keys={'rid','assetType'};version_keys={'fileVersion','assemblyVersion'}
+    if set(restored)!=identity_keys or not identity_keys<=set(entry)<=identity_keys|version_keys:return False
+    if any(type(entry[key]) is not str or entry[key]!=restored[key] for key in identity_keys):return False
+    if any(not sdk_derived_version(entry[key]) for key in version_keys&set(entry)):return False
+    if 'assemblyVersion' in entry and ('fileVersion' not in entry or Path(relative).suffix.lower() not in ('.dll','.exe','.winmd')):return False
+    return True
+
+
 def require_rid_metadata(identity,relative,entry,restored_targets):
     try:
-        require(relative in restored_targets and entry==restored_targets[relative], 'Unbound RID-specific runtime asset')
+        require(rid_metadata_matches(relative,entry,restored_targets), 'Unbound RID-specific runtime asset')
     except ValueError as original:
         try:
             original.rid_asset=RidAssetDiagnostics(identity,relative,relative in restored_targets,entry,restored_targets.get(relative))
@@ -563,7 +582,7 @@ def built(root,packages,expected_packages):
     require(set(libs)==package_ids|project_ids,'Unknown built dependency library kind')
     targets=deps['targets'][deps['runtimeTarget']['name']]
     source_targets=assets['targets']['net10.0'];checked=0
-    known_dlls=set();known_rid_files=set()
+    known_dlls=set();known_rid_files=set();version_fields_checked=0
     for identity in package_ids:
         library=assets['libraries'][identity];folder=packages/library['path']
         require(libs[identity].get('path')==library['path'],'Runtime package path differs from actual assets')
@@ -579,6 +598,7 @@ def built(root,packages,expected_packages):
         # DestinationSubDirectory and DestinationSubPath for copy-local output.
         for relative,entry in targets[identity].get('runtimeTargets',{}).items():
             require_rid_metadata(identity,relative,entry,source_targets[identity].get('runtimeTargets',{}))
+            version_fields_checked+=sum(key in entry for key in ('fileVersion','assemblyVersion'))
             parts=relative.split('/')
             require(len(parts)>=4 and parts[0]=='runtimes' and all(x not in ('','..','.') for x in parts)
                     and '\\' not in relative and entry.get('rid')==parts[1] and entry.get('assetType') in ('runtime','native'),
@@ -609,4 +629,5 @@ def built(root,packages,expected_packages):
     config=read_json(output/(ENTRY+'.runtimeconfig.json'))
     require(config['runtimeOptions']['tfm']=='net10.0' and config['runtimeOptions']['framework']=={'name':'Microsoft.NETCore.App','version':'10.0.0'},'Wrong originalaccept runtime request')
     return {'binary':digest(output/(ENTRY+'.dll')),'officialRuntimeAssets':checked,'runtimePackages':sorted(package_ids),
+            'ridVersionMetadata':{'policy':'SDK-derived descriptor schema only; not independent PE version extraction','validatedFields':version_fields_checked},
             'assetOnlyPackages':sorted(set(expected_packages)-package_ids),'runtimeProjects':sorted(project_ids),'frameworkRequest':'10.0.0'}

@@ -333,15 +333,34 @@ class FullGraphAudit(unittest.TestCase):
    with patch.object(audit.ProjectEdgeDiagnostics,'public',side_effect=RuntimeError('format failed')):
     self.assertEqual(run.finish(lane,errors,writer=lambda *args,**kwargs:None,fallback=lambda *args:None),1)
    self.assertIs(errors[0],original);self.assertIsInstance(errors[1],RuntimeError)
- def test_rid_diagnostic_version_fields_still_fail_authoritative_predicate(self):
+ def test_rid_metadata_binding_separate_from_builder_descriptor_schema(self):
   path='runtimes/linux-x64/native/libexample.so';base={'rid':'linux-x64','assetType':'native'}
-  audit.require_rid_metadata('Example/1.0.0',path,base,{path:base})
-  for changes in ({'fileVersion':'1.2.3.4'},{'assemblyVersion':'1.2.3.4'},{'rid':'other'},{'assetType':'runtime'}):
+  for actual in (base,dict(base,fileVersion='0.0.0.0'),dict(base,fileVersion='65535.1.2.3')):
+   audit.require_rid_metadata('Example/1.0.0',path,actual,{path:base})
+  managed='runtimes/linux-x64/lib/net10.0/Example.dll'
+  audit.require_rid_metadata('Example/1.0.0',managed,dict(base,fileVersion='1.2.3.4',assemblyVersion='1.2.0.0'),{managed:base})
+  for changes in ({'assemblyVersion':'1.2.3.4'},{'rid':'other'},{'assetType':'runtime'},{'fileVersion':'1.2.3.4','UNKNOWN':'x'}):
    actual=dict(base,**changes)
    with self.assertRaises(ValueError) as caught:audit.require_rid_metadata('Example/1.0.0',path,actual,{path:base})
    detail=caught.exception.rid_asset.public();self.assertEqual(detail['knownPackageRelative'],path)
    self.assertEqual(detail['package'],'Example/1.0.0');self.assertTrue(detail['restoredMember'])
    self.assertIn('ridAsset',run.failure_leaves([caught.exception],'build-baseline')[0])
+ def test_builder_versions_are_canonical_four_uint16_not_ignored(self):
+  path='runtimes/linux-x64/lib/net10.0/Example.dll';base={'rid':'linux-x64','assetType':'runtime'}
+  for invalid in (None,True,1,{},[], '', '1.2.3','1.2.3.4.5','01.2.3.4','1.2.3.04','+1.2.3.4','-1.2.3.4','1.2.3.4 ',' 1.2.3.4','1.2.3.4\n','1.2.3.65536','2147483647.0.0.0','１.2.3.4'):
+   for key in ('fileVersion','assemblyVersion'):
+    actual=dict(base,fileVersion='1.2.3.4');actual[key]=invalid
+    with self.assertRaises(ValueError):audit.require_rid_metadata('Example/1',path,actual,{path:base})
+  for suffix in ('.dll','.exe','.winmd','.DLL'):
+   managed=path+suffix;audit.require_rid_metadata('Example/1',managed,dict(base,fileVersion='1.2.3.4',assemblyVersion='1.2.3.4'),{managed:base})
+  with self.assertRaises(ValueError):audit.require_rid_metadata('Example/1',path,dict(base,assemblyVersion='1.2.3.4'),{path:base})
+  with self.assertRaises(ValueError):audit.require_rid_metadata('Example/1',path,base,{path:dict(base,fileVersion='1.2.3.4')})
+ def test_observed_config_descriptor_hash_and_unchanged_copy_binding(self):
+  actual={'rid':'linux-musl-x64','assetType':'native','fileVersion':'0.0.0.0'}
+  self.assertEqual(hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest(),'c2176658d7b1b9806d9ee8d18531aa0a409e4a41da7268c66c9f5862e75d14f1')
+  path='runtimes/linux-musl-x64/native/Cov_x64.config'
+  audit.require_rid_metadata('Microsoft.Testing.Extensions.CodeCoverage/18.12.0',path,actual,{path:{'rid':'linux-musl-x64','assetType':'native'}})
+  with self.assertRaises(ValueError):audit.require_rid_metadata('Microsoft.Testing.Extensions.CodeCoverage/18.12.0',path,dict(actual,assemblyVersion='0.0.0.0'),{path:{'rid':'linux-musl-x64','assetType':'native'}})
  def test_rid_diagnostic_unknown_escape_and_keys_are_hash_only_without_reads(self):
   for relative,mapping in [('SECRET/path',{}),('../SECRET/path',{'../SECRET/path':{}}),('/SECRET/path',{'/SECRET/path':{}})]:
    with patch.object(Path,'read_bytes',side_effect=AssertionError('must not read FS')):
@@ -398,10 +417,11 @@ class FullGraphAudit(unittest.TestCase):
    deps_path=output/(a.ASSEMBLY+'.deps.json');assets=c.read_json(assets_path);deps=c.read_json(deps_path)
    identity='TUnit/1.78.0';relative='runtimes/linux-x64/native/libexample.so';entry={'rid':'linux-x64','assetType':'native'}
    for obj in (assets['targets']['net10.0'][identity],deps['targets']['net10.0'][identity]):obj['runtimeTargets']={relative:entry}
-   assets_path.write_text(json.dumps(assets));deps_path.write_text(json.dumps(deps))
+   assets_path.write_text(json.dumps(assets));deps['targets']['net10.0'][identity]['runtimeTargets']={relative:dict(entry,fileVersion='0.0.0.0')};deps_path.write_text(json.dumps(deps))
    installed=packages/identity.lower()/relative;installed.parent.mkdir(parents=True);installed.write_bytes(b'official')
    copied=output/relative;copied.parent.mkdir(parents=True);copied.write_bytes(b'official')
-   audit.built(root,packages,identities)
+   result=audit.built(root,packages,identities);self.assertEqual(result['ridVersionMetadata']['validatedFields'],1)
+   self.assertIn('not independent PE',result['ridVersionMetadata']['policy'])
    copied.write_bytes(b'wrong')
    with self.assertRaises(ValueError):audit.built(root,packages,identities)
    copied.unlink()
