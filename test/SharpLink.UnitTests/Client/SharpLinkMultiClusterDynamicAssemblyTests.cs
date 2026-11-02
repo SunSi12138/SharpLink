@@ -89,15 +89,9 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
             new SharpLinkMultiClusterOptions(),
             new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
                 .ToFrozenDictionary(),
-            new Dictionary<Type, SharpLinkClusterRouteRegistration>
-            {
-                [typeof(IOrdersContract)] = route
-            }.ToFrozenDictionary(),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
             []);
-        var registrations = (List<DynamicAssemblyRegistration>)(typeof(SharpLinkMultiClusterClient)
-            .GetField("_dynamicRegistrations", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(client)!);
-        registrations.Add(new DynamicAssemblyRegistration(slot, TestManifestAssembly, Manifest.Instance));
+        AddPreparedUnregisterFixture(client, slot, route);
 
         var first = client.UnregisterAssemblyAsync(
             cluster, TestManifestAssembly, TimeSpan.Zero).AsTask();
@@ -272,6 +266,73 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
         Ensure(migration.ScopeCreateCount == 1 && migration.FactoryCreateCount == 1 &&
                migration.ScopeDisposeCount == 1,
             "the real candidate must create one adapter scope, attempt its Codec factory once, and release that scope once");
+    }
+
+    // Prepare the existing controlled dynamic route under the coordinator's real owner.
+    // No static-manifest label or production ownership check is bypassed.
+    private static void AddPreparedUnregisterFixture(
+        SharpLinkMultiClusterClient coordinator, SharpLinkClusterSlot slot,
+        SharpLinkClusterRouteRegistration route)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var domain = (ColdMetadataDomain)typeof(SharpLinkMultiClusterClient)
+            .GetField("_metadataDomain", flags)!.GetValue(coordinator)!;
+        var gate = (Lock)typeof(SharpLinkMultiClusterClient)
+            .GetField("_gate", flags)!.GetValue(coordinator)!;
+        var snapshotField = typeof(SharpLinkMultiClusterClient).GetField("_snapshot", flags)!;
+        using var preparation = domain.BeginPreparation();
+        var manifest = PreparedGeneratedManifest.Capture(Manifest.Instance, preparation);
+        SharpLinkGeneratedManifestStructureValidator.ValidatePrepared(manifest);
+        using var previous = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
+            .GetMethod("AcquireSnapshot", flags)!.Invoke(coordinator, null)!;
+        preparation.ReserveCollection(1); // Mutable route map.
+        preparation.ReserveCollection(1); // Frozen route map.
+        var routes = new Dictionary<Type, SharpLinkClusterRouteRegistration>
+        {
+            [route.ContractType] = route
+        }.ToFrozenDictionary();
+        MultiClusterSnapshot? unownedSnapshot = null;
+        DynamicAssemblyRegistration? unownedRegistration = null;
+        try
+        {
+            unownedSnapshot = MultiClusterSnapshot.Create(previous.Clusters, routes,
+                previous.ConfiguredConnectionBudget, preparation, previous, manifest);
+            unownedRegistration = new DynamicAssemblyRegistration(slot, manifest.OwnerAssembly, manifest);
+            lock (gate)
+            {
+                Ensure(ReferenceEquals(previous, snapshotField.GetValue(coordinator)),
+                    "fixture publication must use the exact retained coordinator snapshot");
+                var registrations = (List<DynamicAssemblyRegistration>)typeof(SharpLinkMultiClusterClient)
+                    .GetField("_dynamicRegistrations", flags)!.GetValue(coordinator)!;
+                var capacity = checked(registrations.Count + 1);
+                preparation.ReserveCollection(capacity);
+                registrations.EnsureCapacity(capacity);
+                registrations.Add(unownedRegistration);
+                unownedRegistration = null; // The coordinator catalog now owns its exact metadata lease.
+                try
+                {
+                    typeof(SharpLinkMultiClusterClient).GetMethod("PublishSnapshotLocked", flags)!
+                        .Invoke(coordinator, [unownedSnapshot]);
+                }
+                finally
+                {
+                    // Publication can precede old-snapshot cleanup; do not dispose a transferred owner.
+                    if (ReferenceEquals(unownedSnapshot, snapshotField.GetValue(coordinator)))
+                        unownedSnapshot = null;
+                }
+            }
+            preparation.Complete();
+        }
+        catch (Exception primary)
+        {
+            var failures = new List<Exception> { primary };
+            try { unownedRegistration?.Dispose(); }
+            catch (Exception cleanup) { failures.Add(cleanup); }
+            try { unownedSnapshot?.Dispose(); }
+            catch (Exception cleanup) { failures.Add(cleanup); }
+            if (failures.Count > 1) throw new AggregateException(failures);
+            throw;
+        }
     }
 
     // This is a metadata-only coordinator catalog fixture, as in the original test.
