@@ -17,6 +17,8 @@ namespace SharpLink.RollbackPlugin;
 
 public sealed class RollbackMarker;
 
+public interface IRollbackRetirementContract { }
+
 public static class RollbackState
 {
     public static int ScopeDisposeCount;
@@ -41,6 +43,15 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
             ? []
             : [new RollbackCodecFactory(codecHash)];
 
+        if (string.Equals(Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_RETIREMENT_CONTRACT"),
+                "1", StringComparison.Ordinal))
+        {
+            var contract = typeof(IRollbackRetirementContract);
+            Contracts = [new SharpLinkGeneratedContractDescriptor(contract, contract.FullName!, 0x7751,
+                new string('c', 64), [], static (_, _) => throw new NotSupportedException(),
+                static _ => throw new NotSupportedException())];
+        }
+
         var started = RollbackState.ManifestConstructionStarted;
         if (started is null)
             return;
@@ -55,7 +66,7 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
     public Assembly OwnerAssembly => typeof(RollbackManifest).Assembly;
     public RpcHash128 RpcAssemblyHash { get; }
     public string CompileTimeDescriptor => "rollback-test";
-    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } = [];
     public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
     public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; }
     public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => [];

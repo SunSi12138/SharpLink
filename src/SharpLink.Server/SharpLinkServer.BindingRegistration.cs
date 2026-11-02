@@ -77,6 +77,47 @@ internal sealed partial class SharpLinkServer
             registration.Binding?.Retire();
     }
 
+    // Replacement-only prepare/commit split. Unlike the existing Publish wrapper,
+    // no Registration.Binding is mutated while IDs/arrays/group sealing can fail.
+    private ServerBindingRegistration[][] PrepareReplacementBindings(PreparedBindingGroup[] plans,
+        long generation, ColdMetadataPreparation preparation)
+    {
+        if (plans.Length != 0 && generation <= 0)
+            throw new InvalidOperationException("A binding publication requires a positive generation.");
+        preparation.ReserveCollection(plans.Length);
+        var prepared = new ServerBindingRegistration[plans.Length][];
+        for (var groupIndex = 0; groupIndex < plans.Length; groupIndex++)
+        {
+            var plan = plans[groupIndex];
+            if (!_bindingRegistrationIds.TryIssue(out var registrationId))
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                    "The server registration identity domain is exhausted; a new server epoch is required.");
+            preparation.ReserveCollection(0); // Admission group header.
+            preparation.ReserveCollection(plan.Members.Length); // Prepared members.
+            preparation.ReserveCollection(plan.Members.Length); // Sealed group copy.
+            var group = new ServerBindingAdmissionGroup();
+            var members = new ServerBindingRegistration[plan.Members.Length];
+            for (var index = 0; index < members.Length; index++)
+            {
+                var member = plan.Members[index];
+                members[index] = new(member.Registration, member.ContractId, member.Hash, registrationId,
+                    generation, member.Registration.DeclaredFacts!, group);
+            }
+            group.Seal(members);
+            prepared[groupIndex] = members;
+        }
+        return prepared;
+    }
+
+    private static void CommitReplacementBindings(PreparedBindingGroup[] plans, ServerBindingRegistration[][] prepared)
+    {
+        // Exact arrays were constructed and exclusively owned by this candidate;
+        // only scalar binding roots move after the codec publication commit cut.
+        for (var groupIndex = 0; groupIndex < plans.Length; groupIndex++)
+            for (var memberIndex = 0; memberIndex < plans[groupIndex].Members.Length; memberIndex++)
+                plans[groupIndex].Members[memberIndex].Registration.Binding = prepared[groupIndex][memberIndex];
+    }
+
     private long NextBindingPublicationGeneration()
     {
         if (_registryGeneration == long.MaxValue)

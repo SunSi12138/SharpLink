@@ -181,17 +181,23 @@ internal sealed partial class SharpLinkServer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
+        RetirementGraceBudget retirementBudget;
+        using (RetirementCallbackScope.Enter(_runtimeContext.Domain))
+            retirementBudget = RetirementGraceBudget.Capture(gracefulTimeout, _runtimeContext.TimeProvider);
         if (!TryBeginRegistrationPreparation(out var preparation, out var preparationError))
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(preparationError!));
-        using var preparationOwner = preparation!;
+        using var preparationTransfer = RetirementTransfer<RegistrationPreparation>.CreateCharged(
+            preparation!, preparation!.Metadata, slots: 1);
+        var preparationOwner = preparation!;
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, preparationOwner.Metadata, out var manifest);
         if (!loaded.Succeeded)
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
 
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
-        TaskCompletionSource<Exception?>? retirementReady = null;
+        RetirementControl? retirement = null;
         Task<(Exception? Failure, bool SupervisorOwned)>? retirementObservation = null;
-        Task<Exception?>? retirementTracking = null;
+        ServerBindingRegistration[][]? preparedBindings = null;
         Exception? publicationFailure = null;
         SharpLinkRuntimeContext.PreparedGeneratedCodecPublication? codecPublication = null;
         SharpLinkDynamicModule? oldModule = null;
@@ -207,6 +213,36 @@ internal sealed partial class SharpLinkServer
         Exception? rollbackException = null;
         var published = false;
         SharpLinkRuntimeContext.CapturedGeneratedCodecs? codecSource = null;
+        Exception? CompleteRetirementActions(bool committed)
+        {
+            Exception? failure = committed ? publicationFailure : null;
+            AttemptRetirementCleanup(codecPublication, ref failure);
+            AttemptRetirementCleanup(retiredSnapshot, ref failure);
+            if (committed) AttemptRetirementCleanup(candidateFactsGroup, ref failure);
+            else
+            {
+                AttemptRetirementCleanup(detachedSnapshot, ref failure);
+                try { DisposeRegistrationCandidate(candidateServices, retainedCandidateServices,
+                    codecRegistration, candidateFactsGroup, candidateSnapshot); }
+                catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+            }
+            if (preparedBindings is not null)
+            {
+                foreach (var members in preparedBindings) Array.Clear(members);
+                Array.Clear(preparedBindings);
+            }
+            AttemptRetirementCleanup(codecSource, ref failure);
+            AttemptRetirementCleanup(preparationOwner, ref failure);
+            if (committed)
+            {
+                try { ScheduleBindingInvalidations(); }
+                catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+                try { ScheduleContractManifestPublish(); }
+                catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+            }
+            else if (failure is not null) ThrowAfterAssemblyRollback(rollbackError, rollbackException, failure);
+            return failure;
+        }
         try
         {
             codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
@@ -323,15 +359,22 @@ internal sealed partial class SharpLinkServer
                         }
                         cancellationToken.ThrowIfCancellationRequested();
                         var bindingGeneration = NextBindingPublicationGeneration();
-                        PublishBindingRegistrations(candidate.BindingPlans, bindingGeneration);
+                        preparedBindings = PrepareReplacementBindings(candidate.BindingPlans, bindingGeneration, preparationOwner.Metadata);
+                        candidate.FactsGroup.ValidateCommit();
+                        _dynamicModules.EnsureCapacity(checked(_dynamicModules.Count + 1));
+                        _detachedModuleServices.EnsureCapacity(checked(_detachedModuleServices.Count + 1));
+                        retirement = CreateRetirementLocked(oldAssembly, oldModule,
+                            RetirementOrigin.PublicReplacement, retirementBudget, CompleteRetirementActions);
+                        drainOperation = oldModule.RetirementOperation;
+                        retirementObservation = oldModule.RetirementObservation;
+                        preparationTransfer.Relinquish();
                         _runtimeContext.CommitGeneratedCodecPublication(codecPublication);
+                        published = true;
+                        retirement.MarkCommitted();
+                        CommitReplacementBindings(candidate.BindingPlans, preparedBindings);
                         _dynamicModules.Add(newAssembly, newModule!);
                         _detachedModuleServices.Add(oldModule, detachedSnapshot!);
-                        drainOperation = StartRetirementLocked(oldAssembly, oldModule, stopOwned: false, out retirementReady);
-                        retirementObservation = oldModule.RetirementObservation;
-                        retirementTracking = oldModule.RetirementTracking;
-                        published = true;
-                        candidate.FactsGroup.Commit();
+                        candidate.FactsGroup.CommitValidated();
                         oldModule.TryBeginDraining();
                         RetireBindingGroup(detachedServices);
                         retiredSnapshot = _serviceModuleRegistry.PublishServices(candidateSnapshot!);
@@ -360,27 +403,23 @@ internal sealed partial class SharpLinkServer
             {
                 rollbackException = exception;
                 rollbackError = CreatePreparationFailure(newAssembly, exception);
-                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
+                var rejection = SharpLinkAssemblyReplacementResult.Failure(rollbackError);
+                return retirement is null ? ValueTask.FromResult(rejection)
+                    : WaitForRejectedReplacementAsync(drainOperation!, retirement, retirementObservation!, rejection, cancellationToken);
             }
         }
         finally
         {
-            if (published)
+            if (retirement is not null)
             {
-                AttemptRetirementCleanup(codecPublication, ref publicationFailure);
-                AttemptRetirementCleanup(retiredSnapshot, ref publicationFailure);
-                AttemptRetirementCleanup(candidateFactsGroup, ref publicationFailure);
-                AttemptRetirementCleanup(codecSource, ref publicationFailure);
-                // Drop our preparation pins before releasing the actual physical worker.
-                AttemptRetirementCleanup(preparationOwner, ref publicationFailure);
-                try { ScheduleBindingInvalidations(); }
-                catch (Exception exception) { AddRetirementFailure(ref publicationFailure, exception); }
-                try { ScheduleContractManifestPublish(); }
-                catch (Exception exception) { AddRetirementFailure(ref publicationFailure, exception); }
-                retirementReady!.TrySetResult(publicationFailure);
+                // Only restore this caller's ambient scope here. All real
+                // postcommit/abort cleanup belongs to the rooted physical task.
+                preparationOwner.LeaveCallerScope();
+                retirement.Activate();
             }
             else
             {
+                preparationTransfer.Relinquish();
                 Exception? cleanupFailure = null;
                 AttemptRetirementCleanup(codecPublication, ref cleanupFailure);
                 AttemptRetirementCleanup(retiredSnapshot, ref cleanupFailure);
@@ -393,15 +432,8 @@ internal sealed partial class SharpLinkServer
                 if (cleanupFailure is not null) ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupFailure);
             }
         }
-        return WaitForReplacementRetirementAsync(drainOperation!, oldModule!, retirementObservation!, retirementTracking!, gracefulTimeout, cancellationToken);
+        return WaitForControlledReplacementAsync(drainOperation!, retirement!, retirementObservation!, cancellationToken);
     }
-
-    private async ValueTask<SharpLinkAssemblyReplacementResult> WaitForReplacementRetirementAsync(
-        Task<SharpLinkAssemblyUnregisterResult> operation, SharpLinkDynamicModule module,
-        Task<(Exception? Failure, bool SupervisorOwned)> observation, Task<Exception?> tracking,
-        TimeSpan gracefulTimeout, CancellationToken cancellationToken)
-        => SharpLinkAssemblyReplacementResult.Published(
-            await WaitForRetirementAsync(operation, module, observation, tracking, gracefulTimeout, cancellationToken).ConfigureAwait(false));
 
     private RegistrationCandidate BuildRegistrationCandidate(
         PreparedGeneratedManifest incoming,

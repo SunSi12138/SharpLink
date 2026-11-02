@@ -202,8 +202,21 @@ internal sealed class ServerDeclaredMethodFactsGroupReservation : IDisposable
     {
         // Final publication is scalar/root transfer only. Dispose is deliberately separate
         // and must run outside registry/table gates after either success or rollback.
+        ValidateCommit();
+        CommitValidated();
+    }
+
+    internal void ValidateCommit()
+    {
         if (!_readyToCommit || _disposed || _committed)
             throw new InvalidOperationException("Facts transfer was not prepared exactly once.");
+    }
+
+    // Only the exclusive candidate owner calls this after ValidateCommit, with
+    // no intervening Dispose/Commit/callback. Destructive publication has begun;
+    // this bounded root transfer must not repeat a fallible preflight predicate.
+    internal void CommitValidated()
+    {
         _committed = true;
         foreach (var item in _reservations) item.DetachPreparationOwner();
         _reservations.Clear();

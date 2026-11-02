@@ -204,6 +204,7 @@ internal sealed class SharpLinkDynamicModule
     private Assembly? _assembly;
     private ISharpLinkGeneratedAssemblyManifest? _manifest;
     private RpcGeneratedManifestRegistration? _codecRegistration;
+    private ColdMetadataReservation? _retirementCapacity;
     private int _state;
     private int _preparationOwners; // Cold registration callbacks only; never ordinary RPC admission.
 
@@ -217,6 +218,7 @@ internal sealed class SharpLinkDynamicModule
     internal Task<Exception?>? RetirementTracking { get; set; }
     internal FrameworkTaskRegistration? RetirementRegistration { get; set; }
     internal Task<(Exception? Failure, bool SupervisorOwned)>? RetirementObservation { get; set; }
+    internal RetirementControl? RetirementControl { get; set; }
 
     internal SharpLinkDynamicModule(
         Assembly assembly,
@@ -234,6 +236,13 @@ internal sealed class SharpLinkDynamicModule
         _callCounters = new PaddedCounter[stripeCount];
         _streamCounters = new PaddedCounter[stripeCount];
         _stripeMask = stripeCount - 1;
+        // Codec storage comes from ForkStorage (_completed=1), not an active
+        // registration preparation. Its original token refunds on candidate
+        // rollback automatically. Election only Retains this prepaid capacity;
+        // final codec-storage reference release detaches the retained token; an
+        // earlier Dispose may still leave other real metadata storage owners.
+        _retirementCapacity = codecRegistration.Storage.ReserveCollection(
+            global::SharpLink.Runtime.RetirementControl.ReservedSlots, codecRegistration.RegistrationScope);
     }
 
     internal Assembly Assembly => Volatile.Read(ref _assembly) ??
@@ -250,6 +259,9 @@ internal sealed class SharpLinkDynamicModule
         => (SharpLinkDynamicModuleState)Volatile.Read(ref _state);
 
     internal CancellationToken ForcedCancellation => _forcedCancellationToken;
+
+    internal IDisposable RetainRetirementCapacity() => (_retirementCapacity ??
+        throw new ObjectDisposedException(nameof(SharpLinkDynamicModule))).Retain();
 
     internal int RemainingCalls => Sum(_callCounters);
 
@@ -341,16 +353,9 @@ internal sealed class SharpLinkDynamicModule
             timeProvider).ConfigureAwait(false);
     }
 
-    internal void CancelRemainingCalls()
-    {
-        try
-        {
-            _forcedCancellation.Cancel();
-        }
-        catch
-        {
-        }
-    }
+    // Only the elected cold driver may use this entry. It retains both the raw
+    // callback failure and the actual Cancel invocation exit on its physical task.
+    internal void CancelRemainingCallsFromRetirementDriver() => _forcedCancellation.Cancel();
 
     internal void MarkDrainTimedOut()
         => Interlocked.CompareExchange(
@@ -364,6 +369,7 @@ internal sealed class SharpLinkDynamicModule
         Volatile.Write(ref _manifest, null);
         Volatile.Write(ref _assembly, null);
         Volatile.Write(ref _codecRegistration, null);
+        _retirementCapacity = null; // Actual observer retains its independent token lease.
         // A dispatch can retain a route snapshot before acquiring its module lease.
         // Keep the token source usable until that stale reader drops the module; all
         // registered callbacks are already gone when the module counters drain.

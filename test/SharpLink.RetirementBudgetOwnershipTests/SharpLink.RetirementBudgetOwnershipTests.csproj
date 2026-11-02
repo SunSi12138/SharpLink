@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- A focused selected-source binary, NOT the complete Unit suite. Existing
+         friend access requires this simple assembly name; outputs stay local. -->
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.UnitTests</RootNamespace>
+    <AssemblyTitle>SharpLink.RetirementBudgetOwnershipTests A-B selected-source controls</AssemblyTitle>
+    <Description>Exact retirement budget and physical owner controls, not full Unit or lifecycle C-D qualification.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="RetirementBudgetOwnership-AB-v1" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="GlobalUsings.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/RetirementGraceBudgetTests.cs" Link="Runtime/RetirementGraceBudgetTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/RetirementOwnedDriverTests.cs" Link="Runtime/RetirementOwnedDriverTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
+  </ItemGroup>
+</Project>

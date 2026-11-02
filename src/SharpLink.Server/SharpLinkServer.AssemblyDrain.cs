@@ -10,18 +10,29 @@ internal sealed partial class SharpLinkServer
         ThrowIfRegistrationCallbackReentry();
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+        RetirementGraceBudget budget;
+        using (RetirementCallbackScope.Enter(_runtimeContext.Domain))
+            budget = RetirementGraceBudget.Capture(gracefulTimeout, _runtimeContext.TimeProvider);
+        return UnregisterAssemblyCore(assembly, budget, cancellationToken);
+    }
+
+    private ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyCore(
+        Assembly assembly, RetirementGraceBudget budget, CancellationToken cancellationToken)
+    {
         while (true)
         {
             SharpLinkDynamicModule module;
             ServerServiceSnapshot.Lease? snapshot = null;
             Task<SharpLinkAssemblyUnregisterResult>? operation = null;
             Task<(Exception? Failure, bool SupervisorOwned)>? observation = null;
-            Task<Exception?>? tracking = null;
+            RetirementControl? control = null;
             lock (_registryGate)
             {
                 if (_unregisterOperations.TryGetValue(assembly, out var existing))
-                { operation = existing.Task; module = existing.Module;
-                    observation = module.RetirementObservation; tracking = module.RetirementTracking; }
+                {
+                    operation = existing.Task; module = existing.Module;
+                    observation = module.RetirementObservation; control = module.RetirementControl;
+                }
                 else
                 {
                     if (!_dynamicModules.TryGetValue(assembly, out module!))
@@ -30,16 +41,40 @@ internal sealed partial class SharpLinkServer
                 }
             }
             if (operation is not null)
-                return WaitForRetirementAsync(operation, module, observation!, tracking!, gracefulTimeout, cancellationToken);
+                return control is { IsCommitted: false }
+                    ? RetryUnregisterAfterStageAsync(assembly, budget, operation, observation!, cancellationToken)
+                    : WaitForControlledRetirementAsync(operation, control!, observation!, cancellationToken);
 
             ColdMetadataPreparation? storage = null;
+            ColdMetadataReservation? mutableCharge = null;
             ServerServiceSnapshot? old = null;
             ServerServiceSnapshot? next = null;
             ServerDetachedServices? detached = null;
-            TaskCompletionSource<Exception?>? ready = null;
+            RetirementControl? selected = null;
             var transferred = false;
             var retry = false;
             Exception? failure = null;
+            Exception? CompleteActions(bool committed)
+            {
+                Exception? outcome = failure;
+                AttemptRetirementCleanup(old, ref outcome);
+                if (!transferred)
+                {
+                    AttemptRetirementCleanup(next, ref outcome);
+                    AttemptRetirementCleanup(detached, ref outcome);
+                }
+                AttemptRetirementCleanup(mutableCharge, ref outcome);
+                AttemptRetirementCleanup(snapshot, ref outcome);
+                AttemptRetirementCleanup(storage, ref outcome);
+                if (committed)
+                {
+                    try { ScheduleBindingInvalidations(); }
+                    catch (Exception exception) { AddRetirementFailure(ref outcome, exception); }
+                    try { ScheduleContractManifestPublish(); }
+                    catch (Exception exception) { AddRetirementFailure(ref outcome, exception); }
+                }
+                return outcome;
+            }
             try
             {
                 storage = _runtimeContext.CreateMetadataStorage();
@@ -47,7 +82,7 @@ internal sealed partial class SharpLinkServer
                 var retiringBindings = source.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
                 var detachedCharge = storage.ReserveCollection(retiringBindings.Length);
                 detached = new ServerDetachedServices(retiringBindings, storage, detachedCharge);
-                using var mutableCharge = storage.ReserveCollection(source.Count - retiringBindings.Length);
+                mutableCharge = storage.ReserveCollection(source.Count - retiringBindings.Length);
                 var nextMap = source.Where(pair => !ReferenceEquals(pair.Value.Module, module))
                     .ToDictionary(static pair => pair.Key, static pair => pair.Value);
                 var snapshotCharge = storage.ReserveCollection(nextMap.Count);
@@ -56,16 +91,25 @@ internal sealed partial class SharpLinkServer
                 lock (_registryGate)
                 {
                     if (_unregisterOperations.TryGetValue(assembly, out var existing))
-                    { operation = existing.Task; module = existing.Module;
-                    observation = module.RetirementObservation; tracking = module.RetirementTracking; }
+                    {
+                        operation = existing.Task; module = existing.Module;
+                        observation = module.RetirementObservation; control = module.RetirementControl;
+                    }
                     else if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module) ||
                         !_serviceModuleRegistry.IsCurrentServices(snapshot!)) retry = true;
                     else
                     {
                         EnsureNoDynamicDependants(module);
                         var generation = NextBindingPublicationGeneration();
-                        operation = StartRetirementLocked(assembly, module, stopOwned: false, out ready);
-                        observation = module.RetirementObservation; tracking = module.RetirementTracking;
+                        _detachedModuleServices.EnsureCapacity(checked(_detachedModuleServices.Count + 1));
+                        selected = CreateRetirementLocked(assembly, module, RetirementOrigin.PublicUnregister, budget, CompleteActions);
+                        control = selected;
+                        operation = module.RetirementOperation;
+                        observation = module.RetirementObservation;
+                        // Rooted task precedes the first destructive admission cut.
+                        // The remainder is pre-sized dictionary/scalar publication.
+                        module.TryBeginDraining();
+                        selected.MarkCommitted();
                         if (!_detachedModuleServices.TryGetValue(module, out _))
                         {
                             _detachedModuleServices.Add(module, detached);
@@ -74,142 +118,21 @@ internal sealed partial class SharpLinkServer
                             RetireBindingGroup(retiringBindings);
                             _registryGeneration = generation;
                         }
-                        module.TryBeginDraining();
                     }
                 }
             }
             catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
             finally
             {
-                AttemptRetirementCleanup(old, ref failure);
-                if (!transferred)
-                { AttemptRetirementCleanup(next, ref failure); AttemptRetirementCleanup(detached, ref failure); }
-                AttemptRetirementCleanup(snapshot, ref failure);
-                AttemptRetirementCleanup(storage, ref failure);
-                if (ready is not null)
-                {
-                    try { ScheduleBindingInvalidations(); }
-                    catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
-                    try { ScheduleContractManifestPublish(); }
-                    catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
-                    ready.TrySetResult(failure);
-                }
+                if (selected is not null) selected.Activate();
+                else failure = CompleteActions(committed: false);
             }
-            if (ready is null) ThrowRetirementFailure(failure);
+            if (selected is null) ThrowRetirementFailure(failure);
             if (retry) continue;
-            return WaitForRetirementAsync(operation!, module, observation!, tracking!, gracefulTimeout, cancellationToken);
+            return control is { IsCommitted: false }
+                ? RetryUnregisterAfterStageAsync(assembly, budget, operation!, observation!, cancellationToken)
+                : WaitForControlledRetirementAsync(operation!, control!, observation!, cancellationToken);
         }
-    }
-
-    // Existing registry gate elects and roots the ACTUAL suspended worker before it can start.
-    private Task<SharpLinkAssemblyUnregisterResult> StartRetirementLocked(
-        Assembly assembly, SharpLinkDynamicModule module, bool stopOwned,
-        out TaskCompletionSource<Exception?> ready)
-    {
-        ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        var tracking = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        module.RetirementRegistration = null;
-        module.RetirementTracking = tracking.Task;
-        var operation = RetireModulePhysicalAsync(assembly, module, stopOwned, ready.Task, tracking);
-        module.RetirementOperation = operation;
-        _unregisterOperations.Add(assembly, (operation, module));
-        module.RetirementObservation = ObserveRetirementExitAsync(assembly, module, operation);
-        return operation;
-    }
-
-    private async Task<SharpLinkAssemblyUnregisterResult> RetireModulePhysicalAsync(
-        Assembly assembly, SharpLinkDynamicModule module, bool stopOwned, Task<Exception?> ready,
-        TaskCompletionSource<Exception?> tracking)
-    {
-        var failure = await ready.ConfigureAwait(false);
-        Task<SharpLinkAssemblyUnregisterResult> operation;
-        lock (_registryGate)
-        {
-            if (!_unregisterOperations.TryGetValue(assembly, out var entry) || !ReferenceEquals(entry.Module, module))
-                throw new InvalidOperationException("The exact retirement operation lost its registry owner.");
-            operation = entry.Task;
-            module.TryBeginDraining();
-        }
-        FrameworkTaskRegistration? receipt = null;
-        Exception? trackingFailure = null;
-        if (!stopOwned)
-        {
-            try { TrackOwnedRetirementTask(operation, module, ref receipt); }
-            catch (Exception exception)
-            { trackingFailure = exception; AddRetirementFailure(ref failure, exception); }
-            finally { module.RetirementRegistration = receipt; }
-        }
-        tracking.TrySetResult(trackingFailure);
-        try
-        {
-            await module.WaitForDrainAsync().ConfigureAwait(false);
-            await ReleaseModuleAsync(assembly, module).ConfigureAwait(false);
-        }
-        catch (Exception exception) { AddRetirementFailure(ref failure, PhysicalTaskFailureException.GetRaw(exception)); }
-        if (failure is not null) throw PhysicalTaskFailureException.From(failure);
-        return new SharpLinkAssemblyUnregisterResult { ReferencesReleased = true };
-    }
-
-    private async Task<(Exception? Failure, bool SupervisorOwned)> ObserveRetirementExitAsync(
-        Assembly assembly, SharpLinkDynamicModule module, Task<SharpLinkAssemblyUnregisterResult> operation)
-    {
-        try { await operation.ConfigureAwait(false); }
-        catch { /* Actual outcome has an explicit public/strict/lifecycle owner below. */ }
-        Exception? failure = null;
-        var receipt = module.RetirementRegistration;
-        try { if (receipt is not null) receipt.Supervisor.CompleteAcceptedRegistration(receipt); }
-        catch (Exception exception) { failure = exception; }
-        try
-        {
-            lock (_registryGate)
-            {
-                // Receipt-null and unreleased failures stay discoverable until Stop actually
-                // adopts them. Otherwise a retry could change State before an old Stop join.
-                if (receipt is not null && failure is null && module.State == SharpLinkDynamicModuleState.Released &&
-                    _unregisterOperations.TryGetValue(assembly, out var entry) &&
-                    ReferenceEquals(entry.Task, operation) && ReferenceEquals(entry.Module, module))
-                    _unregisterOperations.Remove(assembly);
-            }
-        }
-        catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
-        return (failure, receipt is not null);
-    }
-
-    private async ValueTask<SharpLinkAssemblyUnregisterResult> WaitForRetirementAsync(
-        Task<SharpLinkAssemblyUnregisterResult> operation, SharpLinkDynamicModule module,
-        Task<(Exception? Failure, bool SupervisorOwned)> observation, Task<Exception?> tracking,
-        TimeSpan gracefulTimeout, CancellationToken cancellationToken)
-    {
-        var trackingFailure = cancellationToken.CanBeCanceled
-            ? await tracking.WaitAsync(cancellationToken).ConfigureAwait(false) : await tracking.ConfigureAwait(false);
-        var drain = module.WaitForDrainAsync();
-        if (trackingFailure is null && !drain.IsCompleted)
-        {
-            if (!await SharpLinkTimer.WaitAsync(drain, gracefulTimeout, _runtimeContext.TimeProvider, cancellationToken).ConfigureAwait(false))
-            {
-                module.CancelRemainingCalls();
-                await Task.Yield();
-                if (!drain.IsCompleted)
-                {
-                    module.MarkDrainTimedOut();
-                    return new SharpLinkAssemblyUnregisterResult
-                    { ReferencesReleased = false, RemainingCalls = module.RemainingCalls, RemainingStreams = module.RemainingStreams };
-                }
-            }
-        }
-        Exception? failure = null;
-        SharpLinkAssemblyUnregisterResult result = default!;
-        try { result = cancellationToken.CanBeCanceled ? await operation.WaitAsync(cancellationToken).ConfigureAwait(false)
-                : await operation.ConfigureAwait(false); }
-        catch (Exception exception)
-        {
-            if (!operation.IsCompleted) throw;
-            failure = PhysicalTaskFailureException.GetRaw(exception);
-        }
-        var observed = await observation.ConfigureAwait(false);
-        if (observed.Failure is not null) AddRetirementFailure(ref failure, observed.Failure);
-        ThrowRetirementFailure(failure);
-        return result;
     }
 
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
@@ -496,33 +419,9 @@ internal sealed partial class SharpLinkServer
         foreach (var index in order)
         {
             var pair = modules[index];
-            Task<SharpLinkAssemblyUnregisterResult> operation;
-            Task<(Exception? Failure, bool SupervisorOwned)> observation;
-            TaskCompletionSource<Exception?>? ready = null;
-            lock (_registryGate)
-            {
-                if (_unregisterOperations.TryGetValue(pair.Key, out var entry))
-                {
-                    if (!ReferenceEquals(entry.Module, pair.Value))
-                        throw new InvalidOperationException("Stop cannot adopt an operation for another module generation.");
-                    operation = entry.Task;
-                }
-                else if (pair.Value.State == SharpLinkDynamicModuleState.Released && pair.Value.RetirementOperation is { } completed)
-                    operation = completed;
-                else
-                {
-                    if (!_dynamicModules.TryGetValue(pair.Key, out var current) || !ReferenceEquals(current, pair.Value))
-                        throw new InvalidOperationException("The exact Stop module disappeared before retirement election.");
-                    pair.Value.TryBeginDraining();
-                    operation = StartRetirementLocked(pair.Key, pair.Value, stopOwned: true, out ready);
-                }
-                observation = pair.Value.RetirementObservation!;
-            }
-            Exception? cancellationFailure = null;
-            try { pair.Value.CancelRemainingCalls(); }
-            catch (Exception exception) { cancellationFailure = exception; }
-            ready?.TrySetResult(cancellationFailure);
-            if (ready is null && cancellationFailure is not null) AddRetirementFailure(ref failure, cancellationFailure);
+            var retirement = await GetShutdownRetirementAsync(pair.Key, pair.Value).ConfigureAwait(false);
+            var operation = retirement.Operation;
+            var observation = retirement.Observation;
             var observed = await JoinRetirementForStopAsync(pair.Key, pair.Value, operation, observation).ConfigureAwait(false);
             if (observed.Failure is not null) AddRetirementFailure(ref failure, observed.Failure);
             // Capture release BEFORE dropping the operation: a concurrent retry is not this outcome.
@@ -548,7 +447,7 @@ internal sealed partial class SharpLinkServer
         {
             released = module.State == SharpLinkDynamicModuleState.Released;
             // Only this actual join adopts a receipt-null outcome. Shutdown intent alone does not.
-            if (_unregisterOperations.TryGetValue(assembly, out var entry) &&
+            if (released && _unregisterOperations.TryGetValue(assembly, out var entry) &&
                 ReferenceEquals(entry.Task, operation) && ReferenceEquals(entry.Module, module))
                 _unregisterOperations.Remove(assembly);
         }

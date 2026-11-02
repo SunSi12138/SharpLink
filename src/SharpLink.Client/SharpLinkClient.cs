@@ -140,6 +140,7 @@ internal sealed partial class SharpLinkClient :
 
     public ValueTask StopAsync(CancellationToken cancellationToken = default)
     {
+        RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
         ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
         Task stopTask;
         lock (_stateGate)

@@ -65,6 +65,7 @@ internal sealed class ServerServiceModuleRegistry
         internal DynamicModuleTable(ServerServiceModuleRegistry owner) => _owner = owner;
 
         internal int Count => _owner._dynamicModules.Count;
+        internal void EnsureCapacity(int capacity) => _owner._dynamicModules.EnsureCapacity(capacity);
 
         internal IEnumerable<Assembly> Keys => _owner._dynamicModules.Keys;
 
@@ -104,6 +105,7 @@ internal sealed class ServerServiceModuleRegistry
         internal UnregisterOperationTable(ServerServiceModuleRegistry owner) => _owner = owner;
 
         internal int Count => _owner._unregisterOperations.Count;
+        internal void EnsureCapacity(int capacity) => _owner._unregisterOperations.EnsureCapacity(capacity);
 
         internal IEnumerable<KeyValuePair<Assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)>> Entries
             => _owner._unregisterOperations;
@@ -139,6 +141,7 @@ internal sealed class ServerServiceModuleRegistry
         internal DetachedModuleServiceTable(ServerServiceModuleRegistry owner) => _owner = owner;
 
         internal int Count => _owner._detachedModuleServices.Count;
+        internal void EnsureCapacity(int capacity) => _owner._detachedModuleServices.EnsureCapacity(capacity);
 
         internal IEnumerable<ServiceRegistration[]> Values => _owner._detachedModuleServices.Values.Select(static item => item.Services);
 

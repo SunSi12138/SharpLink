@@ -11,6 +11,7 @@ internal sealed partial class SharpLinkServer
 
     private void ThrowIfRegistrationCallbackReentry()
     {
+        RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
         ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
         for (var current = CurrentRegistrationPreparation.Value; current is not null; current = current.Previous)
             if (current.IsActive && ReferenceEquals(current.Server, this))
@@ -215,12 +216,20 @@ internal sealed partial class SharpLinkServer
             return true;
         }
 
+        // Caller scope restoration is scalar and synchronous. Resource ownership
+        // can then transfer to the suspended physical worker without leaving this
+        // caller's AsyncLocal pointing at an asynchronously disposed preparation.
+        internal void LeaveCallerScope()
+        {
+            if (ReferenceEquals(CurrentRegistrationPreparation.Value, this))
+                CurrentRegistrationPreparation.Value = Previous;
+        }
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
-            if (ReferenceEquals(CurrentRegistrationPreparation.Value, this))
-                CurrentRegistrationPreparation.Value = Previous;
+            LeaveCallerScope();
             List<Exception>? failures = null;
             try
             {

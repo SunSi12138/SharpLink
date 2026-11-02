@@ -403,6 +403,7 @@ internal sealed partial class SharpLinkServer
                     _serviceCleanupObserver ??= ObserveCleanupFailureAsync(_deferredServiceCleanupTask, "Services");
                 }
 
+                _server.RequestDynamicRetirementCancellation();
                 CancelForShutdown(_forceStopCts, "CallCancellation");
                 var closeSessionsTask = DisposeAllSessionsAsync();
                 var frameworkTasksTask = GetOrStartFrameworkDrain();
@@ -565,6 +566,7 @@ internal sealed partial class SharpLinkServer
             _server._admissionController?.StopAccepting();
             _server.BeginDrainDynamicModules();
             _server._frameworkTasks.Seal();
+            _server.RequestDynamicRetirementCancellation();
             CancelForShutdown(_forceStopCts, "CallCancellation");
             TrySignalCallsDrained();
             var callsDrained = _callsDrained.Task.IsCompletedSuccessfully;
