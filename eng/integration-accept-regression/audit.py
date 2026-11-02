@@ -511,6 +511,46 @@ def expanded(path, root, packages, sdk_pins, diagnostic_sdk_root=None, source_pi
     return origins
 
 
+@dataclass(frozen=True)
+class RidAssetDiagnostics:
+    package: str
+    relative: str
+    restored_member: bool
+    deps: dict
+    restored: dict | None
+
+    def public(self):
+        def hashed(value):
+            return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+        known_keys={'rid','assetType','assemblyVersion','fileVersion'}
+        left=set(self.deps);right=set(self.restored or {})
+        def keys(values):
+            return [{'key':key} if key in known_keys else {'unknownKeySHA256':hashed(key)} for key in sorted(values)[:16]]
+        parts=self.relative.split('/')
+        safe_relative=(self.restored_member and len(self.relative)<=512 and len(parts)>=4 and parts[0]=='runtimes'
+                       and all(re.fullmatch(r'[A-Za-z0-9_.+-]+',x) and x not in ('.','..') for x in parts))
+        output={'packageIdentitySHA256':hashed(self.package),'relativeSHA256':hashed(self.relative),
+                'restoredMember':self.restored_member,'depsKeyCount':len(left),'assetsKeyCount':len(right),
+                'depsKeys':keys(left),'assetsKeys':keys(right),'keysTruncated':len(left)>16 or len(right)>16,
+                'depsMetadataSHA256':hashed(self.deps),'assetsMetadataSHA256':hashed(self.restored),
+                'commonKnownFieldsEqual':{key:self.deps[key]==self.restored[key] for key in sorted(left&right&known_keys)}}
+        # Package identity already came from audited official Integration assets.
+        if len(self.package)<=256 and re.fullmatch(r'[A-Za-z0-9_.+-]+/[A-Za-z0-9_.+-]+',self.package):output['package']=self.package
+        if safe_relative:output['knownPackageRelative']=self.relative
+        return output
+
+
+def require_rid_metadata(identity,relative,entry,restored_targets):
+    try:
+        require(relative in restored_targets and entry==restored_targets[relative], 'Unbound RID-specific runtime asset')
+    except ValueError as original:
+        try:
+            original.rid_asset=RidAssetDiagnostics(identity,relative,relative in restored_targets,entry,restored_targets.get(relative))
+        except BaseException as diagnostic:
+            raise BaseExceptionGroup('Original RID rejection and diagnostic failure',[original,diagnostic])
+        raise
+
+
 def built(root,packages,expected_packages):
     output=root/Path(PROJECTS[ENTRY]).parent/'bin/Release/net10.0'
     assets=read_json(root/Path(PROJECTS[ENTRY]).parent/'obj/project.assets.json')
@@ -538,8 +578,7 @@ def built(root,packages,expected_packages):
         # SDK WriteRuntimeTargets preserves the asset directory in both
         # DestinationSubDirectory and DestinationSubPath for copy-local output.
         for relative,entry in targets[identity].get('runtimeTargets',{}).items():
-            require(relative in source_targets[identity].get('runtimeTargets',{}) and entry==source_targets[identity]['runtimeTargets'][relative],
-                    'Unbound RID-specific runtime asset')
+            require_rid_metadata(identity,relative,entry,source_targets[identity].get('runtimeTargets',{}))
             parts=relative.split('/')
             require(len(parts)>=4 and parts[0]=='runtimes' and all(x not in ('','..','.') for x in parts)
                     and '\\' not in relative and entry.get('rid')==parts[1] and entry.get('assetType') in ('runtime','native'),

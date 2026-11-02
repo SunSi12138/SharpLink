@@ -333,6 +333,35 @@ class FullGraphAudit(unittest.TestCase):
    with patch.object(audit.ProjectEdgeDiagnostics,'public',side_effect=RuntimeError('format failed')):
     self.assertEqual(run.finish(lane,errors,writer=lambda *args,**kwargs:None,fallback=lambda *args:None),1)
    self.assertIs(errors[0],original);self.assertIsInstance(errors[1],RuntimeError)
+ def test_rid_diagnostic_version_fields_still_fail_authoritative_predicate(self):
+  path='runtimes/linux-x64/native/libexample.so';base={'rid':'linux-x64','assetType':'native'}
+  audit.require_rid_metadata('Example/1.0.0',path,base,{path:base})
+  for changes in ({'fileVersion':'1.2.3.4'},{'assemblyVersion':'1.2.3.4'},{'rid':'other'},{'assetType':'runtime'}):
+   actual=dict(base,**changes)
+   with self.assertRaises(ValueError) as caught:audit.require_rid_metadata('Example/1.0.0',path,actual,{path:base})
+   detail=caught.exception.rid_asset.public();self.assertEqual(detail['knownPackageRelative'],path)
+   self.assertEqual(detail['package'],'Example/1.0.0');self.assertTrue(detail['restoredMember'])
+   self.assertIn('ridAsset',run.failure_leaves([caught.exception],'build-baseline')[0])
+ def test_rid_diagnostic_unknown_escape_and_keys_are_hash_only_without_reads(self):
+  for relative,mapping in [('SECRET/path',{}),('../SECRET/path',{'../SECRET/path':{}}),('/SECRET/path',{'/SECRET/path':{}})]:
+   with patch.object(Path,'read_bytes',side_effect=AssertionError('must not read FS')):
+    with self.assertRaises(ValueError) as caught:audit.require_rid_metadata('SECRET/TOKEN/path',relative,{'SECRET-KEY':'SECRET-VALUE'},mapping)
+    detail=caught.exception.rid_asset.public()
+   output=json.dumps(detail);self.assertNotIn('SECRET',output);self.assertNotIn('knownPackageRelative',detail);self.assertNotIn('package',detail)
+  path='runtimes/linux/native/test.so';many={f'SECRET-{n}':n for n in range(20)}
+  with self.assertRaises(ValueError) as caught:audit.require_rid_metadata('Example/1.0.0',path,many,{})
+  detail=caught.exception.rid_asset.public();self.assertEqual(detail['depsKeyCount'],20);self.assertEqual(len(detail['depsKeys']),16);self.assertTrue(detail['keysTruncated'])
+ def test_rid_diagnostic_creation_and_formatting_fail_after_original(self):
+  with patch.object(audit,'RidAssetDiagnostics',side_effect=RuntimeError('diagnostic failure')):
+   with self.assertRaises(BaseExceptionGroup) as caught:audit.require_rid_metadata('Example/1','runtimes/linux/native/test.so',{}, {})
+  self.assertIsInstance(caught.exception.exceptions[0],ValueError);self.assertIsInstance(caught.exception.exceptions[1],RuntimeError)
+  with self.assertRaises(ValueError) as caught:audit.require_rid_metadata('Example/1','runtimes/linux/native/test.so',{}, {})
+  original=caught.exception
+  with tempfile.TemporaryDirectory() as tmp:
+   lane=SimpleNamespace(work=Path(tmp),manifest_sha='synthetic',stage='build-baseline',results=[],active_scope=None,active_uid=None);errors=[original]
+   with patch.object(audit.RidAssetDiagnostics,'public',side_effect=RuntimeError('format failure')):
+    self.assertEqual(run.finish(lane,errors,writer=lambda *args,**kwargs:None,fallback=lambda *args:None),1)
+   self.assertIs(errors[0],original);self.assertIsInstance(errors[1],RuntimeError)
  def synthetic_build(self,root,packages):
   output=root/Path(audit.PROJECTS[a.ASSEMBLY]).parent/'bin/Release/net10.0';output.mkdir(parents=True)
   assets={'libraries':{},'targets':{'net10.0':{}}};libs={};targets={}

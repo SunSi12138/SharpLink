@@ -628,6 +628,9 @@ def failure_leaves(errors, stage, scope=None, uid=None):
             diagnostic=getattr(error,'origin_diagnostics',None)
             if type(diagnostic) is audit.ImportDiagnostics:
                 row['importOrigins']=diagnostic.public()
+        rid_asset=getattr(error,'rid_asset',None)
+        if type(rid_asset) is audit.RidAssetDiagnostics:
+            row['ridAsset']=rid_asset.public()
         project_edges=getattr(error,'project_edges',None)
         if type(project_edges) is audit.ProjectEdgeDiagnostics:
             row['projectEdges']=project_edges.public()
