@@ -526,6 +526,10 @@ internal sealed partial class SharpLinkClient
                 transport = null;
                 PublishClientReadiness();
                 EnsureMinimumReadyEndpoints();
+                // Handshake manifest publication ran before this connection entered the Ready pool.
+                // The original connect task owns this cold refresh after pool ownership transfer;
+                // it schedules tracked Bind tasks, but does not await their remote confirmations.
+                await _client.RefreshContractBindingsAfterReadyAsync().ConfigureAwait(false);
             }
             catch (Exception exception)
             {
