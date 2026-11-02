@@ -205,6 +205,52 @@ def cache_audit(packages):
     return identities
 
 
+def restore_reference_projection(edges):
+    # NuGet GetRestoreProjectReferencesTask emits only missing/true
+    # ReferenceOutputAssembly; build traversal remains the full pinned 19 graph.
+    result=[]
+    for edge in edges:
+        output=edge['attributes'].get('ReferenceOutputAssembly','true')
+        require(output.lower() in ('true','false'),'Unsupported pinned ReferenceOutputAssembly')
+        if output.lower()=='true':result.append(edge)
+    return result
+
+
+@dataclass(frozen=True)
+class ProjectEdgeDiagnostics:
+    project_name: str
+    expected: tuple
+    optional: tuple
+    actual: tuple
+
+    def public(self):
+        project=CATALOG['projects'][self.project_name]
+        known={v['path']:name for name,v in CATALOG['projects'].items()}
+        def safe(path):
+            # No FS access and no uncontrolled filename/path disclosure.
+            if path in known:
+                row=CATALOG['projects'][known[path]]
+                return {'project':known[path],'relative':path,'sourceSHA256':row['sha256']}
+            return {'category':'unknown-project-relative','pathSHA256':hashlib.sha256(path.encode()).hexdigest()}
+        missing=sorted(set(self.expected)-set(self.actual))
+        extra=sorted(set(self.actual)-set(self.expected)-set(self.optional))
+        return {'project':self.project_name,'relative':project['path'],'sourceSHA256':project['sha256'],
+                'expectedCount':len(self.expected),'optionalCount':len(self.optional),'actualCount':len(self.actual),
+                'missingCount':len(missing),'extraCount':len(extra),
+                'missing':[safe(x) for x in missing[:16]],'extra':[safe(x) for x in extra[:16]],
+                'truncated':len(missing)>16 or len(extra)>16}
+
+
+def require_project_edges(name,mandatory,optional,refs):
+    try:
+        require(mandatory<=refs<=mandatory|optional,'Actual original project edges outside precise conditional graph')
+    except ValueError as original:
+        try:original.project_edges=ProjectEdgeDiagnostics(name,tuple(sorted(mandatory)),tuple(sorted(optional)),tuple(sorted(refs)))
+        except BaseException as diagnostic:
+            raise BaseExceptionGroup('Original edge rejection and diagnostic failure',[original,diagnostic])
+        raise
+
+
 def restored(root, packages):
     edges=static_graph(root)
     expected={str(Path(path).parent/'obj/project.assets.json') for path in PROJECTS.values()}
@@ -229,9 +275,10 @@ def restored(root, packages):
         require({Path(x).resolve() for x in value['packageFolders']}=={packages.resolve()},'Unexpected original package folder')
         require(set(restore['frameworks'])=={framework},'Wrong original restored framework')
         refs={Path(x['projectPath']).resolve().relative_to(root).as_posix() for x in restore['frameworks'][framework].get('projectReferences',{}).values()}
-        mandatory={x['path'] for x in edges[name] if 'Condition' not in x['attributes']}
-        optional={x['path'] for x in edges[name] if x['attributes'].get('Condition')=="'$(PublishAot)' != 'true'"}
-        require(mandatory<=refs<=mandatory|optional,'Actual original project edges outside precise conditional graph')
+        projected=restore_reference_projection(edges[name])
+        mandatory={x['path'] for x in projected if 'Condition' not in x['attributes']}
+        optional={x['path'] for x in projected if x['attributes'].get('Condition')=="'$(PublishAot)' != 'true'"}
+        require_project_edges(name,mandatory,optional,refs)
         actual_edges[name]=sorted(refs)
         for identity,library in value['libraries'].items():
             identifier,version=identity.rsplit('/',1)

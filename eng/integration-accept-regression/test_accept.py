@@ -235,7 +235,7 @@ class FullGraphAudit(unittest.TestCase):
   for identity in names:cache[identity.lower()]={'canonicalContentHash':canonical,'archiveSHA256':'synthetic'}
   for name,item in a.CATALOG['projects'].items():
    project=root/item['path'];project.parent.mkdir(parents=True,exist_ok=True)
-   refs={str(root/x['path']):{'projectPath':str(root/x['path'])} for x in item['references']}
+   refs={str(root/x['path']):{'projectPath':str(root/x['path'])} for x in audit.restore_reference_projection(item['references'])}
    libraries={key:{'type':'package','path':key.lower(),'sha512':canonical} for key in names} if name==a.ASSEMBLY else {}
    value={'project':{'restore':{'projectPath':str(project),'projectName':item['restoreName'],'sources':{'https://api.nuget.org/v3/index.json':{}},
                                 'frameworks':{item['framework']:{'projectReferences':refs}}}},
@@ -251,8 +251,10 @@ class FullGraphAudit(unittest.TestCase):
     result=audit.restored(root,packages);self.assertEqual(len(result['projectEdges']),19)
     path,value=documents['SharpLink.Sdk'];saved=copy.deepcopy(value)
     refs=value['project']['restore']['frameworks']['net10.0']['projectReferences']
-    refs.pop(str(root/'src/SharpLink.Generator/SharpLink.Generator.csproj'));path.write_text(json.dumps(value))
-    audit.restored(root,packages) # Only the pinned conditional generator edge may be omitted.
+    generator=str(root/'src/SharpLink.Generator/SharpLink.Generator.csproj')
+    self.assertNotIn(generator,refs)
+    refs[generator]={'projectPath':generator};path.write_text(json.dumps(value))
+    with self.assertRaises(ValueError):audit.restored(root,packages) # false assembly reference is forbidden, not optional.
     value=copy.deepcopy(saved);value['project']['restore']['frameworks']['net10.0']['projectReferences']={};path.write_text(json.dumps(value))
     with self.assertRaises(ValueError):audit.restored(root,packages)
     path.write_text(json.dumps(saved));path,value=documents[a.ASSEMBLY];saved=copy.deepcopy(value)
@@ -293,6 +295,44 @@ class FullGraphAudit(unittest.TestCase):
      path.write_text(json.dumps(bad))
      with self.assertRaises(ValueError):audit.restored(root,packages)
     path.write_text(json.dumps(good));audit.restored(root,packages)
+ def test_restore_projection_is_exact_false_exclusion_not_optional_edges(self):
+  full=[edge for project in a.CATALOG['projects'].values() for edge in project['references']]
+  projected=audit.restore_reference_projection(full)
+  self.assertEqual(len(full),60);self.assertEqual(len(projected),44)
+  self.assertTrue(all(edge['attributes'].get('ReferenceOutputAssembly','true').lower()=='true' for edge in projected))
+  sdk=audit.restore_reference_projection(a.CATALOG['projects']['SharpLink.Sdk']['references'])
+  self.assertEqual([x['path'] for x in sdk],['src/SharpLink.Abstractions/SharpLink.Abstractions.csproj'])
+  source={'path':'example.csproj','attributes':{'ReferenceOutputAssembly':'TRUE'}}
+  self.assertEqual(audit.restore_reference_projection([source]),[source])
+  for flag in ('unknown','1',''):
+   with self.assertRaises(ValueError):audit.restore_reference_projection([{'path':'example','attributes':{'ReferenceOutputAssembly':flag}}])
+ def test_edge_diagnostics_are_bounded_safe_and_do_not_accept_unknown(self):
+  name='SharpLink.Sdk';known='src/SharpLink.Abstractions/SharpLink.Abstractions.csproj'
+  with self.assertRaises(ValueError) as caught:audit.require_project_edges(name,{known},set(),{'SECRET-UNKNOWN-PATH'})
+  original=caught.exception;detail=original.project_edges.public()
+  self.assertEqual((detail['missingCount'],detail['extraCount']),(1,1))
+  self.assertEqual(detail['missing'][0]['relative'],known)
+  self.assertEqual(detail['extra'][0]['category'],'unknown-project-relative')
+  self.assertNotIn('SECRET-UNKNOWN-PATH',json.dumps(run.failure_leaves([original],'restore-baseline')))
+  self.assertEqual(detail['sourceSHA256'],a.CATALOG['projects'][name]['sha256'])
+  unknown={f'SECRET-{i}' for i in range(20)}
+  with self.assertRaises(ValueError) as caught:audit.require_project_edges(name,set(),set(),unknown)
+  detail=caught.exception.project_edges.public();self.assertEqual(len(detail['extra']),16);self.assertEqual(detail['extraCount'],20);self.assertTrue(detail['truncated'])
+  audit.require_project_edges(name,{known},set(),{known})
+ def test_edge_diagnostic_failure_preserves_original_private_body(self):
+  name='SharpLink.Sdk'
+  with patch.object(audit,'ProjectEdgeDiagnostics',side_effect=RuntimeError('diagnostic failed')):
+   with self.assertRaises(BaseExceptionGroup) as caught:audit.require_project_edges(name,{'missing'},set(),set())
+  self.assertIsInstance(caught.exception.exceptions[0],ValueError)
+  self.assertIsInstance(caught.exception.exceptions[1],RuntimeError)
+  with self.assertRaises(ValueError) as caught:audit.require_project_edges(name,{'missing'},set(),set())
+  original=caught.exception
+  with tempfile.TemporaryDirectory() as tmp:
+   lane=SimpleNamespace(work=Path(tmp),manifest_sha='synthetic',stage='restore-baseline',results=[],active_scope=None,active_uid=None)
+   errors=[original]
+   with patch.object(audit.ProjectEdgeDiagnostics,'public',side_effect=RuntimeError('format failed')):
+    self.assertEqual(run.finish(lane,errors,writer=lambda *args,**kwargs:None,fallback=lambda *args:None),1)
+   self.assertIs(errors[0],original);self.assertIsInstance(errors[1],RuntimeError)
  def synthetic_build(self,root,packages):
   output=root/Path(audit.PROJECTS[a.ASSEMBLY]).parent/'bin/Release/net10.0';output.mkdir(parents=True)
   assets={'libraries':{},'targets':{'net10.0':{}}};libs={};targets={}
