@@ -47,9 +47,9 @@ internal sealed class ContractScopedRouteSelectionFixture
             builder =>
             {
                 Configure(builder);
-                builder.UseLoadBalancing(strategy);
+                if (selector is null) builder.UseLoadBalancing(strategy);
+                else builder.UseEndpointSelector(selector);
                 if (admission is not null) builder.UseEndpointAdmission(admission);
-                if (selector is not null) builder.UseEndpointSelector(selector);
             });
         await ObserveAsync(Own("connect", Client.ConnectAsync().AsTask()));
         await ObserveAsync(Own("transport-readiness", Client.WaitForReadinessAsync(3).AsTask()));
@@ -153,7 +153,6 @@ internal sealed class ContractScopedRouteSelectionFixture
 
     private static void Configure(SharpClientBuilder builder)
     {
-        builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);
         builder.UseCluster(options =>
         {
             options.MinReadyEndpoints = 3;

@@ -140,7 +140,7 @@ internal sealed partial class ContractScopedRouteHandoffFixture
         _peers = [new(_transports[0].Connection, holdDispose: true), new(_transports[1].Connection), new(_transports[2].Connection)];
         void ConfigureRetry(SharpClientBuilder builder)
         {
-            Configure(builder);
+            Configure(builder, useBuiltIn: false);
             builder.UseTimeProvider(_retryClock);
             builder.UseRetry(options => { options.MaxAttempts = 2; options.InitialBackoff = TimeSpan.Zero; options.MaxBackoff = TimeSpan.Zero; options.JitterRatio = 0; });
             builder.UseRetry(_oneRetry);

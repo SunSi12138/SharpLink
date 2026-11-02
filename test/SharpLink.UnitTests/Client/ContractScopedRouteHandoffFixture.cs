@@ -237,9 +237,9 @@ internal sealed partial class ContractScopedRouteHandoffFixture
         }
     }
 
-    private static void Configure(SharpClientBuilder builder)
+    private static void Configure(SharpClientBuilder builder, bool useBuiltIn = true)
     {
-        builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);
+        if (useBuiltIn) builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);
         builder.UseCluster(options =>
         {
             options.MinReadyEndpoints = 2;

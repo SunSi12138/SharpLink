@@ -84,9 +84,13 @@ public sealed class ContractScopedRouteProtocolControls
             void ConfigureFixture(SharpClientBuilder builder)
             {
                 Configure(builder);
-                if (callbacks is null) return;
-                builder.UseEndpointSelector(callbacks);
-                builder.UseEndpointAdmission(callbacks);
+                if (callbacks is null)
+                    builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);
+                else
+                {
+                    builder.UseEndpointSelector(callbacks);
+                    builder.UseEndpointAdmission(callbacks);
+                }
             }
             _client = dynamicResolver
                 ? ClientBuilderTestHelper.BuildDynamic(new FixedResolver(new(1, endpoints)),
@@ -175,7 +179,6 @@ public sealed class ContractScopedRouteProtocolControls
 
         private static void Configure(SharpClientBuilder builder)
         {
-            builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);
             builder.UseCluster(options =>
             {
                 options.MinReadyEndpoints = 2;

@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -25,6 +26,46 @@ r = module('route59_results_test', ROOT / 'eng/route59-results.py')
 runner = module('route59_runner_test', ROOT / 'eng/run-route59-controls.py')
 accepted = module('accepted_retirement_tests', ROOT / 'eng/tests/test_retirement_results.py')
 CATALOG = r.read_json(ROOT / 'eng/route59-controls.json')
+
+
+def fixture_configuration_sources():
+    return {path.name: path.read_text() for path in
+            (ROOT / 'test/SharpLink.UnitTests/Client').glob('ContractScopedRoute*.cs')}
+
+
+def verify_fixture_configuration_sources(sources):
+    """Narrow source-shape guard, not C# parsing, compilation or runtime proof."""
+    compact = {name: re.sub(r'\s+', '', source) for name, source in sources.items()}
+    common = 'privatestaticvoidConfigure(SharpClientBuilderbuilder){builder.UseCluster('
+    for name in ('SelectionFixture', 'LoadFixture'):
+        source = compact['ContractScopedRoute' + name + '.cs']
+        r.require(common in source, 'Fixture common configuration must not select a policy')
+        r.require('if(selectorisnull)builder.UseLoadBalancing(strategy);elsebuilder.UseEndpointSelector(selector);' in source,
+                  'Fixture must choose exactly one selection configuration')
+        r.require(source.count('builder.UseLoadBalancing(') == source.count('builder.UseEndpointSelector(') == 1,
+                  'Unexpected extra fixture selection configuration')
+    protocol = compact['ContractScopedRouteProtocolControls.cs']
+    r.require(common in protocol and
+              'if(callbacksisnull)builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);else{builder.UseEndpointSelector(callbacks);builder.UseEndpointAdmission(callbacks);}' in protocol,
+              'Protocol fixture must preserve explicit RR or custom callbacks exclusively')
+    r.require(protocol.count('builder.UseLoadBalancing(') == protocol.count('builder.UseEndpointSelector(') == 1,
+              'Unexpected extra protocol selection configuration')
+    handoff = compact['ContractScopedRouteHandoffFixture.cs']
+    r.require('privatestaticvoidConfigure(SharpClientBuilderbuilder,booluseBuiltIn=true){if(useBuiltIn)builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin);builder.UseCluster(' in handoff,
+              'Handoff common must preserve original RR by default')
+    r.require(handoff.count('builder.UseLoadBalancing(') == 1 and 'builder.UseEndpointSelector(' not in handoff,
+              'Unexpected extra handoff selection configuration')
+    retry = compact['ContractScopedRouteRetryFixture.cs']
+    r.require(retry.count('builder.UseEndpointSelector(_retrySelector);') == 1 and 'builder.UseLoadBalancing(' not in retry,
+              'Retry fixture must keep its original custom selector only')
+    expected = {'ContractScopedRouteHandoffFixture.cs': ['Configure(builder);'],
+                'ContractScopedRouteGenerationControls.cs': ['Configure(builder);'],
+                'ContractScopedRouteRetryFixture.cs': ['Configure(builder,useBuiltIn:false);']}
+    actual = {name: re.findall(r'(?<![A-Za-z])Configure\(builder[^)]*\);', source)
+              for name, source in compact.items()
+              if 'partialclassContractScopedRouteHandoffFixture' in source}
+    r.require({name: calls for name, calls in actual.items() if calls} == expected,
+              'Handoff partial caller graph changed or retry inherited builtin policy')
 
 
 class Route59Tests(unittest.TestCase):
@@ -62,6 +103,37 @@ class Route59Tests(unittest.TestCase):
 
     def discover(self, cases, rows):
         return r.discovery(dict(schemaVersion=1, tests=rows), cases, ROOT, CATALOG['assemblyFullName'])
+
+    def test_fixture_configuration_exclusive_source_shape(self):
+        verify_fixture_configuration_sources(fixture_configuration_sources())
+
+    def test_fixture_configuration_rejects_common_builtin_reintroduction(self):
+        sources = fixture_configuration_sources()
+        for name in ('SelectionFixture', 'LoadFixture', 'ProtocolControls'):
+            with self.subTest(fixture=name):
+                changed = dict(sources); key = 'ContractScopedRoute' + name + '.cs'
+                changed[key] = changed[key].replace('builder.UseCluster(options =>',
+                    'builder.UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin); builder.UseCluster(options =>', 1)
+                with self.assertRaises(ValueError): verify_fixture_configuration_sources(changed)
+
+    def test_fixture_configuration_rejects_nonexclusive_strategy(self):
+        for name in ('SelectionFixture', 'LoadFixture'):
+            with self.subTest(fixture=name):
+                changed = fixture_configuration_sources(); key = 'ContractScopedRoute' + name + '.cs'
+                changed[key] = changed[key].replace('if (selector is null) builder.UseLoadBalancing(strategy);',
+                    'builder.UseLoadBalancing(strategy);')
+                with self.assertRaises(ValueError): verify_fixture_configuration_sources(changed)
+
+    def test_fixture_configuration_preserves_all_partial_default_callers(self):
+        mutations = (
+            ('RetryFixture', 'Configure(builder, useBuiltIn: false);', 'Configure(builder);'),
+            ('HandoffFixture', 'bool useBuiltIn = true', 'bool useBuiltIn = false'),
+            ('GenerationControls', 'Configure(builder);', 'Configure(builder, useBuiltIn: false);'))
+        for name, old, new in mutations:
+            with self.subTest(fixture=name):
+                changed = fixture_configuration_sources(); key = 'ContractScopedRoute' + name + '.cs'
+                self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
+                with self.assertRaises(ValueError): verify_fixture_configuration_sources(changed)
 
     def test_actual_catalog_source_spans_graph_budget_and_pins(self):
         r.verify_catalog(ROOT, CATALOG)
