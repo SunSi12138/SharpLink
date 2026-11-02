@@ -234,8 +234,40 @@ public sealed class ContractScopedRouteProtocolControls
         {
             List<Exception> failures = [];
             if (primary is not null) failures.Add(primary);
-            // Setup may fail before both frame readers completed. Retain any still-pending
-            // original Bind owners before Stop can consume/remove their registrations.
+            // Setup can fail while the actual StartContractBinding scheduler is still
+            // before its Task.Yield continuation. Join that real producer before taking
+            // the original Bind snapshot; Stop's indirect join is not a task identity.
+            if (_client is not null)
+            {
+                var schedulerCaptureSucceeded = false;
+                try
+                {
+                    var supervisor = Read<FrameworkTaskSupervisor>(_client, "_frameworkTasks");
+                    var gate = Read<Lock>(supervisor, "_gate");
+                    var active = Read<Dictionary<Task, FrameworkTaskRegistration>>(supervisor, "_active");
+                    lock (gate)
+                        foreach (var pair in active)
+                            if (pair.Value.Operation == "StartContractBinding" && !_operations.Any(operation =>
+                                operation.Stage == "original binding scheduler" && ReferenceEquals(operation.Task, pair.Key)))
+                                Own("original binding scheduler", pair.Key);
+                    schedulerCaptureSucceeded = true;
+                }
+                catch (Exception error) { failures.Add(error); }
+                var schedulers = _operations.Where(operation => operation.Stage == "original binding scheduler").ToArray();
+                foreach (var scheduler in schedulers) await JoinAsync(scheduler, failures);
+                if (!schedulerCaptureSucceeded || schedulers.Any(operation => !operation.Task.IsCompleted))
+                {
+                    lock (Quarantined) Quarantined.Add(this);
+                    failures.Add(new InvalidOperationException(
+                        "Original binding producer exit is unknown; fixture roots retained. Isolate/terminate this test process."));
+                    foreach (var operation in _operations.Where(operation => operation.Task.IsCompleted).ToArray())
+                        await JoinAsync(operation, failures);
+                    throw new AggregateException("Body first, then independent original producer failures.", failures);
+                }
+                foreach (var scheduler in schedulers) await JoinAsync(scheduler, failures);
+            }
+            // Scheduler producers are now terminal; capture their actual Bind tasks before
+            // Stop can consume/remove registrations, even if frame-reader setup failed.
             if (_client is not null)
             {
                 try
@@ -333,14 +365,32 @@ public sealed class ContractScopedRouteProtocolControls
         private static async Task ExpectAsync(OwnedOperation operation, Func<Exception, bool> expected)
         {
             try { await operation.Task.WaitAsync(Bound); }
-            catch (Exception error)
+            catch (Exception observerFailure)
             {
-                Ensure(operation.Task.IsCompleted, "expected outcome must be the source task's real exit");
-                if (operation.Task.Exception is { } graph)
-                    Ensure(graph.InnerExceptions.Count == 1 && ReferenceEquals(graph.InnerExceptions[0], error),
-                        "an expected failure cannot hide sibling task faults or an empty AggregateException");
-                Ensure(expected(error), $"unexpected original outcome at {operation.Stage}: {error}");
-                operation.Reported = true;
+                if (!operation.Task.IsCompleted) throw; // Unknown source stays owned for cleanup/quarantine.
+                var sourceFailure = await CaptureTerminalFailureAsync(operation.Task);
+                if (sourceFailure is null) throw; // A late success cannot erase the observation timeout.
+                var sourceGraph = operation.Task.Exception;
+                var sourceRoot = sourceGraph is { InnerExceptions.Count: 1 }
+                    ? sourceGraph.InnerExceptions[0] : sourceFailure;
+                Exception? validationFailure = null;
+                try
+                {
+                    Ensure(sourceGraph is null || sourceGraph.InnerExceptions.Count == 1,
+                        "an expected outcome cannot hide sibling roots or an empty source graph");
+                    Ensure(sourceRoot is not AggregateException { InnerExceptions.Count: 0 },
+                        "an empty aggregate is not an expected source outcome");
+                    Ensure(expected(sourceRoot), $"Unexpected original outcome at {operation.Stage}.");
+                }
+                catch (Exception validation) { validationFailure = validation; }
+                operation.Reported = true; // Every rejected terminal graph is included below.
+                var timedOut = IsObserverTimeout(operation.Task, observerFailure);
+                if (validationFailure is not null)
+                    throw new AggregateException($"Original outcome validation failed at {operation.Stage}.",
+                        timedOut ? new[] { observerFailure, sourceFailure, validationFailure } : new[] { sourceFailure, validationFailure });
+                if (timedOut)
+                    throw new AggregateException($"Observation timeout, then actual original outcome at {operation.Stage}.",
+                        observerFailure, sourceFailure);
                 return;
             }
             throw new InvalidOperationException($"Expected failure at {operation.Stage}.");
