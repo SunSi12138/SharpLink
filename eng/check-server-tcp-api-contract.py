@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""External consumer compilation gate for 3.0's TCP, Builder, logger and legacy-sizing APIs.
+"""External consumer compilation gate for 3.0 public API boundaries.
 
 This compiles a fresh project *outside* the repository against the real production
 projects. The negative compilations must fail for the removed Server overloads;
@@ -9,6 +9,8 @@ and fluent, while external subclasses must fail specifically with CS0509.
 Explicit logger configuration and Hosting registration remain public, while each
 Host-only logger fallback must be inaccessible to the external consumer.
 The real generated sizing interfaces stay public; the removed legacy helper must fail to compile.
+External client decorators forward canonical lifecycle members and issued handles.
+Issued-handle constructors stay internal, and codec resolution takes an explicit Assembly.
 No runtime socket or benchmark workload runs.
 """
 
@@ -36,12 +38,15 @@ using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Hosting;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 using SharpLink.Server;
 public static class ConsumerProbe
 {
     public static void Probe()
     {
 """
+CLIENT_DECORATORS = (ROOT / "eng/external-api-probes/ClientDecorators.cs").read_text(encoding="utf-8")
+
 SUFFIX = """
     }
 }
@@ -62,6 +67,9 @@ POSITIVE = """
         _ = (ISharpLinkServerBuilder)SharpLinkServerBuilder.Create();
         using var runtime = new SharpLinkRuntimeContextBuilder().Build();
         _ = runtime.Codecs.GetCodec<int>();
+        _ = RpcGeneratedCodecResolver.GetProvider(runtime, typeof(ConsumerProbe).Assembly);
+        _ = (ISharpLinkClient)new ExternalClientDecorator(null!);
+        _ = (ISharpLinkMultiClusterClient)new ExternalMultiClusterDecorator(null!);
         _ = SharpClientBuilder.Create().UseLoggerFactory(NullLoggerFactory.Instance);
         _ = SharpLinkServerBuilder.Create().UseLoggerFactory(NullLoggerFactory.Instance);
         _ = SharpLinkMultiClusterClientBuilder.Create().UseLoggerFactory(NullLoggerFactory.Instance);
@@ -229,6 +237,39 @@ def verify_removed_legacy_sizing(folder: Path) -> None:
         print(f"PASS: external legacy sizing {expression} rejected with CS0234")
 
 
+def verify_issued_handle_constructors(folder: Path) -> None:
+    for type_name, arguments, expression in (
+        ("RpcProxy", 2, "new RpcProxy<IService>(null!, null!)"),
+        ("RpcLocalContract", 4, "new RpcLocalContract(System.Guid.NewGuid(), 1, 1, default)"),
+    ):
+        rejected = compile_project(f"        _ = {expression};", folder)
+        details = rejected.stdout + rejected.stderr
+        errors = re.findall(r"(?m)^.*\berror\s+[A-Z]+\d+.*$", details)
+        if rejected.returncode == 0 or not errors or any(
+            not re.search(r"Probe\.cs\(\d+,\d+\): error CS1729:", error)
+            or type_name not in error
+            or f"{arguments} arguments" not in error
+            for error in errors
+        ):
+            raise RuntimeError(f"Expected the real {type_name} constructor arity to remain inaccessible:\n" + details)
+        print(f"PASS: external {type_name} construction rejected with CS1729")
+
+
+def verify_removed_type_resolver_alias(folder: Path) -> None:
+    rejected = compile_project(
+        "        _ = RpcGeneratedCodecResolver.GetProvider(null!, typeof(ConsumerProbe));", folder
+    )
+    details = rejected.stdout + rejected.stderr
+    errors = re.findall(r"(?m)^.*\berror\s+[A-Z]+\d+.*$", details)
+    if rejected.returncode == 0 or not errors or any(
+        not re.search(r"Probe\.cs\(\d+,\d+\): error CS1503:", error)
+        or "System.Type" not in error or "System.Reflection.Assembly" not in error
+        for error in errors
+    ):
+        raise RuntimeError("Expected only Type-to-Assembly rejection for the removed resolver alias:\n" + details)
+    print("PASS: external Type resolver alias rejected with CS1503")
+
+
 def main() -> None:
     verify_static_contract()
     verify_no_legacy_server_calls_in_checkout()
@@ -256,7 +297,7 @@ def main() -> None:
         if restored.returncode:
             raise RuntimeError("External consumer restore failed:\n" + restored.stdout + restored.stderr)
 
-        passed = compile_project(POSITIVE, folder)
+        passed = compile_project(POSITIVE, folder, declarations=CLIENT_DECORATORS)
         if passed.returncode:
             raise RuntimeError("Typed Server, Client and standalone Context API compile failed:\n"
                                + passed.stdout + passed.stderr)
@@ -277,7 +318,9 @@ def main() -> None:
         verify_sealed_builders(folder)
         verify_host_only_logger_fallbacks(folder)
         verify_removed_legacy_sizing(folder)
-    print("PASS: 3.0 TCP, Builder, logger and legacy-sizing external-API contracts")
+        verify_issued_handle_constructors(folder)
+        verify_removed_type_resolver_alias(folder)
+    print("PASS: 3.0 TCP, Builder, logger, sizing, lifecycle, issued-handle and resolver external-API contracts")
 
 
 if __name__ == "__main__":

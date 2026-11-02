@@ -618,8 +618,10 @@ public static class Program
 
         var manifests = contract.Assembly.GetCustomAttributes(typeof(SharpLinkGeneratedAssemblyManifestAttribute), inherit: false);
         if (manifests.Length != 1 || manifests[0] is not SharpLinkGeneratedAssemblyManifestAttribute manifest ||
-            manifest.ApiVersion != 5 || manifest.ProtocolVersion != 2 || string.IsNullOrEmpty(manifest.AbiIdentity))
-            throw new InvalidOperationException("Generation-control package must carry exact generated API 5 metadata.");
+            manifest.ApiVersion != SharpLinkGeneratedManifestVersions.Api ||
+            manifest.ProtocolVersion != SharpLinkGeneratedManifestVersions.Protocol ||
+            !string.Equals(manifest.AbiIdentity, SharpLinkGeneratedManifestVersions.AbiIdentity, StringComparison.Ordinal))
+            throw new InvalidOperationException("Generation-control package must carry the current exact generated API, protocol and ABI metadata.");
         if (typeof(IService).IsAssignableFrom(typeof(ISharpLinkGenerationProvider)) ||
             typeof(ISharpLinkGenerationProvider).GetCustomAttributes(typeof(RpcContractAttribute), inherit: false).Length != 0)
             throw new InvalidOperationException("Generation provider must remain a local SPI, never a remote contract.");

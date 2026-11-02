@@ -15,8 +15,9 @@ internal static class ExternalApiBoundaryProbe
         VerifyOwnerResolverForwarding();
         VerifyOwnerResolverFailures();
         VerifyGeneratedSizingBoundary();
+        VerifyRequiredLifecycleMembers();
         VerifyExternalInheritance();
-        Console.WriteLine("EXTERNAL_API_BOUNDARIES_PASS resolver+generated-sizing-boundary+inheritance; transport-constructors=compile-only");
+        Console.WriteLine("EXTERNAL_API_BOUNDARIES_PASS resolver+generated-sizing-boundary+lifecycle+inheritance; transport-constructors=compile-only");
     }
 
     // Intentionally never called: SocketServerTransportListener binds immediately.
@@ -110,6 +111,33 @@ internal static class ExternalApiBoundaryProbe
         if (abstractions != typeof(IRpcSizedCodecSnapshot).Assembly ||
             abstractions.GetType("SharpLink.Abstractions.RpcGeneratedCodecSizing", throwOnError: false) is not null)
             throw new InvalidOperationException("Generated sizing ABI or removed legacy helper boundary changed.");
+    }
+
+    private static void VerifyRequiredLifecycleMembers()
+    {
+        var client = typeof(ISharpLinkClient);
+        RequireAbstract(client, "get_LifecycleState");
+        RequireAbstract(client, "get_Readiness");
+        RequireAbstract(client, "get_ClusterState");
+        RequireAbstract(client, "StartAsync", typeof(CancellationToken));
+        RequireAbstract(client, "WaitForReadyAsync", typeof(CancellationToken));
+        RequireAbstract(client, "WaitForShutdownAsync", typeof(CancellationToken));
+        var multi = typeof(ISharpLinkMultiClusterClient);
+        RequireAbstract(multi, "get_LifecycleState");
+        RequireAbstract(multi, "get_Readiness");
+        RequireAbstract(multi, "StartAsync", typeof(CancellationToken));
+        RequireAbstract(multi, "WaitForReadyAsync", typeof(CancellationToken));
+        RequireAbstract(multi, "WaitForReadyAsync", typeof(SharpLinkClusterKey), typeof(CancellationToken));
+        RequireAbstract(multi, "WaitForShutdownAsync", typeof(CancellationToken));
+        RequireAbstract(multi, "GetClusterRuntimeState", typeof(SharpLinkClusterKey));
+        RequireAbstract(multi, "GetClusterReadiness", typeof(SharpLinkClusterKey));
+    }
+
+    private static void RequireAbstract(Type contract, string member, params Type[] parameters)
+    {
+        var method = contract.GetMethod(member, parameters);
+        if (method is null || !method.IsAbstract)
+            throw new InvalidOperationException($"{contract.Name}.{member} must require an explicit implementation.");
     }
 
     private static void VerifyExternalInheritance()
