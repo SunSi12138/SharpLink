@@ -1,5 +1,6 @@
 using SharpLink.Abstractions;
 using SharpLink.Server;
+using SharpLink.PackageSmoke;
 
 namespace SharpLink.ReferenceRooting.PackageServer;
 
@@ -25,18 +26,47 @@ public static class Program
         }
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await using var server = SharpLinkServerBuilder.Create()
-            .UseSharedMemory(args[0])
-            .Build();
-        var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
-        Console.WriteLine("PACKAGE_REFERENCE_ROOTING_SERVER_READY");
+        var failures = new SmokeFailureCollector();
+        ISharpLinkServer? server = null;
+        Task? runTask = null;
+        Task? acceptedCancellation = null;
         try
         {
-            await runTask;
+            server = SharpLinkServerBuilder.Create()
+                .UseSharedMemory(args[0])
+                .Build();
+            runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
+            Console.WriteLine("PACKAGE_REFERENCE_ROOTING_SERVER_READY");
+            try
+            {
+                await runTask;
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                acceptedCancellation = runTask;
+            }
+            catch (Exception error)
+            {
+                // This is the actual run task, not an await wrapper's first exception.
+                if (runTask.Exception is { } aggregate)
+                    foreach (var failure in aggregate.InnerExceptions)
+                        failures.Capture(failure);
+                else
+                    failures.Capture(error);
+            }
         }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        catch (Exception error) { failures.Capture(error); }
+        finally
         {
+            if (server is not null)
+            {
+                await failures.AttemptAsync(() => server.StopAsync(TimeSpan.Zero, CancellationToken.None));
+                if (runTask is not null)
+                    await failures.ObserveUnlessAcceptedAsync(runTask, acceptedCancellation);
+                await failures.AttemptAsync(server.DisposeAsync);
+            }
         }
+        failures.ThrowIfAny();
         return 0;
     }
 }

@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\SharpLink.PackageSmoke\SmokeFailureCollector.cs" Link="SmokeFailureCollector.cs" />
     <ProjectReference Include="..\SharpLink.ReferenceRooting.PackageContracts\SharpLink.ReferenceRooting.PackageContracts.csproj" />
     <PackageReference Include="SharpLink.Client" Version="$(SharpLinkPackageVersion)" />
   </ItemGroup>

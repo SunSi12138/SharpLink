@@ -180,31 +180,38 @@ public static class Program
         bool useSharedMemory,
         CancellationToken cancellationToken)
     {
-        var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
-        var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseRuntime(ConfigureZstd);
-        if (useSharedMemory)
-            serverBuilder.UseSharedMemory(sharedMemoryName);
-        else
-            serverBuilder.UseTcp(0, IPAddress.Loopback);
-
-        var localEndPoint = serverBuilder.Transport!.LocalEndPoint as IPEndPoint;
-        if (!useSharedMemory && localEndPoint is null)
-            throw new InvalidOperationException("Package smoke server did not expose its TCP endpoint.");
-        var server = serverBuilder.Build();
-        var serverTask = RunServerAsync(server, cancellationToken);
-
-        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
-            .UseRuntime(ConfigureZstd);
-        if (useSharedMemory)
-            clientBuilder.UseSharedMemory(sharedMemoryName);
-        else
-            clientBuilder.UseTcp(IPAddress.Loopback.ToString(), localEndPoint!.Port);
-        var client = clientBuilder.Build();
-
+        var failures = new SmokeFailureCollector();
+        ISharpLinkServer? server = null;
+        Task? serverTask = null;
+        ISharpLinkClient? client = null;
+        CancellationTokenSource? syncCancellation = null;
+        IAsyncEnumerator<SharpLinkGenerationInventory>? sync = null;
+        Task<bool>? pendingMoveNext = null;
+        Task? acceptedCancellation = null;
         try
         {
+            var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
+            var serverBuilder = SharpLinkServerBuilder.Create()
+                .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+                .UseRuntime(ConfigureZstd);
+            if (useSharedMemory)
+                serverBuilder.UseSharedMemory(sharedMemoryName);
+            else
+                serverBuilder.UseTcp(0, IPAddress.Loopback);
+
+            var localEndPoint = serverBuilder.Transport!.LocalEndPoint as IPEndPoint;
+            if (!useSharedMemory && localEndPoint is null)
+                throw new InvalidOperationException("Package smoke server did not expose its TCP endpoint.");
+            server = serverBuilder.Build();
+            serverTask = RunServerAsync(server, cancellationToken);
+
+            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
+                .UseRuntime(ConfigureZstd);
+            if (useSharedMemory)
+                clientBuilder.UseSharedMemory(sharedMemoryName);
+            else
+                clientBuilder.UseTcp(IPAddress.Loopback.ToString(), localEndPoint!.Port);
+            client = clientBuilder.Build();
             await client.ConnectAsync(cancellationToken);
             var fixedReadiness = await client.WaitForReadinessAsync(1, cancellationToken);
             VerifyReadinessSnapshot(
@@ -241,11 +248,12 @@ public static class Program
             if (restartedInventory.EndpointEpoch != "package-smoke-server-restarted" || restartedInventory.Revision != 0)
                 throw new InvalidOperationException("Generation query lost a new epoch with a lower revision.");
 
-            using var syncCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            await using var sync = generationControl
+            syncCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            sync = generationControl
                 .SynchronizeAsync(CreateClientGenerationInventories(syncCancellation.Token), syncCancellation.Token)
                 .GetAsyncEnumerator(syncCancellation.Token);
-            if (!await sync.MoveNextAsync() ||
+            pendingMoveNext = sync.MoveNextAsync().AsTask();
+            if (!await SmokeFailureCollector.AwaitAsync(pendingMoveNext) ||
                 sync.Current.EndpointEpoch != "package-smoke-server-epoch" ||
                 sync.Current.Revision != 1 ||
                 sync.Current.Generations.Length != 1 ||
@@ -255,11 +263,12 @@ public static class Program
                     "Generation-control duplex synchronization did not exchange endpoint declarations.");
             }
 
-            if (!await sync.MoveNextAsync() ||
+            pendingMoveNext = sync.MoveNextAsync().AsTask();
+            if (!await SmokeFailureCollector.AwaitAsync(pendingMoveNext) ||
                 sync.Current.EndpointEpoch != "package-smoke-server-restarted" || sync.Current.Revision != 0)
                 throw new InvalidOperationException("Generation duplex lost a new epoch with a lower revision.");
 
-            var waitingForNextDeclaration = sync.MoveNextAsync().AsTask();
+            var waitingForNextDeclaration = pendingMoveNext = sync.MoveNextAsync().AsTask();
             syncCancellation.Cancel();
             try
             {
@@ -268,6 +277,12 @@ public static class Program
             }
             catch (OperationCanceledException) when (syncCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
+                acceptedCancellation = waitingForNextDeclaration;
+            }
+            catch (Exception) when (waitingForNextDeclaration.IsFaulted)
+            {
+                await SmokeFailureCollector.AwaitAsync(waitingForNextDeclaration);
+                throw;
             }
 
             using var cancelledQuery = new CancellationTokenSource();
@@ -299,11 +314,31 @@ public static class Program
             if (!useSharedMemory)
                 await RunRuntimeMultiClusterSmokeAsync(localEndPoint!.Port, cancellationToken);
         }
+        catch (Exception error) { failures.Capture(error); }
         finally
         {
-            await client.DisposeAsync();
-            await server.DisposeAsync();
-            await Task.WhenAny(serverTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            // Start independent server shutdown even if the client stream's actual join stalls.
+            var serverCleanup = CompleteServerAsync(server, serverTask, "transport server");
+            var clientCleanup = CompleteClientAsync();
+            await failures.ObserveAllAsync(clientCleanup, serverCleanup);
+        }
+        failures.ThrowIfAny();
+
+        async Task CompleteClientAsync()
+        {
+            var cleanup = new SmokeFailureCollector();
+            if (syncCancellation is not null)
+                cleanup.Attempt(syncCancellation.Cancel);
+            if (pendingMoveNext is not null)
+                await cleanup.ObserveUnlessAcceptedAsync(pendingMoveNext, acceptedCancellation);
+            // Never dispose the enumerator or its token source during an actual MoveNext.
+            if (sync is not null)
+                await cleanup.AttemptAsync(sync.DisposeAsync);
+            if (syncCancellation is not null)
+                cleanup.Attempt(syncCancellation.Dispose);
+            if (client is not null)
+                await cleanup.AttemptAsync(client.DisposeAsync);
+            cleanup.ThrowIfAny();
         }
     }
 
@@ -350,102 +385,120 @@ public static class Program
         int port,
         CancellationToken cancellationToken)
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
-            .AddCluster(
-                "bootstrap",
+        var failures = new SmokeFailureCollector();
+        ISharpLinkMultiClusterClient? client = null;
+        try
+        {
+            client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
+                .AddCluster(
+                    "bootstrap",
+                    child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+                    slot => slot.AllowDynamicContracts = true)
+                .Build();
+            await client.StartAsync(cancellationToken);
+            await client.WaitForReadyAsync("bootstrap", cancellationToken);
+
+            var add = await client.AddClusterAsync(
+                "runtime",
                 child => child.UseTcp(IPAddress.Loopback.ToString(), port),
-                slot => slot.AllowDynamicContracts = true)
-            .Build();
-        await client.StartAsync(cancellationToken);
-        await client.WaitForReadyAsync("bootstrap", cancellationToken);
+                cancellationToken: cancellationToken);
+            if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
+                throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
+            await client.WaitForReadyAsync("runtime", cancellationToken);
+            var preparedContract1 = client.CreateProxy<IPackageSmokeService>();
+            await preparedContract1.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            if (await preparedContract1.Service.AddAsync(20, 22) != 42)
+                throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 
-        var add = await client.AddClusterAsync(
-            "runtime",
-            child => child.UseTcp(IPAddress.Loopback.ToString(), port),
-            cancellationToken: cancellationToken);
-        if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
-            throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
-        await client.WaitForReadyAsync("runtime", cancellationToken);
-        var preparedContract1 = client.CreateProxy<IPackageSmokeService>();
-        await preparedContract1.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
-        if (await preparedContract1.Service.AddAsync(20, 22) != 42)
-            throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
+            var replacement = await client.ReplaceClusterAsync(
+                "runtime",
+                child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+                TimeSpan.FromSeconds(2),
+                cancellationToken);
+            if (!replacement.Succeeded ||
+                !replacement.Published ||
+                replacement.FailureCode != SharpLinkClusterMutationFailureCode.None ||
+                !replacement.ReferencesReleased ||
+                replacement.ForcedStop)
+            {
+                throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
+            }
+            var preparedContract2 = client.CreateProxy<IPackageSmokeService>();
+            await preparedContract2.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            if (await preparedContract2.Service.AddAsync(19, 23) != 42)
+                throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
 
-        var replacement = await client.ReplaceClusterAsync(
-            "runtime",
-            child => child.UseTcp(IPAddress.Loopback.ToString(), port),
-            TimeSpan.FromSeconds(2),
-            cancellationToken);
-        if (!replacement.Succeeded ||
-            !replacement.Published ||
-            replacement.FailureCode != SharpLinkClusterMutationFailureCode.None ||
-            !replacement.ReferencesReleased ||
-            replacement.ForcedStop)
-        {
-            throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
+            var removal = await client.RemoveClusterAsync(
+                "runtime",
+                TimeSpan.FromSeconds(2),
+                cancellationToken);
+            if (!removal.Succeeded ||
+                removal.FailureCode != SharpLinkClusterMutationFailureCode.None ||
+                !removal.ReferencesReleased ||
+                removal.ForcedStop)
+            {
+                throw new InvalidOperationException("Runtime multi-cluster Remove structured result package smoke failed.");
+            }
         }
-        var preparedContract2 = client.CreateProxy<IPackageSmokeService>();
-        await preparedContract2.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
-        if (await preparedContract2.Service.AddAsync(19, 23) != 42)
-            throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
-
-        var removal = await client.RemoveClusterAsync(
-            "runtime",
-            TimeSpan.FromSeconds(2),
-            cancellationToken);
-        if (!removal.Succeeded ||
-            removal.FailureCode != SharpLinkClusterMutationFailureCode.None ||
-            !removal.ReferencesReleased ||
-            removal.ForcedStop)
+        catch (Exception error) { failures.Capture(error); }
+        finally
         {
-            throw new InvalidOperationException("Runtime multi-cluster Remove structured result package smoke failed.");
+            if (client is not null)
+                await failures.AttemptAsync(client.DisposeAsync);
         }
+        failures.ThrowIfAny();
     }
 
     private static async Task RunStaticEndpointSmokeAsync(CancellationToken cancellationToken)
     {
-        var firstBuilder = SharpLinkServerBuilder.Create()
-            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseTcp(0, IPAddress.Loopback);
-        var secondBuilder = SharpLinkServerBuilder.Create()
-            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseTcp(0, IPAddress.Loopback);
-        var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
-        var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
-        var firstServer = firstBuilder.Build();
-        var secondServer = secondBuilder.Build();
-        var firstTask = RunServerAsync(firstServer, cancellationToken);
-        var secondTask = RunServerAsync(secondServer, cancellationToken);
-        var endpoints = new[]
-        {
-            new SharpLinkEndpoint
-            {
-                Id = "first",
-                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), firstPort),
-                Attributes = new Dictionary<string, string> { ["zone"] = "a" }
-            },
-            new SharpLinkEndpoint
-            {
-                Id = "second",
-                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), secondPort),
-                Attributes = new Dictionary<string, string> { ["zone"] = "b" }
-            }
-        };
-        var client = SharpClientBuilder.Create().DisableRequestTimeout()
-            .UseEndpoints(
-                endpoints,
-                SharpLinkTransportFactories.Sockets())
-            .UseCluster(options =>
-            {
-                options.MinReadyEndpoints = 2;
-                options.MaxConnections = 2;
-                options.MaxConnectionsPerEndpoint = 1;
-            })
-            .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
-            .Build();
-
+        var failures = new SmokeFailureCollector();
+        ISharpLinkServer? firstServer = null;
+        ISharpLinkServer? secondServer = null;
+        Task? firstTask = null;
+        Task? secondTask = null;
+        ISharpLinkClient? client = null;
+        ISharpLinkClient? dynamicClient = null;
         try
         {
+            var firstBuilder = SharpLinkServerBuilder.Create()
+                .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+                .UseTcp(0, IPAddress.Loopback);
+            var secondBuilder = SharpLinkServerBuilder.Create()
+                .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+                .UseTcp(0, IPAddress.Loopback);
+            var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
+            var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
+            firstServer = firstBuilder.Build();
+            secondServer = secondBuilder.Build();
+            firstTask = RunServerAsync(firstServer, cancellationToken);
+            secondTask = RunServerAsync(secondServer, cancellationToken);
+            var endpoints = new[]
+            {
+                new SharpLinkEndpoint
+                {
+                    Id = "first",
+                    Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), firstPort),
+                    Attributes = new Dictionary<string, string> { ["zone"] = "a" }
+                },
+                new SharpLinkEndpoint
+                {
+                    Id = "second",
+                    Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), secondPort),
+                    Attributes = new Dictionary<string, string> { ["zone"] = "b" }
+                }
+            };
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
+                .UseEndpoints(
+                    endpoints,
+                    SharpLinkTransportFactories.Sockets())
+                .UseCluster(options =>
+                {
+                    options.MinReadyEndpoints = 2;
+                    options.MaxConnections = 2;
+                    options.MaxConnectionsPerEndpoint = 1;
+                })
+                .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
+                .Build();
             await client.ConnectAsync(cancellationToken);
             var staticReadiness = await client.WaitForReadinessAsync(2, cancellationToken);
             VerifyReadinessSnapshot(
@@ -461,7 +514,7 @@ public static class Program
             if (await preparedContract3.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
-            await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
+            dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseEndpointResolver(
                     new DelegateSharpLinkEndpointResolver(
                         _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, endpoints))),
@@ -483,14 +536,41 @@ public static class Program
             if (await preparedContract4.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
+        catch (Exception error) { failures.Capture(error); }
         finally
         {
-            await client.DisposeAsync();
-            await firstServer.DisposeAsync();
-            await secondServer.DisposeAsync();
-            await Task.WhenAny(firstTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
-            await Task.WhenAny(secondTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            var firstCleanup = CompleteServerAsync(firstServer, firstTask, "first static server");
+            var secondCleanup = CompleteServerAsync(secondServer, secondTask, "second static server");
+            var clients = CompleteClientsAsync();
+            await failures.ObserveAllAsync(clients, firstCleanup, secondCleanup);
         }
+        failures.ThrowIfAny();
+
+        async Task CompleteClientsAsync()
+        {
+            var cleanup = new SmokeFailureCollector();
+            var dynamicCleanup = new SmokeFailureCollector();
+            var dynamicTask = dynamicClient is null ? Task.CompletedTask : dynamicCleanup.AttemptAsync(dynamicClient.DisposeAsync);
+            var staticTask = client is null ? Task.CompletedTask : cleanup.AttemptAsync(client.DisposeAsync);
+            await cleanup.ObserveAllAsync(dynamicTask, staticTask);
+            // Both operations have completed; preserve both independent outcome graphs.
+            cleanup.Attempt(dynamicCleanup.ThrowIfAny);
+            cleanup.ThrowIfAny();
+        }
+    }
+
+    private static async Task CompleteServerAsync(ISharpLinkServer? server, Task? runTask, string name)
+    {
+        if (server is null)
+            return;
+        var cleanup = new SmokeFailureCollector();
+        await cleanup.AttemptAsync(() => server.StopAsync(TimeSpan.Zero, CancellationToken.None));
+        if (runTask is not null)
+            await cleanup.ObserveAsync(SmokeFailureCollector.JoinWithDiagnosticAsync(
+                runTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None), name));
+        // An expired diagnostic never reaches here until the actual run task is terminal.
+        await cleanup.AttemptAsync(server.DisposeAsync);
+        cleanup.ThrowIfAny();
     }
 
     private static void VerifyReadinessSnapshot(
@@ -535,17 +615,30 @@ public static class Program
         var clientAssembly = FindReferenceRootingAssembly(
             "SharpLink.ReferenceRooting.PackageClient",
             "SharpLink.ReferenceRooting.PackageClient.dll");
-        using var server = StartReferenceRootingProcess(serverAssembly, sharedMemoryName);
+        var failures = new SmokeFailureCollector();
+        Process? server = null;
+        Process? client = null;
+        Task<string?>? serverReady = null;
+        Task<string>? serverError = null;
+        Task<string>? clientOutputTask = null;
+        Task<string>? clientErrorTask = null;
+        Task? clientExit = null;
         try
         {
-            var ready = await server.StandardOutput.ReadLineAsync(cancellationToken);
+            server = StartReferenceRootingProcess(serverAssembly, sharedMemoryName);
+            serverError = server.StandardError.ReadToEndAsync();
+            serverReady = server.StandardOutput.ReadLineAsync(CancellationToken.None).AsTask();
+            var ready = await serverReady.WaitAsync(cancellationToken);
             if (!string.Equals(ready, "PACKAGE_REFERENCE_ROOTING_SERVER_READY", StringComparison.Ordinal))
                 throw new InvalidOperationException($"Referenced package server did not become ready: '{ready}'.");
 
-            using var client = StartReferenceRootingProcess(clientAssembly, sharedMemoryName);
-            var clientOutput = await client.StandardOutput.ReadToEndAsync(cancellationToken);
-            var clientError = await client.StandardError.ReadToEndAsync(cancellationToken);
-            await client.WaitForExitAsync(cancellationToken);
+            client = StartReferenceRootingProcess(clientAssembly, sharedMemoryName);
+            clientOutputTask = client.StandardOutput.ReadToEndAsync();
+            clientErrorTask = client.StandardError.ReadToEndAsync();
+            clientExit = client.WaitForExitAsync(CancellationToken.None);
+            var clientOutput = await clientOutputTask.WaitAsync(cancellationToken);
+            var clientError = await clientErrorTask.WaitAsync(cancellationToken);
+            await clientExit.WaitAsync(cancellationToken);
             if (client.ExitCode != 0 ||
                 !clientOutput.Contains("PACKAGE_REFERENCE_ROOTING_PASS", StringComparison.Ordinal))
             {
@@ -554,12 +647,41 @@ public static class Program
             }
             Console.WriteLine("PACKAGE_REFERENCE_ROOTING_PASS");
         }
+        catch (Exception error) { failures.Capture(error); }
         finally
         {
-            if (!server.HasExited)
-                server.Kill(entireProcessTree: true);
-            await server.WaitForExitAsync(CancellationToken.None);
+            var clientCleanup = CompleteProcessAsync(client, clientExit, clientOutputTask, clientErrorTask);
+            var serverCleanup = CompleteProcessAsync(server, null, serverReady, serverError);
+            await failures.ObserveAllAsync(clientCleanup, serverCleanup);
         }
+        failures.ThrowIfAny();
+    }
+
+    private static async Task CompleteProcessAsync(Process? process, Task? exit, params Task?[] reads)
+    {
+        if (process is null)
+            return;
+        var cleanup = new SmokeFailureCollector();
+        cleanup.Attempt(() =>
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        });
+        // No cancellation/diagnostic timeout may substitute for the actual process wait.
+        if (exit is not null)
+            await cleanup.ObserveAsync(exit);
+        else
+            await cleanup.AttemptAsync(() => new ValueTask(process.WaitForExitAsync(CancellationToken.None)));
+        // Keep the original pipe operations alive until killing/joining the process closes them.
+        await cleanup.ObserveAllAsync(reads.OfType<Task>().ToArray());
+        var exited = false;
+        cleanup.Attempt(() => exited = process.HasExited);
+        if (exited)
+            cleanup.Attempt(process.Dispose);
+        else
+            cleanup.Capture(new InvalidOperationException(
+                "Reference-rooting process has no confirmed exit; its handle was not disposed. Outer process containment is required."));
+        cleanup.ThrowIfAny();
     }
 
     private static Process StartReferenceRootingProcess(string assemblyPath, string sharedMemoryName)
