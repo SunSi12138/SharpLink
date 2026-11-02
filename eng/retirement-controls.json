@@ -1,0 +1,402 @@
+{
+  "schemaVersion": 1,
+  "project": "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj",
+  "assemblyFullName": "SharpLink.UnitTests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "tunitPackageVersion": "1.73.19",
+  "tunitRuntimeVersion": "1.73.19.0",
+  "expectedGroups": {
+    "AB": 23,
+    "CD": 16,
+    "B1": 7,
+    "Ready": 1
+  },
+  "expectedCaseCount": 47,
+  "projects": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "src/SharpLink.Hosting/SharpLink.Hosting.csproj",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+    "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+    "src/SharpLink.Server/SharpLink.Server.csproj",
+    "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj",
+    "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj",
+    "test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj",
+    "test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj",
+    "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+  ],
+  "scopes": [
+    {
+      "group": "AB",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "RetirementGraceBudgetTests",
+      "source": "test/SharpLink.UnitTests/Runtime/RetirementGraceBudgetTests.cs",
+      "discovery": "class",
+      "methods": [
+        {
+          "name": "FullTimeSpanRangeShouldNotUseRpcHalfRingNormalization",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "RepeatedFractionalElapsedSamplesShouldPreserveTheirRemainder",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "SubTimeSpanTickSamplesShouldAccumulateBeforeProjection",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "BackwardAndHalfRingSamplesShouldNotMoveAcceptedBaseline",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ObservableTimestampWrapShouldConsumeUnsignedDelta",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "TimerSliceShouldRespectBothNativeRangeAndTimestampWindow",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ClockShouldKeepEntryOriginAndOriginalProvider",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "EntryCaptureShouldPreserveFrequencyAndTimestampFailuresWithoutConstructingClock",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "SeveralCompleteNativeSlicesShouldNotResetOrRoundTheRemainingBudget",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        }
+      ]
+    },
+    {
+      "group": "AB",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "RetirementOwnedDriverTests",
+      "source": "test/SharpLink.UnitTests/Runtime/RetirementOwnedDriverTests.cs",
+      "discovery": "class",
+      "methods": [
+        {
+          "name": "ClientRepeatedWaiterCannotRestartTheFirstEntryBudget",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ServerRepeatedWaiterCannotRestartTheFirstEntryBudget",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ProviderBlockedAfterElectionDoesNotOwnThePublicWaiterOrResetEntry",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "BlockedCancellationCallbackAllowsCallerAbandonmentButRetainsPhysicalOwner",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ZeroCallsWithPreparationDoesNotInventTimeoutOrWholeModuleDrain",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ProviderArmingFailureCancelsRemainingCallAndPreservesTheRawOccurrence",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "FailedTimerDisposalRetainsRealOwnerAndDoesNotAdvanceRuntimeCleanup",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "retained-timer-safety"
+        },
+        {
+          "name": "LateWaiterMustObserveOriginalCleanupFailureInsteadOfCachedDeferredResult",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "retained-cleanup-quota-safety"
+        },
+        {
+          "name": "SynchronousTimerHintsCannotExpirePositiveBudgetAndLateHintsAreHarmless",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "IndependentCancellationAndTimerStagesKeepTwoOccurrencesOfTheSameRawObject",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "retained-timer-safety"
+        },
+        {
+          "name": "ReplacementPreparationConsumesEntryBudgetButCannotCancelBeforePublication",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "FailedReplacementPreparationLeavesOldModuleRunningWithoutCancellation",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "PostcommitNotificationIsOwnedOffThePublicThreadAndCallerCanStopWaiting",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "RacingCallerCancellationAndRealCallExitLeaveOriginalOwnerIntact",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        }
+      ]
+    },
+    {
+      "group": "CD",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "RetirementEntryContractTests",
+      "source": "test/SharpLink.UnitTests/Runtime/RetirementEntryContractTests.cs",
+      "discovery": "class",
+      "methods": [
+        {
+          "name": "ServerPreCanceledReplacementPublishesAndOnlyCancelsCallerWait",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ServerCancellationDuringSynchronousPreparationCannotVetoReplacement",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ServerSourceCancellationWithLiveCallerRemainsStructuredRejection",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ServerSourceCancellationWithCanceledCallerRemainsStructuredRejection",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ServerSourceAndRollbackFailuresKeepIndependentOccurrences",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ServerPostcommitCallerCancellationLeavesReplacementOwnerIntact",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "RealCompletedRetirementWinsCanceledCompletionWait",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterNonFirstChildReplacementConsumesOwnOuterBudget",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterFailedOuterPreparationDoesNotCancelOldModule",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterQueuedUnregisterDoesNotRestartCapturedBudget",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterRepeatedUnregisterKeepsOuterWinnerBudget",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterDirectChildElectionKeepsItsOriginalBudget",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterCaptureFailurePreservesRoutesAndRunningModule",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "MultiClusterReplacementRejectsDisposedRegistrationAfterLoader",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "SharedProviderCannotTransferBudgetBetweenChildRegistries",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "UnsupportedInternalChildIsRejectedBeforeRetirementPublication",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control"
+        }
+      ]
+    },
+    {
+      "group": "B1",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "class": "BuilderOwnershipRollbackTests",
+      "source": "test/SharpLink.UnitTests/Builder/BuilderOwnershipRollbackServerTests.cs",
+      "discovery": "method",
+      "methods": [
+        {
+          "name": "ServerCompileValidationFailureShouldNotMaterializeRuntimeContext",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        },
+        {
+          "name": "ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        },
+        {
+          "name": "UnexpectedSuccessfulRollbackBuildShouldRetainEndpointAndJoinItsActualDisposal",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        },
+        {
+          "name": "RollbackBuildShouldRejectAndPreserveAnIndependentTransportCleanupSibling",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        }
+      ]
+    },
+    {
+      "group": "B1",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "DynamicRollbackTests",
+      "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
+      "discovery": "method",
+      "methods": [
+        {
+          "name": "ServerProfileBindingFailureShouldDisposeRuntimeContextAndPreserveBothFailures",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        }
+      ]
+    },
+    {
+      "group": "B1",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "ManifestSourceIsolationTests",
+      "source": "test/SharpLink.UnitTests/Runtime/ManifestSourceIsolationTests.cs",
+      "discovery": "method",
+      "methods": [
+        {
+          "name": "DisposedIsolatedSnapshotRuntimeShouldReleaseCollectibleManifestAndCodecOwners",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        },
+        {
+          "name": "CollectibleSetupFailureShouldPreserveBodyAndJoinActualCleanupBeforeUnload",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-control-with-asserted-internal-failure"
+        }
+      ]
+    },
+    {
+      "group": "Ready",
+      "namespace": "SharpLink.UnitTests.Server",
+      "class": "ContractManifestReadyBoundaryTests",
+      "source": "test/SharpLink.UnitTests/Server/ContractManifestReadyBoundaryTests.cs",
+      "discovery": "method",
+      "methods": [
+        {
+          "name": "BootstrapManifestWriteMustObserveReadyRegistryBoundary",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-real-owner-join"
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "commandBudgetSeconds": 1500,
+    "restoreSeconds": 600,
+    "buildSeconds": 600,
+    "discoverySeconds": 120,
+    "caseSeconds": 120,
+    "engineTimeout": "90s"
+  },
+  "qualification": "Only these 47 actual discovered UIDs, each in its own process. Not full Unit runtime, D2, remaining shared-gate controls, or universal failure containment; the original A/B fixture setup/restore gap remains a separate pending repair."
+}
