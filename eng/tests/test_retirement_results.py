@@ -120,14 +120,39 @@ class ClassifierTests(unittest.TestCase):
         native = copy.deepcopy(self.native); native['filter'] = 'actual-selector'
         self.assertEqual(r.passed(native, self.xml, self.row, self.source, '1.73.19.0', selector='actual-selector')['status'], 'PASS')
 
+    def test_standard_source_policy_has_one_root_and_one_boundary_separator(self):
+        for path in ('/tmp/lane/src', '/tmp/lane/src/', '/tmp/lane/src///'):
+            self.assertEqual(r.compile_path_map(path), '/tmp/lane/src/=/_/')
+        self.assertEqual(r.reported_source_path('test/Example.cs'), Path('/_/test/Example.cs'))
+        for path in ('relative', '/', '/tmp/../lane', '/tmp/ambiguous,root', '/tmp/ambiguous=root'):
+            with self.assertRaises(ValueError): r.compile_path_map(path)
+        for relative in ('/test/Example.cs', '../Example.cs', 'test//Example.cs', 'test/./Example.cs', 'test\\Example.cs'):
+            with self.assertRaises(ValueError): r.reported_source_path(relative)
+
+    def test_new_standard_policy_keeps_discovery_and_native_exact(self):
+        expected = r.reported_source_path('test/Example.cs')
+        row = copy.deepcopy(self.row); row['location']['file'] = str(expected)
+        native = copy.deepcopy(self.native); native['groups'][0]['tests'][0]['filePath'] = str(expected)
+        self.assertEqual(set(r.discovery(dict(schemaVersion=1, tests=[row]), self.scope, self.methods,
+                                        self.source, self.assembly, expected)), {'actual-uid'})
+        self.assertEqual(r.passed(native, self.xml, row, expected, '1.73.19.0')['status'], 'PASS')
+        for bad in ('/_/retirement-unit/test/Example.cs', '/_1/test/Example.cs', '/unknown/test/Example.cs', str(self.source)):
+            with self.subTest(path=bad):
+                wrong = copy.deepcopy(row); wrong['location']['file'] = bad
+                with self.assertRaises(ValueError):
+                    r.discovery(dict(schemaVersion=1, tests=[wrong]), self.scope, self.methods,
+                                self.source, self.assembly, expected)
+                wrong_native = copy.deepcopy(native); wrong_native['groups'][0]['tests'][0]['filePath'] = bad
+                with self.assertRaises(ValueError): r.passed(wrong_native, self.xml, row, expected, '1.73.19.0')
+
     def test_path_diagnostic_never_accepts_an_alternative_prefix(self):
-        expected = Path('/_/retirement-unit/test/Example.cs')
+        expected = Path('/_/test/Example.cs')
         relative = 'test/Example.cs'
         checkout = Path('/private/checkout/test/Example.cs')
         variants = [(str(self.source), 'exact-private-build-source'),
                     (str(checkout), 'exact-invocation-checkout-source'),
                     (relative, 'exact-git-relative-text-unbound'),
-                    ('/_/test/Example.cs', 'other-underscore-virtual-root-unbound'),
+                    ('/_/retirement-unit/test/Example.cs', 'selected-relative-suffix-with-untrusted-prefix'),
                     ('/_1/test/Example.cs', 'other-underscore-virtual-root-unbound'),
                     ('/private/unknown/test/Example.cs', 'selected-relative-suffix-with-untrusted-prefix'),
                     ('/private/another/File.cs', 'other-path-unbound')]
@@ -168,7 +193,7 @@ class ClassifierTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / 'run-retirement-controls.py')
         runner = importlib.util.module_from_spec(runner_spec); runner_spec.loader.exec_module(runner)
         self.source.unlink()
-        expected = Path('/_/retirement-unit/test/Example.cs')
+        expected = Path('/_/test/Example.cs')
         with self.assertRaises(runner.results.SourcePathDiagnosticFailure) as caught:
             runner.results.discovery(dict(schemaVersion=1, tests=[self.row]), self.scope, self.methods,
                         self.source, self.assembly, expected,

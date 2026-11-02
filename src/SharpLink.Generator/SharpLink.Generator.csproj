@@ -3,6 +3,7 @@
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
+        <DefineConstants>$(DefineConstants);SHARPLINK_GENERATOR</DefineConstants>
         <LangVersion>latest</LangVersion>
         <PublishAot>false</PublishAot>
         <RuntimeIdentifier></RuntimeIdentifier>
@@ -27,6 +28,8 @@
     </ItemGroup>
 
     <ItemGroup>
+        <Compile Include="..\SharpLink.Abstractions\SharpLinkGeneratedManifestVersions.cs"
+                 Link="Shared\SharpLinkGeneratedManifestVersions.cs" />
         <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
                  Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
     </ItemGroup>

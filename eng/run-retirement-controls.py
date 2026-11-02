@@ -219,7 +219,8 @@ def main():
         assets = asset_identity(source, catalog, work / 'packages', package_identity)
         built.update({source / name: value for name, value in assets.items()})
         check_files()
-        run('build', [dotnet, 'build', project, '-c', 'Release', '--no-restore', '-v:minimal', '-p:UseSharedCompilation=false', '-p:PathMap=' + str(source) + '=/_/retirement-unit', '-m:1', '-nr:false'], source, limits['buildSeconds'])
+        print('source-path-policy: requested <selected-checkout>/=/_/; actual discovery/native paths must independently match /_/ plus exact catalog source', flush=True)
+        run('build', [dotnet, 'build', project, '-c', 'Release', '--no-restore', '-v:minimal', '-p:UseSharedCompilation=false', '-p:PathMap=' + results.compile_path_map(source), '-m:1', '-nr:false'], source, limits['buildSeconds'])
         output = project.parent / 'bin/Release/net10.0'
         dll = output / 'SharpLink.UnitTests.dll'
         require(dll.is_file(), 'Unit binary missing')
@@ -241,10 +242,10 @@ def main():
                             'Path diagnostic scope must remain the selected nine math methods')
                     def diagnostic(row):
                         detail = results.source_path_diagnostic(row, source / scope['source'],
-                            Path('/_/retirement-unit') / scope['source'], scope['source'], ROOT / scope['source'])
+                            results.reported_source_path(scope['source']), scope['source'], ROOT / scope['source'])
                         print('metadata-path-diagnostic: ' + json.dumps(detail, sort_keys=True), flush=True)
                 rows = results.discovery(results.read_json(path), scope, methods, source / scope['source'],
-                    catalog['assemblyFullName'], Path('/_/retirement-unit') / scope['source'], diagnostic)
+                    catalog['assemblyFullName'], results.reported_source_path(scope['source']), diagnostic)
                 require(not set(rows).intersection(ledger), 'UID appears in multiple selections')
                 for uid, row in rows.items():
                     row['selection'] = scope
@@ -267,7 +268,7 @@ def main():
             # The exact filter is bound above to ONE real UID. No guessed UID/filter CLI.
             record['status'] = 'INCOMPLETE'
             run('case-' + str(index), [dotnet, dll, '--treenode-filter', filter_value, '--maximum-parallel-tests', '1', '--timeout', limits['engineTimeout'], '--results-directory', report, '--report-html', '--report-html-filename', report / 'session.html', '--junit-output-path', report / 'junit.xml'], source, limits['caseSeconds'])
-            verdict = results.passed(results.read_json(report / 'session.tunit-report.json'), (report / 'junit.xml').read_text(), row, Path('/_/retirement-unit') / row['selection']['source'], catalog['tunitRuntimeVersion'], runtime, filter_value)
+            verdict = results.passed(results.read_json(report / 'session.tunit-report.json'), (report / 'junit.xml').read_text(), row, results.reported_source_path(row['selection']['source']), catalog['tunitRuntimeVersion'], runtime, filter_value)
             if runtime is None:
                 print('runtime: ' + verdict['runtime'], flush=True)
             runtime = verdict['runtime']

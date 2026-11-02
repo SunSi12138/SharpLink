@@ -14,6 +14,25 @@ import stat
 import xml.etree.ElementTree as ET
 
 
+REPORTED_SOURCE_ROOT = '/_/'
+
+
+def compile_path_map(source):
+    """Requested NEW policy, not evidence of an actual compiler mapping."""
+    source = Path(source)
+    require(source.is_absolute() and source.anchor == '/' and source != Path('/') and
+            '..' not in source.parts and not any(char in str(source) for char in ',='),
+            'Invalid selected checkout for path-map policy')
+    return str(source).rstrip('/') + '/=' + REPORTED_SOURCE_ROOT
+
+
+def reported_source_path(relative):
+    source = Path(relative)
+    require(not source.is_absolute() and source.parts and '..' not in source.parts and
+            source.as_posix() == relative and '\\' not in relative, 'Invalid selected Git-relative source')
+    return Path(REPORTED_SOURCE_ROOT) / source
+
+
 class SourcePathDiagnosticFailure(BaseExceptionGroup):
     """Retains the two raw failures; console rendering must not stringify children."""
 

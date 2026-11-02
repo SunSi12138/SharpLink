@@ -337,13 +337,16 @@ namespace SharpLink.Abstractions
         string assemblyName,
         string manifestTypeName,
         string internalServiceTypeName,
-        MetadataReference infrastructure)
+        MetadataReference infrastructure,
+        int apiVersion = 5,
+        int protocolVersion = 3,
+        string abiIdentity = "sharplink-3.0-api5-contract-channel-complete-method-facts-v1")
         => CreateMetadataReference(
             assemblyName,
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 5, 3, "3.0.0-test", "sharplink-3.0-api5-contract-channel-complete-method-facts-v1")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), {{apiVersion}}, {{protocolVersion}}, "3.0.0-test", "{{abiIdentity}}")]
 
 namespace SharpLink.Generated
 {

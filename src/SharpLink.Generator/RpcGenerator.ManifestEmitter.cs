@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-contract-channel-complete-method-facts-v1";
+    private const string GeneratedAbiIdentity = SharpLink.Abstractions.SharpLinkGeneratedManifestVersions.AbiIdentity;
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -55,7 +55,7 @@ public partial class RpcGenerator
         }
         if (!codecs.IsDefaultOrEmpty)
             sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 5, 3, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), {SharpLink.Abstractions.SharpLinkGeneratedManifestVersions.Api}, {SharpLink.Abstractions.SharpLinkGeneratedManifestVersions.Protocol}, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
@@ -74,9 +74,9 @@ public partial class RpcGenerator
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
         sb.AppendLine("    /// <inheritdoc />");
-        sb.AppendLine("    public int ApiVersion => 5;");
+        sb.AppendLine($"    public int ApiVersion => {SharpLink.Abstractions.SharpLinkGeneratedManifestVersions.Api};");
         sb.AppendLine("    /// <inheritdoc />");
-        sb.AppendLine("    public int ProtocolVersion => 3;");
+        sb.AppendLine($"    public int ProtocolVersion => {SharpLink.Abstractions.SharpLinkGeneratedManifestVersions.Protocol};");
         sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine("    /// <inheritdoc />");

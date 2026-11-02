@@ -623,6 +623,8 @@ public static class Program
         Task<string>? clientOutputTask = null;
         Task<string>? clientErrorTask = null;
         Task? clientExit = null;
+        var serverReadyConfirmed = false;
+        Exception? serverStartupFailure = null;
         try
         {
             server = StartReferenceRootingProcess(serverAssembly, sharedMemoryName);
@@ -632,6 +634,7 @@ public static class Program
             if (!string.Equals(ready, "PACKAGE_REFERENCE_ROOTING_SERVER_READY", StringComparison.Ordinal))
                 throw new InvalidOperationException($"Referenced package server did not become ready: '{ready}'.");
 
+            serverReadyConfirmed = true;
             client = StartReferenceRootingProcess(clientAssembly, sharedMemoryName);
             clientOutputTask = client.StandardOutput.ReadToEndAsync();
             clientErrorTask = client.StandardError.ReadToEndAsync();
@@ -647,24 +650,35 @@ public static class Program
             }
             Console.WriteLine("PACKAGE_REFERENCE_ROOTING_PASS");
         }
-        catch (Exception error) { failures.Capture(error); }
+        catch (Exception error)
+        {
+            failures.Capture(error);
+            if (server is not null && !serverReadyConfirmed) serverStartupFailure = error;
+        }
         finally
         {
-            var clientCleanup = CompleteProcessAsync(client, clientExit, clientOutputTask, clientErrorTask);
-            var serverCleanup = CompleteProcessAsync(server, null, serverReady, serverError);
+            Action<bool?, int?>? serverDiagnostic = serverStartupFailure is { } startupFailure
+                ? (naturalExit, finalExit) => WriteReferenceServerStartupDiagnostic(
+                    startupFailure, naturalExit, finalExit, serverError)
+                : null;
+            var clientCleanup = CompleteProcessAsync(client, clientExit, null, clientOutputTask, clientErrorTask);
+            var serverCleanup = CompleteProcessAsync(server, null, serverDiagnostic, serverReady, serverError);
             await failures.ObserveAllAsync(clientCleanup, serverCleanup);
         }
         failures.ThrowIfAny();
     }
 
-    private static async Task CompleteProcessAsync(Process? process, Task? exit, params Task?[] reads)
+    private static async Task CompleteProcessAsync(Process? process, Task? exit,
+        Action<bool?, int?>? afterJoin, params Task?[] reads)
     {
         if (process is null)
             return;
         var cleanup = new SmokeFailureCollector();
+        bool? exitedBeforeCleanup = null;
         cleanup.Attempt(() =>
         {
-            if (!process.HasExited)
+            exitedBeforeCleanup = process.HasExited;
+            if (!exitedBeforeCleanup.Value)
                 process.Kill(entireProcessTree: true);
         });
         // No cancellation/diagnostic timeout may substitute for the actual process wait.
@@ -677,11 +691,40 @@ public static class Program
         var exited = false;
         cleanup.Attempt(() => exited = process.HasExited);
         if (exited)
+        {
+            // Only after real Wait and original pipe joins. Reporter faults are real
+            // independent cleanup errors; diagnostic context is not a second body error.
+            if (afterJoin is not null)
+            {
+                int? finalExit = null;
+                cleanup.Attempt(() => finalExit = process.ExitCode);
+                cleanup.Attempt(() => afterJoin(exitedBeforeCleanup, finalExit));
+            }
             cleanup.Attempt(process.Dispose);
+        }
         else
             cleanup.Capture(new InvalidOperationException(
                 "Reference-rooting process has no confirmed exit; its handle was not disposed. Outer process containment is required."));
         cleanup.ThrowIfAny();
+    }
+
+    private static void WriteReferenceServerStartupDiagnostic(Exception originalFailure,
+        bool? exitedBeforeCleanup, int? finalExit, Task<string>? originalStderr)
+    {
+        var text = originalStderr is { IsCompletedSuccessfully: true } ? originalStderr.Result : null;
+        Console.Error.WriteLine(
+            $"REFERENCE_SERVER_STARTUP_ERROR type={originalFailure.GetType().Name} " +
+            $"exitedBeforeCleanup={exitedBeforeCleanup?.ToString() ?? "unknown"} " +
+            $"finalExit={finalExit?.ToString() ?? "unknown"} stderrState={originalStderr?.Status.ToString() ?? "not-started"} " +
+            $"stderrChars={text?.Length.ToString() ?? "unavailable"}");
+        if (text is not null)
+        {
+            const int limit = 384;
+            var snippet = text[..Math.Min(text.Length, limit)];
+            // One bounded, control-free console line, not a raw log artifact or workflow command.
+            snippet = new string(snippet.Select(static character => char.IsControl(character) ? ' ' : character).ToArray());
+            Console.Error.WriteLine($"REFERENCE_SERVER_STARTUP_ERROR_STDERR {snippet} truncated={text.Length > limit}");
+        }
     }
 
     private static Process StartReferenceRootingProcess(string assemblyPath, string sharedMemoryName)

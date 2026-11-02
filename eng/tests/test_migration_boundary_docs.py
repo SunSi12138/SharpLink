@@ -16,7 +16,7 @@ DOCS = (
 
 class MigrationBoundaryDocsTests(unittest.TestCase):
     def test_current_boundary_matches_authoritative_manifest_constants(self):
-        source = (ROOT / "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs").read_text()
+        source = (ROOT / "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs").read_text()
         api = re.search(r"public const int Api = (\d+);", source).group(1)
         protocol = re.search(r"public const int Protocol = (\d+);", source).group(1)
         abi = re.search(r'public const string AbiIdentity = "([^"]+)";', source).group(1)

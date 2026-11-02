@@ -8,7 +8,7 @@
   "versions": [
     {
       "name": "Generated ABI",
-      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs",
       "pattern": "const int Api = (\\d+);",
       "published": 4,
       "current": 5,
@@ -17,8 +17,8 @@
     },
     {
       "name": "Generator emitted ABI",
-      "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "public int ApiVersion => (\\d+);",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs",
+      "pattern": "const int Api = (\\d+);",
       "published": 4,
       "current": 5,
       "policy": "increment",
@@ -26,7 +26,7 @@
     },
     {
       "name": "Protocol major",
-      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs",
       "pattern": "const int Protocol = (\\d+);",
       "published": 2,
       "current": 3,
@@ -35,8 +35,8 @@
     },
     {
       "name": "Generator emitted protocol",
-      "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "public int ProtocolVersion => (\\d+);",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs",
+      "pattern": "const int Protocol = (\\d+);",
       "published": 2,
       "current": 3,
       "policy": "increment",
@@ -71,7 +71,7 @@
     },
     {
       "name": "Runtime ABI identity",
-      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs",
       "pattern": "AbiIdentity = \"sharplink-3.0-api5-contract-channel-complete-method-facts-v(\\d+)\"",
       "published": null,
       "current": 1,
@@ -80,8 +80,8 @@
     },
     {
       "name": "Generator ABI identity",
-      "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api5-contract-channel-complete-method-facts-v(\\d+)\"",
+      "path": "src/SharpLink.Abstractions/SharpLinkGeneratedManifestVersions.cs",
+      "pattern": "AbiIdentity = \"sharplink-3.0-api5-contract-channel-complete-method-facts-v(\\d+)\"",
       "published": null,
       "current": 1,
       "policy": "initial",
