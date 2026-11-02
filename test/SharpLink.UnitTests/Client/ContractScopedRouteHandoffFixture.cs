@@ -170,6 +170,8 @@ internal sealed partial class ContractScopedRouteHandoffFixture
 
     private void RequireNoPriorRefreshRollout()
     {
+        Ensure((Source.Session.NegotiatedCapabilities & ProtocolV2Capabilities.SessionRefresh) != 0,
+            "the actual source session must negotiate SessionRefresh before a refresh request is injected");
         CaptureFrameworkOwners("StaticClusterSessionRefreshRollout", "original session refresh rollout");
         Ensure(_rollout is null && !SnapshotOperations().Any(operation => operation.Stage == "original session refresh rollout"),
             "a new fixture refresh must not borrow a prior original rollout");
@@ -687,7 +689,8 @@ internal sealed partial class ContractScopedRouteHandoffFixture
     }
 
     private static TestClientTransportFactory ManualTransport()
-        => new(contractManifest: [new(ManualClientContractFixture.ContractId, ManualClientContractFixture.AssemblyHash)],
+        => new(negotiatedCapabilities: ProtocolV2Capabilities.SessionRefresh,
+            contractManifest: [new(ManualClientContractFixture.ContractId, ManualClientContractFixture.AssemblyHash)],
             acceptManualContractBindings: false);
     private static void Ensure(bool condition, string message)
     {

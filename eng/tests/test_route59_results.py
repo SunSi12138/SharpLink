@@ -105,6 +105,20 @@ def verify_refresh_registration_sources(sources):
               'Terminal audit must retain all original Task.Exception roots')
 
 
+def verify_refresh_capability_sources(sources):
+    # Existing ordering guard proves both wire injection paths call the shared
+    # precondition before injection; this is source-shape only, not runtime proof.
+    verify_refresh_registration_sources(sources)
+    source = sources['ContractScopedRouteHandoffFixture.cs']
+    compact = re.sub(r'\s+', '', source)
+    r.require('privatestaticTestClientTransportFactoryManualTransport()=>new(negotiatedCapabilities:ProtocolV2Capabilities.SessionRefresh,contractManifest:' in compact,
+              'Refresh fixture must negotiate exactly the needed optional capability')
+    prior = fixture_method_source(source, 'private void RequireNoPriorRefreshRollout()')
+    actual = 'Ensure((Source.Session.NegotiatedCapabilities&ProtocolV2Capabilities.SessionRefresh)!=0,'
+    r.require(actual in prior and prior.index(actual) < prior.index('CaptureFrameworkOwners('),
+              'Refresh injection must check actual negotiated source session capability')
+
+
 class Route59Tests(unittest.TestCase):
     def setUp(self):
         self.base = accepted.ClassifierTests()
@@ -202,6 +216,26 @@ class Route59Tests(unittest.TestCase):
         old = 'return source.Exception is { } graph ? graph : original;'
         self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, 'return original;', 1)
         with self.assertRaises(ValueError): verify_refresh_registration_sources(changed)
+
+    def test_refresh_capability_is_negotiated_and_checked_before_wire_injection(self):
+        verify_refresh_capability_sources(fixture_configuration_sources())
+
+    def test_refresh_capability_rejects_omitted_or_unrelated_optional_bits(self):
+        old = 'negotiatedCapabilities: ProtocolV2Capabilities.SessionRefresh,'
+        for new in ('', 'negotiatedCapabilities: ProtocolV2Capabilities.None,',
+                    'negotiatedCapabilities: ProtocolV2Capabilities.SessionRefresh | ProtocolV2Capabilities.Metadata,'):
+            with self.subTest(replacement=new):
+                changed = fixture_configuration_sources(); key = 'ContractScopedRouteHandoffFixture.cs'
+                self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
+                with self.assertRaises(ValueError): verify_refresh_capability_sources(changed)
+
+    def test_refresh_capability_rejects_synthetic_or_missing_session_precondition(self):
+        old = '(Source.Session.NegotiatedCapabilities & ProtocolV2Capabilities.SessionRefresh) != 0'
+        for new in ('true', '(ProtocolV2Capabilities.SessionRefresh & ProtocolV2Capabilities.SessionRefresh) != 0'):
+            with self.subTest(replacement=new):
+                changed = fixture_configuration_sources(); key = 'ContractScopedRouteHandoffFixture.cs'
+                self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
+                with self.assertRaises(ValueError): verify_refresh_capability_sources(changed)
 
     def test_actual_catalog_source_spans_graph_budget_and_pins(self):
         r.verify_catalog(ROOT, CATALOG)
