@@ -437,7 +437,6 @@ internal sealed partial class SharpLinkClient
             replacement = null;
             TryAdvanceFixedSessionRefreshRetirement(source);
             PublishReadyState();
-            return true;
         }
         catch (Exception exception)
         {
@@ -450,6 +449,10 @@ internal sealed partial class SharpLinkClient
                 session).ConfigureAwait(false);
             throw new UnreachableException();
         }
+        // Do not route a post-publication scheduler failure through failed-dial cleanup.
+        // This original replacement task owns the cold refresh, not remote Bind completion.
+        await RefreshContractBindingsAfterReadyAsync().ConfigureAwait(false);
+        return true;
     }
 
     private void TryAdvanceFixedSessionRefreshRetirement(ClientConnection source)

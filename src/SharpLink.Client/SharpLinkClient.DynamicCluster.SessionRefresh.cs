@@ -347,7 +347,6 @@ internal sealed partial class SharpLinkClient
                 TryAdvancePlannedSessionRefreshRetirement(source);
                 UpdateClientReadiness();
                 routeFailure?.ThrowIfAny();
-                return true;
             }
             catch (Exception exception)
             {
@@ -402,6 +401,11 @@ internal sealed partial class SharpLinkClient
                     _reconnect.EnsureMinimumReadyEndpoints();
                 }
             }
+            // Only the original successful replacement path reaches this point. Existing
+            // postcommit/finalization steps have returned; the pool owns the replacement.
+            // This task owns the cold scheduler, not remote Bind confirmation or old-session drain.
+            await _client.RefreshContractBindingsAfterReadyAsync().ConfigureAwait(false);
+            return true;
         }
 
         public void TryAdvancePlannedSessionRefreshRetirement(ClientConnection source)
