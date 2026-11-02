@@ -1,0 +1,600 @@
+{
+  "base": "9d1635c8988870ee295098fe9e65cb49924013d2",
+  "centralBeforeGitBlob": "8106159e925660c1f03f9394538b8a04814557e7",
+  "centralAfterGitBlob": "ec1efcd161c38e72b1d7cd4db3a0d5bda7b41229",
+  "coordinatorBeforeGitBlob": "472ab7117d4b79d01151db1b745af2ff4498d859",
+  "coordinatorAfterSHA256": "5986242bcbb20fd7cbf0b98644dc5af50462122eea9575f5335dc2fee2b22f05",
+  "entryProject": "SharpLink.IntegrationTests",
+  "projects": {
+    "SharpLink.Abstractions": {
+      "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+      "sha256": "026d3726e13ae7ce0791eb2864413308ad6393ff1091b950bc2eace90d12cecc",
+      "gitBlob": "2136b75baf9da268f731faeef2e06244e2e41c4e",
+      "framework": "net10.0",
+      "references": [],
+      "restoreName": "SharpLink.Abstractions"
+    },
+    "SharpLink.AotContracts": {
+      "path": "test/SharpLink.AotContracts/SharpLink.AotContracts.csproj",
+      "sha256": "de1fa0ae5a9c6309fcf072f687f65141662d231ba13772c1184ad1e3e936566f",
+      "gitBlob": "f2bb806c84896bd30a9d34ecbbc83b0e6248bd80",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.AotContracts"
+    },
+    "SharpLink.AotServices": {
+      "path": "test/SharpLink.AotServices/SharpLink.AotServices.csproj",
+      "sha256": "7bf6d85d7c7db492537147b98ff5e85fc00ec8f644772b2b35d84cd4b02ab8f5",
+      "gitBlob": "391c6a9ee3b4a7a849ce5bd9fd954ab4b48c4412",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "test/SharpLink.AotContracts/SharpLink.AotContracts.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false",
+            "GlobalPropertiesToRemove": "RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.AotServices"
+    },
+    "SharpLink.AotSmoke": {
+      "path": "test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj",
+      "sha256": "cf0e5ef09033ef1af6968e8759217e0013c01a4e4eb68f58405dfb384c562004",
+      "gitBlob": "e69f47ed9a3954ea0f1d3f13ba5da603fa9dfeb8",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Client/SharpLink.Client.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Server/SharpLink.Server.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "test/SharpLink.AotContracts/SharpLink.AotContracts.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "test/SharpLink.AotServices/SharpLink.AotServices.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false",
+            "GlobalPropertiesToRemove": "RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.AotSmoke"
+    },
+    "SharpLink.Client": {
+      "path": "src/SharpLink.Client/SharpLink.Client.csproj",
+      "sha256": "c4be86cce056d56ee28ca8b25ca539f787ce9953e8c117d728dd1420999c466d",
+      "gitBlob": "85706df2ffe75d3a403bd7a9fbf6cca7f68b2d6e",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.Client"
+    },
+    "SharpLink.Compression.Zstd": {
+      "path": "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+      "sha256": "1c48b9e40a62d44d8dec67d92aea95d4ab4ede1bdefb4326d47177859d3e0344",
+      "gitBlob": "33219c2fa195bf7103945b27d0f255d153a03efa",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.Compression.Zstd"
+    },
+    "SharpLink.DynamicContracts": {
+      "path": "test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj",
+      "sha256": "c1f2029812d48695c3ffac4a5913ea943ec055e138069113e2baf1ba525df0dd",
+      "gitBlob": "f442cb0ef51f62b7893e406953b306dc4063133a",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.DynamicPlugin.Contracts"
+    },
+    "SharpLink.DynamicServices": {
+      "path": "test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj",
+      "sha256": "750178a76fe270adad02f0533a85220ea85e99beeb882b57c94db93730204ec4",
+      "gitBlob": "ddd0975357ae747a1c918a31cd04e191304fd591",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.DynamicPlugin.Services"
+    },
+    "SharpLink.Generator": {
+      "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+      "sha256": "b22065bedfa90aca4cecab4ae7e641be5fd1ec0fa87a55a1c28267e09d1c119e",
+      "gitBlob": "08f9bf51dcd74dba59060d4d147520c266d949f8",
+      "framework": "netstandard2.0",
+      "references": [],
+      "restoreName": "SharpLink.Generator"
+    },
+    "SharpLink.ModuleDependencyConsumer": {
+      "path": "test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj",
+      "sha256": "b6d8e9a312981ba64ad68913cd434e9ae9c7a2fe19ee91adce5401eed41d1cf5",
+      "gitBlob": "0d4d2d3b86bedce7a290f4cfd408f1fd79fde24a",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.ModuleDependencyConsumer"
+    },
+    "SharpLink.ReferencedCodecConsumer": {
+      "path": "test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj",
+      "sha256": "b6d8e9a312981ba64ad68913cd434e9ae9c7a2fe19ee91adce5401eed41d1cf5",
+      "gitBlob": "0d4d2d3b86bedce7a290f4cfd408f1fd79fde24a",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.ReferencedCodecConsumer"
+    },
+    "SharpLink.ReferencedCodecProvider": {
+      "path": "test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj",
+      "sha256": "1a68990387b702fd26f6aa07efbf6c8ebba3992ad3d6b823d36df30a23b170a0",
+      "gitBlob": "e9b7a1068c8cbf09cc7de37e4a73ae1600dff8ad",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.ReferencedCodecProvider"
+    },
+    "SharpLink.ReplacementContracts": {
+      "path": "test/SharpLink.ReplacementContracts/SharpLink.ReplacementContracts.csproj",
+      "sha256": "b94ab8e8c379a1108898c045fe6da9d3bafe12ba06ed0b6192ea9fa91ad9535a",
+      "gitBlob": "21ee387b582f97b6699467b4f819cf9a09fe4da5",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.DynamicPlugin.Contracts"
+    },
+    "SharpLink.ReplacementServices": {
+      "path": "test/SharpLink.ReplacementServices/SharpLink.ReplacementServices.csproj",
+      "sha256": "59a021df082ae8f753d8c3a47f51d1b7a73f6216cbf742d0f959cc3843dd04c7",
+      "gitBlob": "39a7813dba38b69d56874fde9b4d3bfa3c66354e",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "test/SharpLink.ReplacementContracts/SharpLink.ReplacementContracts.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.DynamicPlugin.Services"
+    },
+    "SharpLink.Runtime": {
+      "path": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+      "sha256": "5d69868f77acbbc0d3e707cfe5e54243adcd21d495b5e764f346da7381398846",
+      "gitBlob": "64f7245d73f39f596e6c68846588a72fa094ce4d",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.Runtime"
+    },
+    "SharpLink.Sdk": {
+      "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+      "sha256": "134e70627bd80c89d2aab4b3930df1da5e0a1a0b945035f2903afcc66d06c117",
+      "gitBlob": "ee9a783552d4ab26dd7d45eac7e0f4f32d0db35f",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "Condition": "'$(PublishAot)' != 'true'",
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false",
+            "GlobalPropertiesToRemove": "RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.Sdk"
+    },
+    "SharpLink.Serializer.SharpPack": {
+      "path": "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+      "sha256": "efd63b3c6281af14d49663e5a97f22bfe8f2c5aace9b906500b79c406dec2a21",
+      "gitBlob": "034bea8d911b8365683244badc8f7ab27ccb2d06",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.Serializer.SharpPack"
+    },
+    "SharpLink.Server": {
+      "path": "src/SharpLink.Server/SharpLink.Server.csproj",
+      "sha256": "b100a680185f4f3aed84fca83d0f1012b0ac4ad729664fb1cf67745f932bd4e0",
+      "gitBlob": "e552c01e2ead42052a76ea086e032e269167827e",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+          "attributes": {}
+        }
+      ],
+      "restoreName": "SharpLink.Server"
+    },
+    "SharpLink.IntegrationTests": {
+      "path": "test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj",
+      "sha256": "1c8a1f33e8ab77f4de05e8579edcd285b299d8e4303fc11f35305cae0feb8cb4",
+      "gitBlob": "345cf97b0e5adb4088dc8f859ac240c432d77659",
+      "framework": "net10.0",
+      "references": [
+        {
+          "path": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Client/SharpLink.Client.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Server/SharpLink.Server.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+          "attributes": {}
+        },
+        {
+          "path": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+          "attributes": {
+            "OutputItemType": "Analyzer",
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.ReplacementServices/SharpLink.ReplacementServices.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        },
+        {
+          "path": "test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj",
+          "attributes": {
+            "ReferenceOutputAssembly": "false"
+          }
+        }
+      ],
+      "restoreName": "SharpLink.IntegrationTests"
+    }
+  },
+  "runtimeProjects": [
+    "SharpLink.Abstractions",
+    "SharpLink.Client",
+    "SharpLink.IntegrationTests",
+    "SharpLink.Runtime",
+    "SharpLink.Sdk",
+    "SharpLink.Serializer.SharpPack",
+    "SharpLink.Server"
+  ],
+  "sourcePins": {
+    "test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj": {
+      "sha256": "1c8a1f33e8ab77f4de05e8579edcd285b299d8e4303fc11f35305cae0feb8cb4",
+      "gitBlob": "345cf97b0e5adb4088dc8f859ac240c432d77659"
+    },
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj": {
+      "sha256": "026d3726e13ae7ce0791eb2864413308ad6393ff1091b950bc2eace90d12cecc",
+      "gitBlob": "2136b75baf9da268f731faeef2e06244e2e41c4e"
+    },
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj": {
+      "sha256": "5d69868f77acbbc0d3e707cfe5e54243adcd21d495b5e764f346da7381398846",
+      "gitBlob": "64f7245d73f39f596e6c68846588a72fa094ce4d"
+    },
+    "src/SharpLink.Client/SharpLink.Client.csproj": {
+      "sha256": "c4be86cce056d56ee28ca8b25ca539f787ce9953e8c117d728dd1420999c466d",
+      "gitBlob": "85706df2ffe75d3a403bd7a9fbf6cca7f68b2d6e"
+    },
+    "src/SharpLink.Server/SharpLink.Server.csproj": {
+      "sha256": "b100a680185f4f3aed84fca83d0f1012b0ac4ad729664fb1cf67745f932bd4e0",
+      "gitBlob": "e552c01e2ead42052a76ea086e032e269167827e"
+    },
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj": {
+      "sha256": "134e70627bd80c89d2aab4b3930df1da5e0a1a0b945035f2903afcc66d06c117",
+      "gitBlob": "ee9a783552d4ab26dd7d45eac7e0f4f32d0db35f"
+    },
+    "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj": {
+      "sha256": "efd63b3c6281af14d49663e5a97f22bfe8f2c5aace9b906500b79c406dec2a21",
+      "gitBlob": "034bea8d911b8365683244badc8f7ab27ccb2d06"
+    },
+    "src/SharpLink.Generator/SharpLink.Generator.csproj": {
+      "sha256": "b22065bedfa90aca4cecab4ae7e641be5fd1ec0fa87a55a1c28267e09d1c119e",
+      "gitBlob": "08f9bf51dcd74dba59060d4d147520c266d949f8"
+    },
+    "test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj": {
+      "sha256": "cf0e5ef09033ef1af6968e8759217e0013c01a4e4eb68f58405dfb384c562004",
+      "gitBlob": "e69f47ed9a3954ea0f1d3f13ba5da603fa9dfeb8"
+    },
+    "test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj": {
+      "sha256": "c1f2029812d48695c3ffac4a5913ea943ec055e138069113e2baf1ba525df0dd",
+      "gitBlob": "f442cb0ef51f62b7893e406953b306dc4063133a"
+    },
+    "test/SharpLink.ReplacementServices/SharpLink.ReplacementServices.csproj": {
+      "sha256": "59a021df082ae8f753d8c3a47f51d1b7a73f6216cbf742d0f959cc3843dd04c7",
+      "gitBlob": "39a7813dba38b69d56874fde9b4d3bfa3c66354e"
+    },
+    "test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj": {
+      "sha256": "750178a76fe270adad02f0533a85220ea85e99beeb882b57c94db93730204ec4",
+      "gitBlob": "ddd0975357ae747a1c918a31cd04e191304fd591"
+    },
+    "test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj": {
+      "sha256": "1a68990387b702fd26f6aa07efbf6c8ebba3992ad3d6b823d36df30a23b170a0",
+      "gitBlob": "e9b7a1068c8cbf09cc7de37e4a73ae1600dff8ad"
+    },
+    "test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj": {
+      "sha256": "b6d8e9a312981ba64ad68913cd434e9ae9c7a2fe19ee91adce5401eed41d1cf5",
+      "gitBlob": "0d4d2d3b86bedce7a290f4cfd408f1fd79fde24a"
+    },
+    "test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj": {
+      "sha256": "b6d8e9a312981ba64ad68913cd434e9ae9c7a2fe19ee91adce5401eed41d1cf5",
+      "gitBlob": "0d4d2d3b86bedce7a290f4cfd408f1fd79fde24a"
+    },
+    "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj": {
+      "sha256": "1c48b9e40a62d44d8dec67d92aea95d4ab4ede1bdefb4326d47177859d3e0344",
+      "gitBlob": "33219c2fa195bf7103945b27d0f255d153a03efa"
+    },
+    "test/SharpLink.AotContracts/SharpLink.AotContracts.csproj": {
+      "sha256": "de1fa0ae5a9c6309fcf072f687f65141662d231ba13772c1184ad1e3e936566f",
+      "gitBlob": "f2bb806c84896bd30a9d34ecbbc83b0e6248bd80"
+    },
+    "test/SharpLink.AotServices/SharpLink.AotServices.csproj": {
+      "sha256": "7bf6d85d7c7db492537147b98ff5e85fc00ec8f644772b2b35d84cd4b02ab8f5",
+      "gitBlob": "391c6a9ee3b4a7a849ce5bd9fd954ab4b48c4412"
+    },
+    "test/SharpLink.ReplacementContracts/SharpLink.ReplacementContracts.csproj": {
+      "sha256": "b94ab8e8c379a1108898c045fe6da9d3bafe12ba06ed0b6192ea9fa91ad9535a",
+      "gitBlob": "21ee387b582f97b6699467b4f819cf9a09fe4da5"
+    },
+    "Directory.Build.props": {
+      "sha256": "1c5beebda0e8deff3fba70c3d6c1390db607c2195a1b2443665f551e8515ae7b",
+      "gitBlob": "450b49da8a59127778d5e0b30539c695a19ac8eb"
+    },
+    "Directory.Packages.props": {
+      "sha256": "86048cc466737c91b510c77a082ec9283a5d0eeda511b813599557d8c64578c5",
+      "gitBlob": "8106159e925660c1f03f9394538b8a04814557e7"
+    },
+    "global.json": {
+      "sha256": "099805cd1161ca87a57c0b0241c614b0ec35b5fce384c3fd1c86a16e5364f6e4",
+      "gitBlob": "e9ed1033b3534e6d844d4c34b2783ab0c814ed84"
+    },
+    "src/Directory.Build.props": {
+      "sha256": "5dbaadda54a281d25c9ddc263532e23eb0c5c937af3d70b10d866a80b850cd86",
+      "gitBlob": "17e2f29f606b3d6aff9d81b7d5ef2cb28a732da1"
+    },
+    "test/Directory.Build.props": {
+      "sha256": "8637c25314ba6ec567157f89484c088634e7f311d36d5e21cb60261d22144690",
+      "gitBlob": "2313190136b75e53d71064d744ef4f457cd4fe97"
+    },
+    "src/SharpLink.Sdk/buildTransitive/SharpLink.Sdk.targets": {
+      "sha256": "6034c68149beafa16a1881dfb54d139bac80a2e016c963d86cf2c8e0cf034bc3",
+      "gitBlob": "ccc874d5642eb211b70ff7244146824f81339303"
+    },
+    "test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.cs": {
+      "sha256": "22657e46ef4d7a3cb98d6fe542626acba017032a52cfaf5bae533d999433b185",
+      "gitBlob": "95324a6187640a6c397c1a7af09c409c1d59d5ac"
+    },
+    "test/SharpLink.IntegrationTests/TransportConnectionIntegrationTests.Lifecycle.cs": {
+      "sha256": "d37bc7ec4d904ee378f3289c7f6319e49d5d1574574af8771eeef25441ce7a78",
+      "gitBlob": "58890548019f42d2c37fdbc0ee037cee0ba6727f"
+    },
+    "src/SharpLink.Server/SharpLinkServer.RunLoop.cs": {
+      "sha256": "b1f1589446f2c9b466d88766d07396cf30b3b2d45d1acaaa5e808b76893576e1",
+      "gitBlob": "fbe110c7ee1bf12aed26ac30ce30e37720bbc875"
+    }
+  },
+  "absent": [
+    "Directory.Build.targets"
+  ],
+  "framePins": {
+    "src/SharpLink.Server/ServerLifecycleCoordinator.cs": {
+      "sha256": "15f51c31b41ac17cd035d861e9a71da866ffe41c91ceb438c49c15f9bff6c383",
+      "gitBlob": "472ab7117d4b79d01151db1b745af2ff4498d859"
+    },
+    "src/SharpLink.Server/SharpLinkServer.RunLoop.cs": {
+      "sha256": "b1f1589446f2c9b466d88766d07396cf30b3b2d45d1acaaa5e808b76893576e1",
+      "gitBlob": "fbe110c7ee1bf12aed26ac30ce30e37720bbc875"
+    }
+  }
+}
