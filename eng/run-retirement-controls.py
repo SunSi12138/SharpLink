@@ -101,6 +101,11 @@ def asset_identity(source, catalog, packages, expected_package_identity):
 
 
 def summarize_failure(error):
+    if isinstance(error, results.SourcePathDiagnosticFailure):
+        # Only rendering is restricted: both original objects/tracebacks remain
+        # rooted in the group, including OSError.filename in private evidence.
+        print('failure: SourcePathDiagnosticFailure: original path mismatch; diagnostic details retained privately', flush=True)
+        return
     if isinstance(error, BaseExceptionGroup):
         for member in error.exceptions:
             summarize_failure(member)
@@ -229,7 +234,17 @@ def main():
                 selected = '*' if scope['discovery'] == 'class' else methods[0]['name']
                 filter_value = '/*/' + scope['namespace'] + '/' + scope['class'] + '/' + selected
                 path = run('list-' + str(number) + '-' + str(part), [dotnet, dll, '--list-tests', 'json', '--treenode-filter', filter_value], source, limits['discoverySeconds'])
-                rows = results.discovery(results.read_json(path), scope, methods, source / scope['source'], catalog['assemblyFullName'], Path('/_/retirement-unit') / scope['source'])
+                diagnostic = None
+                if number == 0 and part == 0:
+                    require(scope['namespace'] == 'SharpLink.UnitTests.Runtime' and
+                            scope['class'] == 'RetirementGraceBudgetTests' and len(methods) == 9,
+                            'Path diagnostic scope must remain the selected nine math methods')
+                    def diagnostic(row):
+                        detail = results.source_path_diagnostic(row, source / scope['source'],
+                            Path('/_/retirement-unit') / scope['source'], scope['source'], ROOT / scope['source'])
+                        print('metadata-path-diagnostic: ' + json.dumps(detail, sort_keys=True), flush=True)
+                rows = results.discovery(results.read_json(path), scope, methods, source / scope['source'],
+                    catalog['assemblyFullName'], Path('/_/retirement-unit') / scope['source'], diagnostic)
                 require(not set(rows).intersection(ledger), 'UID appears in multiple selections')
                 for uid, row in rows.items():
                     row['selection'] = scope

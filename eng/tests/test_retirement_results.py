@@ -1,5 +1,7 @@
 """Synthetic classifier checks only; never SharpLink/.NET test evidence."""
 import copy
+import contextlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -117,6 +119,73 @@ class ClassifierTests(unittest.TestCase):
             with self.assertRaises(ValueError): self.verdict(native)
         native = copy.deepcopy(self.native); native['filter'] = 'actual-selector'
         self.assertEqual(r.passed(native, self.xml, self.row, self.source, '1.73.19.0', selector='actual-selector')['status'], 'PASS')
+
+    def test_path_diagnostic_never_accepts_an_alternative_prefix(self):
+        expected = Path('/_/retirement-unit/test/Example.cs')
+        relative = 'test/Example.cs'
+        checkout = Path('/private/checkout/test/Example.cs')
+        variants = [(str(self.source), 'exact-private-build-source'),
+                    (str(checkout), 'exact-invocation-checkout-source'),
+                    (relative, 'exact-git-relative-text-unbound'),
+                    ('/_/test/Example.cs', 'other-underscore-virtual-root-unbound'),
+                    ('/_1/test/Example.cs', 'other-underscore-virtual-root-unbound'),
+                    ('/private/unknown/test/Example.cs', 'selected-relative-suffix-with-untrusted-prefix'),
+                    ('/private/another/File.cs', 'other-path-unbound')]
+        for path, category in variants:
+            with self.subTest(category=category):
+                row = copy.deepcopy(self.row); row['location']['file'] = path
+                details = []
+                with self.assertRaisesRegex(ValueError, '^Discovered source path mismatch$'):
+                    r.discovery(dict(schemaVersion=1, tests=[row]), self.scope, self.methods, self.source,
+                                self.assembly, expected,
+                                lambda actual: details.append(r.source_path_diagnostic(actual, self.source,
+                                    expected, relative, checkout)))
+                self.assertEqual(len(details), 1)
+                self.assertEqual(details[0]['actualPathClass'], category)
+                self.assertEqual(details[0]['expectedReportedPath'], str(expected))
+                self.assertNotIn('/private/', json.dumps(details))
+                self.assertNotIn(self.temp.name, json.dumps(details))
+        row = copy.deepcopy(self.row); row['location']['file'] = str(expected)
+        callbacks = []
+        self.assertEqual(set(r.discovery(dict(schemaVersion=1, tests=[row]), self.scope, self.methods,
+                                        self.source, self.assembly, expected, callbacks.append)), {'actual-uid'})
+        self.assertEqual(callbacks, [])
+
+    def test_path_diagnostic_failure_keeps_original_rejection(self):
+        marker = RuntimeError('diagnostic failed')
+        def broken(_): raise marker
+        with self.assertRaises(BaseExceptionGroup) as caught:
+            r.discovery(dict(schemaVersion=1, tests=[self.row]), self.scope, self.methods,
+                        self.source, self.assembly, Path('/_/unexpected'), broken)
+        self.assertEqual(len(caught.exception.exceptions), 2)
+        self.assertIsInstance(caught.exception.exceptions[0], ValueError)
+        self.assertEqual(str(caught.exception.exceptions[0]), 'Discovered source path mismatch')
+        self.assertIs(caught.exception.exceptions[1], marker)
+
+    def test_path_diagnostic_io_failure_console_keeps_private_filename_private(self):
+        # Load the actual renderer only; module import never invokes SDK/main.
+        runner_spec = importlib.util.spec_from_file_location('retirement_runner',
+            Path(__file__).resolve().parents[1] / 'run-retirement-controls.py')
+        runner = importlib.util.module_from_spec(runner_spec); runner_spec.loader.exec_module(runner)
+        self.source.unlink()
+        expected = Path('/_/retirement-unit/test/Example.cs')
+        with self.assertRaises(runner.results.SourcePathDiagnosticFailure) as caught:
+            runner.results.discovery(dict(schemaVersion=1, tests=[self.row]), self.scope, self.methods,
+                        self.source, self.assembly, expected,
+                        lambda row: runner.results.source_path_diagnostic(row, self.source, expected,
+                            'test/Example.cs', Path('/private/checkout/test/Example.cs')))
+        rejection, diagnostic = caught.exception.exceptions
+        self.assertEqual(str(rejection), 'Discovered source path mismatch')
+        self.assertIsInstance(diagnostic, FileNotFoundError)
+        self.assertEqual(diagnostic.filename, str(self.source))
+        envelope = caught.exception
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output): runner.summarize_failure(envelope)
+        self.assertIn('SourcePathDiagnosticFailure', output.getvalue())
+        self.assertNotIn(str(self.source), output.getvalue())
+        self.assertNotIn(self.temp.name, output.getvalue())
+        self.assertIs(envelope.exceptions[0], rejection)
+        self.assertIs(envelope.exceptions[1], diagnostic)
 
     def cache_context(self):
         lane = Path(self.temp.name) / 'lane'; lane.mkdir()

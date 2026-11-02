@@ -6,11 +6,16 @@ Microsoft testfx 0bf77e3aedbf86f1fa16220bc951d3b52ba56763 DiscoveredTestsJsonSer
 Raw reports remain local. No exception container, retry, skip or timeout is PASS.
 """
 import json
+import hashlib
 import math
 from pathlib import Path
 import re
 import stat
 import xml.etree.ElementTree as ET
+
+
+class SourcePathDiagnosticFailure(BaseExceptionGroup):
+    """Retains the two raw failures; console rendering must not stringify children."""
 
 
 def require(value, message):
@@ -57,7 +62,7 @@ def source_span(path, method):
     return attribute + 1, signature + 1, end + 1
 
 
-def discovery(document, scope, methods, source, assembly, reported_source=None):
+def discovery(document, scope, methods, source, assembly, reported_source=None, on_source_path_mismatch=None):
     require(type(document.get('schemaVersion')) is int and document['schemaVersion'] == 1, 'Discovery schema mismatch')
     tests = document.get('tests')
     require(isinstance(tests, list) and len(tests) == len(methods), 'Discovery case count mismatch')
@@ -81,7 +86,14 @@ def discovery(document, scope, methods, source, assembly, reported_source=None):
                 meta.get('returnTypeFullName') == item['return'], 'Discovered signature mismatch')
         require(isinstance(test.get('displayName'), str) and test['displayName'], 'Missing actual display name')
         location = test.get('location', {})
-        require(location.get('file') == str(reported_source if reported_source is not None else source), 'Discovered source path mismatch')
+        if location.get('file') != str(reported_source if reported_source is not None else source):
+            rejection = ValueError('Discovered source path mismatch')
+            if on_source_path_mismatch is not None:
+                try:
+                    on_source_path_mismatch(test)
+                except BaseException as diagnostic:
+                    raise SourcePathDiagnosticFailure('Source path rejection and diagnostic failure', [rejection, diagnostic]) from None
+            raise rejection
         start, signature, end = source_span(source, name)
         require(type(location.get('lineStart')) is int and start <= location['lineStart'] <= signature and
                 type(location.get('lineEnd')) is int and location['lineEnd'] == end, 'Discovered source span mismatch')
@@ -89,6 +101,46 @@ def discovery(document, scope, methods, source, assembly, reported_source=None):
         rows[uid] = test
     require(seen_methods == set(expected), 'Missing selected method')
     return rows
+
+
+def source_path_diagnostic(row, source, reported_source, relative_source, checkout_source):
+    """Safe description only, NEVER a path resolver or acceptance rule.
+
+    Called only for the first rejected row in the selected nine-method math list,
+    after discovery has checked its UID/method/type/signature. Unknown absolute
+    prefixes are hashed, not printed or read from the filesystem.
+    """
+    actual = row.get('location', {}).get('file')
+    detail = dict(method=row['type']['methodName'],
+                  actualUidSha256=hashlib.sha256(row['uid'].encode()).hexdigest(),
+                  selectedGitRelativeSource=relative_source,
+                  selectedSourceSha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                  expectedReportedPath=str(reported_source),
+                  qualification='diagnostic-only; rejected path remains rejected')
+    if not isinstance(actual, str):
+        detail['actualPathClass'] = 'missing-or-nonstring'
+        return detail
+    detail['actualPathSha256'] = hashlib.sha256(actual.encode()).hexdigest()
+    detail['actualPathLength'] = len(actual)
+    if actual == str(reported_source):
+        detail['actualPathClass'] = 'exact-expected-reported-path'
+    elif actual == str(source):
+        detail['actualPathClass'] = 'exact-private-build-source'
+    elif actual == str(checkout_source):
+        detail['actualPathClass'] = 'exact-invocation-checkout-source'
+    elif actual == relative_source:
+        detail['actualPathClass'] = 'exact-git-relative-text-unbound'
+    elif re.fullmatch(r'/_[0-9]{0,3}/' + re.escape(relative_source), actual):
+        # Only this controlled virtual-root grammar plus the exact catalog path
+        # is printable. It does not establish an actual compiler mapping.
+        detail['actualPathClass'] = 'other-underscore-virtual-root-unbound'
+        detail['controlledReportedPath'] = actual
+    elif actual.endswith('/' + relative_source):
+        detail['actualPathClass'] = 'selected-relative-suffix-with-untrusted-prefix'
+        detail['prefixSha256'] = hashlib.sha256(actual[:-len(relative_source)].encode()).hexdigest()
+    else:
+        detail['actualPathClass'] = 'other-path-unbound'
+    return detail
 
 
 def directory_identity(raw):
