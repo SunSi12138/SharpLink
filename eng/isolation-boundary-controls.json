@@ -177,7 +177,7 @@
       "namespace": "SharpLink.UnitTests.Runtime",
       "class": "DynamicRollbackTests",
       "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
-      "sourceSha256": "71a74ae8f498ef07f62dcbe18321484ac4d5710ace0f87eda6a2ee1f9caa1b8b",
+      "sourceSha256": "a8cce485c0fb0078289cb7571c143bc7213029b10adf5dafc9069a7cc26f6413",
       "discovery": "methods",
       "methods": [
         {
@@ -226,7 +226,7 @@
       "namespace": "SharpLink.UnitTests.Runtime",
       "class": "DynamicRollbackTests",
       "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
-      "sourceSha256": "71a74ae8f498ef07f62dcbe18321484ac4d5710ace0f87eda6a2ee1f9caa1b8b",
+      "sourceSha256": "a8cce485c0fb0078289cb7571c143bc7213029b10adf5dafc9069a7cc26f6413",
       "discovery": "methods",
       "methods": [
         {

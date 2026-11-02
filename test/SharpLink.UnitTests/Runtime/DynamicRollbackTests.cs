@@ -58,75 +58,13 @@ public class DynamicRollbackTests
     [Test]
     public async Task ClientReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
-        try
-        {
-            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
-                .DisableRequestTimeout()
-                .UseTransport(new NoopClientTransport()).Build();
-            using var oldPlugin = LoadPlugin("client-old");
-            using var newPlugin = LoadPlugin("client-new");
-            try
-            {
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "retained-schema");
-                Ensure(client.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "retained Client registration");
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-                Ensure(client.RegisterAssembly(oldPlugin.Assembly).Succeeded, "old Client registration");
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "incoming-schema");
-
-                var failure = Capture(() => client.ReplaceAssemblyAsync(
-                    oldPlugin.Assembly, newPlugin.Assembly, TimeSpan.Zero).AsTask().GetAwaiter().GetResult());
-
-                Ensure(Contains(failure, "Codec conflict"), "Client replacement retains the structured conflict");
-                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Client replacement retains Adapter cleanup failure");
-            }
-            finally
-            {
-                ClearEnvironment();
-                try { await client.DisposeAsync(); } catch { }
-            }
-        }
-        finally
-        {
-            RollbackState.TestIsolation.Release();
-        }
+        await B3cOwner.Run(false, testCancellationToken);
     }
 
     [Test]
     public async Task ServerReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
-        try
-        {
-            var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
-            using var oldPlugin = LoadPlugin("server-old");
-            using var newPlugin = LoadPlugin("server-new");
-            try
-            {
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "retained-schema");
-                Ensure(server.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "retained Server registration");
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-                Ensure(server.RegisterAssembly(oldPlugin.Assembly).Succeeded, "old Server registration");
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "incoming-schema");
-
-                var failure = Capture(() => server.ReplaceAssemblyAsync(
-                    oldPlugin.Assembly, newPlugin.Assembly, TimeSpan.Zero).AsTask().GetAwaiter().GetResult());
-
-                Ensure(Contains(failure, "Codec conflict"), "Server replacement retains the structured conflict");
-                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server replacement retains Adapter cleanup failure");
-            }
-            finally
-            {
-                ClearEnvironment();
-                try { await server.DisposeAsync(); } catch { }
-            }
-        }
-        finally
-        {
-            RollbackState.TestIsolation.Release();
-        }
+        await B3cOwner.Run(true, testCancellationToken);
     }
 
     [Test]
@@ -162,6 +100,612 @@ public class DynamicRollbackTests
 
     // B3b owns the real public registration invocations and exact instance receipts.
     // It is intentionally separate from B3a's no-cleanup-fault normal-exit owner.
+    private sealed class B3cOwner(bool server)
+    {
+        private static readonly Lock RootsGate = new();
+        private static readonly HashSet<B3cOwner> Roots = [];
+        private static readonly TimeSpan Bound = TimeSpan.FromSeconds(2);
+        private static readonly string[] EnvironmentKeys = ["SHARPLINK_ROLLBACK_SCHEMA", "SHARPLINK_ROLLBACK_CODEC_IDENTITY",
+            "SHARPLINK_ROLLBACK_DISABLE_CODEC", "SHARPLINK_ROLLBACK_RETIREMENT_CONTRACT"];
+        private readonly string?[] _previousEnvironment = new string?[EnvironmentKeys.Length];
+        private readonly bool[] _writeAttempted = new bool[EnvironmentKeys.Length];
+        private readonly Lock _gate = new();
+        private readonly Dictionary<Task, Task<B3cOutcome>> _outcomes = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<Task> _accepted = new(ReferenceEqualityComparer.Instance);
+        private readonly List<(string Stage, Exception Failure)> _failures = [];
+        private readonly List<(string Stage, Task Original)> _taskEdges = [];
+        private readonly List<Exception> _hookFailures = [];
+        private readonly List<ISharpLinkGeneratedAssemblyManifest> _observedManifests = [];
+        private readonly B3bTransport _transport = new();
+        private bool _permit, _snapshots, _offered, _registrationAttempted, _hookSnapshot, _hookWriteAttempted;
+        private object? _builder;
+        private IAsyncDisposable? _endpoint;
+        private SharpLinkClient? _client;
+        private SharpLinkServer? _server;
+        private SharpLinkRuntimeContext? _runtime;
+        private ClientAssemblyRegistry? _clientRegistry;
+        private ServerServiceModuleRegistry? _serverRegistry;
+        private SharpLinkDynamicModule? _retainedModule;
+        private RpcGeneratedManifestRegistration? _retainedCodecOwner;
+        private ISharpLinkGeneratedAssemblyManifest? _retainedManifest, _incomingManifest;
+        private Exception? _retainedFailure, _incomingFailure;
+        private Task? _setup, _replacementInvocation, _stopInvocation, _stop, _disposeInvocation, _dispose, _terminal;
+        private B3aWave? _retainedWave1, _retainedWave2;
+        private PluginLoadContext? _context, _replacementOldContext;
+        private Assembly? _replacementOldAssembly;
+        private SharpLinkDynamicModule? _replacementOldModule;
+        private RpcGeneratedManifestRegistration? _replacementOldCodecOwner;
+        private ISharpLinkGeneratedAssemblyManifest? _replacementOldManifest;
+        private B3aWave? _oldWave1, _oldWave2;
+        private bool _replacementOldRegistrationAttempted, _replacementApiReturned;
+        private Task<SharpLinkAssemblyReplacementResult>? _replacementReturned;
+        private ValueTask<SharpLinkAssemblyReplacementResult>? _replacementValue;
+        private Assembly? _incomingAssembly;
+        private FieldInfo? _hookField;
+        private object? _previousHook, _defaultObserver, _defaultStarted, _defaultRelease;
+        private Action<ISharpLinkGeneratedAssemblyManifest>? _installedHook;
+        private bool _hookRestored, _oracleComplete;
+        private readonly Assembly _retainedAssembly = typeof(RollbackMarker).Assembly;
+
+        internal static async Task Run(bool server, CancellationToken token)
+        {
+            var owner = new B3cOwner(server);
+            lock (RootsGate) Roots.Add(owner);
+            try
+            {
+                await RollbackState.TestIsolation.WaitAsync(token);
+                owner._permit = true;
+                try
+                {
+                    owner.PrepareEnvironment();
+                    owner._setup = owner.Own(Task.Run(owner.Initialize), "setup");
+                    await owner.Success(owner._setup, "setup");
+                    owner._replacementInvocation = owner.Own(Task.Run(owner.ReplaceIncoming), "replacement-invocation");
+                    await owner.CheckRollback();
+                }
+                catch (Exception failure) { owner.Fail("body", failure); }
+                finally
+                {
+                    try { await owner.Close(); }
+                    catch (Exception failure) { owner.Fail("close", failure); }
+                }
+            }
+            catch (Exception failure) { owner.Fail("admission", failure); }
+            finally
+            {
+                if (!owner._permit && owner._endpoint is null && !owner._offered)
+                    lock (RootsGate) Roots.Remove(owner);
+            }
+            Exception[] failures;
+            lock (owner._gate) failures = owner._failures.ConvertAll(x => x.Failure).ToArray();
+            if (failures.Length != 0) throw new AggregateException(failures);
+        }
+
+        private void Fail(string stage, Exception failure) { lock (_gate) _failures.Add((stage, failure)); }
+        private void Require(bool condition, string message) => Ensure(condition, "B3c " + message);
+        private static object? ReadField(object owner, string name)
+            => (owner.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("Missing B3c field " + name)).GetValue(owner);
+        private static T Field<T>(object owner, string name) => (T)(ReadField(owner, name)
+            ?? throw new InvalidOperationException("Missing B3c owner " + name));
+
+        private void PrepareEnvironment()
+        {
+            // Read every prior value before any mutation. Foreign default hooks
+            // are not invoked, cleared or chained by this fixture.
+            for (var i = 0; i < EnvironmentKeys.Length; i++)
+                _previousEnvironment[i] = Environment.GetEnvironmentVariable(EnvironmentKeys[i]);
+            _snapshots = true;
+            _defaultObserver = RollbackState.ManifestConstructed;
+            _defaultStarted = RollbackState.ManifestConstructionStarted;
+            _defaultRelease = RollbackState.ManifestConstructionRelease;
+            Require(_defaultObserver is null && _defaultStarted is null && _defaultRelease is null,
+                "default assembly has no foreign observer or construction barrier");
+            for (var i = 0; i < EnvironmentKeys.Length; i++)
+            {
+                _writeAttempted[i] = true;
+                Environment.SetEnvironmentVariable(EnvironmentKeys[i], i == 0 ? "retained-schema" : null);
+            }
+        }
+
+        private void Initialize()
+        {
+            if (server)
+            {
+                var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+                _builder = builder; _offered = true; builder.UseTransport(_transport);
+                var endpoint = builder.Build(); _endpoint = endpoint; _server = (SharpLinkServer)endpoint;
+                _runtime = Field<SharpLinkRuntimeContext>(_server, "_runtimeContext");
+                _serverRegistry = Field<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry");
+                _registrationAttempted = true;
+                Require(endpoint.RegisterAssembly(_retainedAssembly).Succeeded, "first Server registration");
+            }
+            else
+            {
+                var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).DisableRequestTimeout();
+                _builder = builder; _offered = true; builder.UseTransport(_transport);
+                var endpoint = builder.Build(); _endpoint = endpoint; _client = (SharpLinkClient)endpoint;
+                _runtime = (SharpLinkRuntimeContext)_client.RuntimeContext;
+                _clientRegistry = Field<ClientAssemblyRegistry>(_client, "_assemblyRegistry");
+                _registrationAttempted = true;
+                Require(endpoint.RegisterAssembly(_retainedAssembly).Succeeded, "first Client registration");
+            }
+            CaptureModule();
+            _retainedCodecOwner = _retainedModule!.CodecRegistration;
+            _retainedManifest = ((PreparedGeneratedManifest)_retainedModule!.Manifest).OriginalManifest;
+            Require(_retainedManifest is RollbackManifest && ReferenceEquals(_retainedManifest.OwnerAssembly, _retainedAssembly), "exact first instance");
+            var oldReceipt = Receipts(_retainedManifest);
+            Require(oldReceipt.Length == 1 && oldReceipt[0].Count == 0 && oldReceipt[0].Order == 0, "first scope not yet disposed");
+            _retainedFailure = oldReceipt[0].Failure;
+            // The old replacement target is a different real module, deliberately
+            // codec-free. The retained default module remains the conflict owner.
+            _replacementOldContext = new PluginLoadContext(server ? "b3c-server-old" : "b3c-client-old");
+            _replacementOldAssembly = _replacementOldContext.LoadFromAssemblyPath(typeof(RollbackMarker).Assembly.Location);
+            var oldState = _replacementOldAssembly.GetType(typeof(RollbackState).FullName!, throwOnError: true)!;
+            Require(oldState.GetField(nameof(RollbackState.ManifestConstructed))!.GetValue(null) is null &&
+                oldState.GetField(nameof(RollbackState.ManifestConstructionStarted))!.GetValue(null) is null &&
+                oldState.GetField(nameof(RollbackState.ManifestConstructionRelease))!.GetValue(null) is null,
+                "old collectible assembly has no foreign observer/barrier");
+            _writeAttempted[2] = true;
+            Environment.SetEnvironmentVariable(EnvironmentKeys[2], "1");
+            _replacementOldRegistrationAttempted = true;
+            var oldRegistration = server ? _server!.RegisterAssembly(_replacementOldAssembly)
+                : _client!.RegisterAssembly(_replacementOldAssembly);
+            Require(oldRegistration.Succeeded, "old codec-free registration");
+            CaptureReplacementOldModule();
+            _replacementOldCodecOwner = _replacementOldModule!.CodecRegistration;
+            _replacementOldManifest = ((PreparedGeneratedManifest)_replacementOldModule.Manifest).OriginalManifest;
+            Require(ReferenceEquals(_replacementOldManifest.OwnerAssembly, _replacementOldAssembly) &&
+                _replacementOldManifest.Codecs.Count == 0 && Receipts(_replacementOldManifest).Length == 0,
+                "actual old module has no codec factories or scope receipts");
+            Environment.SetEnvironmentVariable(EnvironmentKeys[2], null);
+            _context = new PluginLoadContext(server ? "b3c-server-incoming" : "b3c-client-incoming");
+            _incomingAssembly = _context.LoadFromAssemblyPath(typeof(RollbackMarker).Assembly.Location);
+            var state = _incomingAssembly.GetType(typeof(RollbackState).FullName!, throwOnError: true)!;
+            Require(state.GetField(nameof(RollbackState.ManifestConstructionStarted))!.GetValue(null) is null &&
+                state.GetField(nameof(RollbackState.ManifestConstructionRelease))!.GetValue(null) is null, "incoming has no foreign barrier");
+            _hookField = state.GetField(nameof(RollbackState.ManifestConstructed))!;
+            _previousHook = _hookField.GetValue(null); _hookSnapshot = true;
+            _installedHook = ObserveIncoming;
+            _hookWriteAttempted = true;
+            _hookField.SetValue(null, _installedHook);
+            _writeAttempted[0] = true;
+            Environment.SetEnvironmentVariable(EnvironmentKeys[0], "incoming-schema");
+        }
+
+        private void ObserveIncoming(ISharpLinkGeneratedAssemblyManifest manifest)
+        {
+            // Root actual this BEFORE validating. A callback throw/constructor
+            // non-return cannot discard the only instance receipt owner.
+            lock (_gate)
+            {
+                var previous = _incomingManifest;
+                _observedManifests.Add(manifest);
+                _incomingManifest ??= manifest;
+                try
+                {
+                    Require(previous is null, "one actual incoming construction");
+                    Require(ReferenceEquals(manifest.OwnerAssembly, _incomingAssembly), "incoming observer exact assembly");
+                }
+                catch (Exception failure) { _hookFailures.Add(failure); throw; }
+            }
+        }
+
+        private void ReplaceIncoming()
+        {
+            // Keep the API-return boundary separate from conversion. A sync API
+            // throw, an AsTask throw and a returned original are distinct facts.
+            var pending = server ? _server!.ReplaceAssemblyAsync(_replacementOldAssembly!, _incomingAssembly!, TimeSpan.Zero)
+                : _client!.ReplaceAssemblyAsync(_replacementOldAssembly!, _incomingAssembly!, TimeSpan.Zero);
+            _replacementValue = pending; // retain the actual value/source if conversion itself fails
+            _replacementApiReturned = true;
+            var original = pending.AsTask(); // consume the actual ValueTask once
+            _replacementReturned = Own(original, "replacement-returned");
+        }
+
+        private static (Exception Failure, int Count, int Order)[] Receipts(ISharpLinkGeneratedAssemblyManifest manifest)
+            => ((Exception Failure, int Count, int Order)[])(manifest.GetType()
+                .GetMethod(nameof(RollbackManifest.GetScopeCleanupReceipts), BindingFlags.Instance | BindingFlags.Public)!
+                .Invoke(manifest, null) ?? throw new InvalidOperationException("Missing actual scope receipt"));
+
+        private void WithRegistry(Action action)
+        {
+            if (_serverRegistry is not null) { lock (_serverRegistry.Gate) action(); }
+            else if (_clientRegistry is not null) { lock (Field<Lock>(_clientRegistry, "_gate")) action(); }
+            else throw new InvalidOperationException("Unknown B3c registry");
+        }
+
+        private void CaptureModule()
+        {
+            if (_retainedModule is not null) return;
+            WithRegistry(() =>
+            {
+                var found = _serverRegistry is not null ? _serverRegistry.DynamicModules.TryGetValue(_retainedAssembly, out _retainedModule)
+                    : _clientRegistry!.DynamicModules.TryGetValue(_retainedAssembly, out _retainedModule);
+                Require(found && _retainedModule is not null, "exact first module root");
+            });
+        }
+
+        private void CaptureReplacementOldModule()
+        {
+            if (_replacementOldModule is not null) return;
+            WithRegistry(() =>
+            {
+                var found = _serverRegistry is not null
+                    ? _serverRegistry.DynamicModules.TryGetValue(_replacementOldAssembly!, out _replacementOldModule)
+                    : _clientRegistry!.DynamicModules.TryGetValue(_replacementOldAssembly!, out _replacementOldModule);
+                Require(found && _replacementOldModule is not null, "exact codec-free old module root");
+            });
+        }
+
+        private sealed record B3cOutcome(Exception? AwaitFailure, AggregateException? FullTaskFailure)
+        {
+            internal bool Succeeded => AwaitFailure is null && FullTaskFailure is null;
+        }
+        private static async Task<B3cOutcome> Observe(Task source)
+        {
+            try { await source.ConfigureAwait(false); return new(null, null); }
+            catch (Exception failure) { return new(failure, source.Exception); }
+        }
+        private T Own<T>(T source, string stage) where T : Task
+        {
+            lock (_gate)
+            {
+                _taskEdges.Add((stage, source));
+                if (!_outcomes.ContainsKey(source)) _outcomes.Add(source, Observe(source));
+            }
+            return source;
+        }
+        private async Task<B3cOutcome> Outcome(Task source, string stage)
+        {
+            _ = Own(source, stage);
+            Task<B3cOutcome> observer;
+            lock (_gate) observer = _outcomes[source];
+            return await observer.WaitAsync(Bound); // diagnostic error is NOT source error data
+        }
+        private void Accept(Task source) { lock (_gate) _accepted.Add(source); }
+        private async Task Success(Task source, string stage)
+        {
+            var outcome = await Outcome(source, stage);
+            if (!outcome.Succeeded)
+                throw new AggregateException("Unexpected B3c source failure: " + stage,
+                    outcome.FullTaskFailure ?? outcome.AwaitFailure!);
+            Accept(source);
+        }
+        private static bool SingleTaskFault(B3cOutcome outcome)
+            => outcome.AwaitFailure is not null && outcome.FullTaskFailure is { InnerExceptions.Count: 1 } &&
+                ReferenceEquals(outcome.FullTaskFailure.InnerExceptions[0], outcome.AwaitFailure);
+
+        private async Task CheckRollback()
+        {
+            var outcome = await Outcome(_replacementInvocation!, "replacement-invocation-oracle");
+            Require(!_replacementApiReturned && _replacementValue is null && _replacementReturned is null,
+                "selected precommit rollback throws synchronously before any API ValueTask return");
+            Require(_incomingManifest is not null && _retainedManifest is not null && _replacementOldManifest is not null,
+                "three actual manifest instances");
+            Require(Receipts(_replacementOldManifest!).Length == 0 && _replacementOldManifest!.Codecs.Count == 0,
+                "codec-free old registration unchanged");
+            var incoming = Receipts(_incomingManifest!); var old = Receipts(_retainedManifest!);
+            Require(incoming.Length == 1 && incoming[0].Count == 1 && incoming[0].Order == 1, "incoming scope rollback exactly once");
+            _incomingFailure = incoming[0].Failure;
+            Require(old.Length == 1 && old[0].Count == 0 && old[0].Order == 0 && ReferenceEquals(old[0].Failure, _retainedFailure), "original scope unchanged");
+            var firstCodecs = _retainedManifest!.Codecs; var incomingCodecs = _incomingManifest!.Codecs;
+            Require(firstCodecs.Count == 1 && incomingCodecs.Count == 1 && firstCodecs[0].TargetType == typeof(string) &&
+                incomingCodecs[0].TargetType == typeof(string) && !firstCodecs[0].CodecHash.IsEmpty &&
+                !incomingCodecs[0].CodecHash.IsEmpty && firstCodecs[0].CodecHash != incomingCodecs[0].CodecHash, "actual distinct string codec identities");
+            var expected = $"CodecConflict: Codec conflict for '{typeof(string).FullName}': existing CodecHash '{firstCodecs[0].CodecHash}', incoming CodecHash '{incomingCodecs[0].CodecHash}'.";
+            Require(SingleTaskFault(outcome) && outcome.AwaitFailure is AggregateException { InnerExceptions.Count: 2 }, "exact two-part synchronous replacement failure");
+            var failure = (AggregateException)outcome.AwaitFailure!;
+            Require(failure.InnerExceptions[0].GetType() == typeof(InvalidOperationException) && failure.InnerExceptions[0].InnerException is null &&
+                failure.InnerExceptions[0].Message == expected && ReferenceEquals(failure.InnerExceptions[1], _incomingFailure),
+                "structured exact conflict then original incoming adapter failure, without unknown siblings");
+            Require(!ReferenceEquals(_retainedFailure, _incomingFailure), "different instances own different original failures");
+            WithRegistry(() =>
+            {
+                Require(_retainedModule!.State == SharpLinkDynamicModuleState.Running && ReferenceEquals(_retainedModule.CodecRegistration, _retainedCodecOwner), "retained module remains Running and identical");
+                Require(_replacementOldModule!.State == SharpLinkDynamicModuleState.Running &&
+                    ReferenceEquals(_replacementOldModule.CodecRegistration, _replacementOldCodecOwner) &&
+                    ReferenceEquals(((PreparedGeneratedManifest)_replacementOldModule.Manifest).OriginalManifest, _replacementOldManifest),
+                    "old replacement target remains Running with its exact codec-free registration");
+                Require(!ReferenceEquals(_retainedModule, _replacementOldModule), "two distinct real modules");
+                foreach (var original in new[] { _retainedModule, _replacementOldModule })
+                    Require(original!.RetirementControl is null && original.RetirementOperation is null &&
+                        original.RetirementTracking is null && original.RetirementObservation is null &&
+                        original.RetirementRegistration is null && original.CleanupCompletion is null &&
+                        !original.ForcedCancellation.IsCancellationRequested,
+                        "failed preparation did not select retirement or cancel either live module");
+                SharpLinkDynamicModule? retained, oldTarget;
+                Require(_serverRegistry is not null
+                    ? _serverRegistry.DynamicModules.TryGetValue(_retainedAssembly, out retained) && ReferenceEquals(retained, _retainedModule) &&
+                      _serverRegistry.DynamicModules.TryGetValue(_replacementOldAssembly!, out oldTarget) && ReferenceEquals(oldTarget, _replacementOldModule)
+                    : _clientRegistry!.DynamicModules.TryGetValue(_retainedAssembly, out retained) && ReferenceEquals(retained, _retainedModule) &&
+                      _clientRegistry.DynamicModules.TryGetValue(_replacementOldAssembly!, out oldTarget) && ReferenceEquals(oldTarget, _replacementOldModule),
+                    "both exact module identities remain published");
+                Require(_serverRegistry is not null ? !_serverRegistry.DynamicModules.ContainsKey(_incomingAssembly!) &&
+                    !_serverRegistry.UnregisterOperations.ContainsKey(_incomingAssembly!) :
+                    !_clientRegistry!.DynamicModules.ContainsKey(_incomingAssembly!) && !ClientOperations().ContainsKey(_incomingAssembly!),
+                    "failed incoming assembly has no published or retiring module");
+            });
+            lock (_gate) Require(_hookFailures.Count == 0, "constructor observer had no failure");
+            Accept(_replacementInvocation!);
+            _oracleComplete = true;
+        }
+
+        private Dictionary<Assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)> ClientOperations()
+            => Field<Dictionary<Assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)>>(_clientRegistry!, "_unregisterOperations");
+
+        private async Task Attempt(string stage, Func<Task> action)
+        {
+            try { await action(); } catch (Exception failure) { Fail(stage, failure); }
+        }
+        private void Check(string stage, Action action)
+        {
+            try { action(); } catch (Exception failure) { Fail(stage, failure); }
+        }
+        private async Task KnownFault(Task task, string stage, Func<Exception, bool> matches)
+        {
+            var outcome = await Outcome(task, stage);
+            if (!SingleTaskFault(outcome) || !matches(outcome.AwaitFailure!))
+            {
+                var rejected = new InvalidOperationException("B3c exact known fault mismatch at " + stage);
+                if (outcome.FullTaskFailure is { } full) throw new AggregateException(rejected, full);
+                if (outcome.AwaitFailure is { } raw) throw new AggregateException(rejected, raw);
+                throw rejected;
+            }
+            Accept(task);
+        }
+        private void Data(string stage, Exception? failure)
+        {
+            if (failure is not null) Fail(stage, failure);
+        }
+
+        private bool IsRetainedPhysical(Exception error)
+            => error is PhysicalTaskFailureException physical && _retainedFailure is not null && ReferenceEquals(physical.RawException, _retainedFailure);
+
+        private B3aWave CaptureWave(SharpLinkDynamicModule module)
+        {
+            B3aWave? wave = null;
+            WithRegistry(() => wave = new B3aWave(module));
+            if (wave!.Control is not null) _ = Own(wave.Control.Driver.Task, "driver");
+            if (wave.Physical is not null) _ = Own(wave.Physical, "physical");
+            if (wave.Tracking is not null) _ = Own(wave.Tracking, "tracking");
+            if (wave.Observer is not null) _ = Own(wave.Observer, "retirement-observer");
+            if (wave.Cleanup is not null) _ = Own(wave.Cleanup, "module-cleanup");
+            return wave;
+        }
+
+        private async Task InvokeHost(bool dispose)
+        {
+            var invocation = Task.Factory.StartNew(() =>
+            {
+                var source = dispose ? _endpoint!.DisposeAsync().AsTask() : _endpoint is ISharpLinkServer host
+                    ? host.StopAsync(TimeSpan.Zero).AsTask() : ((ISharpLinkClient)_endpoint!).StopAsync().AsTask();
+                _ = Own(source, dispose ? "dispose" : "stop");
+                if (dispose) _dispose = source; else _stop = source;
+                return source;
+            }, CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
+            if (dispose) _disposeInvocation = Own(invocation, "dispose-invocation");
+            else _stopInvocation = Own(invocation, "stop-invocation");
+            await Success(invocation, "host-invocation");
+            var original = await invocation;
+            if (_retainedFailure is null) await Success(original, "unregistered-host-cleanup");
+            else await KnownFault(original, dispose ? "dispose" : "stop", server ? IsRetainedPhysical : e => ReferenceEquals(e, _retainedFailure));
+        }
+
+        private async Task JoinWave(B3aWave wave, bool final, bool retained)
+        {
+            if (wave.Control is null)
+                Check("wave", () => Require(!final && wave.Physical is null && wave.Tracking is null && wave.Observer is null,
+                    "no missing final control"));
+            else
+            {
+                Check("wave-shape", () => Require(wave.Control.Origin == RetirementOrigin.Stop && wave.Physical is not null &&
+                    wave.Tracking is not null && wave.Observer is not null, "complete Stop-origin owner"));
+                await Attempt("driver", async () =>
+                {
+                    await Success(wave.Control.Driver.Task, "driver"); var value = wave.Control.Driver.Task.Result;
+                    Data("driver-primary", value.PrimaryFailure); Data("driver-cancellation", value.CancellationFailure);
+                    Data("driver-timer", value.TimerFailure); Data("driver-wake", value.WakeFailure);
+                    Require(!value.Aborted && !value.HasRetainedTimer, "driver outcome success and real timer exit");
+                });
+            }
+            // Even an incomplete owner shape must not hide another already
+            // rooted source or successful Task's independent failure-data slot.
+            if (wave.Physical is not null) await Attempt("physical", async () =>
+            {
+                if (retained) await KnownFault(wave.Physical, "retained-physical", IsRetainedPhysical);
+                else
+                {
+                    await Success(wave.Physical, "codec-free-physical");
+                    Require(wave.Physical.Result.ReferencesReleased, "codec-free module physical references released");
+                }
+            });
+            if (wave.Tracking is not null) await Attempt("tracking", async () =>
+            {
+                await Success(wave.Tracking, "tracking"); Data("tracking-data", wave.Tracking.Result);
+            });
+            if (wave.Observer is not null) await Attempt("retirement-observer", async () =>
+            {
+                await Success(wave.Observer, "retirement-observer"); var value = wave.Observer.Result;
+                Data("observer-refund-data", value.Failure);
+                Require(!value.SupervisorOwned && wave.Receipt is null, "observer refund success/Stop ownership");
+            });
+            if (final) Check("cleanup-shape", () => Require(wave.Cleanup is not null, "actual cleanup outcome source"));
+            if (wave.Cleanup is not null) await Attempt("module-cleanup", async () =>
+            {
+                await Success(wave.Cleanup, "module-cleanup");
+                if (retained ? !ReferenceEquals(wave.Cleanup.Result, _retainedFailure) : wave.Cleanup.Result is not null)
+                {
+                    Data("unexpected-module-cleanup-data", wave.Cleanup.Result);
+                    Require(false, "cleanup data is retained scope failure or codec-free success, by exact module");
+                }
+            });
+        }
+
+        private async Task ServerTails()
+        {
+            if (_server is null) return;
+            var lifecycle = Field<SharpLinkServer.ServerLifecycleCoordinator>(_server, "_lifecycle");
+            _terminal = Own(lifecycle.WaitForShutdownAsync(CancellationToken.None), "terminal-completion");
+            var service = lifecycle.DeferredServiceCleanupTaskForDiagnostics;
+            var serviceObserver = (Task?)ReadField(lifecycle, "_serviceCleanupObserver");
+            var shutdownObserver = lifecycle.ShutdownCleanupObserverTaskForDiagnostics;
+            var terminalObserver = lifecycle.TerminalFailureObserverTaskForDiagnostics;
+            var strictObserver = lifecycle.StrictShutdownCleanupObserverForDiagnostics;
+            var strict = lifecycle.StrictPhysicalDrainForDiagnostics;
+            foreach (var source in new[] { service, serviceObserver, shutdownObserver, terminalObserver, strictObserver, strict.Drain })
+                if (source is not null) _ = Own(source, "server-tail");
+            if (service is not null) await Attempt("service-cleanup", () => KnownFault(service, "service-cleanup", IsRetainedPhysical));
+            else Check("service-cleanup", () => Require(_retainedModule is null, "normal registered host has actual service cleanup"));
+            foreach (var source in new[] { serviceObserver, shutdownObserver, terminalObserver, strictObserver, strict.Drain })
+                if (source is not null) await Attempt("server-observer", () => Success(source, "server-observer"));
+            await Attempt("terminal-completion", () => KnownFault(_terminal!, "terminal-completion", error =>
+                IsRetainedPhysical(error) && _stop is { IsFaulted: true } && ReferenceEquals(error, _stop.Exception!.InnerExceptions[0])));
+            var final = lifecycle.StrictPhysicalDrainForDiagnostics;
+            Data("strict-drain-data", final.Failure);
+            var terminalFailure = lifecycle.StrictPhysicalTerminalFailureForDiagnostics;
+            var terminalMatches = _stop is { IsFaulted: true } &&
+                ReferenceEquals(terminalFailure, _stop.Exception!.InnerExceptions[0]);
+            if (!terminalMatches) Data("unexpected-terminal-data", terminalFailure);
+            Check("server-late-tail", () => Require(ReferenceEquals(service, lifecycle.DeferredServiceCleanupTaskForDiagnostics) &&
+                ReferenceEquals(serviceObserver, ReadField(lifecycle, "_serviceCleanupObserver")) &&
+                ReferenceEquals(shutdownObserver, lifecycle.ShutdownCleanupObserverTaskForDiagnostics) &&
+                ReferenceEquals(terminalObserver, lifecycle.TerminalFailureObserverTaskForDiagnostics) &&
+                ReferenceEquals(strictObserver, lifecycle.StrictShutdownCleanupObserverForDiagnostics) && ReferenceEquals(strict.Drain, final.Drain),
+                "no late uncaptured server tail"));
+            Check("service-observer-path", () => Require(serviceObserver is null, "normal Created cleanup did not defer its service observer"));
+            Check("strict-exit", () => Require(!final.Requested || final.Observed, "strict drain outcome"));
+            Check("terminal-data", () => Require(terminalMatches, "actual terminal failure equals actual Stop wrapper"));
+            Check("service-stop-identity", () => Require(service is { IsFaulted: true } && _stop is { IsFaulted: true } &&
+                ReferenceEquals(service.Exception!.InnerExceptions[0], _stop.Exception!.InnerExceptions[0]),
+                "Stop preserves exact service-cleanup sealed wrapper"));
+            Check("server-terminal-state", () => Require(lifecycle.LifecycleState == SharpLinkServerLifecycleState.Faulted,
+                "intentional old scope cleanup leaves Server Faulted"));
+        }
+
+        private async Task Close()
+        {
+            GC.KeepAlive(_builder);
+            if (_setup is not null) await Attempt("setup-join", () => Success(_setup, "setup-join"));
+            if (_setup is { IsCompleted: false }) return; // may still publish host/hook
+            if (_replacementInvocation is not null)
+            {
+                // Keep complete outcome even when the business oracle did not
+                // accept it. Never reclassify an arbitrary caught container.
+                await Attempt("replacement-invocation-join", async () => { _ = await Outcome(_replacementInvocation, "replacement-invocation-join"); });
+                if (!_replacementInvocation.IsCompleted) return;
+            }
+            if (_replacementReturned is not null)
+            {
+                // Unexpected returned source is still a real owner, never a
+                // synthetic substitute for the expected synchronous API throw.
+                await Attempt("replacement-returned-join", async () => { _ = await Outcome(_replacementReturned, "replacement-returned-join"); });
+                if (!_replacementReturned.IsCompleted) return;
+            }
+            Check("hook-restore", () =>
+            {
+                if (_hookWriteAttempted)
+                {
+                    Require(_hookSnapshot && _hookField is not null, "exact hook prior snapshot");
+                    _hookField!.SetValue(null, _previousHook);
+                    Require(ReferenceEquals(_hookField.GetValue(null), _previousHook), "exact hook restoration");
+                }
+                _hookRestored = true;
+            });
+            lock (_gate) foreach (var failure in _hookFailures) _failures.Add(("constructor-hook", failure));
+            if (_registrationAttempted) Check("capture-retained-owner", () => { CaptureModule(); _retainedWave1 = CaptureWave(_retainedModule!); });
+            if (_replacementOldRegistrationAttempted) Check("capture-old-owner", () =>
+            { CaptureReplacementOldModule(); _oldWave1 = CaptureWave(_replacementOldModule!); });
+            if (_endpoint is not null)
+            {
+                await Attempt("stop", () => InvokeHost(false));
+                if (_stopInvocation is { IsCompleted: false } || _stop is { IsCompleted: false }) return;
+                await Attempt("dispose", () => InvokeHost(true));
+                if (_disposeInvocation is { IsCompleted: false } || _dispose is { IsCompleted: false }) return;
+            }
+            else if (_offered) return; // Build transfer unknown: retain builder/transport
+            else await Attempt("unoffered-transport", () => Success(_transport.DisposeAsync().AsTask(), "unoffered-transport"));
+            if (_retainedModule is not null)
+            {
+                Check("late-retained-wave", () => _retainedWave2 = CaptureWave(_retainedModule));
+                if (_retainedWave1 is not null && (_retainedWave2 is null || !_retainedWave1.SameTasksAs(_retainedWave2))) await JoinWave(_retainedWave1, false, true);
+                if (_retainedWave2 is not null) await JoinWave(_retainedWave2, true, true);
+            }
+            if (_replacementOldModule is not null)
+            {
+                Check("late-old-wave", () => _oldWave2 = CaptureWave(_replacementOldModule));
+                if (_oldWave1 is not null && (_oldWave2 is null || !_oldWave1.SameTasksAs(_oldWave2))) await JoinWave(_oldWave1, false, false);
+                if (_oldWave2 is not null) await JoinWave(_oldWave2, true, false);
+            }
+            await Attempt("server-tails", ServerTails);
+            Check("physical-exit", () =>
+            {
+                Require(_oracleComplete && _hookRestored && _retainedModule is not null && _retainedCodecOwner is not null && _retainedWave2 is not null &&
+                    _replacementOldModule is not null && _replacementOldCodecOwner is not null && _replacementOldManifest is not null && _oldWave2 is not null,
+                    "complete known replacement and two-module cleanup graph");
+                var old = Receipts(_retainedManifest!); var incoming = Receipts(_incomingManifest!);
+                Require(old.Length == 1 && old[0].Count == 1 && old[0].Order == 1 && ReferenceEquals(old[0].Failure, _retainedFailure), "old scope actual one cleanup");
+                Require(incoming.Length == 1 && incoming[0].Count == 1 && incoming[0].Order == 1 && ReferenceEquals(incoming[0].Failure, _incomingFailure), "incoming rollback scope not redisposed");
+                Require(_replacementOldManifest!.Codecs.Count == 0 && Receipts(_replacementOldManifest).Length == 0,
+                    "old codec-free module never created a scope");
+                _replacementOldModule!.AssertAccountingInvariant();
+                Require(_replacementOldModule.State == SharpLinkDynamicModuleState.Released &&
+                    _replacementOldModule.RemainingCalls == 0 && _replacementOldModule.RemainingStreams == 0,
+                    "codec-free module physical/accounting exit");
+                _retainedModule!.AssertAccountingInvariant();
+                Require(_retainedModule.State == SharpLinkDynamicModuleState.Released && _retainedModule.RemainingCalls == 0 && _retainedModule.RemainingStreams == 0, "module physical/accounting exit");
+                WithRegistry(() =>
+                {
+                    Require(_serverRegistry is not null ? !_serverRegistry.DynamicModules.ContainsKey(_retainedAssembly) && !_serverRegistry.UnregisterOperations.ContainsKey(_retainedAssembly)
+                        : !_clientRegistry!.DynamicModules.ContainsKey(_retainedAssembly) && !ClientOperations().ContainsKey(_retainedAssembly), "registry/retirement ownership removed");
+                    Require(_serverRegistry is not null
+                        ? !_serverRegistry.DynamicModules.ContainsKey(_replacementOldAssembly!) && !_serverRegistry.UnregisterOperations.ContainsKey(_replacementOldAssembly!)
+                        : !_clientRegistry!.DynamicModules.ContainsKey(_replacementOldAssembly!) && !ClientOperations().ContainsKey(_replacementOldAssembly!),
+                        "codec-free registry/retirement ownership removed");
+                    Require(_retainedWave2!.SameAs(_retainedModule) && _oldWave2!.SameAs(_replacementOldModule), "neither module has an uncaptured retirement owner");
+                });
+                Require(Field<int>(_runtime!, "_disposed") != 0 && ReadField(_runtime!, "_metadataOwner") is null &&
+                    ReadField(_runtime!, "_publicationMetadataOwner") is null && ReadField(_runtime!, "_generatedManifests") is null, "actual Runtime metadata exit");
+                Require(_retainedCodecOwner!.Identity.IsClosed && ReadField(_retainedCodecOwner!, "_metadata") is null && ReadField(_retainedCodecOwner!, "_baseProvider") is null, "actual old codec owner exit");
+                Require(_replacementOldCodecOwner!.Identity.IsClosed && ReadField(_replacementOldCodecOwner!, "_metadata") is null &&
+                    ReadField(_replacementOldCodecOwner!, "_baseProvider") is null, "actual codec-free registration owner exit");
+                Require(_transport.Disposals.Count == 1 && _transport.Disposals[0].IsCompletedSuccessfully, "actual stateless transport disposed once");
+                if (_client is not null) Require(_client.State == SharpLinkConnectionState.Stopped, "Client stops after reporting exact scope error");
+                Require(_stop is not null && ReferenceEquals(_stop, _dispose), "Dispose observes original Stop task");
+            });
+            lock (_gate)
+            {
+                foreach (var pair in _outcomes)
+                    if (!pair.Value.IsCompletedSuccessfully || !_accepted.Contains(pair.Key))
+                    {
+                        _failures.Add(("unaccepted-source", new InvalidOperationException("Unknown or pending B3c original source retained")));
+                        if (pair.Value.IsCompletedSuccessfully)
+                        {
+                            var outcome = pair.Value.Result;
+                            if (outcome.FullTaskFailure is { } full) _failures.Add(("unaccepted-source-full-graph", full));
+                            else if (outcome.AwaitFailure is { } raw) _failures.Add(("unaccepted-source-cancellation", raw));
+                        }
+                    }
+                if (_failures.Count != 0) return;
+            }
+            // All actual callback/registration/host/physical sources ended. An
+            // unload REQUEST here does not claim immediate collectible reclamation.
+            Check("incoming-unload", () => _context?.Unload());
+            Check("old-unload", () => _replacementOldContext?.Unload());
+            lock (_gate) if (_failures.Count != 0) return;
+            Require(_snapshots, "environment snapshots precede restore");
+            for (var i = 0; i < EnvironmentKeys.Length; i++)
+            {
+                var index = i;
+                if (_writeAttempted[index]) Check("environment-restore", () => Environment.SetEnvironmentVariable(EnvironmentKeys[index], _previousEnvironment[index]));
+            }
+            lock (_gate) if (_failures.Count != 0) return;
+            try { RollbackState.TestIsolation.Release(); _permit = false; }
+            catch (Exception failure) { Fail("permit-release", failure); return; }
+            lock (RootsGate) Roots.Remove(this);
+        }
+    }
+
     private sealed class B3bOwner(bool server)
     {
         private static readonly Lock RootsGate = new();
