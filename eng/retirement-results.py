@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 import re
+import stat
 import xml.etree.ElementTree as ET
 
 
@@ -88,6 +89,71 @@ def discovery(document, scope, methods, source, assembly, reported_source=None):
         rows[uid] = test
     require(seen_methods == set(expected), 'Missing selected method')
     return rows
+
+
+def directory_identity(raw):
+    """Linux lane directory identity; separators/dot normalize, links/traversal do not.
+
+    Require existing real directories, including every ancestor. Returning both the
+    canonical path and inode identity prevents a replaced selected cache from being
+    mistaken for the directory reserved before restore.
+    """
+    require(isinstance(raw, str) and raw and '\x00' not in raw, 'invalid-directory-text')
+    path = Path(raw)
+    require(path.is_absolute() and path.anchor == '/', 'nonabsolute-directory')
+    require('..' not in path.parts, 'directory-traversal')
+    try:
+        for component in reversed((path, *path.parents)):
+            mode = component.lstat().st_mode
+            require(not stat.S_ISLNK(mode), 'symlink-directory')
+            require(stat.S_ISDIR(mode), 'nondirectory-component')
+        canonical = path.resolve(strict=True)
+        current = canonical.stat()
+    except OSError as error:
+        raise ValueError('unavailable-directory-' + type(error).__name__) from error
+    return canonical, current.st_dev, current.st_ino
+
+
+def package_directories(folders, restored_path, packages, expected_identity, source, asset_name):
+    """Exactly one actual cache, with safe classifications instead of raw paths.
+
+    A single textual key may have a trailing slash or not. Multiple keys never
+    become one accepted folder merely because they normalize to the same path.
+    """
+    asset = Path(asset_name)
+    require(not asset.is_absolute() and '..' not in asset.parts and asset.as_posix() == asset_name,
+            'invalid-source-relative-asset-name')
+    count = len(folders) if isinstance(folders, dict) else None
+
+    def classify(raw):
+        try:
+            identity = directory_identity(raw)
+        except ValueError as error:
+            # directory_identity only emits fixed reasons/type names, not input text.
+            return str(error), None
+        canonical = identity[0]
+        if canonical == packages:
+            return ('selected-cache' if identity == expected_identity else 'selected-cache-replaced'), identity
+        if canonical.is_relative_to(packages):
+            return 'selected-cache-descendant', identity
+        if canonical.is_relative_to(source):
+            return 'source-root', identity
+        if canonical.is_relative_to(packages.parent):
+            return 'lane-root', identity
+        return 'outside-known-roots', identity
+
+    keys = list(folders) if isinstance(folders, dict) else []
+    classifications = [classify(key) for key in keys[:4]]
+    restore_class, restore_identity = classify(restored_path)
+    selected_class, selected_identity = classify(str(packages))
+    valid = (count == 1 and classifications[0][1] == expected_identity and
+             restore_identity == expected_identity and selected_identity == expected_identity)
+    if not valid:
+        detail = dict(asset=asset_name, folderCount=count,
+                      folderClasses=[item[0] for item in classifications],
+                      omittedFolderCount=max(0, len(keys) - len(classifications)),
+                      restorePathClass=restore_class, selectedCacheClass=selected_class)
+        raise ValueError('Package directory identity rejected: ' + json.dumps(detail, sort_keys=True))
 
 
 def exact_summary(value):

@@ -118,6 +118,76 @@ class ClassifierTests(unittest.TestCase):
         native = copy.deepcopy(self.native); native['filter'] = 'actual-selector'
         self.assertEqual(r.passed(native, self.xml, self.row, self.source, '1.73.19.0', selector='actual-selector')['status'], 'PASS')
 
+    def cache_context(self):
+        lane = Path(self.temp.name) / 'lane'; lane.mkdir()
+        packages = lane / 'packages'; packages.mkdir()
+        source = lane / 'src'; source.mkdir()
+        return packages, r.directory_identity(str(packages)), source
+
+    def check_folders(self, folders, restore, packages, identity, source):
+        r.package_directories(folders, restore, packages, identity, source,
+                              'src/Example/obj/project.assets.json')
+
+    def test_package_directory_single_identity_accepts_separator_variants(self):
+        packages, identity, source = self.cache_context()
+        for text in (str(packages), str(packages) + '/', str(packages) + '//', str(packages) + '/.'):
+            with self.subTest(spelling=text):
+                self.check_folders({text: {}}, text, packages, identity, source)
+
+    def test_package_directory_count_is_not_collapsed_by_canonicalization(self):
+        packages, identity, source = self.cache_context()
+        for folders, count in (({}, 0), ({str(packages): {}, str(packages) + '/': {}}, 2), ([], None)):
+            with self.subTest(count=count):
+                with self.assertRaises(ValueError) as caught:
+                    self.check_folders(folders, str(packages), packages, identity, source)
+                self.assertIn('"folderCount": ' + json.dumps(count), str(caught.exception))
+                self.assertNotIn(self.temp.name, str(caught.exception))
+
+    def test_package_directory_real_fallback_and_unknown_roots_fail_closed(self):
+        packages, identity, source = self.cache_context()
+        inside = packages.parent / 'other-cache'; inside.mkdir()
+        outside = Path(self.temp.name) / 'private-external-cache'; outside.mkdir()
+        for folder, category in ((inside, 'lane-root'), (outside, 'outside-known-roots'), (source, 'source-root')):
+            with self.subTest(category=category):
+                with self.assertRaises(ValueError) as caught:
+                    self.check_folders({str(folder): {}}, str(packages), packages, identity, source)
+                self.assertIn(category, str(caught.exception))
+                self.assertIn('src/Example/obj/project.assets.json', str(caught.exception))
+                self.assertNotIn(self.temp.name, str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            self.check_folders({str(packages): {}, str(outside): {}}, str(packages), packages, identity, source)
+        self.assertIn('"folderCount": 2', str(caught.exception))
+
+    def test_package_directory_links_traversal_relative_missing_and_files_rejected(self):
+        packages, identity, source = self.cache_context()
+        direct_link = packages.parent / 'linked-cache'; direct_link.symlink_to(packages, target_is_directory=True)
+        ancestor_link = Path(self.temp.name) / 'linked-lane'; ancestor_link.symlink_to(packages.parent, target_is_directory=True)
+        child = packages / 'nested'; child.mkdir()
+        file = packages.parent / 'not-directory'; file.write_text('not a folder')
+        cases = [(str(direct_link), 'symlink-directory'), (str(ancestor_link / 'packages'), 'symlink-directory'),
+                 (str(packages / '..' / 'packages'), 'directory-traversal'), ('packages', 'nonabsolute-directory'),
+                 (str(packages.parent / 'missing'), 'unavailable-directory-FileNotFoundError'),
+                 (str(file), 'nondirectory-component'), (str(child), 'selected-cache-descendant')]
+        for folder, reason in cases:
+            with self.subTest(reason=reason):
+                with self.assertRaises(ValueError) as caught:
+                    self.check_folders({folder: {}}, str(packages), packages, identity, source)
+                self.assertIn(reason, str(caught.exception))
+                self.assertNotIn(self.temp.name, str(caught.exception))
+
+    def test_package_restore_path_and_pre_restore_inode_both_required(self):
+        packages, identity, source = self.cache_context()
+        other = packages.parent / 'other'; other.mkdir()
+        with self.assertRaises(ValueError) as caught:
+            self.check_folders({str(packages): {}}, str(other), packages, identity, source)
+        self.assertIn('"restorePathClass": "lane-root"', str(caught.exception))
+        packages.rename(packages.parent / 'original-cache')
+        packages.mkdir()
+        with self.assertRaises(ValueError) as caught:
+            self.check_folders({str(packages): {}}, str(packages), packages, identity, source)
+        self.assertIn('selected-cache-replaced', str(caught.exception))
+        self.assertNotIn(self.temp.name, str(caught.exception))
+
     def test_json_duplicate_and_nonfinite_rejected(self):
         path = Path(self.temp.name) / 'data.json'
         for data in ('{"a": 1, "a": 2}', '{"a": NaN}', '{"a": Infinity}'):

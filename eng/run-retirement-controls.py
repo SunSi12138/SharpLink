@@ -81,7 +81,7 @@ def verify_graph(source, catalog):
     require(counts == catalog['expectedGroups'] and sum(counts.values()) == 47, 'Candidate catalog mismatch')
 
 
-def asset_identity(source, catalog, packages):
+def asset_identity(source, catalog, packages, expected_package_identity):
     assets = sorted(p.relative_to(source).as_posix() for p in source.rglob('project.assets.json'))
     expected = sorted(str(Path(p).parent / 'obj/project.assets.json') for p in catalog['projects'])
     require(assets == expected, 'Actual restored project assets differ from Unit14')
@@ -89,8 +89,8 @@ def asset_identity(source, catalog, packages):
         value = results.read_json(source / name)
         restore = value['project']['restore']
         require(set(restore['sources']) == {'https://api.nuget.org/v3/index.json'}, 'Nonofficial restore source')
-        require(Path(restore['packagesPath']).resolve() == packages, 'Unexpected package cache')
-        require(set(value['packageFolders']) == {str(packages) + '/'}, 'Fallback package folders are forbidden')
+        results.package_directories(value.get('packageFolders'), restore.get('packagesPath'),
+                                    packages, expected_package_identity, source, name)
         for key in value['libraries']:
             package, version = key.rsplit('/', 1)
             if package == 'TUnit' or package.startswith('TUnit.'):
@@ -115,6 +115,7 @@ def main():
     work = Path(tempfile.mkdtemp(prefix='slret-', dir='/tmp'))
     logs = work / 'logs'; logs.mkdir()
     env = environment(work)
+    package_identity = results.directory_identity(str(work / 'packages'))
     stop_at = time.monotonic() + limits['commandBudgetSeconds']
     sequence = 0
     source = work / 'src'
@@ -210,7 +211,7 @@ def main():
         config.write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3"/></packageSources></configuration>\n')
         project = source / catalog['project']
         run('restore', [dotnet, 'restore', project, '--configfile', config, '--disable-parallel', '-p:Configuration=Release', '-p:RestoreIgnoreFailedSources=false', '-m:1', '-nr:false'], source, limits['restoreSeconds'])
-        assets = asset_identity(source, catalog, work / 'packages')
+        assets = asset_identity(source, catalog, work / 'packages', package_identity)
         built.update({source / name: value for name, value in assets.items()})
         check_files()
         run('build', [dotnet, 'build', project, '-c', 'Release', '--no-restore', '-v:minimal', '-p:UseSharedCompilation=false', '-p:PathMap=' + str(source) + '=/_/retirement-unit', '-m:1', '-nr:false'], source, limits['buildSeconds'])
