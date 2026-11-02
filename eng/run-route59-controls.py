@@ -118,9 +118,12 @@ def main():
     runtime_files = set()
     errors = []
     current = None
+    case_context = None
+    command_states = {}
 
     def run(label, argv, cwd=ROOT, seconds=120):
         nonlocal sequence, log_seal
+        state = command_states[label] = {'phase': 'preflight', 'receipt': None, 'provenance': None}
         remaining = stop_at - time.monotonic()
         require(remaining > 0, 'Remaining command budget exhausted before ' + label)
         results.verify_directory(work, work_identity)
@@ -135,16 +138,24 @@ def main():
         output = None
         actual_seconds = min(seconds, remaining)
         actual_argv = [str(x) for x in argv]
+        state['phase'] = 'owner-call'
         try:
             output = owner.run_owned(label, actual_argv, cwd, child, logs, actual_seconds)
         except BaseException as error:
             failure = error
+            if isinstance(error, owner.CommandFailure):
+                state.update(receipt=error.outcome, provenance='original-owner-failure')
         checks = []
         if output is not None:
             try:
-                results.verify_receipt(results.read_json(logs / (label + '.json')), label, actual_argv, actual_seconds)
+                state['phase'] = 'receipt-check'
+                receipt = results.read_json(logs / (label + '.json'))
+                results.verify_receipt(receipt, label, actual_argv, actual_seconds)
+                state.update(receipt=receipt, provenance='validated-success')
             except BaseException as error:
                 checks.append(error)
+        if failure is None and not checks:
+            state['phase'] = 'directory-check'
         for directory, expected, empty in ((work, work_identity, False),
                                             (logs, logs_identity, False), (pipe, identity, True)):
             try:
@@ -155,8 +166,10 @@ def main():
             if failure is not None:
                 checks.insert(0, failure)
             raise BaseExceptionGroup('Command and actual containment checks: ' + label, checks)
+        state['phase'] = 'log-seal'
         log_seal = results.verify_seal(logs, log_seal,
             expected_new=(label + '.stdout', label + '.stderr', label + '.json'))
+        state['phase'] = 'done'
         print('stage: ' + label + ' exit=0 owned=joined', flush=True)
         return output[0]
 
@@ -270,16 +283,21 @@ def main():
         for index, record in enumerate(records):
             current = record
             entry = ledger[index]; row = entry['discovery']
+            case_context = {'index': index, 'entry': entry, 'phase': 'input-guard', 'report': None}
             require(row['uid'] == record['uid'] and results.digest(frozen) == ledger_hash, 'Frozen UID ledger changed')
             check_files()
+            case_context['phase'] = 'report-directory'
             report = work / ('r' + str(index)); report.mkdir()
             report_identity = results.directory_identity_strict(report)
             results.verify_directory(report, report_identity, empty=True)
             argv = results.case_argv(dotnet, dll, row['uid'], report, limits['engineTimeout'])
+            case_context.update(report=report, reportIdentity=report_identity, argv=argv, phase='owned-command')
             record['status'] = 'INCOMPLETE'
             run('case-' + str(index), argv, source, limits['caseSeconds'])
+            case_context['phase'] = 'report-open'
             native_path = results.regular_report(report, report_identity, 'session.tunit-report.json')
             junit_path = results.regular_report(report, report_identity, 'junit.xml')
+            case_context['phase'] = 'native-junit-oracle'
             verdict = results.passed(results.read_json(native_path), junit_path.read_text(), row,
                 results.reported_source_path(entry['case']['source']), catalog['tunitRuntimeVersion'], runtime, generations)
             print('native-filter-diagnostic: ' + json.dumps(verdict['filterDiagnostic'], sort_keys=True), flush=True)
@@ -289,7 +307,9 @@ def main():
             require(any(line.startswith('Microsoft.NETCore.App ' + runtime.removeprefix('.NET ') + ' [') for line in runtimes.splitlines()), 'Loaded runtime is not in actual installed runtime inventory')
             require(verdict['publicationGeneration'] not in generations, 'Reused native publication')
             generations.add(verdict['publicationGeneration'])
+            case_context['phase'] = 'post-input-guard'
             check_files()
+            case_context['phase'] = 'report-seal'
             results.regular_report(report, report_identity, 'session.html')
             report_seals[report] = results.seal_directory(report)
             record['status'] = 'PASS'
@@ -299,6 +319,17 @@ def main():
         errors.append(error)
         if current is not None:
             current['status'] = 'FAILED_OR_INCOMPLETE'
+            if case_context is not None:
+                try:
+                    diagnostic, terminal = results.owner_case_diagnostic(case_context,
+                        command_states.get('case-' + str(case_context['index'])))
+                    print('case-owner-diagnostic: ' + json.dumps(diagnostic, sort_keys=True), flush=True)
+                    report_diagnostic, diagnostic_errors = results.failure_report_diagnostic(
+                        case_context, terminal, catalog, source)
+                    errors.extend(diagnostic_errors)
+                    print('case-report-diagnostic: ' + json.dumps(report_diagnostic, sort_keys=True), flush=True)
+                except BaseException as diagnostic_error:
+                    errors.append(diagnostic_error)
     finally:
         try:
             check_files()

@@ -422,6 +422,103 @@ class Route59Tests(unittest.TestCase):
         self.assertEqual(r.diagnostic_value(77,source_line=True)['integer'],77)
 
 
+    def body_context(self):
+        case=next(c for c in CATALOG['cases'] if c['designId']=='R05')
+        return {'index':4,'entry':{'case':case,'discovery':self.row},'phase':'owned-command',
+                'argv':['dotnet','SECRET-argv','--filter-uid','SECRET-uid'],'report':None}
+
+    def test_original_failed_owner_classification_has_exit_timeout_counts_not_raw(self):
+        context=self.body_context();receipt=self.receipt(context['argv'])
+        receipt.update(stage='case-4',exitCode=2,timedOut=False,errors=['SECRET-error'],cleanupErrors=[],
+                       reportingErrors=[],remainingOwned={},elapsedSeconds=10.321)
+        detail,terminal=r.owner_case_diagnostic(context,{'phase':'owner-call','provenance':'original-owner-failure','receipt':receipt})
+        self.assertTrue(terminal);self.assertEqual(detail['exitCode'],2);self.assertFalse(detail['timedOut'])
+        self.assertEqual(detail['errorsCount'],1);self.assertEqual(detail['remainingOwnedCount'],0)
+        self.assertNotIn('SECRET',json.dumps(detail));self.assertEqual(detail['phase'],'owned-command')
+        self.assertEqual(receipt['errors'],['SECRET-error'])
+        receipt['remainingOwned']={'12345':['SECRET-owner']}
+        detail,terminal=r.owner_case_diagnostic(context,{'phase':'owner-call','provenance':'original-owner-failure','receipt':receipt})
+        self.assertFalse(terminal);self.assertEqual(detail['remainingOwnedCount'],1)
+        self.assertNotIn('12345',json.dumps(detail));self.assertNotIn('SECRET',json.dumps(detail))
+
+    def test_unknown_owner_never_reads_reports_or_turns_waiter_timeout_into_exit(self):
+        context=self.body_context()
+        detail,terminal=r.owner_case_diagnostic(context,None)
+        self.assertFalse(terminal)
+        with mock.patch.object(r,'regular_report',side_effect=AssertionError('must not read')):
+            reports,errors=r.failure_report_diagnostic(context,terminal,CATALOG,ROOT)
+        self.assertEqual(reports['reports'],'not-read-owner-exit-unknown');self.assertEqual(errors,[])
+        receipt=self.receipt(context['argv']);receipt.update(stage='case-4',exitCode=None,timedOut=True)
+        _,terminal=r.owner_case_diagnostic(context,{'phase':'owner-call','provenance':'original-owner-failure','receipt':receipt})
+        self.assertFalse(terminal)
+        receipt.update(exitCode=-15,remainingOwned={})
+        detail,terminal=r.owner_case_diagnostic(context,{'phase':'owner-call','provenance':'original-owner-failure','receipt':receipt})
+        self.assertTrue(terminal);self.assertTrue(detail['timedOut']) # terminal is NOT success
+        with self.assertRaises(ValueError):r.verify_receipt(receipt,'case-4',context['argv'],120)
+
+    def test_failed_native_classification_exposes_only_whitelisted_source_frames(self):
+        native=copy.deepcopy(self.native);test=native['groups'][0]['tests'][0]
+        test['status']='failed'
+        relative='test/SharpLink.UnitTests/Client/ContractScopedRouteLoadFixture.cs'
+        test['exception']={'type':'System.AggregateException','message':'SECRET-message',
+            'stackTrace':'SECRET-stack at Unknown in /private/SECRET.cs:line 7',
+            'innerException':{'type':'System.TimeoutException','message':'SECRET-timeout',
+               'stackTrace':'at Hidden in /_/'+relative+':line 214'}}
+        before=copy.deepcopy(native)
+        classified=r.native_failure_classification(native,self.row,CATALOG,ROOT)
+        self.assertEqual(native,before);self.assertEqual(classified['cases'][0]['status'],'failed')
+        chain=classified['cases'][0]['exception']['serializedChain']
+        self.assertEqual(chain[0]['typeClass'],'aggregate');self.assertEqual(chain[1]['typeClass'],'timeout')
+        self.assertEqual(chain[0]['reportedSourceFrames'],[])
+        self.assertEqual(chain[1]['reportedSourceFrames'],[{'source':relative,'line':214}])
+        self.assertNotIn('SECRET',json.dumps(classified));self.assertNotIn('/private/',json.dumps(classified))
+        with self.assertRaises(ValueError):self.verdict(native)
+
+    def test_unknown_native_type_status_and_junit_text_remain_redacted(self):
+        native=copy.deepcopy(self.native);test=native['groups'][0]['tests'][0]
+        test.update(id='SECRET-id',displayName='SECRET-display',status='SECRET-status',
+                    exception={'type':'SECRET.Type','message':'SECRET-message','stackTrace':'SECRET-path'})
+        classified=r.native_failure_classification(native,self.row,CATALOG,ROOT)
+        self.assertFalse(classified['cases'][0]['uidMatches']);self.assertEqual(classified['cases'][0]['status'],'unknown')
+        self.assertEqual(classified['cases'][0]['exception']['serializedChain'][0]['typeClass'],'other')
+        self.assertNotIn('SECRET',json.dumps(classified))
+        xml='<testsuites><testsuite><testcase name="SECRET-name"><failure>SECRET-body</failure><SECRET-tag/></testcase></testsuite></testsuites>'
+        classified=r.junit_failure_classification(xml,self.row)
+        self.assertEqual(classified['childCounts']['failure'],1);self.assertEqual(classified['unknownChildCount'],1)
+        self.assertNotIn('SECRET',json.dumps(classified))
+
+    def test_failure_report_read_is_readonly_and_independent_parse_error_is_retained(self):
+        context=self.body_context();folder=Path(self.base.temp.name)/'failed-report';folder.mkdir()
+        context.update(report=folder,reportIdentity=r.directory_identity_strict(folder))
+        native=copy.deepcopy(self.native);native['groups'][0]['tests'][0]['status']='failed'
+        data=json.dumps(native);(folder/'session.tunit-report.json').write_text(data)
+        (folder/'junit.xml').write_text('SECRET-invalid-xml')
+        summary,failures=r.failure_report_diagnostic(context,True,CATALOG,ROOT)
+        self.assertEqual(summary['native']['cases'][0]['status'],'failed')
+        self.assertEqual(summary['junit']['classification'],'diagnostic-rejected');self.assertEqual(len(failures),1)
+        self.assertEqual((folder/'session.tunit-report.json').read_text(),data)
+        self.assertNotIn('SECRET',json.dumps(summary))
+        (folder/'junit.xml').unlink();(folder/'junit.xml').symlink_to(folder/'missing')
+        summary,failures=r.failure_report_diagnostic(context,True,CATALOG,ROOT)
+        self.assertEqual(summary['junit']['classification'],'diagnostic-rejected');self.assertEqual(len(failures),1)
+
+    def test_report_exception_chain_is_bounded_diagnostic_not_full_graph_claim(self):
+        value=None
+        for i in range(12):value={'type':'System.TimeoutException','message':'private','innerException':value}
+        detail=r.serialized_exception_diagnostic(value,CATALOG,ROOT)
+        self.assertEqual(len(detail['serializedChain']),8);self.assertTrue(detail['tailUnclassified'])
+        self.assertIn('not a complete',detail['qualification'])
+
+    def test_owner_phase_and_untrusted_receipt_provenance_are_not_accepted(self):
+        context=self.body_context();context['phase']='SECRET-phase'
+        detail,terminal=r.owner_case_diagnostic(context,{'phase':'SECRET-command','provenance':'disk-unverified','receipt':self.receipt(context['argv'])})
+        self.assertFalse(terminal);self.assertEqual(detail['phase'],'unknown');self.assertEqual(detail['commandPhase'],'unknown')
+        self.assertNotIn('SECRET',json.dumps(detail))
+        receipt=self.receipt(['wrong-argv']);receipt['stage']='case-4'
+        detail,terminal=r.owner_case_diagnostic(self.body_context(),{'phase':'owner-call','provenance':'original-owner-failure','receipt':receipt})
+        self.assertFalse(terminal);self.assertFalse(detail['argvMatches'])
+
+
 
 if __name__ == '__main__':
     suite=unittest.TestSuite((unittest.defaultTestLoader.loadTestsFromModule(accepted),

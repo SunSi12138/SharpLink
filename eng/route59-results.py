@@ -363,3 +363,155 @@ def verify_seal(path, sealed, expected_new=()):
     for name, expected in sealed['files'].items():
         require(current['files'][name] == expected, 'Completed evidence bytes/mode changed')
     return current
+
+
+CASE_PHASES = frozenset(('input-guard', 'report-directory', 'owned-command', 'report-open',
+    'native-junit-oracle', 'post-input-guard', 'report-seal'))
+COMMAND_PHASES = frozenset(('preflight', 'owner-call', 'receipt-check', 'directory-check', 'log-seal', 'done'))
+KNOWN_TEST_STATUSES = frozenset(('passed', 'failed', 'skipped', 'cancelled', 'timedOut', 'flaky', 'error'))
+KNOWN_EXCEPTION_TYPES = {'System.TimeoutException': 'timeout', 'TimeoutException': 'timeout',
+    'System.AggregateException': 'aggregate', 'AggregateException': 'aggregate',
+    'System.InvalidOperationException': 'invalid-operation', 'InvalidOperationException': 'invalid-operation',
+    'System.OperationCanceledException': 'cancelled', 'OperationCanceledException': 'cancelled',
+    'System.Threading.Tasks.TaskCanceledException': 'task-cancelled', 'TaskCanceledException': 'task-cancelled'}
+
+
+def owner_case_diagnostic(context, command):
+    """Diagnostic only. Receipt comes from original owner object or validated success.
+    No disk receipt is reinterpreted as proof that an unknown writer ended.
+    """
+    c = context['entry']['case']
+    result = {'caseOrdinal': context['index'], 'designId': c['designId'], 'method': c['methodName'],
+              'phase': context['phase'] if context['phase'] in CASE_PHASES else 'unknown'}
+    if command is None:
+        return dict(result, commandPhase='not-entered', ownerReceipt='unavailable'), False
+    result['commandPhase'] = command['phase'] if command['phase'] in COMMAND_PHASES else 'unknown'
+    receipt = command.get('receipt')
+    provenance = command.get('provenance')
+    if provenance not in ('validated-success', 'original-owner-failure') or not isinstance(receipt, dict):
+        return dict(result, ownerReceipt='unavailable'), False
+    result['ownerReceipt'] = provenance
+    result['stageMatches'] = receipt.get('stage') == 'case-' + str(context['index'])
+    result['argvMatches'] = receipt.get('argv') == context.get('argv')
+    code = receipt.get('exitCode')
+    result['exitCode'] = code if type(code) is int and -255 <= code <= 255 else diagnostic_value(code)
+    timed = receipt.get('timedOut')
+    result['timedOut'] = timed if type(timed) is bool else diagnostic_value(timed)
+    elapsed = receipt.get('elapsedSeconds')
+    result['elapsedSeconds'] = (round(elapsed, 3) if type(elapsed) in (int,float) and
+        math.isfinite(elapsed) and 0 <= elapsed <= 15000 else diagnostic_value(elapsed))
+    for key in ('errors', 'cleanupErrors', 'reportingErrors'):
+        value = receipt.get(key)
+        result[key + 'Count'] = len(value) if type(value) is list else diagnostic_value(value)
+    remaining = receipt.get('remainingOwned')
+    result['remainingOwnedCount'] = len(remaining) if type(remaining) is dict else diagnostic_value(remaining)
+    terminal = (result['stageMatches'] and result['argvMatches'] and type(code) is int and
+                type(remaining) is dict and remaining == {})
+    result['originalProcessOwnerTerminal'] = terminal
+    return result, terminal
+
+
+def approved_source_frames(stack, catalog, source):
+    # Raw stack is never emitted. Only exact already-pinned /_/ documents and
+    # bounded actual lines within those documents can appear in diagnostics.
+    if not isinstance(stack, str):
+        return []
+    frames = []
+    for relative, expected in catalog['sourcePins'].items():
+        pattern = re.escape(' in ' + str(reported_source_path(relative)) + ':line ') + r'([0-9]{1,6})(?![0-9])'
+        matches = list(re.finditer(pattern, stack))
+        if not matches:
+            continue
+        content = (source / relative).read_bytes()
+        require(hashlib.sha256(content).hexdigest() == expected, 'Diagnostic source pin mismatch')
+        line_count = len(content.decode().splitlines())
+        for match in matches:
+            line = int(match.group(1))
+            if 1 <= line <= line_count:
+                frames.append((match.start(), {'source': relative, 'line': line}))
+    return [frame for _, frame in sorted(frames, key=lambda item: item[0])[:12]]
+
+
+def serialized_exception_diagnostic(value, catalog, source):
+    result = []; current = value
+    for depth in range(8):
+        if not isinstance(current, dict):
+            break
+        kind = current.get('type'); stack = current.get('stackTrace')
+        result.append({'depth': depth, 'typeClass': KNOWN_EXCEPTION_TYPES.get(kind, 'other') if isinstance(kind,str) else 'invalid',
+                       'type': diagnostic_value(kind), 'message': diagnostic_value(current.get('message')),
+                       'stack': diagnostic_value(stack), 'reportedSourceFrames': approved_source_frames(stack, catalog, source)})
+        current = current.get('innerException')
+    return {'serializedChain': result, 'tailUnclassified': current is not None,
+            'qualification': 'Serialized native chain only, not a complete .NET AggregateException graph'}
+
+
+def native_failure_classification(document, row, catalog, source):
+    require(isinstance(document, dict), 'Diagnostic native root shape')
+    summary = document.get('summary'); groups = document.get('groups')
+    result = {'schemaMatches': type(document.get('schemaVersion')) is int and document['schemaVersion'] == 1,
+              'assemblyMatches': document.get('assemblyName') == 'SharpLink.UnitTests',
+              'tunitMatches': document.get('tunitVersion') == catalog['tunitRuntimeVersion'],
+              'groupCount': len(groups) if isinstance(groups,list) else diagnostic_value(groups)}
+    if isinstance(summary,dict):
+        result['summary'] = {k: (summary[k] if type(summary.get(k)) is int and 0 <= summary[k] <= 1000000
+                           else diagnostic_value(summary.get(k)))
+                           for k in ('total','passed','failed','skipped','cancelled','timedOut','flaky')}
+    else:
+        result['summary'] = diagnostic_value(summary)
+    tests = [test for group in groups if isinstance(group,dict) and isinstance(group.get('tests'),list)
+             for test in group['tests']] if isinstance(groups,list) else []
+    result['testRows'] = len(tests)
+    result['selectedUidRows'] = sum(isinstance(t,dict) and t.get('id') == row['uid'] for t in tests)
+    result['cases'] = []
+    for test in tests[:2]:
+        if not isinstance(test,dict):
+            result['cases'].append({'shape': diagnostic_value(test)});continue
+        status = test.get('status')
+        detail = {'uidMatches': test.get('id') == row['uid'], 'displayMatches': test.get('displayName') == row['displayName'],
+                  'status': status if isinstance(status,str) and status in KNOWN_TEST_STATUSES else 'unknown',
+                  'statusValue': diagnostic_value(status), 'hasException': 'exception' in test,
+                  'hasSkipReason': 'skipReason' in test, 'hasRetryFields': bool({'retryAttempt','attempts'}.intersection(test))}
+        if 'exception' in test:
+            detail['exception'] = serialized_exception_diagnostic(test['exception'], catalog, source)
+        result['cases'].append(detail)
+    result['additionalRowsOmitted'] = len(tests) > 2
+    return result
+
+
+def junit_failure_classification(text, row):
+    require(len(text.encode()) <= 16*1024*1024 and '<!DOCTYPE' not in text and '<!ENTITY' not in text,
+            'Diagnostic JUnit size/entities')
+    root = ET.fromstring(text); cases = root.findall('.//testcase')
+    return {'rootIsTestsuites': root.tag == 'testsuites', 'testcaseCount': len(cases),
+            'selectedNameRows': sum(case.get('name') == row['displayName'] for case in cases),
+            'childCounts': {tag: sum(child.tag == tag for case in cases for child in case)
+                            for tag in ('failure','error','skipped','system-out','system-err')},
+            'unknownChildCount': sum(child.tag not in ('failure','error','skipped','system-out','system-err')
+                                     for case in cases for child in case)}
+
+
+def failure_report_diagnostic(context, terminal, catalog, source):
+    """Readonly failure classification, never a second acceptance path or join."""
+    if not terminal:
+        return {'reports': 'not-read-owner-exit-unknown'}, []
+    report = context.get('report')
+    if report is None:
+        return {'reports': 'no-fresh-report-directory'}, []
+    result = {}; failures = []
+    for name, key in (('session.tunit-report.json','native'), ('junit.xml','junit')):
+        try:
+            verify_directory(report, context['reportIdentity'])
+            try:
+                (report / name).lstat()
+            except FileNotFoundError:
+                result[key] = {'presence': 'absent'};continue
+            path = regular_report(report, context['reportIdentity'], name)
+            if key == 'native':
+                result[key] = native_failure_classification(read_json(path), context['entry']['discovery'], catalog, source)
+            else:
+                result[key] = junit_failure_classification(path.read_text(), context['entry']['discovery'])
+        except BaseException as error:
+            failures.append(error)
+            result[key] = {'classification': 'diagnostic-rejected', 'errorType': type(error).__name__}
+    return result, failures
