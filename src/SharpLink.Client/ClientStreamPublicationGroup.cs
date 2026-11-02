@@ -339,6 +339,10 @@ internal sealed partial class ClientStreamPublicationGroup : RpcStreamPublicatio
                     "Stream head publication was uncertain or producers ran without an accepted head.")).ConfigureAwait(false);
         }
         catch (Exception error) { residual = AddPhysical(residual, error); }
+        // Readiness is not physical completion. Even a failed fence must not bypass the
+        // exact accepted source, whose final graph includes all frame/observer cleanup.
+        if (Volatile.Read(ref _headEmissionSource) is not null)
+            residual = AddPhysical(residual, await JoinOwnedHeadEmissionAsync().ConfigureAwait(false));
         // Atomic against accepted terminal-batch transfer. Later logical-terminal failures stay
         // with their existing caller; this does not extend normal producer lifetime to response.
         residual = ClosePhysicalReduction(residual);

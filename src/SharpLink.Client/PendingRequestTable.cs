@@ -905,7 +905,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     // Producing setup/head failure must not resample the same broken application clock.
     // Exact group/slot identity is the authority; all terminal obligations stay outside gates.
     internal void CompleteProducingSetupFailure(ClientStreamPublicationGroup group, Exception error,
-        PendingCallCompletionReason? reason = null)
+        PendingCallCompletionReason? reason = null,
+        ClientStreamPublicationGroup.HeadFailureReceipt? headFailure = null)
     {
         if (!group.IsAdopted) return;
         var id = group.RequestId;
@@ -916,9 +917,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (call is null || call.Id != id || !ReferenceEquals(call.StreamGroup, group)) return;
         var terminal = TakeCallAfterClockFailure(slots, index, call, id);
         if (terminal is null) return;
+        headFailure?.RecordSelection(terminal.Operation, terminal.Id);
         var empty = ReadOnlySequence<byte>.Empty;
         CompleteTakenCall(terminal, reason ?? (error is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
-            ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure), error, ref empty);
+            ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure), error, ref empty, headFailure);
     }
 
     private void OnProducingRegistered(long id, RpcDeadline deadline, CancellationToken token)
@@ -1033,7 +1035,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             : ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, expected), expected);
 
     private void CompleteTakenCall(PendingCall call, PendingCallCompletionReason reason,
-        Exception? exception, ref ReadOnlySequence<byte> payload)
+        Exception? exception, ref ReadOnlySequence<byte> payload,
+        ClientStreamPublicationGroup.HeadFailureReceipt? headFailure = null)
     {
         // Capture ALL receipt identities before SetError/CompleteResponse can let application
         // continuations consume/reset a pooled operation, or terminal processing returns call.
@@ -1089,8 +1092,14 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 if (operation is not null)
                 {
                     if (isResponse) operation.CompleteResponse(exception);
-                    else operation.SetError(exception ?? new SharpLinkException(SharpLinkErrorCode.Internal,
-                        "A pending request completed without a result."));
+                    else
+                    {
+                        operation.SetError(exception ?? new SharpLinkException(SharpLinkErrorCode.Internal,
+                            "A pending request completed without a result."));
+                        // Control-flow provenance, not exception equality. This exact selected
+                        // attempt supplied the origin, and SetError has physically returned.
+                        headFailure?.RecordPublication(operation, id);
+                    }
                     disposition = StreamSinkPublicationDisposition.Published;
                 }
             }

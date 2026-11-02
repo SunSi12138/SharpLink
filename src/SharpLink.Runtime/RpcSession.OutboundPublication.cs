@@ -1,5 +1,8 @@
 namespace SharpLink.Runtime;
 
+// Internal ownership, not a wire flag. Only exact producing pending calls select the second mode.
+internal enum RpcHeadEmissionObservation : byte { CallerWait, PendingOwnedHead }
+
 internal sealed partial class RpcSession
 {
     /// <summary>
@@ -146,7 +149,8 @@ internal sealed partial class RpcSession
 
     /// <summary>Unconditional OUTSIDE-gate finalization, including paths that never attempted transfer.</summary>
     internal void FinishPreparedFrameEnqueue(
-        ref PreparedFrameEnqueue admission, out ValueTask emission, out Exception? rejection)
+        ref PreparedFrameEnqueue admission, out ValueTask emission, out Exception? rejection,
+        RpcHeadEmissionObservation observation = RpcHeadEmissionObservation.CallerWait)
     {
         emission = default;
         rejection = null;
@@ -156,7 +160,7 @@ internal sealed partial class RpcSession
         {
             // Do not read the frame/buffer here: the consumer may already have returned it.
             admission.Pump!.FinishAcceptedPublication();
-            if (admission.Completion is not null)
+            if (admission.Completion is not null && observation == RpcHeadEmissionObservation.CallerWait)
                 emission = AwaitEmissionAsync(admission.Completion, admission.CancellationToken);
             return;
         }

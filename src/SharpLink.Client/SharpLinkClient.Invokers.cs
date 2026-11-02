@@ -835,7 +835,8 @@ internal sealed partial class SharpLinkClient
             }
 
             var producerStarted = false;
-            var headTaskRetained = false;
+            Task? consumedHeadSource = null;
+            ClientStreamPublicationGroup.HeadFailureReceipt<RpcEmptyRequest>? headFailure = null;
             Exception? publicationFailure = null;
             try
             {
@@ -856,16 +857,30 @@ internal sealed partial class SharpLinkClient
                         observeEmission: control.Deadline.HasValue,
                         // The pending call owns producer cancellation and request publication.
                         cancellationToken: streamCancellationToken,
-                        publicationTable: connection.PendingCalls);
-                    if (emission.IsCompletedSuccessfully) await emission.ConfigureAwait(false);
+                        publicationTable: connection.PendingCalls,
+                        observation: RpcHeadEmissionObservation.PendingOwnedHead);
+                    await emission.ConfigureAwait(false); // Finalization only; raw ownership was committed before callbacks.
+                    var readiness = control.Deadline.HasValue
+                        ? group.ObserveHeadEmissionAsync()
+                        : ValueTask.FromResult(default(ClientStreamPublicationGroup.HeadEmissionDecision));
+                    ClientStreamPublicationGroup.HeadEmissionDecision decision;
+                    if (readiness.IsCompletedSuccessfully) decision = await readiness.ConfigureAwait(false);
                     else
                     {
-                        var headTask = emission.AsTask(); // The original ValueTask is consumed ONCE.
+                        var headTask = readiness.AsTask(); // Exactly one readiness continuation; never the raw outcome owner.
                         group.RetainHeadTask(headTask);
-                        headTaskRetained = true;
-                        await headTask.ConfigureAwait(false);
+                        decision = await headTask.ConfigureAwait(false);
                     }
-                    var producer = group!.HeadPublicationConfirmed
+                    if (decision.Kind == ClientStreamPublicationGroup.HeadEmissionKind.SourceConsumed)
+                    {
+                        if (decision.Failure is not null)
+                        {
+                            consumedHeadSource = decision.Source;
+                            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(decision.Failure).Throw();
+                        }
+                    }
+                    var producer = decision.Kind != ClientStreamPublicationGroup.HeadEmissionKind.PendingTerminalSelected &&
+                        group.HeadPublicationConfirmed
                         ? RunGeneratedClientStreamsAsync(connection, group, streams, streamCancellationToken, completeOneWay: true)
                         : FinishUnstartedClientStreamsAsync(connection, group, null);
                     producerStarted = true;
@@ -874,20 +889,22 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                publicationFailure = CompleteFailedProducingPending(connection!, group, exception);
+                publicationFailure = exception;
+                headFailure = new(oneWayStreamLease.Operation, requestId, exception, consumedHeadSource);
+                headFailure.CompletePending(connection!, group);
             }
 
             if (!producerStarted)
             {
                 var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure,
-                    startupFailureOwnedByCaller: publicationFailure is not null && !headTaskRetained);
+                    startupFailureOwnedByCaller: publicationFailure is not null);
                 group.AttachOriginTask(cleanup);
             }
 
             // Registration may already have completed and removed the pending entry. Its operation
             // still owns that terminal result and must be consumed exactly once to return it to the pool.
-            if (publicationFailure is not null)
-                _ = await ObserveFailedOperationAsync(oneWayStreamLease.Operation, publicationFailure).ConfigureAwait(false);
+            if (headFailure is not null)
+                _ = await headFailure.ObserveFailureAsync().ConfigureAwait(false);
             else
                 _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
         }
@@ -971,7 +988,8 @@ internal sealed partial class SharpLinkClient
                 : ProtocolV2FrameFlags.Cancellable;
             var streamCancellationToken = group!.ProducerToken;
             var producerStarted = false;
-            var headTaskRetained = false;
+            Task? consumedHeadSource = null;
+            ClientStreamPublicationGroup.HeadFailureReceipt<TResponse>? headFailure = null;
             Exception? publicationFailure = null;
             try
             {
@@ -993,16 +1011,30 @@ internal sealed partial class SharpLinkClient
                         // its pending entry, so the emission wait has to observe the token that entry
                         // cancels when it reaches a terminal reason.
                         cancellationToken: streamCancellationToken,
-                        publicationTable: connection.PendingCalls);
-                    if (emission.IsCompletedSuccessfully) await emission.ConfigureAwait(false);
+                        publicationTable: connection.PendingCalls,
+                        observation: RpcHeadEmissionObservation.PendingOwnedHead);
+                    await emission.ConfigureAwait(false); // Finalization only; raw ownership was committed before callbacks.
+                    var readiness = control.Deadline.HasValue
+                        ? group.ObserveHeadEmissionAsync()
+                        : ValueTask.FromResult(default(ClientStreamPublicationGroup.HeadEmissionDecision));
+                    ClientStreamPublicationGroup.HeadEmissionDecision decision;
+                    if (readiness.IsCompletedSuccessfully) decision = await readiness.ConfigureAwait(false);
                     else
                     {
-                        var headTask = emission.AsTask(); // No second await/AsTask of the ValueTask.
+                        var headTask = readiness.AsTask(); // Exactly one readiness continuation; never the raw outcome owner.
                         group.RetainHeadTask(headTask);
-                        headTaskRetained = true;
-                        await headTask.ConfigureAwait(false);
+                        decision = await headTask.ConfigureAwait(false);
                     }
-                    var producerTask = group!.HeadPublicationConfirmed
+                    if (decision.Kind == ClientStreamPublicationGroup.HeadEmissionKind.SourceConsumed)
+                    {
+                        if (decision.Failure is not null)
+                        {
+                            consumedHeadSource = decision.Source;
+                            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(decision.Failure).Throw();
+                        }
+                    }
+                    var producerTask = decision.Kind != ClientStreamPublicationGroup.HeadEmissionKind.PendingTerminalSelected &&
+                        group.HeadPublicationConfirmed
                         ? RunGeneratedClientStreamsAsync(connection, group, streams, streamCancellationToken)
                         : FinishUnstartedClientStreamsAsync(connection, group, null);
                     producerStarted = true;
@@ -1011,21 +1043,23 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                publicationFailure = CompleteFailedProducingPending(connection!, group, exception);
+                publicationFailure = exception;
+                headFailure = new(operation!, requestId, exception, consumedHeadSource);
+                headFailure.CompletePending(connection!, group);
             }
             finally
             {
                 if (!producerStarted)
                 {
                     var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure,
-                        startupFailureOwnedByCaller: publicationFailure is not null && !headTaskRetained);
+                        startupFailureOwnedByCaller: publicationFailure is not null);
                     group.AttachOriginTask(cleanup);
                 }
             }
 
-            return publicationFailure is null
+            return headFailure is null
                 ? await operation!.AsValueTask().ConfigureAwait(false)
-                : await ObserveFailedOperationAsync(operation!, publicationFailure).ConfigureAwait(false);
+                : await headFailure.ObserveFailureAsync().ConfigureAwait(false);
         }
 
         private static async Task RunGeneratedClientStreamsAsync<TStreams>(

@@ -17,7 +17,8 @@ internal sealed partial class SharpLinkClient
             bool observeEmission = false,
             CancellationToken cancellationToken = default,
             IRequestEmissionFailureObserver? failureObserver = null,
-            PendingRequestTable? publicationTable = null)
+            PendingRequestTable? publicationTable = null,
+            RpcHeadEmissionObservation observation = RpcHeadEmissionObservation.CallerWait)
         {
             var binding = publication switch
             {
@@ -97,7 +98,8 @@ internal sealed partial class SharpLinkClient
                             failureObserver ?? table,
                             out var emission,
                             out var rejection,
-                            publication))
+                            publication,
+                            observation))
                     {
                         if (rejection is not null)
                         {

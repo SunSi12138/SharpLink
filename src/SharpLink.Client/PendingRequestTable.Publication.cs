@@ -16,7 +16,8 @@ partial class PendingRequestTable
         IRequestEmissionFailureObserver? failureObserver,
         out ValueTask emission,
         out Exception? rejection,
-        RpcFramePublication? publication = null)
+        RpcFramePublication? publication = null,
+        RpcHeadEmissionObservation observation = RpcHeadEmissionObservation.CallerWait)
     {
         emission = default;
         rejection = null;
@@ -29,6 +30,13 @@ partial class PendingRequestTable
         Exception? failure = null;
         try
         {
+            // Fallible preparation is before transfer and inside unconditional finalization.
+            // The existing completion is rooted even if any deferred accepted callback throws.
+            if (observation == RpcHeadEmissionObservation.PendingOwnedHead && admission.Completion is { } completion)
+            {
+                if (group is null) throw new InvalidOperationException("A pending-owned head requires its exact stream group.");
+                group.PrepareHeadEmission(session, id, completion.Task);
+            }
             var slots = Volatile.Read(ref _slots);
             var index = (int)(id & _indexMask);
             var current = slots is null ? null : Volatile.Read(ref slots[index]);
@@ -65,7 +73,13 @@ partial class PendingRequestTable
                         else
                         {
                             var accepted = session.TryTransferPreparedFrame(ref admission);
-                            if (accepted) current.MarkRequestPublished();
+                            if (accepted)
+                            {
+                                // Existing pending -> group gate order; validated scalar commit only.
+                                if (observation == RpcHeadEmissionObservation.PendingOwnedHead && admission.Completion is not null)
+                                    group!.CommitHeadEmissionUnderCompletionGate();
+                                current.MarkRequestPublished();
+                            }
                             group?.ResolveHeadUnderCompletionGate(accepted);
                         }
                     }
@@ -80,8 +94,10 @@ partial class PendingRequestTable
         if (failure is null && !admission.TransferAttempted)
             admission.AbandonForTerminal();
         // All independent deferred obligations survive errors in the other obligations.
-        try { session.FinishPreparedFrameEnqueue(ref admission, out emission, out rejection); }
+        try { session.FinishPreparedFrameEnqueue(ref admission, out emission, out rejection, observation); }
         catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        if (!admission.Accepted && admission.Completion is not null && observation == RpcHeadEmissionObservation.PendingOwnedHead)
+            group?.RetireUnacceptedHeadEmission();
         try { group?.NotifyHeadResolved(); }
         catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
         if (terminal is not null)

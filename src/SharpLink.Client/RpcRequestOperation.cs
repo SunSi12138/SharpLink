@@ -113,6 +113,31 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     }
     public ValueTask<T> AsValueTask() => new(this, _core.Version);
 
+    // Error-only observation never stores a receipt in this pooled operation. The caller
+    // captures its version before publication; normal GetResult and success paths are unchanged.
+    internal short FailureObservationVersion => _core.Version;
+
+    internal readonly record struct FailureConsumption(
+        bool Consumed, ValueTaskSourceStatus Status, Exception? CoreFailure, Exception? ReturnFailure);
+
+    internal FailureConsumption ConsumeFailure(short version)
+    {
+        ValueTaskSourceStatus status;
+        try { status = _core.GetStatus(version); }
+        catch (Exception invalid) { return new(false, default, invalid, null); }
+        if (status == ValueTaskSourceStatus.Pending)
+            return new(false, status, new InvalidOperationException("The original pending outcome is not terminal."), null);
+        // Valid original version + terminal core: exactly one consume and one return. No
+        // finally can mask the original terminal with an independent pool-return failure.
+        Exception? coreFailure = null;
+        Exception? returnFailure = null;
+        try { _ = _core.GetResult(version); }
+        catch (Exception failure) { coreFailure = failure; }
+        try { ReturnToPool(); }
+        catch (Exception failure) { returnFailure = failure; }
+        return new(true, status, coreFailure, returnFailure);
+    }
+
     private void ReturnToPool()
     {
         _codec = null;
