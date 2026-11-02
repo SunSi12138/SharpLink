@@ -45,6 +45,7 @@ internal sealed partial class RpcSession
         var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         IAsyncEnumerator<T>? enumerator = null;
         Task? pendingOperation = null;
+        var pendingRole = GeneratedPendingOperationRole.IndependentPhysical;
         var terminalSelected = false;
         Exception? invocationFailure = null;
         try
@@ -56,6 +57,7 @@ internal sealed partial class RpcSession
 
             while (true)
             {
+                pendingRole = GeneratedPendingOperationRole.InvocationMoveNext;
                 var moveNext = enumerator.MoveNextAsync();
                 bool hasNext;
                 if (moveNext.IsCompletedSuccessfully ||
@@ -108,6 +110,7 @@ internal sealed partial class RpcSession
                         "A non-nullable RPC stream response was null.");
                 }
 
+                pendingRole = GeneratedPendingOperationRole.IndependentPhysical;
                 var send = SendGeneratedStreamChunkAsync(
                     requestId,
                     streamId,
@@ -200,7 +203,7 @@ internal sealed partial class RpcSession
                 try
                 {
                     await FinishGeneratedEnumeratorAsync(enumerator, pendingOperation, lifetimeCancellation,
-                        physicalOwner, terminalSelected, lifetimeFailure).ConfigureAwait(false);
+                        physicalOwner, terminalSelected, lifetimeFailure, pendingRole, requestId).ConfigureAwait(false);
                 }
                 catch (Exception error) { residual = PhysicalTaskFailureException.GetRaw(error); }
             }

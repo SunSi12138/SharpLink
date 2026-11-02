@@ -356,6 +356,30 @@ internal sealed class ServerRequestPermit : IDisposable, IGeneratedStreamPhysica
         => Volatile.Read(ref _physicalTailGate) ??
             Interlocked.CompareExchange(ref _physicalTailGate, new Lock(), null) ?? _physicalTailGate!;
 
+    public void TryAcceptInvocationOutcome(Task operation, long expectedRequestId,
+        ref GeneratedInvocationOutcomeReceipt? receipt)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        // Normal permit liveness is supplied by invocation-await -> release ordering.
+        // This does not promise safety for an adversarial concurrent direct Permit.Dispose.
+        if (Volatile.Read(ref _state) is Releasing or Disposed ||
+            (Volatile.Read(ref _physicalOutcomeFlags) & PhysicalServiceCleanupFinished) != 0 ||
+            _capturedPhysicalCallState is not { } captured || captured.RequestId != expectedRequestId ||
+            !captured.TryAcquire())
+            return;
+        try
+        {
+            // Successful original-generation acquisition is the capture boundary. A later
+            // DisposeRequested may close new acquisitions, but cannot reset this pinned state.
+            // Do not add a second disposal check or rebind through the request table.
+            if (captured.State.Reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
+                return;
+            receipt = new GeneratedInvocationOutcomeReceipt(this, operation,
+                captured.RequestId, captured.Generation);
+        }
+        finally { captured.ReleaseUse(); }
+    }
+
     public void TrackPhysicalTail(Task task, ref FrameworkTaskRegistration? registration)
         => _admission.TrackPhysicalTail(task, ref registration);
 
