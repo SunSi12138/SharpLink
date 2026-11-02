@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "project": "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj",
+  "assemblyFullName": "SharpLink.UnitTests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "tunitPackageVersion": "1.73.19",
+  "tunitRuntimeVersion": "1.73.19.0",
+  "projects": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "src/SharpLink.Hosting/SharpLink.Hosting.csproj",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+    "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+    "src/SharpLink.Server/SharpLink.Server.csproj",
+    "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj",
+    "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj",
+    "test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj",
+    "test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj",
+    "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+  ],
+  "limits": {
+    "commandBudgetSeconds": 1500,
+    "restoreSeconds": 600,
+    "buildSeconds": 600,
+    "discoverySeconds": 120,
+    "caseSeconds": 120,
+    "engineTimeout": "90s"
+  },
+  "expectedGroups": {
+    "ABScope": 6,
+    "B2a": 2,
+    "B2c": 1
+  },
+  "expectedCaseCount": 9,
+  "scopes": [
+    {
+      "group": "ABScope",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "RetirementTestIsolationScopeTests",
+      "source": "test/SharpLink.UnitTests/Runtime/RetirementTestIsolationScopeTests.cs",
+      "sourceSha256": "69cd6e287d54d7059d9b758808735746098a73f3223fb7a151bacc8de59acdc8",
+      "discovery": "class",
+      "methods": [
+        {
+          "name": "ActualRunSnapshotFailureDoesNotLeakGrantedPermit",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "negative-oracle-with-real-private-task-and-permit-containment",
+          "expectedSpan": [
+            11,
+            12,
+            22
+          ]
+        },
+        {
+          "name": "SecondSnapshotFailureDoesNotMutateEitherEnvironmentValue",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "negative-oracle-with-real-private-task-and-permit-containment",
+          "expectedSpan": [
+            24,
+            25,
+            40
+          ]
+        },
+        {
+          "name": "MutatingSecondSetterFailureRestoresBothSnapshots",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "negative-oracle-with-real-private-task-and-permit-containment",
+          "expectedSpan": [
+            42,
+            43,
+            60
+          ]
+        },
+        {
+          "name": "BodyCleanupAndBothRestoreFailuresKeepFourOccurrencesAndRoot",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "negative-oracle-with-real-private-task-and-permit-containment",
+          "expectedSpan": [
+            62,
+            63,
+            77
+          ]
+        },
+        {
+          "name": "PendingOriginalOwnerPreventsRestoreAndPermitRelease",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "negative-oracle-with-real-private-task-and-permit-containment",
+          "expectedSpan": [
+            79,
+            80,
+            114
+          ]
+        },
+        {
+          "name": "PermitReleaseFailurePreservesBodyAndItsScopeRoot",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "negative-oracle-with-real-private-task-and-permit-containment",
+          "expectedSpan": [
+            116,
+            117,
+            133
+          ]
+        }
+      ]
+    },
+    {
+      "group": "B2a",
+      "namespace": "SharpLink.UnitTests.Client",
+      "class": "SharpLinkMultiClusterDynamicAssemblyTests",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterDynamicAssemblyTests.cs",
+      "sourceSha256": "add01284df1cefec423e009107170e37a134f757eb37b19d6aded4efbd176847",
+      "discovery": "methods",
+      "methods": [
+        {
+          "name": "RuntimeReplaceShouldMigrateDynamicAssemblyBeforeSwitchingRoute",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-mutation-and-actual-owner-join",
+          "expectedSpan": [
+            126,
+            129,
+            182
+          ]
+        },
+        {
+          "name": "DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "normal-mutation-and-actual-owner-join",
+          "expectedSpan": [
+            184,
+            187,
+            242
+          ]
+        }
+      ]
+    },
+    {
+      "group": "B2c",
+      "namespace": "SharpLink.UnitTests.Server",
+      "class": "ServiceRegistrationTests",
+      "source": "test/SharpLink.UnitTests/Server/ServiceRegistrationTests.cs",
+      "sourceSha256": "6ccd7e935486ead35032a9ecc171ece95106874679e1cab8c0a152309928d28a",
+      "discovery": "methods",
+      "methods": [
+        {
+          "name": "RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "exact-two-service-fault-oracle-real-Faulted-host-and-physical-accounting-join",
+          "expectedSpan": [
+            391,
+            394,
+            430
+          ]
+        }
+      ]
+    }
+  ],
+  "qualification": "Exactly nine newly selected actual UIDs; original47 separate. B2c intentionally Faulted is exact internal oracle, not generic failure acceptance. D2 and other Unit bodies excluded."
+}
