@@ -125,19 +125,44 @@ public partial class RpcManifestCodecProviderTests
     [Test]
     public void RuntimeContextBuildShouldRejectPreviousGeneratedManifestApi()
     {
+        var ownerAssembly = typeof(IContractA).Assembly;
+        var currentApi = SharpLinkGeneratedManifestVersions.Api;
+        var previousApi = currentApi - 1;
+        var currentProtocol = SharpLinkGeneratedManifestVersions.Protocol;
+
+        // All other fixture metadata must be accepted with the current API.
+        using (var current = new SharpLinkRuntimeContextBuilder().Build(
+                   [new ApiVersionManifest(ownerAssembly, currentApi)]))
+        {
+        }
+
+        // Capture rejects the version before reading the owner assembly's ABI.
+        var expectedDiagnostic = "Manifest compatibility mismatch: " +
+            $"API {previousApi}/{currentApi}, " +
+            $"Protocol {currentProtocol}/{currentProtocol}, " +
+            $"ABI '<unknown>'/{SharpLinkGeneratedManifestVersions.AbiIdentity}, " +
+            "Generator 'previous-api-test'. " +
+            "Action: delete stale generated outputs, then regenerate and rebuild this assembly " +
+            "with the SharpLink SDK version that matches the current Runtime.";
+
+        SharpLinkRuntimeContext unexpected;
         try
         {
-            using var _ = new SharpLinkRuntimeContextBuilder().Build(
-                [new PreviousApiManifest(typeof(IContractA).Assembly)]);
+            unexpected = new SharpLinkRuntimeContextBuilder().Build(
+                [new ApiVersionManifest(ownerAssembly, previousApi)]);
         }
-        catch (InvalidOperationException exception)
+        catch (ColdMetadataException exception)
         {
-            Ensure(exception.Message.Contains("incompatible", StringComparison.OrdinalIgnoreCase),
-                "direct RuntimeContext construction must fail at the generated-manifest compatibility boundary");
+            if (exception.Code != SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest ||
+                !string.Equals(exception.Message, expectedDiagnostic, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "direct RuntimeContext construction must report the exact generated-manifest compatibility boundary",
+                    exception);
             return;
         }
 
-        throw new Exception("Expected a previous generated manifest API to be rejected by RuntimeContext construction.");
+        using (unexpected)
+            throw new Exception("Expected a previous generated manifest API to be rejected by RuntimeContext construction.");
     }
 
     private static void Ensure(bool condition, string message)
@@ -278,9 +303,9 @@ public partial class RpcManifestCodecProviderTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
-    private sealed class PreviousApiManifest(Assembly ownerAssembly) : ITestGeneratedManifest
+    private sealed class ApiVersionManifest(Assembly ownerAssembly, int apiVersion) : ITestGeneratedManifest
     {
-        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api - 1;
+        public int ApiVersion => apiVersion;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "previous-api-test";
         public Assembly OwnerAssembly { get; } = ownerAssembly;
