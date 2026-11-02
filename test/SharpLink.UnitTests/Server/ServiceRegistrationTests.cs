@@ -391,9 +391,9 @@ public partial class ServiceRegistrationTests
     [Test]
     // The scenario owns both a generated-catalog identity and RollbackState process state.
     [NotInParallel(new[] { "generated-catalog", "rollback-plugin" })]
-    public async Task RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures()
+    public async Task RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         var manifest = new StaticCleanupManifest();
         SharpLinkGeneratedAssemblyCatalog.Register(manifest);
         SharpLinkServer? server = null;

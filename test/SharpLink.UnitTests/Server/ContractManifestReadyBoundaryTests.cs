@@ -10,9 +10,9 @@ namespace SharpLink.UnitTests.Server;
 public class ContractManifestReadyBoundaryTests
 {
     [Test]
-    public async Task BootstrapManifestWriteMustObserveReadyRegistryBoundary()
+    public async Task BootstrapManifestWriteMustObserveReadyRegistryBoundary(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         var connection = new TestTransportConnection();
         var listener = new SingleConnectionListener(connection);
         var server = (SharpLinkServer)SharpLinkServerBuilder.Create()

@@ -126,9 +126,9 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
     [Test]
     // The rollback plugin exposes a process-wide environment switch and disposal state.
     [NotInParallel("rollback-plugin")]
-    public async Task RuntimeReplaceShouldMigrateDynamicAssemblyBeforeSwitchingRoute()
+    public async Task RuntimeReplaceShouldMigrateDynamicAssemblyBeforeSwitchingRoute(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         try
         {
@@ -181,9 +181,9 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
     [Test]
     // The rollback plugin exposes process-wide construction gates and environment switches.
     [NotInParallel("rollback-plugin")]
-    public async Task DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads()
+    public async Task DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         var manifestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var manifestRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         RollbackState.ManifestConstructionStarted = manifestStarted;

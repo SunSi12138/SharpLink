@@ -14,9 +14,9 @@ namespace SharpLink.UnitTests.Runtime;
 public class DynamicRollbackTests
 {
     [Test]
-    public async Task HugeDynamicDrainTimeoutShouldRemainPendingUntilLeaseRelease()
+    public async Task HugeDynamicDrainTimeoutShouldRemainPendingUntilLeaseRelease(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableRequestTimeout()
@@ -68,9 +68,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public async Task ClientUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider()
+    public async Task ClientUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         var ownerProvider = new ManualTimeProvider();
         var unrelatedProvider = new ManualTimeProvider();
@@ -135,9 +135,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public async Task ServerUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider()
+    public async Task ServerUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         var ownerProvider = new ManualTimeProvider();
         var unrelatedProvider = new ManualTimeProvider();
@@ -201,9 +201,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public async Task ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
+    public async Task ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -234,9 +234,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public async Task ServerRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
+    public async Task ServerRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
@@ -265,9 +265,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public async Task ClientReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure()
+    public async Task ClientReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -303,9 +303,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public async Task ServerReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure()
+    public async Task ServerReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
@@ -339,9 +339,9 @@ public class DynamicRollbackTests
     }
 
     [Test]
-    public void ServerProfileBindingFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
+    public async Task ServerProfileBindingFailureShouldDisposeRuntimeContextAndPreserveBothFailures(CancellationToken testCancellationToken)
     {
-        RollbackState.TestIsolation.Wait();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "server-build-schema");

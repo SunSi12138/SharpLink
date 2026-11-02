@@ -15,9 +15,9 @@ public partial class BuilderOwnershipRollbackTests
 {
     [Test]
     [NotInParallel("rollback-plugin")]
-    public void ServerCompileValidationFailureShouldNotMaterializeRuntimeContext()
+    public async Task ServerCompileValidationFailureShouldNotMaterializeRuntimeContext(CancellationToken testCancellationToken)
     {
-        RollbackState.TestIsolation.Wait();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             WithRollbackManifest(manifest =>
@@ -44,9 +44,9 @@ public partial class BuilderOwnershipRollbackTests
 
     [Test]
     [NotInParallel("rollback-plugin")]
-    public void ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
+    public async Task ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures(CancellationToken testCancellationToken)
     {
-        RollbackState.TestIsolation.Wait();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
             WithRollbackManifest(manifest =>

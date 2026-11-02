@@ -333,9 +333,9 @@ public sealed class ManifestSourceIsolationTests
     [Test]
     // The collectible rollback plugin uses process-wide module state while its real Codec owner unloads.
     [NotInParallel("rollback-plugin")]
-    public async Task DisposedIsolatedSnapshotRuntimeShouldReleaseCollectibleManifestAndCodecOwners()
+    public async Task DisposedIsolatedSnapshotRuntimeShouldReleaseCollectibleManifestAndCodecOwners(CancellationToken testCancellationToken)
     {
-        await RollbackState.TestIsolation.WaitAsync();
+        await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         CollectibleRuntimeReferences references;
         try
         {
