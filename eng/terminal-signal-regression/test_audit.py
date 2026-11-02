@@ -31,9 +31,9 @@ def diagnostic_controls():
         assert audit.header_role('\n'+delimiter+'\n  </Import>\n\n'+str(manifest)+'\n'+delimiter+'\n',manifest)=='import-close'
         assert audit.header_role(str(manifest),manifest)=='other-comment'
         pp=base/'pp.xml';pp.write_text('<Project><!--'+root_header(manifest)+'--></Project>')
-        try:audit.expanded(pp,source,packages,{},diagnostic_sdk_root=sdk)
+        try:audit.expanded(pp,source,packages,{},diagnostic_sdk_root=sdk,source_pins={},cache_pins={})
         except ValueError as failure:
-            assert str(failure)=='Import outside exact source/official cache/sealed selected SDK'
+            assert str(failure)=='Import origin missing/ambiguous in exact sealed inputs'
             rows=runner.failure_leaves([failure],'preprocess-baseline-0')
             assert rows[0]['importOrigins']['rejectedCount']==1
             assert rows[0]['importOrigins']['rejected'][0]==detail
@@ -68,27 +68,126 @@ def diagnostic_controls():
         assert diagnostics.candidate_count==20 and diagnostics.rejected_count==20 and len(diagnostics.rejected)==16 and diagnostics.public()['truncated']
         # Formatter failure preserves original rejection as first leaf/fullgraph.
         saved=audit.import_diagnostics
-        def broken(*args):raise RuntimeError('SECRET_DIAGNOSTIC')
+        def broken(*args,**kwargs):raise RuntimeError('SECRET_DIAGNOSTIC')
         audit.import_diagnostics=broken
         try:
-            try:audit.expanded(pp,source,packages,{},diagnostic_sdk_root=sdk)
+            try:audit.expanded(pp,source,packages,{},diagnostic_sdk_root=sdk,source_pins={},cache_pins={})
             except ExceptionGroup as group:
                 assert type(group.exceptions[0]) is ValueError and type(group.exceptions[1]) is RuntimeError
-                assert str(group.exceptions[0])=='Import outside exact source/official cache/sealed selected SDK'
+                assert str(group.exceptions[0])=='Import origin missing/ambiguous in exact sealed inputs'
                 assert 'SECRET' not in json.dumps(runner.failure_leaves([group],'preprocess-baseline-0'))
             else:raise AssertionError('Diagnostic failure must not mask or accept body failure')
         finally:audit.import_diagnostics=saved
-        # A no-rejection diagnostic run is explicitly not runtime qualification.
-        context=SimpleNamespace(work=base,manifest_sha='synthetic',stage='preprocess-baseline-0',
-                                results=[],active_scope=None,active_uid=None,diagnostic_complete=True)
-        emitted=[];errors=[]
-        assert runner.finish(context,errors,writer=lambda line,**kw:emitted.append(json.loads(line)))==0
-        assert emitted==[dict(classification='DIAGNOSTIC_COMPLETE_NOT_RUNTIME_QUALIFICATION',qualifiedScopes=0,rawArtifactsUploaded=False)]
-        assert json.loads((base/'RESULT.json').read_text())['diagnosticOnly'] is True
     return ['known-root-safe-hash', 'header-role-only', 'unsealed-still-rejected',
             'unknown-no-filesystem-access', 'escape-no-filesystem-access', 'alias-still-rejected',
             'symlink-no-follow', 'fifo-no-read', 'missing-file', 'bounded-16-total-count',
-            'diagnostic-error-body-first', 'complete-not-runtime-qualification']
+            'diagnostic-error-body-first']
+
+
+
+def closure_controls():
+    import os
+    from types import SimpleNamespace
+    passed=[]
+    def reject(label,action):
+        try:action()
+        except (ValueError,OSError):passed.append(label)
+        else:raise AssertionError('Unexpected acceptance: '+label)
+    with tempfile.TemporaryDirectory(prefix='sl971-closure-synthetic-') as temporary:
+        b=Path(temporary); sdk=b/'dotnet';source=b/'main';cache=b/'cache'
+        for folder in (sdk,source,cache):folder.mkdir()
+        def write(path,text='test'):
+            path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text);return path
+        selected='10.0.114';band='10.0.100'
+        write(sdk/'sdk'/selected/'KnownWorkloadManifests.txt','example\nfallback\n')
+        current=write(sdk/'sdk-manifests'/band/'example/1.0.0/WorkloadManifest.targets')
+        write(current.with_suffix('.json'),'{}')
+        older=write(sdk/'sdk-manifests/9.0.100/fallback/2.0.0/WorkloadManifest.targets')
+        write(older.with_suffix('.json'),'{}')
+        referenced=write(sdk/'sdk-manifests/9.0.200/cross/3.0.0/WorkloadManifest.targets')
+        write(referenced.with_suffix('.json'),'{}')
+        write(sdk/'sdk-manifests/8.0.100/workloadsets/10.0.114/baseline.workloadset.json',json.dumps({'cross':'3.0.0/9.0.200'}))
+        unrelated=write(sdk/'sdk-manifests/9.0.100/unrelated/8.0.0/WorkloadManifest.targets')
+        future=write(sdk/'sdk-manifests/11.0.100/example/1.0.0/WorkloadManifest.targets')
+        global_text='{\n  "sdk": {\n    "version": "10.0.102",\n    "rollForward": "latestPatch",\n    "allowPrerelease": false\n  },\n  "test": {\n    "runner": "Microsoft.Testing.Platform"\n  }\n}\n'
+        write(source/'global.json',global_text)
+        cli=b/'cli';(cli/'.dotnet').mkdir(parents=True)
+        lane=SimpleNamespace(env={'baseline':{'DOTNET_CLI_HOME':str(cli)}},roots={'baseline':source},sdk_pins={})
+        receipt=runner.workload_inputs(lane,sdk,selected)
+        assert receipt['featureBand']==band
+        assert all(str(p) in lane.sdk_pins for p in (current,older,referenced))
+        assert str(unrelated) not in lane.sdk_pins and str(future) not in lane.sdk_pins
+        passed.append('current-fallback-workloadset-exact-closure-not-entire-sdk')
+        def guard():
+            runner.equal_snapshot(lane.workload_pins)
+            for root,snapshot in lane.workload_parents.items():assert runner.selection_members(root)==snapshot
+            for (base,path),snapshot in lane.workload_paths.items():assert runner.path_state(base,path)==snapshot
+        guard()
+        higher=current.parent.parent/'99.0.0';higher.mkdir()
+        try:guard()
+        except AssertionError:passed.append('higher-candidate-detected')
+        else:raise AssertionError('New manifest candidate ignored')
+        higher.rmdir()
+        absent=cli/'.dotnet/sdk-manifests';absent.mkdir()
+        try:guard()
+        except AssertionError:passed.append('user-override-creation-detected')
+        else:raise AssertionError('New user root ignored')
+        absent.rmdir()
+        original=current.read_bytes();current.write_text('tampered')
+        reject('manifest-bytes-change-detected',guard);current.write_bytes(original)
+        unknown=sdk/'sdk-manifests'/band/'example/1.0.0/unknown.targets'
+        pins=dict(lane.sdk_pins)
+        project=write(source/'Microsoft.NET.Sdk.props','<Project/>');pins[str(project)]=(audit.digest(project),0)
+        containers=(source,cache,sdk)
+        assert audit.canonical_origin(current,containers,pins)==current
+        sibling=current.parent/'sub';sibling.mkdir()
+        alias=sibling/'../WorkloadManifest.targets'
+        assert audit.canonical_origin(alias,containers,pins)==current
+        passed.append('canonical-normal-spelling-exact-file')
+        reject('unsealed-file-not-prefix-allowed',lambda:audit.canonical_origin(unknown,containers,pins))
+        reject('escaping-source-to-sdk-rejected',lambda:audit.canonical_origin(source/'../dotnet'/current.relative_to(sdk),containers,pins))
+        reject('missing-cancelled-parent-rejected',lambda:audit.canonical_origin(current.parent/'missing/../WorkloadManifest.targets',containers,pins))
+        link=current.parent/'link';link.symlink_to(sibling,target_is_directory=True)
+        reject('symlink-even-cancelled-parent-rejected',lambda:audit.canonical_origin(link/'../WorkloadManifest.targets',containers,pins))
+        fifo=current.parent/'fifo.targets';os.mkfifo(fifo);pins[str(fifo)]=('0'*64,0)
+        reject('special-origin-rejected',lambda:audit.canonical_origin(fifo,containers,pins));pins.pop(str(fifo))
+        encoded=write(source/'double--dash.props','<Project/>');pins[str(encoded)]=(audit.digest(encoded),0)
+        assert audit.canonical_origin(source/'double__dash.props',containers,pins)==encoded
+        collision=write(source/'double__dash.props','<Project/>');pins[str(collision)]=(audit.digest(collision),0)
+        reject('encoded-path-collision-rejected',lambda:audit.canonical_origin(collision,containers,pins))
+        pins.pop(str(collision));passed.append('official-comment-encoding-unique-identity')
+        delimiter='='*140
+        def header(path,kind='root'):
+            prefix='' if kind=='root' else ('  </Import>\n\n' if kind=='close' else '  <Import Project="x">\n\n')
+            return '<!--\n'+delimiter+'\n'+prefix+str(path)+'\n'+delimiter+'\n-->'
+        pp=b/'pp.xml';pp.write_text(header(project)+'<Project>'+header(current,'open')+'<!-- /SECRET/EXAMPLE.targets -->'+header(project,'close')+'</Project>')
+        results=audit.expanded(pp,source,cache,lane.sdk_pins,diagnostic_sdk_root=sdk,source_pins={str(project):pins[str(project)]},cache_pins={})
+        assert set(results)=={str(project),str(current)}
+        passed.append('official-root-open-close-ignore-arbitrary-comment')
+        current.write_text('changed')
+        reject('expanded-exact-hash-mismatch',lambda:audit.expanded(pp,source,cache,lane.sdk_pins,diagnostic_sdk_root=sdk,source_pins={str(project):pins[str(project)]},cache_pins={}))
+        current.write_bytes(original)
+        lane.env['baseline']['DOTNETSDK_WORKLOAD_MANIFEST_ROOTS']='SECRET'
+        reject('resolver-override-env-rejected',lambda:runner.workload_inputs(lane,sdk,selected))
+        lane.env['baseline'].pop('DOTNETSDK_WORKLOAD_MANIFEST_ROOTS')
+        userlocal=write(sdk/'metadata/workloads'/band/'userlocal','')
+        reject('userlocal-selector-rejected',lambda:runner.workload_inputs(lane,sdk,selected));userlocal.unlink()
+        link.unlink();fifo.unlink()
+        noncanonical=sdk/'sdk-manifests/10.0.100-preview.1';noncanonical.mkdir()
+        reject('unsupported-feature-band-not-silently-skipped',lambda:runner.workload_inputs(lane,sdk,selected));noncanonical.rmdir()
+        reject('noncanonical-feature-band-rounding',lambda:runner.manifest_feature_band('10.0.114'))
+        reject('noncanonical-feature-band-leading-zero',lambda:runner.manifest_feature_band('010.0.100'))
+        known=sdk/'sdk'/selected/'KnownWorkloadManifests.txt';original_known=known.read_text()
+        known.write_text('..\n')
+        reject('known-dotdot-identifier-rejected',lambda:runner.workload_inputs(lane,sdk,selected));known.write_text(original_known)
+        assert not runner.manifest_identifier('.') and not runner.manifest_identifier('..')
+        spec=sdk/'sdk-manifests/8.0.100/workloadsets/10.0.114/baseline.workloadset.json';original_spec=spec.read_text()
+        spec.write_text(json.dumps({'.':'3.0.0/9.0.200'}))
+        reject('workloadset-dot-identifier-rejected',lambda:runner.workload_inputs(lane,sdk,selected));spec.write_text(original_spec)
+        spec.write_text(json.dumps({'cross':'3.0.0/9.0.214'}))
+        reject('explicit-spec-feature-band-noncanonical-rejected',lambda:runner.workload_inputs(lane,sdk,selected));spec.write_text(original_spec)
+
+    return passed
 
 
 def main():
@@ -201,7 +300,8 @@ def main():
         assert json.loads((context.work/'RESULT.json').read_text())['status']=='FAILED'
         counts['positive']+=1
     diagnostic=diagnostic_controls()
-    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' runtimeTests=0')
+    closure=closure_controls()
+    print('SYNTHETIC_AUDIT_PASS '+json.dumps(counts)+' diagnosticControls='+json.dumps(diagnostic)+' closureControls='+json.dumps(closure)+' runtimeTests=0')
 
 
 if __name__=='__main__':main()

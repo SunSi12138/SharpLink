@@ -71,6 +71,138 @@ def equal_snapshot(expected):
                   'Previously sealed evidence/input changed')
 
 
+
+def path_state(base, path):
+    """Exact existence/type/identity chain; no following symlinks, including absent parents."""
+    c.require(path.is_relative_to(base), 'Selection input escaped container')
+    result = []
+    current = base
+    for part in (None, *path.relative_to(base).parts):
+        if part is not None: current = current / part
+        try: info = current.lstat()
+        except FileNotFoundError:
+            result.append(('missing', str(current.relative_to(base)))); break
+        c.require(not stat.S_ISLNK(info.st_mode) and (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)), 'Selection input symlink/special')
+        result.append((str(current.relative_to(base)), stat.S_IFMT(info.st_mode), info.st_dev, info.st_ino, stat.S_IMODE(info.st_mode)))
+    return result
+
+
+def manifest_feature_band(value):
+    c.require(isinstance(value,str) and re.fullmatch(r'\d+\.\d+\.\d+',value), 'Unsupported manifest feature-band syntax')
+    numbers=tuple(map(int,value.split('.')))
+    c.require('.'.join(map(str,numbers))==value and numbers[2]%100==0, 'Noncanonical manifest feature-band spelling')
+    return numbers
+
+
+def manifest_identifier(value):
+    return isinstance(value,str) and value not in ('.','..') and re.fullmatch(r'[A-Za-z0-9_.-]+',value) is not None
+
+
+def workload_inputs(lane, sdk_root, version):
+    """Seal the resolver's finite candidate closure, not a permissive SDK prefix.
+
+    Current-band candidates, known-ID fallback candidates in older bands, and
+    manifests explicitly referenced by candidate workload sets/install state.
+    All versions in those candidate locations are sealed: selection is left to
+    the real resolver, whose inputs and directory choices cannot change later.
+    """
+    major, minor, patch = map(int, version.split('.'))
+    band = f'{major}.{minor}.{patch // 100 * 100}'
+    manifest_root = sdk_root/'sdk-manifests'
+    trees = set(); metadata = set(); selections = {}; paths = {}
+    def track(path, base=sdk_root):
+        paths[(base,path)] = path_state(base,path)
+        return path.is_dir() if path.exists() else False
+    def parent(path):
+        if track(path): selections[path] = selection_members(path)
+    def tree(path):
+        if track(path):
+            trees.add(path)
+            for current,dirs,names in os.walk(path,followlinks=False):
+                current=Path(current); selections[current]=selection_members(current)
+                for name in names:
+                    item=current/name
+                    c.require(item.is_file() and not item.is_symlink(), 'Workload input not regular')
+                    metadata.add(item)
+    def file(path):
+        track(path)
+        if path.exists():
+            c.require(path.is_file() and not path.is_symlink(), 'Workload metadata not regular')
+            metadata.add(path)
+    # Child environments already exclude overrides; prove absence instead of
+    # setting MSBuildEnableWorkloadResolver=false or redirecting official inputs.
+    forbidden=('DOTNETSDK_WORKLOAD_MANIFEST_ROOTS','DOTNETSDK_WORKLOAD_MANIFEST_IGNORE_DEFAULT_ROOTS',
+               'DOTNETSDK_WORKLOAD_PACK_ROOTS','MSBuildEnableWorkloadResolver',
+               'DOTNET_MSBUILD_SDK_RESOLVER_SDKS_DIR','DOTNET_MSBUILD_SDK_RESOLVER_SDKS_VER')
+    for env in lane.env.values():
+        c.require(not any(key in env for key in forbidden), 'Workload resolver override present')
+        profile=Path(env['DOTNET_CLI_HOME'])/'.dotnet'
+        user_manifests=profile/'sdk-manifests'
+        state=path_state(Path(env['DOTNET_CLI_HOME']),user_manifests)
+        c.require(not user_manifests.exists(), 'User workload manifests outside selected SDK')
+        paths[(Path(env['DOTNET_CLI_HOME']),user_manifests)] = state
+    # This fixed main global.json has no workloadVersion/workload-set override.
+    for root in lane.roots.values():
+        c.require(sha(root/'global.json') == '099805cd1161ca87a57c0b0241c614b0ec35b5fce384c3fd1c86a16e5364f6e4', 'Wrong main global workload policy')
+    userlocal=sdk_root/'metadata/workloads'/band/'userlocal'
+    msi=sdk_root/'metadata/workloads'/band/'installertype/msi'
+    for override in (userlocal,msi):
+        track(override);c.require(not override.exists(), 'Unsupported user-local/MSI workload selection')
+    install=sdk_root/'metadata/workloads/X64'/band/'InstallState/default.json'
+    file(install)
+    state=c.read_json(install) if install.exists() else {}
+    c.require(isinstance(state,dict), 'Invalid workload install state')
+    parent(manifest_root)
+    c.require((manifest_root/band).is_dir(), 'Selected workload feature band missing')
+    tree(manifest_root/band)
+    known=sdk_root/'sdk'/version/'KnownWorkloadManifests.txt'
+    if not known.exists(): known=sdk_root/'sdk'/version/'IncludedWorkloadManifests.txt'
+    c.require(known.is_file(), 'Selected SDK known manifest IDs unavailable')
+    ids=[line for line in known.read_text().splitlines() if line]
+    c.require(all(manifest_identifier(name) for name in ids), 'Unsafe known workload manifest ID')
+    # Missing known IDs may fall back to older feature bands. Cover their exact
+    # ID directories (all candidate versions), not every old SDK/manifest tree.
+    for candidate in manifest_root.iterdir():
+        if candidate.is_dir():
+            feature_numbers=manifest_feature_band(candidate.name)
+            if feature_numbers < (major,minor,patch//100*100):
+                parent(candidate)
+                for identifier in ids: tree(candidate/identifier)
+    set_bands={band,'8.0.100'}
+    requested=state.get('workloadVersion')
+    if requested:
+        c.require(isinstance(requested,str) and re.fullmatch(r'\d+\.\d+\.\d+(?:\.\d+)?',requested), 'Unsupported workload-set version syntax')
+        numbers=list(map(int,requested.split('.')))
+        set_bands.add(f'{numbers[0]}.{numbers[1]}.{numbers[2]//100*100}')
+    specs=[]
+    for set_band in sorted(set_bands):
+        parent(manifest_root/set_band)
+        sets=manifest_root/set_band/'workloadsets'
+        tree(sets)
+        if sets.exists():
+            for spec in sorted(sets.glob('*/*.workloadset.json')):
+                specs.append((c.read_json(spec),set_band))
+    if state.get('manifests') is not None: specs.append((state['manifests'],band))
+    for spec,default_band in specs:
+        c.require(isinstance(spec,dict), 'Invalid workload-set manifest map')
+        for identifier,value in spec.items():
+            c.require(manifest_identifier(identifier) and isinstance(value,str), 'Unsafe workload-set manifest identity')
+            parts=value.split('/')
+            c.require(len(parts) in (1,2) and re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][A-Za-z0-9_.-]+)?',parts[0]), 'Unsupported workload manifest version syntax')
+            feature=parts[1] if len(parts)==2 else default_band
+            manifest_feature_band(feature)
+            parent(manifest_root/feature);parent(manifest_root/feature/identifier)
+            tree(manifest_root/feature/identifier/parts[0])
+    # Seal exact regular bytes AND every visited directory membership. Snapshot
+    # absent selectors too; introducing a higher version or override must fail.
+    for path in metadata:
+        lane.sdk_pins[str(path)]=(sha(path),stat.S_IMODE(path.stat().st_mode))
+    lane.workload_pins={str(path):lane.sdk_pins[str(path)] for path in metadata}
+    lane.workload_parents=selections;lane.workload_paths=paths
+    return {'featureBand':band,'candidateFiles':len(metadata),'selectionDirectories':len(selections),
+            'existenceGuards':len(paths),'policy':'finite candidate closure; actual imports require exact sealed file/hash'}
+
+
 def environment(state):
     keep = ('PATH','DOTNET_ROOT','DOTNET_ROOT_X64','LANG','LC_ALL','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY',
             'http_proxy','https_proxy','all_proxy','no_proxy','SSL_CERT_FILE','SSL_CERT_DIR','REQUESTS_CA_BUNDLE','CURL_CA_BUNDLE')
@@ -85,6 +217,7 @@ def environment(state):
                TUNIT_DISABLE_GITHUB_REPORTER='1', TUNIT_AGGREGATE_REPORTS='off', TUNIT_DISABLE_LOGO='1')
     for name in ('home','cli','packages','http','plugins','tmp'):
         (state/name).mkdir(parents=True)
+    (state/'cli/.dotnet').mkdir()  # Stable private profile ancestor; manifests stay absent.
     return env
 
 
@@ -100,6 +233,7 @@ class Lane:
         self.env = {v: environment(self.work/v) for v in roots}
         self.sealed = {}; self.evidence_dirs = {}; self.pipes = []; self.results = []; self.stage = 'preflight'
         self.sdk_trees = {}; self.sdk_parents = {}; self.sdk_pins = {}; self.seen_publications = set()
+        self.workload_pins={}; self.workload_parents={}; self.workload_paths={}
         self.active_scope = None; self.active_uid = None
         self.dotnet = Path(shutil.which('dotnet', path=self.env['baseline']['PATH']) or '').resolve()
         c.require(self.dotnet.is_file(), 'No selected dotnet host')
@@ -128,6 +262,11 @@ class Lane:
             c.require(selection_members(root) == members, 'SDK/runtime resolution candidate set changed')
         for root, snapshot in self.sdk_trees.items():
             c.require(files(root) == snapshot, 'Sealed actual SDK/runtime input changed')
+        equal_snapshot(self.workload_pins)
+        for parent,members in self.workload_parents.items():
+            c.require(selection_members(parent)==members, 'Workload selection directory changed')
+        for (base,path),expected in self.workload_paths.items():
+            c.require(path_state(base,path)==expected, 'Workload selection metadata/absence changed')
         for directory, snapshot in self.evidence_dirs.items():
             c.require(files(directory) == snapshot, 'Previously sealed evidence set changed')
 
@@ -281,6 +420,8 @@ def execute(lane):
         c.require(snapshot, 'Selected SDK/runtime input set empty')
         lane.sdk_trees[root] = snapshot
         lane.sdk_pins.update(snapshot)
+    workload=workload_inputs(lane,sdk_root,versions[0])
+    print(json.dumps({'stage':'workload-inputs-sealed',**workload}),flush=True)
     print(json.dumps({'stage':'sdk-qualified','actualSDK':versions[0],'hostSHA256':lane.dotnet_identity,
                       'globalPolicy':'10.0.102 latestPatch','actualHost':host.group(1),'installedRuntimes':runtimes,'sealedInputFiles':len(lane.sdk_pins),'sealedDirectories':[str(p.relative_to(sdk_root)) for p in seal_roots],'selectionParentCount':len(lane.sdk_parents),'notHistoricalReproduction':True}),flush=True)
     config = lane.work/'NuGet.Config'
@@ -301,10 +442,8 @@ def execute(lane):
             expanded_path=lane.work/label/'expanded.xml'
             lane.command(label,variant,[str(lane.dotnet),'msbuild',str(root/path),'-nologo','-nodeReuse:false',
                          '-p:Configuration=Release','-p:PathMap='+str(root)+'='+VIRTUAL_ROOT,'-preprocess:'+str(expanded_path)],60)
-            origins=audit.expanded(expanded_path,root,packages,lane.sdk_pins,diagnostic_sdk_root=lane.dotnet.parent)
-            # This successor is diagnostic-only: no Build, discovery or test body.
-            lane.diagnostic_complete=True
-            return
+            origins=audit.expanded(expanded_path,root,packages,lane.sdk_pins,diagnostic_sdk_root=lane.dotnet.parent,
+                                   source_pins=lane.current_sources[variant],cache_pins=lane.current_packages[variant])
             text=expanded_path.read_text(encoding='utf-8-sig').replace(str(root),'<SOURCE>').replace(str(packages),'<PACKAGES>')
             expansions[variant][name]=hashlib.sha256(text.encode()).hexdigest()
             print(json.dumps({'stage':label+'-audit','actualImportOrigins':len(origins)}),flush=True)
@@ -420,7 +559,6 @@ def private_receipt(lane, errors):
         graph.extend(exception_graph(e,seen,[]) for e in formatting_errors)
         receipt={'base':BASE,'sourceManifest':SOURCE_SHA,'ciManifest':lane.manifest_sha,
                  'lastStage':lane.stage,'qualifiedScopes':lane.results,
-                 'diagnosticOnly':True,'diagnosticComplete':getattr(lane,'diagnostic_complete',False),
                  'status':'FAILED' if errors else 'PASSED','errors':graph}
         (lane.work/'RESULT.json').write_text(json.dumps(receipt,indent=2)+'\n')
     except BaseException as failure: errors.append(failure)
@@ -430,9 +568,8 @@ def finish(lane, errors, writer=print, fallback=os.write):
     private_receipt(lane, errors)
     if not errors:
         try:
-            c.require(getattr(lane,'diagnostic_complete',False), 'Diagnostic completion missing')
-            writer(json.dumps({'classification':'DIAGNOSTIC_COMPLETE_NOT_RUNTIME_QUALIFICATION',
-                               'qualifiedScopes':0,'rawArtifactsUploaded':False}),flush=True)
+            writer(json.dumps({'classification':'FINITE_PROTOCOL_PASS','baselineExpectedFailures':4,
+                               'independentPositive':1,'fixedRegularPassed':7,'rawArtifactsUploaded':False}),flush=True)
             return 0
         except BaseException as failure: errors.append(failure)
     try:

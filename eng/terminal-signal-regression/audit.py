@@ -151,13 +151,25 @@ def header_role(comment, candidate):
     if len(lines) < 3 or lines[0] != '=' * 140 or lines[-1] != '=' * 140:
         return 'other-comment'
     middle = lines[1:-1]
-    if middle == [str(candidate)]: return 'root'
-    if middle == ['  </Import>', '', str(candidate)]: return 'import-close'
+    if len(middle)==1 and Path(middle[0])==candidate: return 'root'
+    if len(middle)==3 and middle[:2]==['  </Import>', ''] and Path(middle[-1])==candidate: return 'import-close'
     if (len(middle) in (3, 4) and middle[0].startswith('  <Import Project="')
-            and middle[0].endswith('>') and middle[-2:] == ['', str(candidate)]
+            and middle[0].endswith('>') and middle[-2]=='' and Path(middle[-1])==candidate
             and (len(middle) == 3 or middle[1].startswith('  This import was added implicitly because '))):
         return 'import-open'
     return 'other-comment'
+
+
+
+def header_candidates(text):
+    # Only the emitted root/open/close comment grammar defines origin records.
+    # Arbitrary source comments containing absolute example paths are not imports.
+    for comment in re.findall(r'<!--(.*?)-->',text,re.S):
+        lines=comment.strip().splitlines()
+        if len(lines)<3 or lines[0]!='='*140 or lines[-1]!='='*140: continue
+        candidate=Path(lines[-2])
+        if candidate.is_absolute() and header_role(comment,candidate)!='other-comment':
+            yield candidate,comment
 
 
 def origin_class(candidate, root, packages, sdk_root, sdk_pins):
@@ -218,40 +230,89 @@ def origin_detail(candidate, comment, root, packages, sdk_root, sdk_pins):
     return row
 
 
-def import_diagnostics(candidates, root, packages, sdk_root, sdk_pins):
+def import_diagnostics(candidates, root, packages, sdk_root, sdk_pins, exact_pins=None):
     categories = {}; rejected = []; count = 0
     for candidate, comment in candidates:
         category, _, _ = origin_class(candidate, root, packages, sdk_root, sdk_pins)
         categories[category] = categories.get(category, 0) + 1
-        # Exactly the unchanged original rejection predicate, not header_role.
-        if not (any(candidate.is_relative_to(base) for base in (root, packages)) or str(candidate) in sdk_pins):
+        if exact_pins is None:
+            rejected_here=not (any(candidate.is_relative_to(base) for base in (root, packages)) or str(candidate) in sdk_pins)
+        else:
+            try:
+                actual=canonical_origin(candidate,(root,packages,sdk_root),exact_pins)
+                rejected_here=digest(actual)!=exact_pins[str(actual)][0]
+            except (ValueError,OSError): rejected_here=True
+        if rejected_here:
             count += 1
             if len(rejected) < 16:
                 rejected.append(origin_detail(candidate, comment, root, packages, sdk_root, sdk_pins))
     return ImportDiagnostics(len(candidates), count, categories, tuple(rejected))
 
 
-def expanded(path, root, packages, sdk_pins, diagnostic_sdk_root=None):
+
+def canonical_origin(candidate, containers, pins):
+    """Canonical file identity inside its original container, no symlink traversal.
+
+    Normal '..' within a container is allowed, but cannot escape it. Every
+    spelling component is checked before collapsing, so link/.. is not a bypass.
+    MSBuild's '--' -> '__' comment encoding is reversed only by an unambiguous
+    match to the exact sealed file table, never by a global string replacement.
+    """
+    raw=str(candidate)
+    matches=[base for base in containers if candidate.is_relative_to(base)]
+    require(matches, 'Import outside exact source/official cache/sealed selected SDK')
+    base=max(matches,key=lambda p:len(p.parts))
+    normalized=str(Path(os.path.normpath(raw)))
+    require(Path(normalized).is_relative_to(base), 'Import path escaped its input container')
+    aliases=[Path(path) for path in pins if path.replace('--','__')==normalized]
+    if normalized in pins and Path(normalized) not in aliases: aliases.append(Path(normalized))
+    require(len(aliases)==1, 'Import origin missing/ambiguous in exact sealed inputs')
+    actual=aliases[0]
+    require(actual.is_relative_to(base), 'Import encoded identity escaped container')
+    encoded_ancestors={str(p).replace('--','__') for p in (actual,*actual.parents) if p.is_relative_to(base)}
+    stack=[]
+    for index,part in enumerate(candidate.relative_to(base).parts):
+        if part=='.': continue
+        if part=='..':
+            require(stack, 'Import path escaped its input container')
+            stack.pop();continue
+        stack.append(part)
+        current=base.joinpath(*stack)
+        try: info=current.lstat()
+        except FileNotFoundError:
+            require('__' in str(current) and str(current) in encoded_ancestors, 'Import spelling parent unavailable')
+            continue
+        require(not stat.S_ISLNK(info.st_mode), 'Import origin contains symlink')
+        require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode), 'Import origin contains special node')
+        if index<len(candidate.relative_to(base).parts)-1:
+            require(stat.S_ISDIR(info.st_mode), 'Import origin parent is not directory')
+    current=base
+    for part in actual.relative_to(base).parts:
+        current=current/part;info=current.lstat()
+        require(not stat.S_ISLNK(info.st_mode), 'Import origin contains symlink')
+        require(stat.S_ISREG(info.st_mode) if current==actual else stat.S_ISDIR(info.st_mode), 'Import origin is not regular file/directory')
+    return actual
+
+
+def expanded(path, root, packages, sdk_pins, diagnostic_sdk_root=None, source_pins=None, cache_pins=None):
     text = path.read_text(encoding='utf-8-sig')
     xml = ET.fromstring(text)
     require(not any(e.tag.split('}')[-1] == 'Import' for e in xml.iter()), 'Unexpanded MSBuild Import')
+    require(source_pins is not None and cache_pins is not None and diagnostic_sdk_root is not None, 'Exact import input seals missing')
+    pins={**source_pins,**cache_pins,**sdk_pins}
+    candidates = list(header_candidates(text))
     origins = {}
-    candidates = list(origin_candidates(text))
     for candidate, comment in candidates:
         try:
-            require(any(candidate.is_relative_to(base) for base in (root, packages)) or str(candidate) in sdk_pins, 'Import outside exact source/official cache/sealed selected SDK')
-        except ValueError as original:
-            if diagnostic_sdk_root is not None:
-                try:
-                    original.origin_diagnostics = import_diagnostics(candidates, root, packages, diagnostic_sdk_root, sdk_pins)
-                except BaseException as diagnostic_error:
-                    raise BaseExceptionGroup('Import rejection and diagnostic failure', [original, diagnostic_error])
+            actual=canonical_origin(candidate,(root,packages,diagnostic_sdk_root),pins)
+            require(digest(actual)==pins[str(actual)][0], 'Expanded origin differs from exact sealed input')
+        except (ValueError,OSError) as original:
+            try:
+                original.origin_diagnostics = import_diagnostics(candidates, root, packages, diagnostic_sdk_root, sdk_pins,exact_pins=pins)
+            except BaseException as diagnostic_error:
+                raise BaseExceptionGroup('Import rejection and diagnostic failure', [original, diagnostic_error])
             raise
-        require(not candidate.is_symlink() and candidate.is_file(), 'Import origin unavailable')
-        current_digest = digest(candidate)
-        if str(candidate) in sdk_pins:
-            require(current_digest == sdk_pins[str(candidate)][0], 'Expanded SDK origin differs from sealed input')
-        origins[str(candidate)] = current_digest
+        origins[str(actual)] = pins[str(actual)][0]
     require(origins and any('Microsoft.NET.Sdk' in p for p in origins), 'Actual import origins missing')
     return origins
 
