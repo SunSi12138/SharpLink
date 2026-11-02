@@ -1,0 +1,26 @@
+{
+  "scope": "NEW isolated TUnit1.78 strict three-cell finite lane; original1.73 lane immutable",
+  "sourceManifestSHA256": "9cdb79b3be5a3e4e191759316931421741f5df5db7001d5dbfdba2ddc6541538",
+  "base": "9d1635c8988870ee295098fe9e65cb49924013d2",
+  "approvedPlanSHA256": "aa3d1f3fcd73f656831f4914edf7dcd17e45457abc21bb8161850b09894c6611",
+  "files": {
+    "FocusedGlobalUsings.cs": "d0fe91c70cb3416964b1a2465e551803038bed77cce54d80e5e8bbd269e3e07b",
+    "SOURCE.json": "9cdb79b3be5a3e4e191759316931421741f5df5db7001d5dbfdba2ddc6541538",
+    "ServerTerminalSignalObservationTests.cs": "f2bf615cc01cab31a45382825138cf47aac5de7b87da3ccf8e38ba4a437e0d2a",
+    "SharpLink.TerminalSignal.Focused.csproj": "e817c15d3d457adaac7b3c767ec1e555f009c95d5db09887fcdd8a27bf95e615",
+    "audit.py": "d873a3d5070a3bddff480fd91923bf751dae056416bcaad006d68846c621cbca",
+    "classify.py": "4255d3dad8c6f67a3718257a1eccff082d2efecffbe1d38fd788a65413ce1c23",
+    "classify178.py": "d48239df928574b6a2701a75e6ee63cd4db462b60c446f83ecbcbbc32368851e",
+    "closure178.py": "c57f4ebac76344bb859dd75d33757f17056e41235b14062680e286e2cf2d1eed",
+    "package-preimage.props": "86048cc466737c91b510c77a082ec9283a5d0eeda511b813599557d8c64578c5",
+    "prepare.py": "3e0718afa690c2ebd57c71b4af54bbd46e0def3ba69a0bf6b5ab09d0a8a4412a",
+    "prepare178.py": "978c2b91b74f1a1eae7c294dabfb91a974be1c8f037e984905ff0a43f212d06d",
+    "process_owner.py": "44d66d88933b21d525241ac76e0dbe421a10682dba461fe784e4706cc578a9b5",
+    "run.py": "6fe6b4c7539d279d22a0abb5bb19792e2ff75ea0351e534982685f5fc4ba1352",
+    "source178.py": "8ee7c5c9f3f4d5194ffe820d94257c59fb80c1bbda8edc83f002dfd299449041",
+    "terminal-signal.patch": "2b5dc7af1e2c7a406103fac2991b271958169f2caf71e9ff08207270b3b15e93",
+    "test178.py": "90e45be4db5188187f9b437114de75614ac70217b0e743e5c0a16ed0f5a5dac6",
+    "test_audit.py": "845a6957570a927292c78463ebb3080f91891d4e33a786f65b3a6d3135272f5d",
+    "test_classify.py": "ff8db67e776316df1ed09d4b8c79c4b916ae1faf6a41c0142cf266ac8aeffaf8"
+  }
+}

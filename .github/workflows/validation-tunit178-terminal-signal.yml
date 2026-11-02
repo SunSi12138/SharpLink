@@ -1,0 +1,72 @@
+name: Validation isolated TUnit178 terminal signal
+
+# Only this focused lane. No NuGet publish, secrets, or raw report/log uploads.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 'wip/775-code-recovery-20261102'
+    paths:
+      - '.github/workflows/validation-tunit178-terminal-signal.yml'
+      - 'eng/terminal-signal-tunit178/**'
+
+concurrency:
+  group: validation-tunit178-terminal-signal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  terminal-signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout exact validation payload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: payload
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout independent fixed TUnit173 reference
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SunSi12138/SharpLink
+          ref: 9d1635c8988870ee295098fe9e65cb49924013d2
+          path: reference
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout exact unmodified main baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SunSi12138/SharpLink
+          ref: 9d1635c8988870ee295098fe9e65cb49924013d2
+          path: baseline
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout separate exact main for the cold-path patch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SunSi12138/SharpLink
+          ref: 9d1635c8988870ee295098fe9e65cb49924013d2
+          path: fixed
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Synthetic report classifier controls (not runtime tests)
+        run: |
+          python3 payload/eng/terminal-signal-tunit178/test_classify.py
+          python3 payload/eng/terminal-signal-tunit178/test_audit.py
+          python3 payload/eng/terminal-signal-tunit178/test178.py
+      - name: Setup official SDK using exact main global policy
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: baseline/global.json
+      - name: Qualify actual environment and run finite isolated controls
+        run: >-
+          python3 payload/eng/terminal-signal-tunit178/run.py
+          --reference "$GITHUB_WORKSPACE/reference"
+          --baseline "$GITHUB_WORKSPACE/baseline"
+          --fixed "$GITHUB_WORKSPACE/fixed"
+          --ci-manifest-sha256 ac6ce8085b9e440b9034ebb2bf8d305036424434271671ee7e0fbcd299a85e2a
