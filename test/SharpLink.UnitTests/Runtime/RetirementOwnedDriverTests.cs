@@ -358,36 +358,28 @@ public sealed class RetirementOwnedDriverTests
             await f.Module.RetirementObservation!.WaitAsync(Bound);
         });
 
-    private static async Task Run(bool server, Func<Fixture, Task> body, bool enableCodec = false, bool withContract = false)
+    private static async Task Run(bool server, Func<Fixture, Task> body, bool enableCodec = false, bool withContract = false,
+        SemaphoreSlim? isolation = null, Func<string, string?>? read = null)
     {
-        Ensure(await RollbackState.TestIsolation.WaitAsync(Bound), "finite test isolation admission");
-        var previous = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC");
-        var previousContract = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_RETIREMENT_CONTRACT");
-        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_RETIREMENT_CONTRACT", withContract ? "1" : null);
-        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", enableCodec ? null : "1");
-        var f = new Fixture(server);
-        Exception? failure = null;
-        try { await f.Initialize(); await body(f); }
-        catch (Exception exception) { failure = exception; }
-        try { await f.Close(failure); }
-        finally
-        {
-            // Unknown pending work keeps BOTH roots and shared-state isolation.
-            // Later controls fail finite admission instead of racing this owner;
-            // the selected test process must then be contained by its runner.
-            if (!f.OwnersEnded)
+        Fixture? fixture = null;
+        var scope = new RetirementTestIsolationScope(isolation ?? RollbackState.TestIsolation, Bound,
+            enableCodec, withContract,
+            async () =>
             {
-                lock (Containment)
-                    if (!Containment.Contains(f)) Containment.Add(f);
-            }
-            else
-            {
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", previous);
-                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_RETIREMENT_CONTRACT", previousContract);
-                RollbackState.TestIsolation.Release();
-            }
-        }
+                // The constructor only initializes fixture-local managed state;
+                // all host publication/async work begins after this root exists.
+                fixture = new Fixture(server);
+                await fixture.Initialize();
+                await body(fixture);
+            },
+            () => fixture is null ? Task.CompletedTask : fixture.Close(null),
+            () => fixture is null || fixture.OwnersEnded, read: read);
+        await scope.ExecuteAsync();
     }
+
+    internal static Task RunSnapshotFailureForDiagnostics(SemaphoreSlim isolation, Func<string, string?> read)
+        => Run(false, _ => throw new InvalidOperationException("Snapshot failure must precede fixture body."),
+            isolation: isolation, read: read);
 
     private sealed class Fixture(bool server)
     {

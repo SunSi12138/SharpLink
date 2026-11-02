@@ -23,6 +23,7 @@
     <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
     <Compile Include="../SharpLink.UnitTests/Runtime/RetirementGraceBudgetTests.cs" Link="Runtime/RetirementGraceBudgetTests.cs" />
     <Compile Include="../SharpLink.UnitTests/Runtime/RetirementOwnedDriverTests.cs" Link="Runtime/RetirementOwnedDriverTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/RetirementTestIsolationScope.cs" Link="Runtime/RetirementTestIsolationScope.cs" />
   </ItemGroup>
   <ItemGroup>
     <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
