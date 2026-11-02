@@ -83,8 +83,11 @@ def safe_record(record):
 
 def summarize_failure(error):
     # Never stringify raw exceptions, receipts, paths or report data on the console.
-    print('failure: ' + json.dumps({'type': type(error).__name__,
-          'independentMembers': len(error.exceptions) if isinstance(error, BaseExceptionGroup) else 1}), flush=True)
+    detail = {'type': type(error).__name__,
+              'independentMembers': len(error.exceptions) if isinstance(error, BaseExceptionGroup) else 1}
+    if isinstance(error, results.DiscoveryRejected):
+        detail.update(reasonCode=error.reason_code, selection=error.safe_context, facts=error.safe_details)
+    print('failure: ' + json.dumps(detail, sort_keys=True), flush=True)
 
 
 def main():

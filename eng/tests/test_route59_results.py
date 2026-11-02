@@ -340,6 +340,88 @@ class Route59Tests(unittest.TestCase):
         with self.assertRaises(ValueError):r.verify_seal(folder,sealed,expected_new=names)
 
 
+    def test_multiline_expression_method_end_is_64_not_next_helper_77(self):
+        # Independent literal source slice, not a row synthesized from catalog endLine.
+        source=ROOT/'test/SharpLink.UnitTests/Client/ContractScopedRouteCandidateFailureControls.cs'
+        lines=source.read_text().splitlines()
+        self.assertEqual(lines[16].strip(),'public Task SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(bool observerHandoffFails)')
+        self.assertEqual(lines[17].strip(),'=> WithCandidateFaultFixture(async fixture =>')
+        self.assertEqual(lines[63],'        });')
+        self.assertTrue(lines[65].startswith('    private static async Task WithCandidateFaultFixture('))
+        self.assertEqual(lines[76],'    }')
+        snippet='\n'.join(lines[13:64])+'\n'
+        self.assertEqual(r.hashlib.sha256(snippet.encode()).hexdigest(),
+                         'f0c00e205ac544c4b232bb7123da08b6e99526d799ac2ca3af0955fbafdbe74b')
+        cases,rows=self.cases_and_rows()
+        selected=[c for c in cases if c['methodName']=='SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs']
+        selected_rows=[row for row in rows if row['type']['methodName']==selected[0]['methodName']]
+        self.assertEqual(len(selected),2)
+        for row in selected_rows:row['location']['lineEnd']=64
+        self.assertEqual(len(self.discover(selected,selected_rows)),2)
+        wrong=copy.deepcopy(selected_rows);wrong[0]['location']['lineEnd']=77
+        with self.assertRaises(r.DiscoveryRejected) as caught:self.discover(selected,wrong)
+        self.assertEqual(caught.exception.reason_code,'RD_LOCATION')
+        self.assertEqual(caught.exception.safe_details['expectedEnd'],64)
+        self.assertEqual(caught.exception.safe_details['lineEnd']['integer'],77)
+
+    def test_safe_discovery_reason_redacts_unknown_path_and_identity(self):
+        cases,rows=self.cases_and_rows();rows[0]['location']['file']='/private/SECRET-token/raw-path'
+        with self.assertRaises(runner.results.DiscoveryRejected) as caught:
+            runner.results.discovery(dict(schemaVersion=1,tests=rows),cases,ROOT,CATALOG['assemblyFullName'])
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output):runner.summarize_failure(caught.exception)
+        text=output.getvalue();self.assertIn('RD_LOCATION',text);self.assertIn('expectedEnd',text)
+        self.assertNotIn('SECRET',text);self.assertNotIn('/private/',text)
+        self.assertEqual(caught.exception.safe_details['path']['jsonType'],'str')
+        self.assertEqual(len(caught.exception.safe_details['path']['sha256']),64)
+        rows[0]['displayName']='SECRET arbitrary display'
+        with self.assertRaises(runner.results.DiscoveryRejected) as caught:
+            runner.results.discovery(dict(schemaVersion=1,tests=rows),cases,ROOT,CATALOG['assemblyFullName'])
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output):runner.summarize_failure(caught.exception)
+        self.assertIn('RD_CASE',output.getvalue());self.assertNotIn('SECRET',output.getvalue())
+
+    def test_safe_reason_code_count_and_signature_do_not_relax_acceptance(self):
+        cases,rows=self.cases_and_rows()
+        with self.assertRaises(r.DiscoveryRejected) as caught:self.discover(cases,rows[:-1])
+        self.assertEqual(caught.exception.reason_code,'RD_COUNT')
+        self.assertEqual(caught.exception.safe_details['actualRows']['count'],58)
+        rows[0]['type']['parameterTypeFullNames']=['SECRET unknown type']
+        with self.assertRaises(r.DiscoveryRejected) as caught:self.discover(cases,rows)
+        self.assertEqual(caught.exception.reason_code,'RD_SIGNATURE')
+        self.assertNotIn('SECRET',json.dumps(caught.exception.safe_details))
+        self.assertFalse(caught.exception.safe_details['parameterTypesEqual'])
+        huge=r.diagnostic_value(10**100)
+        self.assertNotIn('integer',huge);self.assertEqual(len(huge['sha256']),64)
+
+    def test_safe_diagnostic_failure_keeps_original_rejection_first(self):
+        independent=RuntimeError('private diagnostic failure')
+        with self.assertRaises(BaseExceptionGroup) as caught:
+            r.discovery_expect(False,'RD_LOCATION',{'selectionClass':'Known'},
+                               lambda: (_ for _ in ()).throw(independent))
+        self.assertIsInstance(caught.exception.exceptions[0],r.DiscoveryRejected)
+        self.assertEqual(caught.exception.exceptions[0].reason_code,'RD_LOCATION')
+        self.assertIs(caught.exception.exceptions[1],independent)
+
+
+    def test_invalid_integer_uid_or_identity_is_hash_only_not_raw_value(self):
+        cases,rows=self.cases_and_rows();rows[0]['uid']=123456
+        with self.assertRaises(r.DiscoveryRejected) as caught:self.discover(cases,rows)
+        self.assertEqual(caught.exception.reason_code,'RD_UID')
+        self.assertNotIn('integer',caught.exception.safe_details['uid'])
+        self.assertEqual(caught.exception.safe_details['uid']['jsonType'],'int')
+        cases,rows=self.cases_and_rows();rows[0]['displayName']=987654
+        with self.assertRaises(r.DiscoveryRejected) as caught:self.discover(cases,rows)
+        self.assertEqual(caught.exception.reason_code,'RD_IDENTITY')
+        self.assertNotIn('integer',caught.exception.safe_details['displayName'])
+        cases,rows=self.cases_and_rows();rows[0]['location']['file']=456789
+        with self.assertRaises(r.DiscoveryRejected) as caught:self.discover(cases,rows)
+        self.assertEqual(caught.exception.reason_code,'RD_LOCATION')
+        self.assertNotIn('integer',caught.exception.safe_details['path'])
+        self.assertNotIn('integer',r.diagnostic_value(77))
+        self.assertEqual(r.diagnostic_value(77,source_line=True)['integer'],77)
+
+
 
 if __name__ == '__main__':
     suite=unittest.TestSuite((unittest.defaultTestLoader.loadTestsFromModule(accepted),

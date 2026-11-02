@@ -869,9 +869,9 @@
       "span": {
         "attributeLine": 14,
         "signatureLine": 17,
-        "endLine": 77,
+        "endLine": 64,
         "signatureText": "    public Task SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(bool observerHandoffFails)",
-        "endText": "    }"
+        "endText": "        });"
       },
       "actualUID": null
     },
@@ -892,9 +892,9 @@
       "span": {
         "attributeLine": 14,
         "signatureLine": 17,
-        "endLine": 77,
+        "endLine": 64,
         "signatureText": "    public Task SiteBuildAndCandidateCleanupFailuresKeepOriginalTaskGraphs(bool observerHandoffFails)",
-        "endText": "    }"
+        "endText": "        });"
       },
       "actualUID": null
     },

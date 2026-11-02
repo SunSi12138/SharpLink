@@ -81,36 +81,93 @@ def validate_budget(catalog):
             'Total finite budget insufficient or changed')
 
 
+DISCOVERY_REASONS = frozenset(('RD_SCHEMA', 'RD_COUNT', 'RD_EXPECTED', 'RD_ROW', 'RD_UID',
+    'RD_TYPE', 'RD_IDENTITY', 'RD_CASE', 'RD_SIGNATURE', 'RD_LOCATION', 'RD_SOURCE', 'RD_MISSING'))
+
+
+class DiscoveryRejected(ValueError):
+    """Fixed reason code and bounded diagnostic facts, never arbitrary messages."""
+    def __init__(self, code, context):
+        require(code in DISCOVERY_REASONS, 'Unknown controlled discovery reason')
+        self.reason_code = code
+        self.safe_context = context
+        self.safe_details = {}
+        super().__init__(code)
+
+
+def diagnostic_value(value, *, source_line=False):
+    result = {'jsonType': type(value).__name__, 'sha256': digest(value)}
+    if type(value) in (str, list, dict):
+        result['count'] = len(value)
+    elif source_line and type(value) is int and -1000000 <= value <= 1000000:
+        result['integer'] = value
+    return result
+
+
+def discovery_expect(ok, code, context, details=lambda: {}):
+    if ok:
+        return
+    original = DiscoveryRejected(code, context)
+    try:
+        original.safe_details = details()
+    except BaseException as diagnostic_error:
+        raise BaseExceptionGroup('Discovery rejection and independent diagnostic failure',
+                                 [original, diagnostic_error])
+    raise original
+
+
 def discovery(document, cases, source, assembly):
-    require(type(document.get('schemaVersion')) is int and document['schemaVersion'] == 1, 'Discovery schema mismatch')
+    # Context strings come ONLY from the pinned catalog, never from actual metadata.
+    context = {'selectionClass': cases[0]['className'] if cases else None}
+    expect = lambda ok, code, details=lambda: {}: discovery_expect(ok, code, dict(context), details)
+    expect(isinstance(document, dict) and type(document.get('schemaVersion')) is int and document['schemaVersion'] == 1,
+           'RD_SCHEMA', lambda: {'document': diagnostic_value(document)})
     rows = document.get('tests')
-    require(isinstance(rows, list) and len(rows) == len(cases), 'Discovered case count mismatch')
+    expect(isinstance(rows, list) and len(rows) == len(cases), 'RD_COUNT',
+           lambda: {'expectedCount': len(cases), 'actualRows': diagnostic_value(rows)})
     expected = {case_key(c): c for c in cases}
-    require(len(expected) == len(cases), 'Duplicate expected source cases')
+    expect(len(expected) == len(cases), 'RD_EXPECTED')
     seen = set(); uids = set(); matched = []
-    for row in rows:
-        require(isinstance(row, dict), 'Invalid discovery row')
+    for row_index, row in enumerate(rows):
+        context = {'selectionClass': cases[0]['className'], 'rowIndex': row_index}
+        expect(isinstance(row, dict), 'RD_ROW', lambda: {'row': diagnostic_value(row)})
         uid = row.get('uid')
-        require(isinstance(uid, str) and 0 < len(uid) <= 8192 and not uid.startswith('-') and
-                not any(c in uid for c in '\0\r\n') and uid not in uids, 'Missing/unsafe/duplicate actual UID')
+        expect(isinstance(uid, str) and 0 < len(uid) <= 8192 and not uid.startswith('-') and
+                not any(c in uid for c in '\0\r\n') and uid not in uids, 'RD_UID',
+                lambda: {'uid': diagnostic_value(uid), 'alreadySeen': isinstance(uid, str) and uid in uids})
         meta = row.get('type', {})
-        require(isinstance(meta, dict), 'Invalid discovered type')
+        expect(isinstance(meta, dict), 'RD_TYPE', lambda: {'type': diagnostic_value(meta)})
         ns = meta.get('namespace'); name = meta.get('typeName'); display = row.get('displayName')
-        require(isinstance(ns, str) and isinstance(name, str) and isinstance(display, str), 'Missing discovery identity')
+        expect(isinstance(ns, str) and isinstance(name, str) and isinstance(display, str) and
+               isinstance(meta.get('methodName'), str), 'RD_IDENTITY',
+               lambda: {k: diagnostic_value(v) for k,v in dict(namespace=ns, className=name,
+                        displayName=display, methodName=meta.get('methodName')).items()})
         short = name[len(ns)+1:] if name.startswith(ns + '.') else name
         key = (ns, short, meta.get('methodName'), display)
-        require(key in expected and key not in seen, 'Unknown/duplicate argument or method identity')
+        expect(key in expected and key not in seen, 'RD_CASE',
+               lambda: {'identity': diagnostic_value(list(key)), 'knownCase': key in expected, 'alreadySeen': key in seen})
         c = expected[key]; span = c['span']
-        require(meta.get('assemblyFullName') == assembly and type(meta.get('methodArity')) is int and
+        context.update(method=c['methodName'], source=c['source'], designId=c['designId'], caseIndex=c['caseIndex'])
+        expect(meta.get('assemblyFullName') == assembly and type(meta.get('methodArity')) is int and
                 meta['methodArity'] == 0 and meta.get('parameterTypeFullNames') == c['parameterTypes'] and
-                meta.get('returnTypeFullName') == c['returnType'], 'Discovered signature mismatch')
+                meta.get('returnTypeFullName') == c['returnType'], 'RD_SIGNATURE',
+                lambda: {'assemblyEqual': meta.get('assemblyFullName') == assembly,
+                    'arity': diagnostic_value(meta.get('methodArity')),
+                    'parameterTypesEqual': meta.get('parameterTypeFullNames') == c['parameterTypes'],
+                    'parameterTypes': diagnostic_value(meta.get('parameterTypeFullNames')),
+                    'returnTypeEqual': meta.get('returnTypeFullName') == c['returnType']})
         location = row.get('location', {})
-        require(isinstance(location, dict) and location.get('file') == str(reported_source_path(c['source'])) and
+        expect(isinstance(location, dict) and location.get('file') == str(reported_source_path(c['source'])) and
                 type(location.get('lineStart')) is int and span['attributeLine'] <= location['lineStart'] <= span['signatureLine'] and
-                type(location.get('lineEnd')) is int and location['lineEnd'] == span['endLine'], 'Discovered source span/path mismatch')
-        require(hashlib.sha256((source / c['source']).read_bytes()).hexdigest() == c['sourceSHA256'], 'Discovered source bytes changed')
+                type(location.get('lineEnd')) is int and location['lineEnd'] == span['endLine'], 'RD_LOCATION',
+                lambda: {'expectedStartRange': [span['attributeLine'], span['signatureLine']], 'expectedEnd': span['endLine'],
+                    'location': diagnostic_value(location),
+                    **({'pathEqual': location.get('file') == str(reported_source_path(c['source'])),
+                        'path': diagnostic_value(location.get('file')), 'lineStart': diagnostic_value(location.get('lineStart'), source_line=True),
+                        'lineEnd': diagnostic_value(location.get('lineEnd'), source_line=True)} if isinstance(location,dict) else {})})
+        expect(hashlib.sha256((source / c['source']).read_bytes()).hexdigest() == c['sourceSHA256'], 'RD_SOURCE')
         seen.add(key); uids.add(uid); matched.append({'case': c, 'discovery': row})
-    require(seen == set(expected), 'Missing parameter-expanded case')
+    expect(seen == set(expected), 'RD_MISSING', lambda: {'expectedCount':len(expected), 'seenCount':len(seen)})
     return matched
 
 
