@@ -17,62 +17,72 @@ public partial class BuilderOwnershipRollbackTests
     [NotInParallel("rollback-plugin")]
     public async Task ServerCompileValidationFailureShouldNotMaterializeRuntimeContext(CancellationToken testCancellationToken)
     {
+        var owner = new RollbackBuildFixture();
         await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
-            WithRollbackManifest(manifest =>
-            {
-                var transport = new TrackingServerTransport();
-                var failure = Capture(() => CreateServerBuilder(manifest)
-                    .UseTransport(transport)
-                    .EnableService<IMissingService>()
-                    .Build());
+            owner.Initialize("builder-rollback-schema");
+            var transport = owner.CreateTransport();
+            var builder = CreateServerBuilder(owner.Manifest)
+                .UseTransport(transport)
+                .EnableService<IMissingService>();
+            var failure = owner.CaptureBuild(builder);
 
-                Ensure(Contains(failure, "required contract"), "Server Compile retains service validation failure");
-                Ensure(!Contains(failure, "rollback Adapter scope cleanup failed"),
-                    "Server Compile validation must not create a RuntimeContext cleanup path");
-                Ensure(RollbackState.ScopeDisposeCount == 0,
-                    "Server Compile validation must not materialize generated adapter scopes");
-                Ensure(transport.DisposeCount == 1, "Server Compile validation still disposes listener once");
-            });
+            Ensure(Contains(failure, "required contract"), "Server Compile retains service validation failure");
+            Ensure(!Contains(failure, "rollback Adapter scope cleanup failed"),
+                "Server Compile validation must not create a RuntimeContext cleanup path");
+            Ensure(RollbackState.ScopeDisposeCount == 0,
+                "Server Compile validation must not materialize generated adapter scopes");
+            Ensure(transport.DisposeCount == 1, "Server Compile validation still disposes listener once");
+            Ensure(failure.GetType() == typeof(InvalidOperationException) && failure.InnerException is null &&
+                failure.Message == $"Generated service for required contract '{typeof(IMissingService).FullName}' was not found." &&
+                owner.Manifest.GetScopeCleanupReceipts().Length == 0,
+                "Compile failure must be the sole exact required-contract validation outcome");
+            owner.AcceptBuildFailure();
         }
-        finally
-        {
-            RollbackState.TestIsolation.Release();
-        }
+        catch (Exception failure) { owner.RecordBodyFailure(failure); }
+        finally { await owner.FinishAsync(testCancellationToken); }
+        owner.ThrowIfFailed();
     }
 
     [Test]
     [NotInParallel("rollback-plugin")]
     public async Task ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures(CancellationToken testCancellationToken)
     {
+        var owner = new RollbackBuildFixture();
         await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
-            WithRollbackManifest(manifest =>
-            {
-                var transport = new TrackingServerTransport("Server transport cleanup failed");
-                var logger = new ThrowingLoggerFactory("Server logger construction failed");
-                var failure = Capture(() => CreateServerBuilder(manifest)
-                    .UseTransport(transport)
-                    .UseLoggerFactory(logger)
-                    .Build());
+            owner.Initialize("builder-rollback-schema");
+            var transport = owner.CreateTransport("Server transport cleanup failed");
+            var logger = owner.CreateLogger("Server logger construction failed");
+            var builder = CreateServerBuilder(owner.Manifest)
+                .UseTransport(transport)
+                .UseLoggerFactory(logger);
+            var failure = owner.CaptureBuild(builder);
 
-                Ensure(Contains(failure, "Server logger construction failed"),
-                    "Server build retains final materialization failure");
-                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"),
-                    "Server final materialization rollback retains Runtime Context cleanup failure");
-                Ensure(Contains(failure, "Server transport cleanup failed"),
-                    "Server final materialization rollback retains transport cleanup failure");
-                Ensure(RollbackState.ScopeDisposeCount == 1, "Server final materialization rollback disposes Context once");
-                Ensure(transport.DisposeCount == 1, "failed Server build disposes its listener once");
-                Ensure(logger.DisposeCount == 0, "Server build failure must not dispose the caller logger factory");
-            });
+            Ensure(Contains(failure, "Server logger construction failed"),
+                "Server build retains final materialization failure");
+            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"),
+                "Server final materialization rollback retains Runtime Context cleanup failure");
+            Ensure(Contains(failure, "Server transport cleanup failed"),
+                "Server final materialization rollback retains transport cleanup failure");
+            Ensure(RollbackState.ScopeDisposeCount == 1, "Server final materialization rollback disposes Context once");
+            Ensure(transport.DisposeCount == 1, "failed Server build disposes its listener once");
+            Ensure(logger.DisposeCount == 0, "Server build failure must not dispose the caller logger factory");
+            var receipts = owner.Manifest.GetScopeCleanupReceipts();
+            Ensure(receipts.Length == 1 && receipts[0].Count == 1 && receipts[0].Order == 1,
+                "materialization rollback must dispose exactly its one actual adapter scope");
+            Ensure(failure is AggregateException aggregate && aggregate.InnerExceptions.Count == 3 &&
+                ReferenceEquals(aggregate.InnerExceptions[0], logger.Failure) &&
+                ReferenceEquals(aggregate.InnerExceptions[1], receipts[0].Failure) &&
+                ReferenceEquals(aggregate.InnerExceptions[2], transport.CleanupFailure),
+                "rollback must retain exact primary, scope and listener failures in transaction order");
+            owner.AcceptBuildFailure();
         }
-        finally
-        {
-            RollbackState.TestIsolation.Release();
-        }
+        catch (Exception failure) { owner.RecordBodyFailure(failure); }
+        finally { await owner.FinishAsync(testCancellationToken); }
+        owner.ThrowIfFailed();
     }
 
     [Test]

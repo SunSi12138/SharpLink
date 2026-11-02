@@ -335,16 +335,24 @@ public sealed class ManifestSourceIsolationTests
     [NotInParallel("rollback-plugin")]
     public async Task DisposedIsolatedSnapshotRuntimeShouldReleaseCollectibleManifestAndCodecOwners(CancellationToken testCancellationToken)
     {
+        List<Exception> failures = [];
+        CollectibleRuntimeReferences references = default;
         await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
-        CollectibleRuntimeReferences references;
         try
         {
             references = CreateAndDisposeCollectibleSnapshotRuntime();
         }
+        catch (Exception failure) { failures.Add(failure); }
         finally
         {
-            RollbackState.TestIsolation.Release();
+            // Every actual operation above is synchronous; returning/throwing is its real exit,
+            // not a canceled wrapper. Release independently without replacing the body graph.
+            try { RollbackState.TestIsolation.Release(); }
+            catch (Exception failure) { failures.Add(failure); }
         }
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count != 0) throw new AggregateException(failures);
 
         for (var attempt = 0;
              attempt < 12 && (references.Manifest.IsAlive || references.LoadContext.IsAlive);
@@ -371,39 +379,75 @@ public sealed class ManifestSourceIsolationTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static CollectibleRuntimeReferences CreateAndDisposeCollectibleSnapshotRuntime()
     {
-        var loadContext = new ManifestPluginLoadContext($"phase15-manifest-{Guid.NewGuid():N}");
-        var loadContextReference = new WeakReference(loadContext);
-        var assembly = loadContext.LoadFromAssemblyPath(typeof(RollbackMarker).Assembly.Location);
-        var manifest = (ISharpLinkGeneratedAssemblyManifest)Activator.CreateInstance(
-            assembly.GetType(typeof(RollbackManifest).FullName!, throwOnError: true)!)!;
-        var manifestReference = new WeakReference(manifest);
-        var source = new FixedGeneratedManifestSource([manifest]);
-        var context = new SharpLinkRuntimeContextBuilder()
-            .UseGeneratedManifestSource(source)
-            .Build();
+        ManifestPluginLoadContext? loadContext = null;
+        SharpLinkRuntimeContext? context = null;
+        ISharpLinkGeneratedAssemblyManifest? manifest = null;
+        FixedGeneratedManifestSource? source = null;
+        Assembly? assembly = null;
+        WeakReference? loadContextReference = null;
+        WeakReference? manifestReference = null;
+        List<Exception> failures = [];
+        Exception? disposalFailure = null;
+        var disposalAccepted = false;
         try
         {
+            // Protect each returned owner immediately, including partial load/build setup.
+            loadContext = new ManifestPluginLoadContext($"phase15-manifest-{Guid.NewGuid():N}");
+            loadContextReference = new WeakReference(loadContext);
+            assembly = loadContext.LoadFromAssemblyPath(typeof(RollbackMarker).Assembly.Location);
+            manifest = (ISharpLinkGeneratedAssemblyManifest)Activator.CreateInstance(
+                assembly.GetType(typeof(RollbackManifest).FullName!, throwOnError: true)!)!;
+            manifestReference = new WeakReference(manifest);
+            source = new FixedGeneratedManifestSource([manifest]);
+            context = new SharpLinkRuntimeContextBuilder()
+                .UseGeneratedManifestSource(source)
+                .Build();
             _ = context.Codecs.GetCodec<string>();
         }
-        finally
+        catch (Exception failure) { failures.Add(failure); }
+
+        // Dispose is the actual synchronous Runtime API (including its internal physical join).
+        // No wrapper cancellation or Task status is substituted for its exit.
+        if (context is not null)
         {
+            try { context.Dispose(); }
+            catch (Exception failure) { disposalFailure = failure; }
             try
             {
-                context.Dispose();
-            }
-            catch (InvalidOperationException exception)
-            {
-                Ensure(exception.Message.Contains("rollback Adapter scope cleanup failed", StringComparison.Ordinal),
+                // The loaded manifest is not the default-ALC RollbackManifest. Only the return
+                // value uses shared CoreLib types, so no host clone counter or plugin cast is used.
+                var receiptMethod = manifest!.GetType().GetMethod(
+                    nameof(RollbackManifest.GetScopeCleanupReceipts), BindingFlags.Instance | BindingFlags.Public,
+                    binder: null, types: Type.EmptyTypes, modifiers: null)
+                    ?? throw new Exception("collectible manifest has no exact cleanup receipt method");
+                Ensure(receiptMethod.ReturnType == typeof((Exception, int, int)[]),
+                    "collectible receipt must use only shared framework identities");
+                var receipts = ((Exception Failure, int Count, int Order)[])receiptMethod.Invoke(manifest, null)!;
+                Ensure(receipts.Length == 1 && receipts[0].Count == 1 && receipts[0].Order == 1,
+                    "collectible cleanup must dispose exactly its actual one generated scope once");
+                Ensure(ReferenceEquals(disposalFailure, receipts[0].Failure) &&
+                    disposalFailure is InvalidOperationException && disposalFailure.InnerException is null &&
+                    disposalFailure.Message == "rollback Adapter scope cleanup failed",
                     "the collectible test plugin must execute its real generated Codec cleanup path");
+                disposalAccepted = true;
             }
+            catch (Exception failure) { failures.Add(failure); }
+            if (!disposalAccepted && disposalFailure is not null) failures.Add(disposalFailure);
         }
 
-        source = null!;
-        manifest = null!;
-        assembly = null!;
-        loadContext.Unload();
-        loadContext = null!;
-        return new CollectibleRuntimeReferences(context, manifestReference, loadContextReference);
+        // Unload is attempted even after an earlier completed body/Dispose/receipt failure.
+        // Every strong diagnostic reference remains inside this NoInlining frame, never static.
+        try { loadContext?.Unload(); }
+        catch (Exception failure) { failures.Add(failure); }
+        source = null;
+        manifest = null;
+        assembly = null;
+        loadContext = null;
+        disposalFailure = null;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count != 0) throw new AggregateException(failures);
+        return new CollectibleRuntimeReferences(context!, manifestReference!, loadContextReference!);
     }
 
     private static Exception Capture(Action action)

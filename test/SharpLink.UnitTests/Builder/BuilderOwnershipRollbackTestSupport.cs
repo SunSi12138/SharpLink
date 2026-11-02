@@ -16,22 +16,6 @@ public partial class BuilderOwnershipRollbackTests
     private static RpcHash128 SyntheticManifestHash => new(0x6275696c6465722dUL, 0x726f6c6c6261636bUL);
     private static RpcHash128 SyntheticCodecHash => new(0x6275696c6465722dUL, 0x636f6465632d7631UL);
 
-    private static void WithRollbackManifest(Action<ISharpLinkGeneratedAssemblyManifest> action)
-    {
-        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "builder-rollback-schema");
-        RollbackState.ScopeDisposeCount = 0;
-        var manifest = new RollbackManifest();
-        try
-        {
-            action(manifest);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", null);
-            GC.KeepAlive(manifest);
-        }
-    }
-
     private static SharpClientBuilder CreateClientBuilder()
         => SharpClientBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -378,4 +362,172 @@ public partial class BuilderOwnershipRollbackTests
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }
+}
+
+// Closed fixture owner for only the two rollback Build controls and the Dynamic profile control.
+// There is one possible asynchronous resource: an unexpectedly returned real Server.
+internal sealed class RollbackBuildFixture
+{
+    private static readonly List<RollbackBuildFixture> Quarantined = [];
+    private readonly List<Exception> _failures = [];
+    private string? _oldSchema;
+    private int _oldScopeCount;
+    private bool _schemaChanged;
+    private bool _countChanged;
+    private bool _buildEntered;
+    private bool _buildFailureAccepted;
+    private Exception? _buildFailure;
+    private ISharpLinkServer? _server;
+    private Task? _serverDisposal;
+    internal Exception? LateDisposalFailure { get; private set; }
+    private RollbackBuildTransport? _transport;
+    private RollbackBuildLogger? _logger;
+    internal RollbackManifest Manifest { get; private set; } = null!;
+
+    internal void Initialize(string schema)
+    {
+        // Called inside the permit-owned try, including reads that can fail.
+        _oldSchema = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA");
+        _oldScopeCount = RollbackState.ScopeDisposeCount;
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", schema);
+        _schemaChanged = true;
+        RollbackState.ScopeDisposeCount = 0;
+        _countChanged = true;
+        Manifest = new RollbackManifest();
+    }
+
+    internal RollbackBuildTransport CreateTransport(string? cleanupFailure = null, string? bindingFailure = null)
+        => _transport = new RollbackBuildTransport(cleanupFailure, bindingFailure);
+    internal RollbackBuildLogger CreateLogger(string failure)
+        => _logger = new RollbackBuildLogger(failure);
+
+    internal Exception CaptureBuild(SharpLinkServerBuilder builder)
+    {
+        // The selected builder is fresh, private and configured once. BeginBuild cannot be a
+        // concurrent/repeated-build rejection. From this entry, its synchronous rollback owns
+        // the listener; neither a throw nor a disposal counter authorizes a second disposal.
+        _buildEntered = true;
+        try
+        {
+            _server = builder.Build(); // Retain an unexpected successful result before asserting.
+            return _buildFailure = new Exception("expected build failure");
+        }
+        catch (Exception failure) { return _buildFailure = failure; }
+    }
+
+    internal void AcceptBuildFailure() => _buildFailureAccepted = true;
+    internal void RecordBodyFailure(Exception failure) => _failures.Add(failure);
+
+    internal async Task FinishAsync(CancellationToken testCancellationToken)
+    {
+        if (!_buildFailureAccepted && _buildFailure is not null) _failures.Add(_buildFailure);
+        var joined = true;
+        if (_server is not null)
+        {
+            try
+            {
+                _serverDisposal = _server.DisposeAsync().AsTask();
+                try { await _serverDisposal.WaitAsync(testCancellationToken); }
+                catch (Exception waiterFailure) { _failures.Add(waiterFailure); }
+                // Latch completion before consuming its full terminal graph. A waiter timeout
+                // remains a failure even if the physical source completes immediately afterward.
+                joined = _serverDisposal.IsCompleted;
+                if (joined) RecordDisposalOutcome(_serverDisposal);
+            }
+            catch (Exception failure)
+            {
+                _failures.Add(failure);
+                joined = false; // A throwing entry has not supplied a physical-join receipt.
+            }
+        }
+        else if (!_buildEntered && _transport is not null)
+        {
+            // This selected fake completes synchronously; no worker is invented for its API.
+            try { _transport.DisposeAsync().GetAwaiter().GetResult(); }
+            catch (Exception failure) { _failures.Add(failure); }
+        }
+
+        if (!joined)
+        {
+            lock (Quarantined) Quarantined.Add(this);
+            if (_serverDisposal is { } source)
+                _ = source.ContinueWith(task =>
+                {
+                    if (task.Exception is { } failures) LateDisposalFailure = failures;
+                    else if (task.IsCanceled)
+                    {
+                        try { task.GetAwaiter().GetResult(); }
+                        catch (Exception failure) { LateDisposalFailure = failure; }
+                    }
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            _failures.Add(new Exception("unexpected Server cleanup is unjoined; fixture owners and isolation are retained"));
+            return; // No late release, logger disposal or global restoration from the observer.
+        }
+
+        // The caller logger's original zero-disposal assertion precedes this fixture cleanup.
+        try { _logger?.Dispose(); } catch (Exception failure) { _failures.Add(failure); }
+        var restored = true;
+        try
+        {
+            if (_schemaChanged) Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", _oldSchema);
+        }
+        catch (Exception failure) { _failures.Add(failure); restored = false; }
+        try { if (_countChanged) RollbackState.ScopeDisposeCount = _oldScopeCount; }
+        catch (Exception failure) { _failures.Add(failure); restored = false; }
+        if (!restored)
+        {
+            lock (Quarantined) Quarantined.Add(this);
+            _failures.Add(new Exception("global restoration failed; isolation remains retained"));
+            return;
+        }
+        try { RollbackState.TestIsolation.Release(); }
+        catch (Exception failure) { _failures.Add(failure); }
+        GC.KeepAlive(Manifest);
+    }
+
+    private void RecordDisposalOutcome(Task source)
+    {
+        if (source.Exception is { } failures) _failures.Add(failures);
+        else if (source.IsCanceled)
+        {
+            try { source.GetAwaiter().GetResult(); }
+            catch (Exception failure) { _failures.Add(failure); }
+        }
+    }
+
+    internal void ThrowIfFailed()
+    {
+        if (_failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(_failures[0]).Throw();
+        if (_failures.Count != 0) throw new AggregateException(_failures);
+    }
+}
+
+internal sealed class RollbackBuildTransport(string? cleanupFailure, string? bindingFailure)
+    : IServerTransportListener, IPerformanceProfileAwareTransport
+{
+    internal Exception? CleanupFailure { get; } = cleanupFailure is null ? null : new InvalidOperationException(cleanupFailure);
+    internal Exception? BindingFailure { get; } = bindingFailure is null ? null : new InvalidOperationException(bindingFailure);
+    internal int DisposeCount { get; private set; }
+    public EndPoint? LocalEndPoint => null;
+    public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+        => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+    public void BindPerformanceProfile(SharpLinkPerformanceProfile profile)
+    {
+        if (BindingFailure is not null) throw BindingFailure;
+    }
+    public ValueTask DisposeAsync()
+    {
+        DisposeCount++;
+        return CleanupFailure is null ? ValueTask.CompletedTask : ValueTask.FromException(CleanupFailure);
+    }
+}
+
+internal sealed class RollbackBuildLogger(string failure) : ILoggerFactory
+{
+    internal Exception Failure { get; } = new InvalidOperationException(failure);
+    internal int DisposeCount { get; private set; }
+    public void AddProvider(ILoggerProvider provider) { }
+    public ILogger CreateLogger(string categoryName) => throw Failure;
+    public void Dispose() => DisposeCount++;
 }

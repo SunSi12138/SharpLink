@@ -341,33 +341,32 @@ public class DynamicRollbackTests
     [Test]
     public async Task ServerProfileBindingFailureShouldDisposeRuntimeContextAndPreserveBothFailures(CancellationToken testCancellationToken)
     {
+        var owner = new SharpLink.UnitTests.Builder.RollbackBuildFixture();
         await RollbackState.TestIsolation.WaitAsync(testCancellationToken);
         try
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "server-build-schema");
-            RollbackState.ScopeDisposeCount = 0;
-            var manifest = new RollbackManifest();
-            try
-            {
-                var failure = Capture(() => SharpLinkServerBuilder.Create()
-                    .UseGeneratedManifestSource(new FixedGeneratedManifestSource([manifest]))
-                    .UseTransport(new ThrowingProfileServerTransport())
-                    .Build());
+            owner.Initialize("server-build-schema");
+            var transport = owner.CreateTransport(bindingFailure: "server profile binding failed");
+            var builder = SharpLinkServerBuilder.Create()
+                .UseGeneratedManifestSource(new FixedGeneratedManifestSource([owner.Manifest]))
+                .UseTransport(transport);
+            var failure = owner.CaptureBuild(builder);
 
-                Ensure(Contains(failure, "server profile binding failed"), "Server build retains profile failure");
-                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server build retains Context cleanup failure");
-                Ensure(RollbackState.ScopeDisposeCount == 1, "Server build disposes Runtime Context once");
-            }
-            finally
-            {
-                ClearEnvironment();
-                GC.KeepAlive(manifest);
-            }
+            Ensure(Contains(failure, "server profile binding failed"), "Server build retains profile failure");
+            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server build retains Context cleanup failure");
+            Ensure(RollbackState.ScopeDisposeCount == 1, "Server build disposes Runtime Context once");
+            var receipts = owner.Manifest.GetScopeCleanupReceipts();
+            Ensure(receipts.Length == 1 && receipts[0].Count == 1 && receipts[0].Order == 1 && transport.DisposeCount == 1,
+                "profile rollback must dispose its exact scope and listener once");
+            Ensure(failure is AggregateException aggregate && aggregate.InnerExceptions.Count == 2 &&
+                ReferenceEquals(aggregate.InnerExceptions[0], transport.BindingFailure) &&
+                ReferenceEquals(aggregate.InnerExceptions[1], receipts[0].Failure),
+                "profile rollback retains exactly primary then scope cleanup, without unknown siblings");
+            owner.AcceptBuildFailure();
         }
-        finally
-        {
-            RollbackState.TestIsolation.Release();
-        }
+        catch (Exception failure) { owner.RecordBodyFailure(failure); }
+        finally { await owner.FinishAsync(testCancellationToken); }
+        owner.ThrowIfFailed();
     }
 
     private static void ClearEnvironment()

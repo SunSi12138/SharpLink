@@ -29,6 +29,12 @@ public static class RollbackState
 
 public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
 {
+    private readonly RollbackScopeReceipts _scopeReceipts = new();
+
+    // Instance-owned diagnostic receipts; no static roots retain collectible manifests.
+    public (Exception Failure, int Count, int Order)[] GetScopeCleanupReceipts()
+        => _scopeReceipts.Snapshot();
+
     public RollbackManifest()
     {
         var identity = Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_CODEC_IDENTITY") ??
@@ -41,7 +47,7 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
                 "1",
                 StringComparison.Ordinal)
             ? []
-            : [new RollbackCodecFactory(codecHash)];
+            : [new RollbackCodecFactory(codecHash, _scopeReceipts)];
 
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPLINK_ROLLBACK_RETIREMENT_CONTRACT"),
                 "1", StringComparison.Ordinal))
@@ -86,12 +92,12 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
     }
 }
 
-internal sealed class RollbackCodecFactory(RpcHash128 codecHash) : IRpcGeneratedCodecFactory
+internal sealed class RollbackCodecFactory(RpcHash128 codecHash, RollbackScopeReceipts receipts) : IRpcGeneratedCodecFactory
 {
     public Type TargetType => typeof(string);
     public RpcHash128 CodecHash { get; } = codecHash;
     public string AdapterId => "rollback-adapter/v1";
-    public IRpcCodecAdapter Adapter { get; } = new RollbackAdapter();
+    public IRpcCodecAdapter Adapter { get; } = new RollbackAdapter(receipts);
 
     public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
         => (adapterScope ?? throw new ArgumentNullException(nameof(adapterScope))).CreateCodec<string>();
@@ -99,20 +105,64 @@ internal sealed class RollbackCodecFactory(RpcHash128 codecHash) : IRpcGenerated
     public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<string>;
 }
 
-internal sealed class RollbackAdapter : IRpcCodecAdapter
+internal sealed class RollbackScopeReceipts
 {
-    public string AdapterId => "rollback-adapter/v1";
-    public IRpcCodecAdapterScope CreateScope() => new RollbackScope();
+    private readonly object _gate = new();
+    private readonly List<RollbackScope> _scopes = [];
+    private int _nextDisposal;
+
+    internal RollbackScope CreateScope()
+    {
+        lock (_gate)
+        {
+            var scope = new RollbackScope(this);
+            _scopes.Add(scope);
+            return scope;
+        }
+    }
+
+    internal void Record(RollbackScope scope)
+    {
+        lock (_gate)
+        {
+            scope.DisposeCount++;
+            scope.LastDisposalOrder = ++_nextDisposal;
+        }
+    }
+
+    internal (Exception Failure, int Count, int Order)[] Snapshot()
+    {
+        lock (_gate)
+        {
+            var result = new (Exception, int, int)[_scopes.Count];
+            for (var index = 0; index < result.Length; index++)
+            {
+                var scope = _scopes[index];
+                result[index] = (scope.Failure, scope.DisposeCount, scope.LastDisposalOrder);
+            }
+            return result;
+        }
+    }
 }
 
-internal sealed class RollbackScope : IRpcCodecAdapterScope
+internal sealed class RollbackAdapter(RollbackScopeReceipts receipts) : IRpcCodecAdapter
 {
+    public string AdapterId => "rollback-adapter/v1";
+    public IRpcCodecAdapterScope CreateScope() => receipts.CreateScope();
+}
+
+internal sealed class RollbackScope(RollbackScopeReceipts receipts) : IRpcCodecAdapterScope
+{
+    internal Exception Failure { get; } = new InvalidOperationException("rollback Adapter scope cleanup failed");
+    internal int DisposeCount;
+    internal int LastDisposalOrder;
     public IRpcCodec<T> CreateCodec<T>() => (IRpcCodec<T>)(object)new RollbackStringCodec();
 
     public void Dispose()
     {
         Interlocked.Increment(ref RollbackState.ScopeDisposeCount);
-        throw new InvalidOperationException("rollback Adapter scope cleanup failed");
+        receipts.Record(this);
+        throw Failure;
     }
 }
 
