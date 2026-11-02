@@ -273,6 +273,7 @@ internal sealed partial class ContractScopedRouteHandoffFixture
     private async Task RefreshAForRetryAsync()
     {
         _refreshStarted = true;
+        RequireNoPriorRefreshRollout();
         var cut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Client._afterSessionRefreshEligibilitySwapTestHook = () => cut.TrySetResult();
         using var payload = new PooledByteBufferWriter();
@@ -282,8 +283,7 @@ internal sealed partial class ContractScopedRouteHandoffFixture
         await ObserveAsync(Own("original retry refresh injection", _transports[0].Connection.InjectFrameAsync(
             ProtocolV2FrameType.SessionRefreshRequested, ProtocolV2FrameFlags.None, 0, bytes)));
         await _factory!.ReplacementEntered.Task.WaitAsync(Bound);
-        CaptureFrameworkOwners("StaticClusterSessionRefreshRollout", "original session refresh rollout");
-        _rollout = SnapshotOperations().Single(operation => operation.Stage == "original session refresh rollout");
+        _rollout = await CapturePendingRefreshRolloutAsync();
         _factory.ReleaseReplacement.TrySetResult();
         await cut.Task.WaitAsync(Bound);
         await ObserveAsync(_rollout);

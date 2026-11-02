@@ -68,6 +68,43 @@ def verify_fixture_configuration_sources(sources):
               'Handoff partial caller graph changed or retry inherited builtin policy')
 
 
+def fixture_method_source(source, signature):
+    # Exact checked fixture layout only; not a general C# method parser.
+    start = source.index(signature)
+    return re.sub(r'\s+', '', source[start:source.index('\n    }', start) + 6])
+
+
+def verify_refresh_registration_sources(sources):
+    for name, signature in (
+            ('HandoffFixture', 'internal async Task RefreshWhileReplacementUnboundAsync()'),
+            ('RetryFixture', 'private async Task RefreshAForRetryAsync()')):
+        body = fixture_method_source(sources['ContractScopedRoute' + name + '.cs'], signature)
+        ordered = ('_refreshStarted=true;', 'RequireNoPriorRefreshRollout();', 'InjectFrameAsync(',
+                   'await_factory!.ReplacementEntered.Task.WaitAsync(Bound);',
+                   '_rollout=awaitCapturePendingRefreshRolloutAsync();',
+                   '_factory.ReleaseReplacement.TrySetResult();', 'awaitcut.Task.WaitAsync(Bound);',
+                   'awaitObserveAsync(_rollout);')
+        positions = [body.index(part) for part in ordered]
+        r.require(positions == sorted(positions) and '.Single(' not in body,
+                  'Refresh owner must be captured after entry but before release, never by immediate Single')
+    source = sources['ContractScopedRouteHandoffFixture.cs']
+    prior = fixture_method_source(source, 'private void RequireNoPriorRefreshRollout()')
+    r.require('CaptureFrameworkOwners("StaticClusterSessionRefreshRollout","originalsessionrefreshrollout");' in prior and
+              'Ensure(_rolloutisnull&&!SnapshotOperations().Any(operation=>operation.Stage=="originalsessionrefreshrollout"),' in prior,
+              'Prior original rollouts cannot be borrowed')
+    capture = fixture_method_source(source, 'private async Task<OwnedOperation> CapturePendingRefreshRolloutAsync()')
+    r.require('awaitAwaitAsync(()=>{' in capture and 'Ensure(!_factory!.ReleaseReplacement.Task.IsCompleted,' in capture and
+              'CaptureFrameworkOwners("StaticClusterSessionRefreshRollout","originalsessionrefreshrollout");' in capture and
+              'varmatches=SnapshotOperations().Where(operation=>operation.Stage=="originalsessionrefreshrollout").ToArray();' in capture and
+              'Ensure(matches.Length<=1,' in capture and 'if(matches.Length==0)returnfalse;' in capture and
+              'captured=matches[0];' in capture and 'Ensure(!captured.Task.IsCompleted,' in capture and
+              'returncaptured!;' in capture and 'TrySetResult' not in capture,
+              'Only one registered pending original is acceptable while factory remains held')
+    audit = fixture_method_source(source, 'private static async Task<Exception?> CaptureTerminalFailureAsync(Task source)')
+    r.require('returnsource.Exceptionis{}graph?graph:original;' in audit,
+              'Terminal audit must retain all original Task.Exception roots')
+
+
 class Route59Tests(unittest.TestCase):
     def setUp(self):
         self.base = accepted.ClassifierTests()
@@ -134,6 +171,37 @@ class Route59Tests(unittest.TestCase):
                 changed = fixture_configuration_sources(); key = 'ContractScopedRoute' + name + '.cs'
                 self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
                 with self.assertRaises(ValueError): verify_fixture_configuration_sources(changed)
+
+    def test_refresh_registration_waits_for_actual_pending_original_source_shape(self):
+        verify_refresh_registration_sources(fixture_configuration_sources())
+
+    def test_refresh_registration_rejects_skipped_capture_or_premature_release(self):
+        for name in ('HandoffFixture', 'RetryFixture'):
+            for old, new in (
+                    ('RequireNoPriorRefreshRollout();', ''),
+                    ('_rollout = await CapturePendingRefreshRolloutAsync();',
+                     '_factory.ReleaseReplacement.TrySetResult(); _rollout = await CapturePendingRefreshRolloutAsync();')):
+                with self.subTest(fixture=name, mutation=old):
+                    changed = fixture_configuration_sources(); key = 'ContractScopedRoute' + name + '.cs'
+                    self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
+                    with self.assertRaises(ValueError): verify_refresh_registration_sources(changed)
+
+    def test_refresh_registration_rejects_absent_multiple_terminal_or_old_owner(self):
+        for old, new in (
+                ('_rollout is null && !SnapshotOperations()', 'true && !SnapshotOperations()'),
+                ('Ensure(matches.Length <= 1,', 'Ensure(matches.Length <= 2,'),
+                ('if (matches.Length == 0) return false;', 'if (matches.Length == 0) return true;'),
+                ('Ensure(!captured.Task.IsCompleted,', 'Ensure(captured.Task.IsCompleted,')):
+            with self.subTest(mutation=old):
+                changed = fixture_configuration_sources(); key = 'ContractScopedRouteHandoffFixture.cs'
+                self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, new, 1)
+                with self.assertRaises(ValueError): verify_refresh_registration_sources(changed)
+
+    def test_refresh_registration_preserves_complete_original_task_error_graph(self):
+        changed = fixture_configuration_sources(); key = 'ContractScopedRouteHandoffFixture.cs'
+        old = 'return source.Exception is { } graph ? graph : original;'
+        self.assertIn(old, changed[key]); changed[key] = changed[key].replace(old, 'return original;', 1)
+        with self.assertRaises(ValueError): verify_refresh_registration_sources(changed)
 
     def test_actual_catalog_source_spans_graph_budget_and_pins(self):
         r.verify_catalog(ROOT, CATALOG)

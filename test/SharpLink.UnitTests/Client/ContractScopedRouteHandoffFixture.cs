@@ -136,6 +136,7 @@ internal sealed partial class ContractScopedRouteHandoffFixture
     internal async Task RefreshWhileReplacementUnboundAsync()
     {
         _refreshStarted = true;
+        RequireNoPriorRefreshRollout();
         var cut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Client._afterSessionRefreshEligibilitySwapTestHook = () => cut.TrySetResult();
         using var payload = new PooledByteBufferWriter();
@@ -145,9 +146,7 @@ internal sealed partial class ContractScopedRouteHandoffFixture
         await ObserveAsync(Own("original refresh request injection", _transports[0].Connection.InjectFrameAsync(
             ProtocolV2FrameType.SessionRefreshRequested, ProtocolV2FrameFlags.None, 0, bytes)));
         await _factory!.ReplacementEntered.Task.WaitAsync(Bound);
-        CaptureFrameworkOwners("StaticClusterSessionRefreshRollout", "original session refresh rollout");
-        _rollout = SnapshotOperations().Single(operation => operation.Stage == "original session refresh rollout");
-        Ensure(!_rollout.Task.IsCompleted, "original refresh rollout is captured while its factory entry is held");
+        _rollout = await CapturePendingRefreshRolloutAsync();
         _factory.ReleaseReplacement.TrySetResult();
         await cut.Task.WaitAsync(Bound);
         await ObserveAsync(_rollout);
@@ -167,6 +166,34 @@ internal sealed partial class ContractScopedRouteHandoffFixture
         Ensure(!_replyStarted[2] && !View.HasEligibleTarget(), "replacement has no route until its own successful Bind confirmation");
         _refreshInitialized = true;
         AssertUnboundB();
+    }
+
+    private void RequireNoPriorRefreshRollout()
+    {
+        CaptureFrameworkOwners("StaticClusterSessionRefreshRollout", "original session refresh rollout");
+        Ensure(_rollout is null && !SnapshotOperations().Any(operation => operation.Stage == "original session refresh rollout"),
+            "a new fixture refresh must not borrow a prior original rollout");
+    }
+
+    private async Task<OwnedOperation> CapturePendingRefreshRolloutAsync()
+    {
+        OwnedOperation? captured = null;
+        // Factory entry proves producer progress, not that its outer Task has returned
+        // to the caller and been registered. Keep our factory gate closed until that
+        // actual original receipt exists; no replacement body or business call is retried.
+        await AwaitAsync(() =>
+        {
+            Ensure(!_factory!.ReleaseReplacement.Task.IsCompleted,
+                "replacement factory gate must remain held until original rollout capture");
+            CaptureFrameworkOwners("StaticClusterSessionRefreshRollout", "original session refresh rollout");
+            var matches = SnapshotOperations().Where(operation => operation.Stage == "original session refresh rollout").ToArray();
+            Ensure(matches.Length <= 1, "multiple original refresh rollouts cannot be substituted for one owner");
+            if (matches.Length == 0) return false;
+            captured = matches[0];
+            Ensure(!captured.Task.IsCompleted, "the registered original refresh rollout must remain pending at the held factory");
+            return true;
+        }, "Original refresh rollout registration was not observed while the replacement factory remained held.");
+        return captured!;
     }
 
     internal async Task ConfirmReplacementAsync()
