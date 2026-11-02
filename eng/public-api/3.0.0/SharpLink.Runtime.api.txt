@@ -107,7 +107,6 @@ namespace SharpLink.Runtime
     public static class RpcGeneratedCodecResolver
     {
         public static SharpLink.Abstractions.IRpcCodecProvider GetProvider(SharpLink.Abstractions.IRpcRuntimeContext runtimeContext, System.Reflection.Assembly ownerAssembly) { }
-        public static SharpLink.Abstractions.IRpcCodecProvider GetProvider(SharpLink.Abstractions.IRpcRuntimeContext runtimeContext, System.Type contractType) { }
     }
     public readonly struct RpcSessionFlushOptions : System.IEquatable<SharpLink.Runtime.RpcSessionFlushOptions>
     {

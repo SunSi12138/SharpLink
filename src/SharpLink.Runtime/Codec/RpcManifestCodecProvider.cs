@@ -26,18 +26,6 @@ public static class RpcGeneratedCodecResolver
             $"Runtime context '{runtimeContext.GetType().FullName}' must implement {nameof(IRpcContractCodecProviderResolver)} to construct generated Contract artifacts.");
     }
 
-    /// <summary>
-    /// Compatibility overload for generated source that still names a Contract Type. The Type does
-    /// not define an independent policy namespace; it is canonicalized to its owner assembly.
-    /// </summary>
-    public static IRpcCodecProvider GetProvider(
-        IRpcRuntimeContext runtimeContext,
-        Type contractType)
-    {
-        ArgumentNullException.ThrowIfNull(contractType);
-        return GetProvider(runtimeContext, contractType.Assembly);
-    }
-
     internal static IRpcCodecProvider GetProvider(RpcGeneratedManifestRegistration registration)
         => GetProvider(registration, RpcGeneratedCodecResolutionScope.Contract);
 

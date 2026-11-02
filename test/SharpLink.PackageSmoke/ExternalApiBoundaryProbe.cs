@@ -53,9 +53,9 @@ internal static class ExternalApiBoundaryProbe
         var context = new ConsumerResolverContext(owner, expected, otherOwner, otherExpected);
 
         AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, owner), expected, context, owner, 1);
-        AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, typeof(ExternalApiBoundaryProbe)), expected, context, owner, 2);
-        AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, typeof(ConsumerAddress)), expected, context, owner, 3);
-        AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, typeof(SharpLinkException)), otherExpected, context, otherOwner, 4);
+        AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, typeof(ExternalApiBoundaryProbe).Assembly), expected, context, owner, 2);
+        AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, typeof(ConsumerAddress).Assembly), expected, context, owner, 3);
+        AssertForwarded(RpcGeneratedCodecResolver.GetProvider(context, typeof(SharpLinkException).Assembly), otherExpected, context, otherOwner, 4);
     }
 
     private static void AssertForwarded(
@@ -72,10 +72,9 @@ internal static class ExternalApiBoundaryProbe
         var owner = typeof(ExternalApiBoundaryProbe).Assembly;
         ExpectNull(() => RpcGeneratedCodecResolver.GetProvider(null!, owner), "runtimeContext");
         ExpectNull(() => RpcGeneratedCodecResolver.GetProvider(context, (Assembly)null!), "ownerAssembly");
-        ExpectNull(() => RpcGeneratedCodecResolver.GetProvider(context, (Type)null!), "contractType");
-        ExpectNull(() => RpcGeneratedCodecResolver.GetProvider(null!, typeof(ExternalApiBoundaryProbe)), "runtimeContext");
+        ExpectNull(() => RpcGeneratedCodecResolver.GetProvider(null!, typeof(ExternalApiBoundaryProbe).Assembly), "runtimeContext");
         ExpectUnsupported(() => RpcGeneratedCodecResolver.GetProvider(context, owner));
-        ExpectUnsupported(() => RpcGeneratedCodecResolver.GetProvider(context, typeof(ExternalApiBoundaryProbe)));
+        ExpectUnsupported(() => RpcGeneratedCodecResolver.GetProvider(context, typeof(ExternalApiBoundaryProbe).Assembly));
     }
 
     private static void ExpectNull(Action resolve, string parameter)

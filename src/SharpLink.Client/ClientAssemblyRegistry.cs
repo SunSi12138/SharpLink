@@ -587,7 +587,7 @@ internal sealed partial class ClientAssemblyRegistry
                 registrations.Add(contract.ContractType, new SharpLinkClient.ClientProxyRegistration(
                     contract,
                     null,
-                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType)));
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType.Assembly)));
             }
         }
         return ClientProxySnapshot.Create(registrations.ToFrozenDictionary(), preparation, staticManifests: manifests);

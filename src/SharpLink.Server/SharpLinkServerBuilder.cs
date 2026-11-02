@@ -586,7 +586,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 entry.Registration.ValidateDependencies(serviceProvider);
                 var registration = transaction.Own(
                     entry.Registration.Materialize(
-                        RpcGeneratedCodecResolver.GetProvider(runtimeContext, entry.Registration.ContractType))
+                        RpcGeneratedCodecResolver.GetProvider(runtimeContext, entry.Registration.ContractType.Assembly))
                         .Build(serviceProvider),
                     static value => SharpLinkAsyncCleanup.DisposeSynchronously(value),
                     SynchronousBuildResourceMetadata.FrameworkOwned("Server service registration"));
