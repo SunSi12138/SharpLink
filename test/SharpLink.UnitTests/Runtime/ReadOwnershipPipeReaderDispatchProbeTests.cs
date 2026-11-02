@@ -72,6 +72,10 @@ public class ReadOwnershipPipeReaderDispatchProbeTests
             start.ArgumentList.Add(typeof(ReadOwnershipPipeReaderDispatchProbeTests).Assembly.Location);
         start.ArgumentList.Add("--treenode-filter");
         start.ArgumentList.Add("/*/*/ReadOwnershipPipeReaderDispatchProbeTests/*");
+        // Keep recursive child reports separate from the parent and every other scenario run.
+        start.ArgumentList.Add("--results-directory");
+        start.ArgumentList.Add(Path.Combine(TestContext.ResultsDirectory, "dispatch-probes",
+            $"{scenario}-{Guid.NewGuid():N}"));
         start.Environment[ProbeEnvironmentVariable] = scenario;
         // A regression such as stack overflow should not create a multi-gigabyte dump in CI.
         start.Environment["DOTNET_DbgEnableMiniDump"] = "0";
