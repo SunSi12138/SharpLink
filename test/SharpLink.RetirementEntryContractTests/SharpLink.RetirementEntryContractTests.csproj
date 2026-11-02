@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.UnitTests</RootNamespace>
+    <AssemblyTitle>SharpLink.RetirementEntryContractTests C1-D1 selected-source controls</AssemblyTitle>
+    <Description>Caller-wait and exact-child entry budget controls; not D2 cleanup qualification.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="RetirementEntryContract-C1D1-v1" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../SharpLink.RetirementBudgetOwnershipTests/GlobalUsings.cs" Link="GlobalUsings.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/RetirementEntryContractTests.cs" Link="Runtime/RetirementEntryContractTests.cs" />
+  </ItemGroup>
+  <ItemGroup><TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" /></ItemGroup>
+</Project>
