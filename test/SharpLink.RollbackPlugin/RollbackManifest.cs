@@ -22,6 +22,7 @@ public interface IRollbackRetirementContract { }
 public static class RollbackState
 {
     public static int ScopeDisposeCount;
+    public static Action<ISharpLinkGeneratedAssemblyManifest>? ManifestConstructed;
     public static TaskCompletionSource? ManifestConstructionStarted;
     public static TaskCompletionSource? ManifestConstructionRelease;
     public static SemaphoreSlim TestIsolation { get; } = new(1, 1);
@@ -57,6 +58,10 @@ public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
                 new string('c', 64), [], static (_, _) => throw new NotSupportedException(),
                 static _ => throw new NotSupportedException())];
         }
+
+        // Test-only observation of this exact constructor instance. No extra
+        // manifest/scope is created, and observer failures retain loader semantics.
+        RollbackState.ManifestConstructed?.Invoke(this);
 
         var started = RollbackState.ManifestConstructionStarted;
         if (started is null)

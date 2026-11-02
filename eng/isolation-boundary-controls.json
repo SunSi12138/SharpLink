@@ -176,7 +176,7 @@
       "namespace": "SharpLink.UnitTests.Runtime",
       "class": "DynamicRollbackTests",
       "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
-      "sourceSha256": "4bfa101a10a62ebc35ea5b5fe5e48144f1cc7120a45f16d48862c20947220660",
+      "sourceSha256": "71a74ae8f498ef07f62dcbe18321484ac4d5710ace0f87eda6a2ee1f9caa1b8b",
       "discovery": "methods",
       "methods": [
         {
