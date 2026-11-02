@@ -363,7 +363,13 @@ public sealed class RetirementEntryContractTests
                 await Within(Own(_server.StartAsync().AsTask()));
                 Ensure(_server.LifecycleState == SharpLinkServerLifecycleState.Running, "actual Server Start");
                 Ensure(_server.RegisterAssembly(OldAssembly).Succeeded, "actual Server dynamic publication");
-                _module = Read<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry").DynamicModules[OldAssembly];
+                var registry = Read<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry");
+                lock (registry.Gate)
+                {
+                    if (!registry.DynamicModules.TryGetValue(OldAssembly, out var module))
+                        throw new InvalidOperationException("Published Server module is missing.");
+                    _module = module;
+                }
             }
             else if (mode == Mode.Unsupported)
             {
@@ -465,8 +471,9 @@ public sealed class RetirementEntryContractTests
         {
             if (_server is not null)
             {
-                lock (Read<Lock>(_server, "_registryGate"))
-                    return Read<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry").DynamicModules.ContainsKey(assembly);
+                var registry = Read<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry");
+                lock (registry.Gate)
+                    return registry.DynamicModules.ContainsKey(assembly);
             }
             lock (Read<Lock>(Registry, "_gate")) return Registry.DynamicModules.ContainsKey(assembly);
         }
@@ -500,8 +507,9 @@ public sealed class RetirementEntryContractTests
         {
             if (_server is not null)
             {
-                lock (Read<Lock>(_server, "_registryGate"))
-                    foreach (var module in Read<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry").DynamicModules.Values) Remember(module);
+                var registry = Read<ServerServiceModuleRegistry>(_server, "_serviceModuleRegistry");
+                lock (registry.Gate)
+                    foreach (var module in registry.DynamicModules.Values) Remember(module);
             }
             foreach (var child in new[] { Child, FirstChild })
             {
@@ -514,9 +522,9 @@ public sealed class RetirementEntryContractTests
         {
             ReleaseCall();
             var original = Module.RetirementOperation ?? throw new InvalidOperationException("No original physical task.");
-            Own(original); Ensure((await Result(original)).ReferencesReleased, "actual physical release");
+            _ = Own(original); Ensure((await Result(original)).ReferencesReleased, "actual physical release");
             var observer = Module.RetirementObservation ?? throw new InvalidOperationException("No original observer.");
-            Own(observer); var result = await Result(observer);
+            _ = Own(observer); var result = await Result(observer);
             Ensure(result.Failure is null && Module.State == SharpLinkDynamicModuleState.Released,
                 "original observer and module release, not inferred from outer Stop");
         }

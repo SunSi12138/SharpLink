@@ -86,6 +86,19 @@ internal sealed class StaticClientRuntimeEndpointState
 
     public ClientConnection[] ReadyConnections => Volatile.Read(ref _readyConnections);
 
+    // A failed cold snapshot build must not make a fatal, removed owner look Ready forever.
+    internal int LiveReadyConnectionCount
+    {
+        get
+        {
+            var count = 0;
+            foreach (var connection in ReadyConnections)
+                if (connection.CanAcceptCalls) count++;
+            return count;
+        }
+    }
+    internal bool HasReadyConnection => LiveReadyConnectionCount != 0;
+
     internal Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
 
     internal Func<int> ActiveCallCountProvider => _activeCallCountProvider;
@@ -129,6 +142,9 @@ internal sealed class StaticClientRuntimeEndpointState
     }
 
     internal int ActiveCallCount => GetActiveCallCount();
+
+    internal void PublishReadyConnections(ClientConnection[] ready)
+        => Volatile.Write(ref _readyConnections, ready);
 
     internal void PublishReadyConnections()
     {

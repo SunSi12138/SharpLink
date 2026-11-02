@@ -23,7 +23,10 @@ internal sealed partial class SharpLinkClient
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
                     SharpLinkErrorDetails.ResourceExhausted.BindingDemandSites, "Client contract demand capacity is full.");
             _contractDemands.Add(new WeakReference<ContractCallSite>(site));
+            PublishContractDemandSnapshotLocked();
         }
+        ContractRouteBuildForTesting?.Invoke(site, "registered");
+        site.ReconcileContractRoute();
         TrackFrameworkTask(StartContractBindingDemandAsync(site), "StartContractBinding");
     }
 
@@ -42,7 +45,10 @@ internal sealed partial class SharpLinkClient
     private void UnregisterContractDemand(ContractCallSite site)
     {
         lock (_contractDemandGate)
+        {
             _contractDemands.RemoveAll(weak => !weak.TryGetTarget(out var existing) || ReferenceEquals(existing, site));
+            PublishContractDemandSnapshotLocked();
+        }
         site.RetireDemand();
     }
 
@@ -54,9 +60,16 @@ internal sealed partial class SharpLinkClient
             retired = _contractDemands.Select(static weak => weak.TryGetTarget(out var site) ? site : null)
                 .Where(site => site is not null && ReferenceEquals(site.LocalControl, control)).ToArray()!;
             _contractDemands.RemoveAll(weak => !weak.TryGetTarget(out var site) || ReferenceEquals(site.LocalControl, control));
+            PublishContractDemandSnapshotLocked();
         }
         // Cancellation and cleanup supervision can invoke callbacks; no demand/site/publication gate.
-        foreach (var site in retired) site.RetireDemand();
+        var failures = new ContractRouteFailure();
+        foreach (var site in retired)
+        {
+            try { site.RetireDemand(); }
+            catch (Exception error) { failures.Add("local-contract-retirement", error); }
+        }
+        failures.ThrowIfAny();
     }
 
     private void PulseContractBindingWaiters()
@@ -75,11 +88,21 @@ internal sealed partial class SharpLinkClient
         lock (_contractDemandGate)
         {
             _contractDemands.RemoveAll(static weak => !weak.TryGetTarget(out var site) || site.LocalControl.IsRetired);
+            PublishContractDemandSnapshotLocked();
             sites = _contractDemands.Select(static weak => weak.TryGetTarget(out var site) ? site : null)
                 .Where(static site => site is not null).ToArray()!;
         }
+        var failures = new ContractRouteFailure();
         foreach (var site in sites)
-            ScheduleContractBinding(site, retryCompletedFailures: true);
+        {
+            try
+            {
+                site.ReconcileContractRoute();
+                ScheduleContractBinding(site, retryCompletedFailures: true);
+            }
+            catch (Exception error) { failures.Add("binding-cold-refresh", error); }
+        }
+        failures.ThrowIfAny();
     }
 
     private void ScheduleContractBinding(ContractCallSite site, bool retryCompletedFailures = false)
@@ -109,6 +132,11 @@ internal sealed partial class SharpLinkClient
 
     private async Task BindContractDemandAsync(ContractCallSite site, ClientConnection connection)
     {
+        var infrastructure = new ContractRouteFailure(8);
+        ClientBindingSession.ResultOwner? resultOwner = null;
+        ContractCallSite.BoundTarget? target = null;
+        Exception? bindingFailure = null;
+        var published = false;
         try
         {
             Protocol3BindingReceipt? receipt = site.Options.Receipt is { } original
@@ -116,49 +144,70 @@ internal sealed partial class SharpLinkClient
                     (ulong)original.Generation, (ulong)original.RegistrationId) : null;
             var request = new Protocol3BindRequest((Protocol3BindingRequirement)site.Options.Requirement,
                 site.Local.ContractId, site.Local.RpcAssemblyHash, receipt);
-            using var resultOwner = await connection.Binding.BindAsync(request, site.DemandRetirement).ConfigureAwait(false);
-            var result = resultOwner.Result;
+            resultOwner = await connection.Binding.BindAsync(request, site.DemandRetirement).ConfigureAwait(false);
+            var result = resultOwner.Value.Result;
             if (result.Status != Protocol3BindStatus.Success)
+                bindingFailure = ApplyBindingRejection(connection, result.Status);
+            else
             {
-                site.BindingFailed(connection, ApplyBindingRejection(connection, result.Status));
-                return;
-            }
-            var published = false;
-            ContractCallSite.BoundTarget target;
-            try { target = new ContractCallSite.BoundTarget(connection, result.Token); }
-            catch (Exception exception)
-            {
-                connection.Binding.Close(exception);
-                await connection.Session.CloseAndDrainOutboundAsync(exception).ConfigureAwait(false);
-                throw;
-            }
-            try
-            {
+                try { target = new ContractCallSite.BoundTarget(connection, result.Token); }
+                catch (Exception error)
+                {
+                    infrastructure.Add("binding-target", error);
+                    try { connection.Binding.Close(error); }
+                    catch (Exception cleanup) { infrastructure.Add("binding-close", cleanup); }
+                    Task? close = null;
+                    try { close = connection.Session.CloseAndDrainOutboundAsync(error).AsTask(); }
+                    catch (Exception cleanup) { infrastructure.Add("session-close-start", cleanup); }
+                    if (close is not null)
+                    {
+                        try { await close.ConfigureAwait(false); }
+                        catch (Exception cleanup) { infrastructure.Add("session-close", close.Exception is { } graph ? graph : cleanup); }
+                    }
+                    throw;
+                }
                 await TrackBindingCandidateAsync(site, target).ConfigureAwait(false);
                 if (!site.LocalControl.IsRetired && connection.CanAcceptCalls)
-                    published = connection.Binding.Publication.TryCommit(result.Token,
-                        () => site.PublishBinding(target));
-                if (!published)
-                    site.BindingFailed(connection, NoBoundRoute());
-            }
-            finally
-            {
-                // A callback can lose the local retirement race and throw. The successful token
-                // still owns a server slot even when no local route ever escaped.
-                if (!published)
-                    await RetireBindingCandidateAsync(target).ConfigureAwait(false);
+                    published = connection.Binding.Publication.TryCommit(result.Token, () => site.PublishBinding(target));
+                if (!published) bindingFailure = NoBoundRoute();
             }
         }
-        catch (Exception exception)
+        catch (Exception error)
         {
-            site.BindingFailed(connection, exception);
+            bindingFailure = error;
+            if (error is ContractRouteFailure) infrastructure.Add("binding-route-publication", error);
         }
         finally
         {
-            // Control owners count during local identity-exhaustion drain, independently of
-            // business pending/reservation counts. This callback runs outside every binding gate.
-            RetireDrainingConnectionIfIdle(connection);
+            var candidateRetirementCompleted = target is null || published;
+            if (target is not null && !published)
+            {
+                Task? cleanup = null;
+                try { _ = target.Connection.Binding.RetireCandidateAsync(target, out cleanup); }
+                catch (Exception error) { infrastructure.Add("candidate-retirement-start", error); }
+                if (cleanup is not null)
+                {
+                    try { await cleanup.ConfigureAwait(false); }
+                    catch (Exception error) { infrastructure.Add("candidate-retirement", cleanup.Exception is { } graph ? graph : error); }
+                    finally { candidateRetirementCompleted = true; }
+                }
+            }
+            if (resultOwner is { } owner)
+            {
+                try { owner.Dispose(); }
+                catch (Exception error) { infrastructure.Add("binding-result-owner", error); }
+            }
+            // Without an exact original cleanup receipt, release is unproven: keep the
+            // attempt incomplete (no infrastructure retry) rather than infer completion.
+            if (bindingFailure is not null && candidateRetirementCompleted)
+            {
+                try { site.BindingFailed(connection, bindingFailure); }
+                catch (Exception error) { infrastructure.Add("binding-failure-publication", error); }
+            }
+            try { RetireDrainingConnectionIfIdle(connection); }
+            catch (Exception error) { infrastructure.Add("binding-idle-retirement", error); }
         }
+        infrastructure.ThrowIfAny();
     }
 
     internal static SharpLinkException ApplyBindingRejection(ClientConnection connection, Protocol3BindStatus status)
@@ -205,7 +254,8 @@ internal sealed partial class SharpLinkClient
             throw CreateConnectionClosedException("Client is stopped.");
         site.LocalControl.ThrowIfRetired();
         var started = _runtimeContext.TimeProvider.GetTimestamp();
-        if (site.TryCompleteReadyPreparation(timeout, started, cancellationToken))
+        var signal = site.BeginPreparation();
+        if (site.TryCompleteReadyPreparation(timeout, started, cancellationToken, signal))
             return ValueTask.CompletedTask;
         if (Interlocked.Increment(ref _bindingWaiters) > 4096)
         {
@@ -213,11 +263,11 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
                 SharpLinkErrorDetails.ResourceExhausted.BindingWaiters, "Client binding waiter capacity is full.");
         }
-        return WaitForContractBindingAsync(site, timeout, started, cancellationToken);
+        return WaitForContractBindingAsync(site, timeout, started, cancellationToken, signal);
     }
 
     private async ValueTask WaitForContractBindingAsync(ContractCallSite site, TimeSpan timeout,
-        long started, CancellationToken cancellationToken)
+        long started, CancellationToken cancellationToken, Task<Exception?> signal)
     {
         var entered = false;
         try
@@ -231,7 +281,6 @@ internal sealed partial class SharpLinkClient
             ScheduleContractBinding(site);
             while (true)
             {
-                var signal = site.CaptureBindingSignal();
                 cancellationToken.ThrowIfCancellationRequested();
                 var remaining = timeout - _runtimeContext.TimeProvider.GetElapsedTime(started);
                 if (remaining <= TimeSpan.Zero)
@@ -239,19 +288,24 @@ internal sealed partial class SharpLinkClient
                 if (_shutdownCts.IsCancellationRequested)
                     throw CreateConnectionClosedException("Client is stopped.");
                 site.LocalControl.ThrowIfRetired();
-                if (site.TryCompleteReadyPreparation(timeout, started, cancellationToken))
+                if (site.TryCompleteReadyPreparation(timeout, started, cancellationToken, signal))
                     return;
                 if (site.CaptureBindingFailure() is { } failure)
                     throw failure;
+                Exception? publicationFailure;
                 try
                 {
-                    await signal.WaitAsync(remaining, _runtimeContext.TimeProvider, cancellationToken).ConfigureAwait(false);
+                    publicationFailure = await signal.WaitAsync(remaining, _runtimeContext.TimeProvider, cancellationToken).ConfigureAwait(false);
                 }
                 catch (TimeoutException)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Prepare deadline expired.");
                 }
+                // A captured construction TimeoutException is not this wait's timeout.
+                if (publicationFailure is not null)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(publicationFailure).Throw();
+                signal = site.CaptureBindingSignal();
             }
         }
         finally

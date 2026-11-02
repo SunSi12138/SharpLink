@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Linq;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -95,7 +96,14 @@ public sealed class DynamicClusterConnectionStateTests
             state.PublishReadyConnections([endpoint]);
             var dispose = new List<ClientConnection>();
 
-            Ensure(state.BeginEndpointRetirement(endpoint, dispose),
+            var retirementSnapshot = state.GetOwnedConnections(endpoint).ToArray();
+            state.PrepareRetirementCapacity(retirementSnapshot.Length);
+            dispose.EnsureCapacity(dispose.Count + retirementSnapshot.Length);
+            var retirementFailures = new SharpLinkClient.ContractRouteFailure();
+            var beganRetirement = state.BeginEndpointRetirement(endpoint, dispose,
+                retirementSnapshot, retirementFailures);
+            retirementFailures.ThrowIfAny();
+            Ensure(beganRetirement,
                 "the first endpoint retirement transition must be accepted");
             state.PublishReadyConnections([endpoint]);
 
@@ -110,7 +118,14 @@ public sealed class DynamicClusterConnectionStateTests
                 "a retiring generation must publish no connection for new selection");
             Ensure(!state.CanRelease(endpoint),
                 "a retiring endpoint cannot release its generation while a connection is draining");
-            Ensure(!state.BeginEndpointRetirement(endpoint, dispose),
+            var repeatedSnapshot = state.GetOwnedConnections(endpoint).ToArray();
+            state.PrepareRetirementCapacity(repeatedSnapshot.Length);
+            dispose.EnsureCapacity(dispose.Count + repeatedSnapshot.Length);
+            var repeatedFailures = new SharpLinkClient.ContractRouteFailure();
+            var repeatedRetirement = state.BeginEndpointRetirement(endpoint, dispose,
+                repeatedSnapshot, repeatedFailures);
+            repeatedFailures.ThrowIfAny();
+            Ensure(!repeatedRetirement,
                 "endpoint retirement must be idempotent");
 
             active.EndUntrackedCall();

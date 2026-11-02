@@ -134,7 +134,7 @@ internal sealed partial class SharpLinkClient
 
         public static async Task DisposeConnectionAsync(ClientConnection connection)
         {
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            try { await DisposeConnectionWithRouteFailuresAsync(connection).ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
         }
 
@@ -263,7 +263,8 @@ internal sealed partial class SharpLinkClient
             var stopping = CreateConnectionClosedException("Client is stopping.");
             for (var index = 0; index < snapshot.Connections.Length; index++)
             {
-                snapshot.Connections[index].Fail(stopping);
+                try { snapshot.Connections[index].Fail(stopping); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
                 try { await DisposeConnectionAsync(snapshot.Connections[index]).ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }

@@ -47,9 +47,10 @@ internal sealed partial class SharpLinkClient
                 RegisterContractDemand(site);
                 _contractSites.Add(key, entry);
             }
-            catch
+            catch (Exception primary)
             {
-                UnregisterContractDemand(site);
+                try { UnregisterContractDemand(site); }
+                catch (Exception cleanup) { throw new AggregateException(primary, cleanup); }
                 throw;
             }
             return new ContractSiteConstruction(key, entry, site);

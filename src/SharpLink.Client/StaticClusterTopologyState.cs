@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
     /// serialized by <c>StaticClusterRuntime</c>'s existing gate; the RPC selection path only reads
     /// immutable snapshots published through volatile writes.
     /// </summary>
-    internal sealed class StaticClusterTopologyState
+    internal sealed class StaticClusterTopologyState : IContractRouteSelection
     {
         private readonly EndpointSelectionPolicyState _selectionPolicy;
         private readonly ILogger? _logger;
@@ -25,7 +25,16 @@ internal sealed partial class SharpLinkClient
             _logger = logger;
         }
 
-        public int ReadyEndpointCount => Volatile.Read(ref _readyEndpoints).Length;
+        public int ReadyEndpointCount
+        {
+            get
+            {
+                var count = 0;
+                foreach (var endpoint in Volatile.Read(ref _readyEndpoints))
+                    if (endpoint.HasReadyConnection) count++;
+                return count;
+            }
+        }
 
         public int ReadyConnectionCount
         {
@@ -34,7 +43,7 @@ internal sealed partial class SharpLinkClient
                 var endpoints = Volatile.Read(ref _readyEndpoints);
                 var count = 0;
                 for (var index = 0; index < endpoints.Length; index++)
-                    count += endpoints[index].ReadyConnections.Length;
+                    count += endpoints[index].LiveReadyConnectionCount;
                 return count;
             }
         }
@@ -55,48 +64,59 @@ internal sealed partial class SharpLinkClient
         public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
             => _selectionPolicy.PublishCustom(selector);
 
+        internal sealed record ReadyPublication(
+            StaticClientRuntimeEndpointState[] Endpoints, StaticEndpointSelectionSnapshot Snapshot,
+            StaticClusterReadinessSnapshot Readiness);
+
         public StaticClusterReadinessSnapshot PublishReadySnapshot(
             IReadOnlyList<StaticClientRuntimeEndpointState> endpointStates)
         {
-            ArgumentNullException.ThrowIfNull(endpointStates);
+            var arrays = new ClientConnection[endpointStates.Count][];
+            for (var index = 0; index < arrays.Length; index++) arrays[index] = endpointStates[index].ReadyConnections;
+            var publication = PrepareReadySnapshot(endpointStates, arrays);
+            CommitReadySnapshot(publication);
+            return publication.Readiness;
+        }
+
+        internal ReadyPublication PrepareReadySnapshot(
+            IReadOnlyList<StaticClientRuntimeEndpointState> endpointStates, ClientConnection[][] arrays)
+        {
             var ready = new List<StaticClientRuntimeEndpointState>(endpointStates.Count);
-            var readyConnections = 0;
+            var connectionCount = 0;
             for (var index = 0; index < endpointStates.Count; index++)
             {
-                var endpoint = endpointStates[index];
-                var endpointReadyConnections = endpoint.ReadyConnections.Length;
-                if (endpointReadyConnections == 0)
-                    continue;
-
-                ready.Add(endpoint);
-                readyConnections += endpointReadyConnections;
+                if (arrays[index].Length == 0) continue;
+                ready.Add(endpointStates[index]);
+                connectionCount += arrays[index].Length;
             }
-
             var endpoints = ready.ToArray();
             var existing = Volatile.Read(ref _readyEndpoints);
             var changed = !HasSameMembership(existing, endpoints);
+            var snapshot = _selectionSnapshot;
             if (changed)
             {
                 var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
                 for (var index = 0; index < endpoints.Length; index++)
                 {
                     var endpoint = endpoints[index];
-                    candidates[index] = new SharpLinkEndpointCandidate(
-                        endpoint.Configuration.Endpoint,
-                        endpoint.ReadyConnectionCountProvider,
-                        endpoint.ActiveCallCountProvider,
-                        generation: 1);
+                    candidates[index] = new SharpLinkEndpointCandidate(endpoint.Configuration.Endpoint,
+                        endpoint.ReadyConnectionCountProvider, endpoint.ActiveCallCountProvider, generation: 1);
                 }
-                Volatile.Write(ref _readyEndpoints, endpoints);
-                Volatile.Write(ref _selectionSnapshot, new StaticEndpointSelectionSnapshot(endpoints, candidates));
+                snapshot = new StaticEndpointSelectionSnapshot(endpoints, candidates);
             }
-
-            return new StaticClusterReadinessSnapshot(
-                ReadyEndpoints: endpoints.Length,
-                ReadyConnections: readyConnections,
-                ReadyEndpointDelta: endpoints.Length - existing.Length,
-                MembershipChanged: changed);
+            return new ReadyPublication(endpoints, snapshot, new StaticClusterReadinessSnapshot(
+                endpoints.Length, connectionCount, endpoints.Length - existing.Length, changed));
         }
+
+        internal void CommitReadySnapshot(ReadyPublication publication)
+        {
+            Volatile.Write(ref _readyEndpoints, publication.Endpoints);
+            Volatile.Write(ref _selectionSnapshot, publication.Snapshot);
+        }
+
+        public int SelectContractEndpoint(ContractRouteView view, EndpointSelectionPolicyGeneration policy,
+            ReadOnlySpan<int> capacities, ulong excluded)
+            => SelectContractEndpointCore(view, policy, capacities, excluded, ref _roundRobinCursor, ref _leastPendingCursor);
 
         public int Clear()
         {

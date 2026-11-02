@@ -59,7 +59,7 @@ internal sealed partial class SharpLinkClient
                 {
                     var index = (int)((start + (uint)offset) % (uint)current.Length);
                     var endpoint = current[index];
-                    if (endpoint.ReadyConnections.Length != 0 ||
+                    if (endpoint.HasReadyConnection ||
                         _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount != 0 ||
                         endpoint.ReconnectTask is { IsCompleted: false })
                     {
@@ -136,7 +136,7 @@ internal sealed partial class SharpLinkClient
                             {
                                 endpoint.ReconnectDelayTicks = ResolveReconnectCompletionDelay(
                                     baseDelay,
-                                    endpoint.ReadyConnections.Length != 0,
+                                    endpoint.HasReadyConnection,
                                     completionPolicy).Ticks;
                             }
                         }
@@ -180,7 +180,7 @@ internal sealed partial class SharpLinkClient
                !_connections.IsRetiringBudgetExceeded(_options.MaxRetiringConnections) &&
                _current.ReadyEndpointCount < Math.Min(_options.MinReadyEndpoints, _current.Current.Length) &&
                TotalActiveConnectionsLocked() < _options.MaxConnections &&
-               endpoint.ReadyConnections.Length == 0 && endpoint.ConnectingCount == 0 &&
+               !endpoint.HasReadyConnection && endpoint.ConnectingCount == 0 &&
                _connections.NonRetiringConnectionCount(endpoint) < _options.MaxConnectionsPerEndpoint;
 
         private int TotalActiveConnectionsLocked()

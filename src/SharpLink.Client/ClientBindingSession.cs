@@ -412,37 +412,44 @@ internal sealed class ClientBindingSession
     }
 
     internal Task RetireCandidateAsync(RpcBindingPublication target)
+        => RetireCandidateAsync(target, out _);
+
+    // Hand the actual existing physical owner to the caller BEFORE supervision can throw.
+    // A synchronous observer failure must not conceal a task which has already started.
+    internal Task RetireCandidateAsync(RpcBindingPublication target, out Task? originalCleanup)
     {
+        originalCleanup = null;
         if (!ReferenceEquals(target.Session, _session))
             throw new InvalidOperationException("A binding retirement cannot cross physical Sessions.");
-        Publication.Invalidate(target.Token); // Never nest publication -> Session gates.
         CleanupOwner? created = null;
         Task result;
         try
         {
+            Publication.Invalidate(target.Token); // Never nest publication -> Session gates.
             lock (_gate)
             {
-                if (_closed) return _terminalDrainTask!;
+                if (_closed) return originalCleanup = _terminalDrainTask!;
                 var record = _candidates[Protocol3BindingToken.Slot(target.Token)];
                 if (!ReferenceEquals(record?.Target, target))
                 {
                     // A superseded incarnation already belongs to its bounded cleanup owner.
                     foreach (var owner in _cleanupOwners)
-                        if (ReferenceEquals(owner.Record.Target, target)) return owner.Task;
+                        if (ReferenceEquals(owner.Record.Target, target)) return originalCleanup = owner.Task;
                     // Completed retirement is idempotent. No second Release marker is published.
-                    return Task.CompletedTask;
+                    return originalCleanup = Task.CompletedTask;
                 }
-                if (record!.Cleanup is { } existing) return existing.Task;
+                if (record!.Cleanup is { } existing) return originalCleanup = existing.Task;
                 created = CreateCleanupOwnerLocked(record);
                 result = created.Task;
             }
         }
         catch (Exception exception)
         {
-            var fallback = CloseAndJoinTerminal(exception);
+            var fallback = originalCleanup = CloseAndJoinTerminal(exception);
             _budget.Observe(fallback, "BindingCleanupTerminalFallback");
             return fallback;
         }
+        originalCleanup = result;
         _budget.Observe(result, "BindingCandidateCleanup");
         return result;
     }

@@ -295,15 +295,23 @@ internal sealed partial class SharpLinkClient
     private void QueueConnectionCleanup(ClientConnection connection, string operation, Exception? failure = null)
         => TrackFrameworkTask(Task.Run(async () =>
         {
-            try
+            Exception? failError = null;
+            Exception? disposeError = null;
+            try { if (failure is not null) connection.Fail(failure); }
+            catch (Exception error) { failError = error; }
+            Task? original = null;
+            try { original = DisposeDisconnectedConnectionAsync(connection); }
+            catch (Exception error) { disposeError = error; }
+            if (original is not null)
             {
-                if (failure is not null)
-                    connection.Fail(failure);
+                try { await original.ConfigureAwait(false); }
+                catch (Exception error) { disposeError = original.Exception is { } graph ? graph : error; }
             }
-            finally
-            {
-                await DisposeDisconnectedConnectionAsync(connection).ConfigureAwait(false);
-            }
+            if (failError is null && disposeError is null) return;
+            var errors = new ContractRouteFailure(2);
+            if (failError is not null) errors.Add("connection-fail", failError);
+            if (disposeError is not null) errors.Add("connection-dispose", disposeError);
+            errors.ThrowIfAny();
         }), operation);
 
     internal void MarkProtocolIdentityExhaustionDraining(ClientConnection connection)
@@ -431,7 +439,7 @@ internal sealed partial class SharpLinkClient
     {
         try
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await DisposeConnectionWithRouteFailuresAsync(connection).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException or SocketException)
         {

@@ -61,7 +61,10 @@ internal sealed partial class SharpLinkClient
         public void BeginStop()
         {
             lock (_gate)
+            {
                 Volatile.Write(ref _stopping, 1);
+                _client.ClearContractRoutingForStop();
+            }
         }
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken)
@@ -161,31 +164,32 @@ internal sealed partial class SharpLinkClient
                 endpoint = FindEndpointLocked(connection);
                 if (endpoint is null)
                     return;
+                if (!connection.TryBeginContractRouteDrain()) return;
                 connection.MarkDraining();
                 if (connection.ActiveCallCount == 0 && connection.CallAdmissionReservationCount == 0 &&
                     connection.Binding.ActiveOperationCount == 0)
                 {
                     endpoint.Connections.Remove(connection);
-                    PublishReadySnapshotLocked();
+                    connection.RetainContractRouteCutFailure(PublishReadySnapshotLocked());
                     retireImmediately = true;
                 }
                 else if (connection.RequiresCapacitySafeDrain)
                 {
                     // Local exhaustion/status12 must never force-close old calls to make retiring space.
                     // The connection remains charged to normal endpoint/pool capacity instead.
-                    PublishReadySnapshotLocked();
+                    connection.RetainContractRouteCutFailure(PublishReadySnapshotLocked());
                 }
                 else if (_retiringConnections.Add(connection) &&
                          _retiringConnections.Count > _options.MaxRetiringConnections)
                 {
                     _retiringConnections.Remove(connection);
                     endpoint.Connections.Remove(connection);
-                    PublishReadySnapshotLocked();
+                    connection.RetainContractRouteCutFailure(PublishReadySnapshotLocked());
                     forceClose = true;
                 }
                 else
                 {
-                    PublishReadySnapshotLocked();
+                    connection.RetainContractRouteCutFailure(PublishReadySnapshotLocked());
                 }
                 if (forceClose)
                 {
@@ -255,7 +259,7 @@ internal sealed partial class SharpLinkClient
                 if (!endpoint.Connections.Remove(connection))
                     return;
                 _retiringConnections.Remove(connection);
-                PublishReadySnapshotLocked();
+                connection.RetainContractRouteDetachFailure(PublishReadySnapshotLocked());
                 _client.QueueConnectionCleanup(connection, "StaticClusterIdleConnectionCleanup");
             }
             EnsureReconnect(endpoint);
@@ -439,6 +443,7 @@ internal sealed partial class SharpLinkClient
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
             Exception? connectFailure = null;
+            ContractRouteFailure? routeFailure = null;
             var failureStage = SharpLinkConnectionFailureStage.Dial;
             try
             {
@@ -483,18 +488,30 @@ internal sealed partial class SharpLinkClient
                     if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
                         throw CreateConnectionClosedException("Client stopped while connecting.");
                     endpoint.Connections.Add(createdConnection);
-                    PublishReadySnapshotLocked();
+                    routeFailure = PublishReadySnapshotLocked();
+                    if (routeFailure is { TopologyCommitted: false })
+                    {
+                        createdConnection.ObserveFatalFailureForAdmission();
+                        endpoint.Connections.Remove(createdConnection);
+                        throw routeFailure;
+                    }
                     try
                     {
                         _client.ReconcileResponseCompressionPreferenceAfterReadyPublication(session);
                     }
                     catch
                     {
+                        createdConnection.ObserveFatalFailureForAdmission();
                         endpoint.Connections.Remove(createdConnection);
-                        PublishReadySnapshotLocked();
+                        var rollbackFailure = PublishReadySnapshotLocked();
+                        if (rollbackFailure is not null)
+                        {
+                            if (routeFailure is null) routeFailure = rollbackFailure;
+                            else routeFailure.Add("connect-rollback", rollbackFailure);
+                        }
                         throw;
                     }
-                    if (endpoint.ReadyConnections.Length != 0)
+                    if (endpoint.HasReadyConnection)
                         endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                     session.NotifyConnected();
                     _client.TrackFrameworkTask(
@@ -506,6 +523,7 @@ internal sealed partial class SharpLinkClient
                 }
                 session = null;
                 connection = null;
+                transport = null;
                 PublishClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
@@ -524,8 +542,16 @@ internal sealed partial class SharpLinkClient
                     endpoint.ConnectingCount--;
             }
             if (connectFailure is not null)
+            {
+                if (routeFailure is not null && !ReferenceEquals(connectFailure, routeFailure))
+                {
+                    routeFailure.Add("connect-body", connectFailure);
+                    connectFailure = routeFailure;
+                }
                 await RethrowAfterFailedConnectionCleanupAsync(connectFailure, transport, connection, session)
                     .ConfigureAwait(false);
+            }
+            routeFailure?.ThrowIfAny();
         }
 
         private void HandleDisconnected(EndpointState endpoint, ClientConnection connection, Exception exception)
@@ -538,8 +564,8 @@ internal sealed partial class SharpLinkClient
                 if (!endpoint.Connections.Remove(connection))
                     return;
                 _retiringConnections.Remove(connection);
-                PublishReadySnapshotLocked();
-                if (endpoint.ReadyConnections.Length == 0)
+                connection.RetainContractRouteDetachFailure(PublishReadySnapshotLocked());
+                if (!endpoint.HasReadyConnection)
                 {
                     var reconnectPolicy = _client.CaptureReconnectPolicy().Policy;
                     if (_client.HasReachedReconnectStableWindow(
@@ -580,7 +606,7 @@ internal sealed partial class SharpLinkClient
                 {
                     var index = (int)((start + (uint)offset) % (uint)_endpoints.Length);
                     var endpoint = _endpoints[index];
-                    if (endpoint.ReadyConnections.Length != 0 ||
+                    if (endpoint.HasReadyConnection ||
                         endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0 ||
                         endpoint.ReconnectTask is { IsCompleted: false })
                     {
@@ -641,7 +667,7 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 LogClientConnectionAttemptFailed(_client._logger, nameof(ExpandAsync), exception);
-                if (endpoint.ReadyConnections.Length == 0)
+                if (!endpoint.HasReadyConnection)
                     EnsureReconnect(endpoint);
             }
         }
@@ -686,7 +712,7 @@ internal sealed partial class SharpLinkClient
                             {
                                 endpoint.ReconnectDelayTicks = ResolveReconnectCompletionDelay(
                                     baseDelay,
-                                    endpoint.ReadyConnections.Length != 0,
+                                    endpoint.HasReadyConnection,
                                     completionPolicy).Ticks;
                             }
                         }
@@ -731,19 +757,74 @@ internal sealed partial class SharpLinkClient
             _client.TransitionTo(SharpLinkConnectionState.Ready);
         }
 
-        private void PublishReadySnapshotLocked()
-        {
-            for (var index = 0; index < _endpoints.Length; index++)
-                _endpoints[index].PublishReadyConnections();
+        private sealed record PreparedRoutePublication(ClientConnection[][] Arrays,
+            StaticClusterTopologyState.ReadyPublication Ready, ContractRouteTopology Topology,
+            ContractRouteFailure Failures);
 
-            var publication = _topology.PublishReadySnapshot(_endpoints);
-            if (publication.ReadyEndpointDelta != 0)
-                SharpLinkTelemetry.AddClientReadyEndpoints(publication.ReadyEndpointDelta);
-            _client.PublishReadinessFacts(new ClientReadinessFacts(
-                ActiveEndpoints: _endpoints.Length,
-                ReadyEndpoints: publication.ReadyEndpoints,
-                ReadyConnections: publication.ReadyConnections,
-                TargetReadyEndpoints: TargetReadyEndpointCount));
+        private PreparedRoutePublication PrepareReadySnapshotLocked(ClientConnection? excluded = null)
+        {
+            try
+            {
+                _client.ContractRoutePublicationForTesting?.Invoke("topology-prebuild");
+                var failures = new ContractRouteFailure();
+                var arrays = new ClientConnection[_endpoints.Length][];
+                var routes = new List<ContractRouteEndpoint>(_endpoints.Length);
+                for (var index = 0; index < _endpoints.Length; index++)
+                {
+                    var endpoint = _endpoints[index];
+                    var ready = endpoint.Connections.Where(connection => connection.CanAcceptCalls &&
+                        !ReferenceEquals(connection, excluded)).ToArray();
+                    arrays[index] = ready;
+                    if (ready.Length != 0)
+                        routes.Add(new ContractRouteEndpoint(endpoint, endpoint.Configuration.Endpoint, 1, ready,
+                            endpoint.ActiveCallCountProvider, _ => EnsureExpansion(endpoint)));
+                }
+                var publication = _topology.PrepareReadySnapshot(_endpoints, arrays);
+                var topology = _client.BuildContractRouteTopology(routes.ToArray(), _topology);
+                return new PreparedRoutePublication(arrays, publication, topology, failures);
+            }
+            catch (Exception error)
+            {
+                if (error is ContractRouteFailure) throw;
+                var failure = new ContractRouteFailure();
+                failure.Add("topology-prebuild", error);
+                throw failure;
+            }
+        }
+
+        private ContractRouteFailure? CommitReadySnapshotLocked(PreparedRoutePublication prepared)
+        {
+            var failures = prepared.Failures;
+            for (var index = 0; index < _endpoints.Length; index++)
+                _endpoints[index].PublishReadyConnections(prepared.Arrays[index]);
+            _topology.CommitReadySnapshot(prepared.Ready);
+            failures.TopologyCommitted = true;
+            _client.CommitContractRouteTopology(prepared.Topology, failures);
+            try
+            {
+                var readiness = prepared.Ready.Readiness;
+                if (readiness.ReadyEndpointDelta != 0)
+                    SharpLinkTelemetry.AddClientReadyEndpoints(readiness.ReadyEndpointDelta);
+                _client.PublishReadinessFacts(new ClientReadinessFacts(_endpoints.Length,
+                    readiness.ReadyEndpoints, readiness.ReadyConnections, TargetReadyEndpointCount));
+            }
+            catch (Exception error) { failures.Add("static-readiness", error); }
+            return failures.Count == 0 ? null : failures;
+        }
+
+        private ContractRouteFailure? PublishReadySnapshotLocked()
+        {
+            try { return CommitReadySnapshotLocked(PrepareReadySnapshotLocked()); }
+            catch (Exception error)
+            {
+                var failure = new ContractRouteFailure();
+                failure.Add("static-topology-build", error);
+                // External fatal cuts cannot be rolled back. Preserve old safe route arrays, but
+                // publish LIVE transport facts so original reconnect predicates cannot get stuck.
+                try { _client.PublishReadinessFacts(new ClientReadinessFacts(_endpoints.Length, _topology.ReadyEndpointCount, _topology.ReadyConnectionCount, TargetReadyEndpointCount)); }
+                catch (Exception factsFailure) { failure.Add("failed-topology-live-readiness", factsFailure); }
+                return failure;
+            }
         }
 
         private static ClientConnection? SelectConnection(EndpointState endpoint)
@@ -769,7 +850,7 @@ internal sealed partial class SharpLinkClient
             => Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested &&
                _topology.ReadyEndpointCount < TargetReadyEndpointCount &&
                TotalConnectionsLocked() < _options.MaxConnections &&
-               endpoint.ReadyConnections.Length == 0 && endpoint.ConnectingCount == 0 &&
+               !endpoint.HasReadyConnection && endpoint.ConnectingCount == 0 &&
                endpoint.NonRetiringConnectionCount < _options.MaxConnectionsPerEndpoint;
 
         private int CountConnections(Func<ClientConnection, int> count)
@@ -791,6 +872,7 @@ internal sealed partial class SharpLinkClient
             ClientConnection[] connections;
             lock (_gate)
             {
+                _client.ClearContractRoutingForStop();
                 connections = [.. _endpoints.SelectMany(static endpoint => endpoint.Connections)];
                 for (var index = 0; index < _endpoints.Length; index++)
                     _endpoints[index].Connections.Clear();
@@ -808,7 +890,8 @@ internal sealed partial class SharpLinkClient
             var stopping = CreateConnectionClosedException("Client is stopping.");
             for (var index = 0; index < connections.Length; index++)
             {
-                connections[index].Fail(stopping);
+                try { connections[index].Fail(stopping); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
                 try { await DisposeConnectionAsync(connections[index]).ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
@@ -837,7 +920,7 @@ internal sealed partial class SharpLinkClient
 
         private static async Task DisposeConnectionAsync(ClientConnection connection)
         {
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            try { await DisposeConnectionWithRouteFailuresAsync(connection).ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
         }
     }

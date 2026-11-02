@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
     /// dynamic-cluster selection hot path. Mutations are serialized by DynamicClusterRuntime's
     /// existing gate; readers only observe arrays published with volatile reads/writes.
     /// </summary>
-    private sealed class DynamicClusterTopologyState : System.Collections.IEnumerable
+    private sealed class DynamicClusterTopologyState : System.Collections.IEnumerable, IContractRouteSelection
     {
         private readonly EndpointSelectionPolicyState _selectionPolicy;
         private readonly Dictionary<string, DynamicEndpointState> _currentById = new(StringComparer.Ordinal);
@@ -30,7 +30,16 @@ internal sealed partial class SharpLinkClient
         public DynamicEndpointState[] Current => _current;
         public IReadOnlyList<DynamicEndpointState> States => _allStates;
         public long LastAcceptedVersion => _lastAcceptedVersion;
-        public int ReadyEndpointCount => Volatile.Read(ref _readyEndpoints).Length;
+        public int ReadyEndpointCount
+        {
+            get
+            {
+                var count = 0;
+                foreach (var endpoint in Volatile.Read(ref _readyEndpoints))
+                    if (endpoint.HasReadyConnection) count++;
+                return count;
+            }
+        }
         public DynamicEndpointSelectionSnapshot SelectionSnapshot => Volatile.Read(ref _selectionSnapshot);
         public bool HasAcceptedEmptyTopology => _lastAcceptedVersion >= 0 && _current.Length == 0;
 
@@ -57,7 +66,7 @@ internal sealed partial class SharpLinkClient
                 var endpoints = Volatile.Read(ref _readyEndpoints);
                 var count = 0;
                 for (var index = 0; index < endpoints.Length; index++)
-                    count += endpoints[index].ReadyConnections.Length;
+                    count += endpoints[index].LiveReadyConnectionCount;
                 return count;
             }
         }
@@ -71,6 +80,12 @@ internal sealed partial class SharpLinkClient
         public void AddState(DynamicEndpointState state) => _allStates.Add(state);
 
         public void RemoveState(DynamicEndpointState state) => _allStates.Remove(state);
+
+        public void PrepareCommitCapacity(int endpointCount, int addedStates)
+        {
+            _currentById.EnsureCapacity(endpointCount);
+            _allStates.EnsureCapacity(_allStates.Count + addedStates);
+        }
 
         public void CommitCurrent(
             Dictionary<string, DynamicEndpointState> nextById,
@@ -115,46 +130,59 @@ internal sealed partial class SharpLinkClient
             return true;
         }
 
+        internal sealed record ReadyPublication(
+            DynamicEndpointState[] Endpoints, DynamicEndpointSelectionSnapshot Snapshot,
+            DynamicClusterReadinessSnapshot Readiness);
+
         public DynamicClusterReadinessSnapshot PublishReadySnapshot(bool force = false)
         {
-            var ready = new List<DynamicEndpointState>(_current.Length);
-            var readyConnections = 0;
-            for (var index = 0; index < _current.Length; index++)
-            {
-                var endpoint = _current[index];
-                var endpointReadyConnections = endpoint.ReadyConnections.Length;
-                if (endpointReadyConnections != 0)
-                {
-                    ready.Add(endpoint);
-                    readyConnections += endpointReadyConnections;
-                }
-            }
+            var arrays = new ClientConnection[_current.Length][];
+            for (var index = 0; index < arrays.Length; index++) arrays[index] = _current[index].ReadyConnections;
+            var publication = PrepareReadySnapshot(arrays, force);
+            CommitReadySnapshot(publication);
+            return publication.Readiness;
+        }
 
+        internal ReadyPublication PrepareReadySnapshot(ClientConnection[][] arrays, bool force = false,
+            DynamicEndpointState[]? prospective = null, SharpLinkEndpoint[]? definitions = null)
+        {
+            var current = prospective ?? _current;
+            var ready = new List<DynamicEndpointState>(current.Length);
+            var connectionCount = 0;
+            for (var index = 0; index < current.Length; index++)
+            {
+                if (arrays[index].Length == 0) continue;
+                ready.Add(current[index]);
+                connectionCount += arrays[index].Length;
+            }
             var endpoints = ready.ToArray();
-            var existing = Volatile.Read(ref _readyEndpoints);
-            var changed = force || !HasSameMembership(existing, endpoints);
+            var changed = force || !HasSameMembership(Volatile.Read(ref _readyEndpoints), endpoints);
+            var snapshot = _selectionSnapshot;
             if (changed)
             {
                 var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
                 for (var index = 0; index < endpoints.Length; index++)
                 {
                     var endpoint = endpoints[index];
-                    candidates[index] = new SharpLinkEndpointCandidate(
-                        endpoint.Configuration.Endpoint,
-                        endpoint.ReadyConnectionCountProvider,
-                        endpoint.ActiveCallCountProvider,
-                        endpoint.Generation);
+                    var definition = definitions is null ? endpoint.Configuration.Endpoint : definitions[Array.IndexOf(current, endpoint)];
+                    candidates[index] = new SharpLinkEndpointCandidate(definition,
+                        endpoint.ReadyConnectionCountProvider, endpoint.ActiveCallCountProvider, endpoint.Generation);
                 }
-                Volatile.Write(ref _readyEndpoints, endpoints);
-                Volatile.Write(ref _selectionSnapshot, new DynamicEndpointSelectionSnapshot(endpoints, candidates));
+                snapshot = new DynamicEndpointSelectionSnapshot(endpoints, candidates);
             }
-
-            return new DynamicClusterReadinessSnapshot(
-                _current.Length,
-                endpoints.Length,
-                readyConnections,
-                changed);
+            return new ReadyPublication(endpoints, snapshot,
+                new DynamicClusterReadinessSnapshot(current.Length, endpoints.Length, connectionCount, changed));
         }
+
+        internal void CommitReadySnapshot(ReadyPublication publication)
+        {
+            Volatile.Write(ref _readyEndpoints, publication.Endpoints);
+            Volatile.Write(ref _selectionSnapshot, publication.Snapshot);
+        }
+
+        public int SelectContractEndpoint(ContractRouteView view, EndpointSelectionPolicyGeneration policy,
+            ReadOnlySpan<int> capacities, ulong excluded)
+            => SelectContractEndpointCore(view, policy, capacities, excluded, ref _roundRobinCursor, ref _leastPendingCursor);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int SelectEndpoint(DynamicEndpointSelectionSnapshot snapshot, ulong excluded)
@@ -279,6 +307,18 @@ internal sealed partial class SharpLinkClient
         public bool FactoryReleased { get; set; }
         public Task? ReconnectTask { get; set; }
         public Task? ExpansionTask { get; set; }
+
+        internal int LiveReadyConnectionCount
+        {
+            get
+            {
+                var count = 0;
+                foreach (var connection in ReadyConnections)
+                    if (connection.CanAcceptCalls) count++;
+                return count;
+            }
+        }
+        internal bool HasReadyConnection => LiveReadyConnectionCount != 0;
 
         public int ActiveCallCount => GetActiveCallCount();
 

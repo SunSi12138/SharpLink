@@ -194,6 +194,8 @@ internal sealed partial class SharpLinkClient
             ITransportConnection? transport = null;
             ClientConnection? replacement = null;
             var replacementCommitReserved = false;
+            var published = false;
+            ContractRouteFailure? routeFailure = null;
             var failureStage = SharpLinkConnectionFailureStage.Dial;
             try
             {
@@ -240,7 +242,6 @@ internal sealed partial class SharpLinkClient
                         exception ?? CreateConnectionClosedException("Transport closed."));
                 };
 
-                var published = false;
                 var sourceGone = false;
                 var retryReplacement = false;
                 lock (_gate)
@@ -284,6 +285,17 @@ internal sealed partial class SharpLinkClient
                         else
                         {
                             replacementCommitReserved = true;
+                            PreparedRoutePublication prepared;
+                            try
+                            {
+                                _sessionRefreshDebt.EnsureCapacity(_sessionRefreshDebt.Count + 1);
+                                prepared = PrepareReadySnapshotLocked(source);
+                            }
+                            catch
+                            {
+                                endpoint.Connections.Remove(publishedReplacement);
+                                throw;
+                            }
                             if (!publishedReplacement.TryCommitSessionRefreshRetirement(source))
                             {
                                 // A fatal transition linearized before the eligibility cut while this
@@ -294,21 +306,27 @@ internal sealed partial class SharpLinkClient
                             }
                             else
                             {
+                                published = true; // Physical cut succeeded: cleanup must not reclaim the pool owner.
                                 CompleteSessionRefreshDebtLocked(
                                     _sessionRefreshDebt, source, publishedReplacement, processedRequest);
-                                PublishReadySnapshotLocked();
+                                routeFailure = CommitReadySnapshotLocked(prepared);
                                 endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
                                 _client._afterSessionRefreshEligibilitySwapTestHook?.Invoke();
-                                published = true;
                             }
                         }
                     }
                 }
 
+                if (published)
+                {
+                    session = null;
+                    replacement = null;
+                    transport = null;
+                }
                 if (replacementCommitReserved)
                 {
-                    publishedReplacement.ReleaseCallAdmissionReservation();
                     replacementCommitReserved = false;
+                    publishedReplacement.ReleaseCallAdmissionReservation();
                 }
 
                 if (!published)
@@ -323,18 +341,41 @@ internal sealed partial class SharpLinkClient
                 replacement = null;
                 TryAdvancePlannedSessionRefreshRetirement(source);
                 PublishClientReadiness();
+                routeFailure?.ThrowIfAny();
                 return true;
             }
             catch (Exception exception)
             {
+                Exception primary = exception;
+                if (routeFailure is not null)
+                {
+                    if (!ReferenceEquals(exception, routeFailure)) routeFailure.Add("refresh-body", exception);
+                    primary = routeFailure;
+                }
                 if (replacementCommitReserved && replacement is not null)
-                    replacement.ReleaseCallAdmissionReservation();
+                {
+                    replacementCommitReserved = false;
+                    try { replacement.ReleaseCallAdmissionReservation(); }
+                    catch (Exception releaseError)
+                    {
+                        var errors = new ContractRouteFailure(2);
+                        errors.Add("refresh-body", primary);
+                        errors.Add("refresh-reservation-release", releaseError);
+                        primary = errors;
+                    }
+                }
+                if (published)
+                {
+                    session = null;
+                    replacement = null;
+                    transport = null;
+                }
                 if (exception is not OperationCanceledException ||
                     (!cancellationToken.IsCancellationRequested && !_client._shutdownCts.IsCancellationRequested))
                 {
                     _client.RecordClusterConnectionFailure(failureStage, exception, endpoint.Index);
                 }
-                await RethrowAfterFailedConnectionCleanupAsync(exception, transport, replacement, session)
+                await RethrowAfterFailedConnectionCleanupAsync(primary, transport, replacement, session)
                     .ConfigureAwait(false);
                 throw new UnreachableException();
             }
@@ -378,7 +419,7 @@ internal sealed partial class SharpLinkClient
                 if (endpoint.Connections.Remove(source))
                 {
                     _retiringConnections.Remove(source);
-                    PublishReadySnapshotLocked();
+                    source.RetainContractRouteDetachFailure(PublishReadySnapshotLocked());
                     _client.QueueConnectionCleanup(source, "StaticClusterSessionRefreshRetiredConnectionCleanup");
                     dispose = true;
                 }

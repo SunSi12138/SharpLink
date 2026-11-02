@@ -53,6 +53,18 @@ internal sealed partial class SharpLinkClient
             return _excludedMask;
         }
 
+        public ulong GetContractExcludedMask(object indexMap, ulong eligible)
+        {
+            if (!ReferenceEquals(_snapshot, indexMap))
+            {
+                _snapshot = indexMap;
+                _excludedMask = 0;
+            }
+            if (eligible != 0 && (_excludedMask & eligible) == eligible)
+                _excludedMask = 0;
+            return _excludedMask;
+        }
+
         public void Exclude(object snapshot, int index)
         {
             if (!ReferenceEquals(_snapshot, snapshot))

@@ -33,6 +33,30 @@ internal sealed class ClientConnection :
     private int _disposed;
     private int _localAdmissionDrainReasons; // bit0: identity exhaustion; bit1: peer binding status12
 
+    // Assigned by the physical topology owner; moved only into that owner's real cleanup.
+    // One effective admission cut and one detach, never an append-only route history.
+    private bool _contractRouteDrainPublished;
+    private SharpLinkClient.ContractRouteFailure? _contractRouteCutFailure;
+    private SharpLinkClient.ContractRouteFailure? _contractRouteDetachFailure;
+    internal bool TryBeginContractRouteDrain()
+    {
+        if (_contractRouteDrainPublished) return false;
+        _contractRouteDrainPublished = true;
+        return true;
+    }
+    internal void RetainContractRouteCutFailure(SharpLinkClient.ContractRouteFailure? failure)
+        => _contractRouteCutFailure = failure;
+    internal void RetainContractRouteDetachFailure(SharpLinkClient.ContractRouteFailure? failure)
+        => _contractRouteDetachFailure = failure;
+    internal SharpLinkClient.ContractRouteFailure? TakeContractRouteFailures()
+    {
+        var cut = Interlocked.Exchange(ref _contractRouteCutFailure, null);
+        var detach = Interlocked.Exchange(ref _contractRouteDetachFailure, null);
+        if (cut is null) return detach;
+        if (detach is not null) cut.Add("physical-detach", detach);
+        return cut;
+    }
+
     public ClientConnection(
         SharpLinkClient client,
         RpcSession session,

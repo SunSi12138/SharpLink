@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
         private readonly Lock _bindingGate = new();
         private readonly Dictionary<ClientConnection, BindingAttempt> _bindingAttempts = [];
         private BoundTarget[] _boundTargets = [];
-        private TaskCompletionSource _bindingSignal = NewBindingSignal();
+        private TaskCompletionSource<Exception?> _bindingSignal = NewBindingSignal();
         private int _bindingWaiters;
         private bool _demandRetired;
         private readonly CancellationTokenSource _demandRetirement = new();
@@ -24,7 +24,45 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        internal bool TryCompleteReadyPreparation(TimeSpan timeout, long started, CancellationToken cancellationToken)
+        // Only a new explicit cold Prepare may reopen an infrastructure failure after
+        // its original candidate cleanup completed. Previously captured notifications
+        // keep their immutable error result even after this current signal is replaced.
+        internal Task<Exception?> BeginPreparation()
+        {
+            lock (_bindingGate)
+            {
+                // A fresh caller can use an already-confirmed route even if a different
+                // attempt failed. Existing waiters retain THEIR captured failure instead.
+                if (_owner._cluster is null ? HasBoundRoute : _contractRouteView.HasEligibleTarget())
+                    return Task.FromResult<Exception?>(null);
+                foreach (var pair in _bindingAttempts)
+                    if (!pair.Value.Completed && pair.Value.PublicationFailure is { } pending)
+                        throw pending;
+                var nextSignal = NewBindingSignal();
+                foreach (var pair in _bindingAttempts)
+                    if (pair.Value.Completed) pair.Value.PublicationFailure = null;
+                var oldSignal = _bindingSignal;
+                _bindingSignal = nextSignal;
+                oldSignal.TrySetResult(null);
+                return nextSignal.Task;
+            }
+        }
+
+        private static void ThrowCapturedPublicationFailure(Task<Exception?> notification)
+        {
+            if (notification.IsCompletedSuccessfully && notification.GetAwaiter().GetResult() is { } error)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        }
+
+        private Exception? CapturePublicationFailureLocked()
+        {
+            foreach (var pair in _bindingAttempts)
+                if (pair.Value.PublicationFailure is { } error) return error;
+            return null;
+        }
+
+        internal bool TryCompleteReadyPreparation(TimeSpan timeout, long started, CancellationToken cancellationToken,
+            Task<Exception?> notification)
         {
             lock (_bindingGate)
             {
@@ -35,7 +73,12 @@ internal sealed partial class SharpLinkClient
                     _owner.State is SharpLinkConnectionState.Draining or SharpLinkConnectionState.Stopped)
                     throw CreateConnectionClosedException("Client is stopping or stopped.");
                 LocalControl.ThrowIfRetired();
-                return HasBoundRoute;
+                ThrowCapturedPublicationFailure(notification);
+                ReconcileContractRoute();
+                if (_owner._cluster is null ? HasBoundRoute : _contractRouteView.HasEligibleTarget()) return true;
+                if (CapturePublicationFailureLocked() is { } publicationFailure)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(publicationFailure).Throw();
+                return false;
             }
         }
 
@@ -45,12 +88,13 @@ internal sealed partial class SharpLinkClient
             {
                 if (_demandRetired || LocalControl.IsRetired)
                     return false;
-                foreach (var stale in _bindingAttempts.Keys.Where(static item => !item.Session.IsConnected).ToArray())
+                foreach (var stale in _bindingAttempts.Where(static pair => pair.Value.Completed && !pair.Key.Session.IsConnected)
+                    .Select(static pair => pair.Key).ToArray())
                     _bindingAttempts.Remove(stale);
                 if (_bindingAttempts.TryGetValue(connection, out var attempt))
                 {
                     if (!attempt.Completed || attempt.Failure is not null && !retryCompletedFailures &&
-                        !IsRetryableBindingCapacityFailure(attempt.Failure))
+                        !attempt.RouteBuildFailed && !IsRetryableBindingCapacityFailure(attempt.Failure))
                         return false; // deterministic failures wait for a cold Session/Manifest/invalidation event
                     if (_boundTargets.Any(target => ReferenceEquals(target.Connection, connection) && target.IsEligible))
                         return false;
@@ -63,15 +107,44 @@ internal sealed partial class SharpLinkClient
         internal void PublishBinding(BoundTarget binding)
         {
             var connection = binding.Connection;
+            _owner.ContractRouteBuildForTesting?.Invoke(this, "before-bind-lock");
             lock (_bindingGate)
             {
-                if (_demandRetired || LocalControl.IsRetired || !connection.CanAcceptCalls)
+                if (_demandRetired || LocalControl.IsRetired || Volatile.Read(ref _owner._contractRoutesStopped) || !connection.CanAcceptCalls)
                     throw NoBoundRoute();
-                var targets = _boundTargets.Where(target => !ReferenceEquals(target.Connection, connection) && target.IsEligible)
-                    .Append(binding).ToArray();
-                Volatile.Write(ref _boundTargets, targets);
-                _bindingAttempts[connection].Completed = true;
-                PulseBindingWaitersLocked();
+                var attempt = _bindingAttempts[connection];
+                try
+                {
+                    if (_bindingRevision == ulong.MaxValue)
+                    {
+                        ExhaustContractRouteRevision();
+                        throw RouteRevisionExhausted();
+                    }
+                    _owner.ContractRouteBuildForTesting?.Invoke(this, "targets");
+                    var targets = _boundTargets.Where(target => !ReferenceEquals(target.Connection, connection) && target.IsEligible)
+                        .Append(binding).ToArray();
+                    var topology = LatestContractTopologyLocked();
+                    var view = BuildContractRouteLocked(topology, targets, _bindingRevision + 1);
+                    _owner.ContractRouteBuildForTesting?.Invoke(this, "signal");
+                    var signal = NewBindingSignal();
+                    // Everything which can fail construction is above this point.
+                    attempt.Completed = true;
+                    // A real successful Bind publication recovers current failure authority;
+                    // it cannot erase errors already stored in a captured notification.
+                    foreach (var pair in _bindingAttempts) pair.Value.PublicationFailure = null;
+                    CommitContractRouteLocked(view, signal);
+                }
+                catch (Exception error)
+                {
+                    // Publish the original cold error before physical retirement can wait.
+                    // Completed/Failure remain owned by BindingFailed AFTER actual cleanup.
+                    attempt.PublicationFailure = error;
+                    attempt.RouteBuildFailed = true;
+                    _bindingSignal.TrySetResult(error);
+                    var failure = new ContractRouteFailure(1);
+                    failure.Add("bind-route-build", error);
+                    throw failure;
+                }
             }
         }
 
@@ -79,12 +152,15 @@ internal sealed partial class SharpLinkClient
         {
             lock (_bindingGate)
             {
+                var nextSignal = NewBindingSignal();
                 if (_bindingAttempts.TryGetValue(connection, out var attempt))
                 {
                     attempt.Completed = true;
                     attempt.Failure = exception;
                 }
-                PulseBindingWaitersLocked();
+                var oldSignal = _bindingSignal;
+                _bindingSignal = nextSignal;
+                oldSignal.TrySetResult(CapturePublicationFailureLocked());
             }
         }
 
@@ -92,6 +168,7 @@ internal sealed partial class SharpLinkClient
         {
             lock (_bindingGate)
             {
+                if (CapturePublicationFailureLocked() is { } publicationFailure) return publicationFailure;
                 Exception? failure = null;
                 foreach (var pair in _bindingAttempts)
                 {
@@ -114,14 +191,21 @@ internal sealed partial class SharpLinkClient
                 _demandRetired = true;
                 targets = _boundTargets;
                 Volatile.Write(ref _boundTargets, []);
-                PulseBindingWaitersLocked();
+                Volatile.Write(ref _contractRouteView, ContractRouteView.Empty);
+                _bindingSignal.TrySetResult(CapturePublicationFailureLocked());
             }
-            _demandRetirement.Cancel();
+            var failures = new ContractRouteFailure(targets.Length * 2 + 1);
+            try { _demandRetirement.Cancel(); }
+            catch (Exception error) { failures.Add("demand-cancel", error); }
             foreach (var target in targets)
             {
-                target.Connection.Binding.Publication.Invalidate(target.Token);
-                _ = _owner.RetireBindingCandidateAsync(target); // Session owns/supervises the coalesced cleanup Task once.
+                try { target.Connection.Binding.Publication.Invalidate(target.Token); }
+                catch (Exception error) { failures.Add("demand-invalidate", error); }
+                try { _ = _owner.RetireBindingCandidateAsync(target); }
+                catch (Exception error) { failures.Add("demand-retirement-start", error); }
+                // Session retains/observes each actual coalesced cleanup Task; no substitute task.
             }
+            failures.ThrowIfAny();
         }
 
         internal void EnterBindingWaiter()
@@ -134,15 +218,15 @@ internal sealed partial class SharpLinkClient
             }
         }
         internal void ExitBindingWaiter() => Interlocked.Decrement(ref _bindingWaiters);
-        internal Task CaptureBindingSignal() { lock (_bindingGate) return _bindingSignal.Task; }
+        internal Task<Exception?> CaptureBindingSignal() { lock (_bindingGate) return _bindingSignal.Task; }
         internal void PulseBindingWaiters() { lock (_bindingGate) PulseBindingWaitersLocked(); }
         private void PulseBindingWaitersLocked()
         {
             var signal = _bindingSignal;
             _bindingSignal = NewBindingSignal();
-            signal.TrySetResult();
+            signal.TrySetResult(CapturePublicationFailureLocked());
         }
-        private static TaskCompletionSource NewBindingSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private static TaskCompletionSource<Exception?> NewBindingSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private void ValidateInvocationIdentity(RpcMethodDescriptor method, RpcMethodKind kind)
         {
@@ -163,26 +247,12 @@ internal sealed partial class SharpLinkClient
             EndpointRetrySelectionState? retrySelection, AttemptOutcomeState? outcome, out BoundTarget bindingId)
         {
             LocalControl.ThrowIfRetired();
+            if (Volatile.Read(ref _contractRouteRevisionExhausted)) throw RouteRevisionExhausted();
+            if (_owner._cluster is not null)
+                return ReserveClusterBoundConnection(retrySelection, outcome, out bindingId);
             var targets = Volatile.Read(ref _boundTargets);
-            if (targets.Length == 0)
-                throw NoBoundRoute();
-            if (_owner._cluster is null)
-                return ReserveFixedBoundConnection(targets, outcome, out bindingId);
-
-            // Cluster-specific cold scoped views remain an explicit nonshipping integration gate.
-            // Never carry a token across a replacement redirect: only this exact returned physical owner qualifies.
-            var connection = _owner.GetReadyConnection(method, retrySelection, outcome);
-            foreach (var target in targets)
-            {
-                if (ReferenceEquals(target.Connection, connection) && target.IsValidForReservedCall && !LocalControl.IsRetired)
-                {
-                    bindingId = target;
-                    return connection;
-                }
-            }
-            connection.ReleaseCallAdmissionReservation();
-            bindingId = null!;
-            throw NoBoundRoute();
+            if (targets.Length == 0) throw NoBoundRoute();
+            return ReserveFixedBoundConnection(targets, outcome, out bindingId);
         }
 
         private ClientConnection ReserveFixedBoundConnection(BoundTarget[] targets,
@@ -238,6 +308,8 @@ internal sealed partial class SharpLinkClient
         {
             internal bool Completed;
             internal Exception? Failure;
+            internal Exception? PublicationFailure;
+            internal bool RouteBuildFailed;
         }
         internal sealed class BoundTarget(ClientConnection connection, ulong token)
             : RpcBindingPublication(connection.Session, token)

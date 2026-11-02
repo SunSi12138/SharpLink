@@ -147,32 +147,26 @@ internal sealed partial class SharpLinkClient
             return endpoint is not null && Remove(endpoint, connection);
         }
 
-        public bool BeginEndpointRetirement(
-            DynamicEndpointState endpoint,
-            List<ClientConnection> connectionsToDispose)
-        {
-            ArgumentNullException.ThrowIfNull(endpoint);
-            ArgumentNullException.ThrowIfNull(connectionsToDispose);
-            if (endpoint.Retiring)
-                return false;
-            endpoint.Retiring = true;
-            if (!_connectionsByEndpoint.TryGetValue(endpoint, out var connections) || connections.Count == 0)
-                return true;
+        public void PrepareRetirementCapacity(int connections)
+            => _retiringConnections.EnsureCapacity(_retiringConnections.Count + connections);
 
-            var snapshot = connections.ToArray();
-            for (var index = 0; index < snapshot.Length; index++)
+        public bool BeginEndpointRetirement(DynamicEndpointState endpoint,
+            List<ClientConnection> connectionsToDispose, ClientConnection[] snapshot,
+            ContractRouteFailure failures)
+        {
+            if (endpoint.Retiring) return false;
+            endpoint.Retiring = true;
+            foreach (var connection in snapshot)
             {
-                var connection = snapshot[index];
-                connection.MarkDraining();
-                if (connection.ActiveCallCount == 0)
+                try { connection.MarkDraining(); }
+                catch (Exception error) { failures.Add("resolver-connection-drain", error); }
+                if (connection.ActiveCallCount == 0 && connection.CallAdmissionReservationCount == 0 &&
+                    connection.Binding.ActiveOperationCount == 0)
                 {
                     Remove(endpoint, connection);
                     connectionsToDispose.Add(connection);
                 }
-                else
-                {
-                    _retiringConnections.Add(connection);
-                }
+                else _retiringConnections.Add(connection);
             }
             return true;
         }
