@@ -180,7 +180,8 @@ internal sealed partial class SharpLinkServer
                 newAssembly)));
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
+        // Preparation remains synchronous and transactional. The caller token
+        // only cancels the final wait; it cannot veto or reclassify publication.
         RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
         RetirementGraceBudget retirementBudget;
         using (RetirementCallbackScope.Enter(_runtimeContext.Domain))
@@ -312,10 +313,9 @@ internal sealed partial class SharpLinkServer
                 var replacementDependencyError = ValidateReplacementDependants(oldModule!, manifest!, currentModules);
                 if (replacementDependencyError is not null)
                     return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(replacementDependencyError));
-                cancellationToken.ThrowIfCancellationRequested();
                 var candidate = BuildRegistrationCandidate(
                     manifest!, retainedServices, currentModules, retainedCodecs,
-                    out newModule, out codecRegistration, out candidateFactsGroup, out candidateSnapshot, out var error, cancellationToken);
+                    out newModule, out codecRegistration, out candidateFactsGroup, out candidateSnapshot, out var error);
                 if (error is not null)
                 {
                     rollbackError = error;
@@ -357,7 +357,6 @@ internal sealed partial class SharpLinkServer
                                 "Server stopped while the replacement candidate was prepared.", newAssembly);
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                         }
-                        cancellationToken.ThrowIfCancellationRequested();
                         var bindingGeneration = NextBindingPublicationGeneration();
                         preparedBindings = PrepareReplacementBindings(candidate.BindingPlans, bindingGeneration, preparationOwner.Metadata);
                         candidate.FactsGroup.ValidateCommit();
@@ -390,11 +389,6 @@ internal sealed partial class SharpLinkServer
                     return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                 }
             }
-        }
-        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested && !published)
-        {
-            rollbackException = exception;
-            throw;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {

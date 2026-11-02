@@ -311,14 +311,26 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             }
         }
 
+        // This double owns prepared metadata only; it has no physical drain clock.
+        public ClientRetirementBudget CaptureRetirementBudget(TimeSpan gracefulTimeout)
+            => new(this, RetirementGraceBudget.Capture(gracefulTimeout, TimeProvider.System));
+
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly, ClientRetirementBudget budget)
+        {
+            _ = budget.GetFor(this);
+            return UnregisterCore(assembly);
+        }
+
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
+            => UnregisterCore(assembly);
+
+        private ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterCore(Assembly assembly)
         {
             _ = assembly;
-            _ = gracefulTimeout;
-            _ = cancellationToken;
             if (Interlocked.Exchange(ref _rejectNextUnregister, 0) != 0)
             {
                 return ValueTask.FromException<SharpLinkAssemblyUnregisterResult>(
@@ -345,9 +357,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => throw new NotSupportedException("This coordinator double requires prepared metadata.");
 
         public ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
-            Assembly oldAssembly, PreparedGeneratedManifest manifest, TimeSpan gracefulTimeout)
+            Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget)
         {
-            _ = gracefulTimeout;
+            _ = budget.GetFor(this);
             if (Interlocked.Exchange(ref _publishReplacementThenFailCleanup, 0) == 0)
                 throw new NotSupportedException();
             PreparedRegistration? candidate = new(manifest);

@@ -10,9 +10,15 @@ internal sealed partial class SharpLinkClient : ISharpLinkPreparedAssemblyClient
         => _assemblyRegistry.RegisterPreparedAssembly(manifest, publication);
 
     ValueTask<SharpLinkAssemblyReplacementResult> ISharpLinkPreparedAssemblyClient.ReplacePreparedAssemblyAsync(
-        Assembly oldAssembly, PreparedGeneratedManifest manifest, TimeSpan gracefulTimeout)
-        => _assemblyRegistry.ReplaceAssemblyAsync(oldAssembly, manifest.OwnerAssembly, gracefulTimeout,
-            preparedManifest: manifest);
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget)
+        => _assemblyRegistry.ReplacePreparedAssemblyAsync(oldAssembly, manifest, budget);
+
+    ClientRetirementBudget ISharpLinkPreparedAssemblyClient.CaptureRetirementBudget(TimeSpan gracefulTimeout)
+        => _assemblyRegistry.CaptureRetirementBudget(gracefulTimeout);
+
+    ValueTask<SharpLinkAssemblyUnregisterResult> ISharpLinkPreparedAssemblyClient.UnregisterAssemblyAsync(
+        Assembly assembly, ClientRetirementBudget budget)
+        => _assemblyRegistry.UnregisterAssemblyAsync(assembly, budget);
 
     public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
         => _assemblyRegistry.RegisterAssembly(assembly);
@@ -73,5 +79,8 @@ internal interface ISharpLinkPreparedAssemblyClient
     SharpLinkAssemblyRegistrationResult RegisterPreparedAssembly(PreparedGeneratedManifest manifest,
         Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication = null);
     ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
-        Assembly oldAssembly, PreparedGeneratedManifest manifest, TimeSpan gracefulTimeout);
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget);
+    ClientRetirementBudget CaptureRetirementBudget(TimeSpan gracefulTimeout);
+    ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+        Assembly assembly, ClientRetirementBudget budget);
 }

@@ -223,8 +223,20 @@ internal sealed partial class ClientAssemblyRegistry
         Assembly oldAssembly,
         Assembly newAssembly,
         TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken = default,
-        PreparedGeneratedManifest? preparedManifest = null)
+        CancellationToken cancellationToken = default)
+        => ReplaceAssemblyCore(oldAssembly, newAssembly, gracefulTimeout, null, cancellationToken, null);
+
+    internal ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return ReplaceAssemblyCore(oldAssembly, manifest.OwnerAssembly, TimeSpan.Zero, budget, default, manifest);
+    }
+
+    private ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyCore(
+        Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout,
+        ClientRetirementBudget? suppliedBudget, CancellationToken cancellationToken,
+        PreparedGeneratedManifest? preparedManifest)
     {
         ArgumentNullException.ThrowIfNull(oldAssembly);
         ArgumentNullException.ThrowIfNull(newAssembly);
@@ -237,10 +249,11 @@ internal sealed partial class ClientAssemblyRegistry
                 newAssembly)));
         }
 
-        RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
-        RetirementGraceBudget retirementBudget;
-        using (RetirementCallbackScope.Enter(_runtimeContext.Domain))
-            retirementBudget = RetirementGraceBudget.Capture(gracefulTimeout, _runtimeContext.TimeProvider);
+        // Only the direct duration path captures here. A supplied capability is
+        // validated for this exact registry and never converted into a new clock.
+        var retirementBudget = suppliedBudget.HasValue
+            ? ValidateRetirementBudget(suppliedBudget.Value)
+            : CaptureRetirementBudget(gracefulTimeout).GetFor(this);
         var preparation = _runtimeContext.Domain.BeginPreparation();
         using var preparationTransfer = RetirementTransfer<ColdMetadataPreparation>.CreateCharged(
             preparation, preparation, slots: 3);
@@ -486,12 +499,33 @@ internal sealed partial class ClientAssemblyRegistry
     {
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+        return UnregisterAssemblyCore(assembly, CaptureRetirementBudget(gracefulTimeout).GetFor(this), cancellationToken);
+    }
+
+    internal ClientRetirementBudget CaptureRetirementBudget(TimeSpan gracefulTimeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
         RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
-        RetirementGraceBudget budget;
         using (RetirementCallbackScope.Enter(_runtimeContext.Domain))
-            budget = RetirementGraceBudget.Capture(gracefulTimeout, _runtimeContext.TimeProvider);
-        return UnregisterAssemblyCore(assembly, budget, cancellationToken);
+            return new ClientRetirementBudget(this, RetirementGraceBudget.Capture(gracefulTimeout, _runtimeContext.TimeProvider));
+    }
+
+    private RetirementGraceBudget ValidateRetirementBudget(ClientRetirementBudget capability)
+    {
+        ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
+        RetirementCallbackScope.ThrowIfReentry(_runtimeContext.Domain);
+        var budget = capability.GetFor(this);
+        if (!ReferenceEquals(budget.Provider, _runtimeContext.TimeProvider))
+            throw new InvalidOperationException("The retirement budget belongs to another TimeProvider.");
+        return budget;
+    }
+
+    internal ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+        Assembly assembly, ClientRetirementBudget budget, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        return UnregisterAssemblyCore(assembly, ValidateRetirementBudget(budget), cancellationToken);
     }
 
     private ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyCore(

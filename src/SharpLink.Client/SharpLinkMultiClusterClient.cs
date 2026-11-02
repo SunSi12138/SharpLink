@@ -287,11 +287,11 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default)
     {
-        using var metadata = CreateMetadataStorage();
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         SharpLinkClusterSlot slot;
         DynamicAssemblyRegistration? registration;
+        ISharpLinkPreparedAssemblyClient preparedChild;
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
@@ -309,6 +309,21 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             if (_slotMutationInProgress)
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
 
+            if (slot.Client is not ISharpLinkPreparedAssemblyClient capability)
+                throw new InvalidOperationException("The internal child does not support exact retirement budgets.");
+            preparedChild = capability;
+        }
+
+        // Identity-only locals cross this synchronous provider call. No manifest,
+        // snapshot lease or preparation is accessed until the second validation.
+        var budget = preparedChild.CaptureRetirementBudget(gracefulTimeout);
+        lock (_gate)
+        {
+            if (!CapturedAssemblyRegistrationIsCurrentLocked(cluster, slot, registration))
+                return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+            if (_unregisterOperations.TryGetValue(registration, out var activeOperation))
+                return WaitForOperationAsync(activeOperation, cancellationToken);
+            using var metadata = CreateMetadataStorage();
             var snapshot = Volatile.Read(ref _snapshot);
             metadata.ReserveCollection(snapshot.Routes.Count);
             metadata.ReserveCollection(snapshot.Routes.Count);
@@ -327,7 +342,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             _ = CompleteSharedUnregisterAsync(
                 slot,
                 registration,
-                gracefulTimeout,
+                budget,
                 completion);
             TrackFrameworkTask(
                 operation,
@@ -348,6 +363,8 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         ArgumentNullException.ThrowIfNull(newAssembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         SharpLinkClusterSlot slot;
+        DynamicAssemblyRegistration? registration;
+        ISharpLinkPreparedAssemblyClient preparedChild;
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
@@ -366,13 +383,28 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             }
 
             slot = GetSlot(cluster);
+            registration = _dynamicRegistrations.FirstOrDefault(candidate =>
+                ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, oldAssembly));
+            if (registration is null)
+                return RejectChangedAssemblyReplacement(newAssembly);
+            if (slot.Client is not ISharpLinkPreparedAssemblyClient capability)
+                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    "The internal child does not support exact retirement budgets.", newAssembly)));
+            preparedChild = capability;
+        }
+
+        var budget = preparedChild.CaptureRetirementBudget(gracefulTimeout);
+        lock (_gate)
+        {
+            if (!CapturedAssemblyRegistrationIsCurrentLocked(cluster, slot, registration))
+                return RejectChangedAssemblyReplacement(newAssembly);
         }
         using var preparation = _metadataDomain.BeginPreparation();
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, preparation, out var newManifest);
         if (!loaded.Succeeded)
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
 
-        DynamicAssemblyRegistration? registration;
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
@@ -383,14 +415,10 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                     $"Multi-cluster client state '{state}' does not accept runtime assembly replacement.", newAssembly)));
             }
 
-            registration = _dynamicRegistrations.FirstOrDefault(candidate =>
-                ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, oldAssembly));
-            if (registration is null)
-            {
-                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
-                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                    $"Assembly '{oldAssembly.FullName}' is not registered in cluster '{cluster}'.", newAssembly)));
-            }
+            // Loader callbacks may race disposal/publication. Revalidate exact
+            // identities before reading registration.Manifest, never by Assembly alone.
+            if (!CapturedAssemblyRegistrationIsCurrentLocked(cluster, slot, registration))
+                return RejectChangedAssemblyReplacement(newAssembly);
 
             var oldIds = registration.Manifest.Contracts.Select(static contract => contract.ContractId).Order().ToArray();
             var newIds = newManifest!.Contracts.Select(static contract => contract.ContractId).Order().ToArray();
@@ -410,13 +438,33 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         }
 
         var operation = CompleteTrackedReplacementAsync(
-            slot, registration!, newAssembly, newManifest!, gracefulTimeout, preparation.Retain());
+            slot, registration!, newAssembly, newManifest!, budget, preparation.Retain());
         TrackFrameworkTask(
             operation,
             "MultiClusterAssemblyReplacement",
             TaskObservationMode.ExternallyObserved);
         return WaitForOperationAsync(operation, cancellationToken);
     }
+
+    // No metadata getter, retained lease or callback occurs in this identity check.
+    // The caller holds _gate; immutable identity locals need no metadata lease.
+    private bool CapturedAssemblyRegistrationIsCurrentLocked(
+        SharpLinkClusterKey cluster, SharpLinkClusterSlot slot, DynamicAssemblyRegistration registration)
+    {
+        var state = (SharpLinkMultiClusterState)_state;
+        if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted ||
+            _slotMutationInProgress || !_snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
+            !ReferenceEquals(currentSlot, slot))
+            return false;
+        foreach (var current in _dynamicRegistrations)
+            if (ReferenceEquals(current, registration)) return true;
+        return false;
+    }
+
+    private static ValueTask<SharpLinkAssemblyReplacementResult> RejectChangedAssemblyReplacement(Assembly newAssembly)
+        => ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
+            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+            "The captured assembly registration or cluster changed before replacement publication.", newAssembly)));
 
     private async Task ConnectCoreAsync()
     {
@@ -507,13 +555,13 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private async Task<SharpLinkAssemblyUnregisterResult> CompleteUnregisterAsync(
         SharpLinkClusterSlot slot,
         DynamicAssemblyRegistration registration,
-        TimeSpan gracefulTimeout)
+        ClientRetirementBudget budget)
     {
         SharpLinkAssemblyUnregisterResult result;
         try
         {
-            result = await slot.Client.UnregisterAssemblyAsync(
-                registration.Assembly, gracefulTimeout).ConfigureAwait(false);
+            result = await ((ISharpLinkPreparedAssemblyClient)slot.Client).UnregisterAssemblyAsync(
+                registration.Assembly, budget).ConfigureAwait(false);
         }
         catch
         {
@@ -543,7 +591,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private async Task CompleteSharedUnregisterAsync(
         SharpLinkClusterSlot slot,
         DynamicAssemblyRegistration registration,
-        TimeSpan gracefulTimeout,
+        ClientRetirementBudget budget,
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
     {
         // The caller publishes tracking under _gate; child lifecycle callbacks run after it leaves.
@@ -553,7 +601,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             completion.TrySetResult(await CompleteUnregisterAsync(
                 slot,
                 registration,
-                gracefulTimeout).ConfigureAwait(false));
+                budget).ConfigureAwait(false));
         }
         catch (Exception exception)
         {
@@ -662,13 +710,13 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         DynamicAssemblyRegistration registration,
         Assembly newAssembly,
         ISharpLinkGeneratedAssemblyManifest newManifest,
-        TimeSpan gracefulTimeout,
+        ClientRetirementBudget budget,
         IDisposable metadataOwner)
     {
         try
         {
             return await CompleteReplacementAsync(
-                slot, registration, newAssembly, newManifest, gracefulTimeout).ConfigureAwait(false);
+                slot, registration, newAssembly, newManifest, budget).ConfigureAwait(false);
         }
         finally
         {
@@ -683,7 +731,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         DynamicAssemblyRegistration registration,
         Assembly newAssembly,
         ISharpLinkGeneratedAssemblyManifest newManifest,
-        TimeSpan gracefulTimeout)
+        ClientRetirementBudget budget)
     {
         if (slot.Client is not ISharpLinkPreparedAssemblyClient preparedChild ||
             newManifest is not PreparedGeneratedManifest prepared)
@@ -691,7 +739,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                 SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                 "The internal child does not implement the prepared metadata transaction.", newAssembly));
         var childOperation = preparedChild.ReplacePreparedAssemblyAsync(
-            registration.Assembly, prepared, gracefulTimeout);
+            registration.Assembly, prepared, budget);
 
         try
         {
