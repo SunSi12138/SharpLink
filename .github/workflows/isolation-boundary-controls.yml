@@ -1,4 +1,4 @@
-name: Twelve isolation boundary controls
+name: Fourteen isolation boundary controls
 
 # Ordinary Unit graph, not all Unit bodies. No secrets, release, or raw artifacts.
 permissions:
@@ -35,5 +35,5 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-      - name: Build ordinary Unit and validate twelve isolated actual UIDs
+      - name: Build ordinary Unit and validate fourteen isolated actual UIDs
         run: python3 eng/run-isolation-boundary-controls.py

@@ -32,9 +32,10 @@
     "ABScope": 6,
     "B2a": 2,
     "B2c": 1,
-    "B3a": 3
+    "B3a": 3,
+    "B3b": 2
   },
-  "expectedCaseCount": 12,
+  "expectedCaseCount": 14,
   "scopes": [
     {
       "group": "ABScope",
@@ -219,7 +220,44 @@
           ]
         }
       ]
+    },
+    {
+      "group": "B3b",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "DynamicRollbackTests",
+      "source": "test/SharpLink.UnitTests/Runtime/DynamicRollbackTests.cs",
+      "sourceSha256": "71a74ae8f498ef07f62dcbe18321484ac4d5710ace0f87eda6a2ee1f9caa1b8b",
+      "discovery": "methods",
+      "methods": [
+        {
+          "name": "ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "exact-public-registration-conflict-and-instance-scope-failure-with-real-owned-cleanup-client-Stopped-server-Faulted",
+          "expectedSpan": [
+            46,
+            47,
+            50
+          ]
+        },
+        {
+          "name": "ServerRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure",
+          "parameters": [
+            "System.Threading.CancellationToken"
+          ],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "exact-public-registration-conflict-and-instance-scope-failure-with-real-owned-cleanup-client-Stopped-server-Faulted",
+          "expectedSpan": [
+            52,
+            53,
+            56
+          ]
+        }
+      ]
     }
   ],
-  "qualification": "Exactly twelve actual UIDs: prior nine plus three B3a. Original47 separate. B2c intentionally Faulted and ABScope retained fake safety keep their exact internal oracles, not generic failure acceptance or quota-zero. B3a normal physical/accounting exit; frozen-clock arm consistency does not prove elapsed-entry consumption. D2, B3b/c and other Unit bodies excluded. All existing command/engine budgets unchanged."
+  "qualification": "Exactly fourteen actual UIDs: original twelve plus B3b2. Original47 separate. B3b validates exact public-registration conflict plus per-instance rollback scope failure and independent known old-scope cleanup with physical/accounting exit (Client Stopped, Server Faulted). No generic failure acceptance. Original retained-fake safety is not quota-zero; B3a frozen clock is not elapsed-entry proof. B3c, D2 and other Unit bodies excluded. Existing command/engine budgets unchanged.",
+  "rollbackPluginSourceSha256": "4189b9131e664ccb3b544f2205f78719b324004d0c6f2385bae1186b077aa431"
 }
