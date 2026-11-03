@@ -385,7 +385,7 @@ def finish(lane,errors):
     def diagnostics(error):
         if isinstance(error,BaseExceptionGroup):
             for child in error.exceptions:diagnostics(child)
-        for name in ('raw_events','discovery_paths','project_edges','rid_asset','command_codes','protected_inventory'):
+        for name in ('raw_events','discovery_paths','project_edges','rid_asset','command_codes','protected_inventory','audit_context'):
             value=getattr(error,name,None)
             if value is not None:print(json.dumps({'stage':lane.stage,'diagnostic':name,'data':value.public()}),flush=True)
     if errors:

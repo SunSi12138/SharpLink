@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import stat
 import hosted_process as host
+from audit_diagnostics import KNOWN_AUDIT_REASONS
 
 MAX_CAPTURE=16*1024*1024
 # Fixed literal categories only, never an extracted arbitrary line/message.
@@ -49,7 +50,7 @@ def stream_summary(raw):
 
 def known_reason(error):
     # Never str(error), message suffixes, raw reports or arbitrary exception args.
-    if type(error) is ValueError and len(error.args)==1 and isinstance(error.args[0],str) and error.args[0] in KNOWN_REASONS:return error.args[0]
+    if type(error) is ValueError and len(error.args)==1 and isinstance(error.args[0],str) and error.args[0] in KNOWN_REASONS|KNOWN_AUDIT_REASONS:return error.args[0]
     return None
 
 

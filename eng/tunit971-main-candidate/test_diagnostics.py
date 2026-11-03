@@ -274,4 +274,70 @@ class WindowsFolderControls(unittest.TestCase):
    lane.system_folder_ids={};(lane.profile_roots['fixed']/'PRIVATE').write_text('changed')
    with self.assertRaises(ValueError):lane.current_guard()
 
+class AuditDiagnosticControls(unittest.TestCase):
+ def test_complete_literal_catalog_exactly_matches_original_guard_sources(self):
+  import ast,audit,audit_diagnostics as ad
+  literals=set()
+  for n in ast.walk(ast.parse(Path(audit.__file__).read_text())):
+   if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='require' and len(n.args)>1 and isinstance(n.args[1],ast.Constant) and type(n.args[1].value) is str:literals.add(n.args[1].value)
+  self.assertEqual(ad.KNOWN_AUDIT_REASONS,literals);self.assertEqual(len(literals),60)
+  for reason in literals:self.assertEqual(d.known_reason(ValueError(reason)),reason)
+  for error in (ValueError('SECRET'),ValueError('Wrong actual RestoreProjectName SECRET'),TypeError('Wrong actual RestoreProjectName')):self.assertIsNone(d.known_reason(error))
+ def test_known_project_shape_only_no_path_or_value_echo(self):
+  import audit,audit_diagnostics as ad
+  name=next(iter(audit.CATALOG['projects']));project=audit.CATALOG['projects'][name]
+  state={'phase':'restore-project','project':name,'expectedProjectPath':'/known/root/'+project['path'],
+         'document':{'project':{'restore':{'projectPath':'C:\\SECRET\\p.csproj','projectName':'SECRET','frameworks':{'SECRET':{}},'sources':{'SECRET':{}}}},
+                     'packageFolders':{'SECRET':{}},'logs':[{'code':'NU1301','message':'SECRET'}],'libraries':{'SECRET':{}}}}
+  value=ad.AuditContext(state,audit.CATALOG['projects']).public()
+  self.assertNotIn('SECRET',json.dumps(value));self.assertEqual(value['knownProject']['relative'],project['path']);self.assertFalse(value['restoreFields']['projectNameMatchesExpected'])
+  self.assertEqual(value['restoreLogCodes'],[{'code':'NU1301','count':1}]);self.assertTrue(value['restoreFields']['projectPath']['hasBackslash'])
+ def test_unknown_project_package_member_and_metadata_are_hash_only(self):
+  import audit_diagnostics as ad
+  state={'phase':'cache-member','project':'SECRET','packageRelative':'SECRET','installedRelative':'SECRET/path','metadata':{'SECRET':'SECRET'},'archiveMemberCount':4,'installedMemberPresent':False}
+  value=ad.AuditContext(state,{}).public();self.assertNotIn('SECRET',json.dumps(value));self.assertFalse(value['installedMemberPresent'])
+ def test_asset_sets_are_counts_and_digest_only(self):
+  import audit_diagnostics as ad
+  value=ad.AuditContext({'phase':'restore-assets','expectedAssets':{'SECRET/x'},'foundAssets':{'SECRET/y'}},{}).public()
+  self.assertEqual((value['missingAssetsCount'],value['extraAssetsCount']),(1,1));self.assertNotIn('SECRET',json.dumps(value))
+ def test_no_fs_access_in_context_public_and_malformed_fields_no_echo(self):
+  import audit_diagnostics as ad
+  state={'phase':'restore-library','project':'SECRET','document':{'project':None,'libraries':True,'logs':'SECRET'},'libraryIdentity':'SECRET','library':{'path':'../SECRET','msbuildProject':'D:/SECRET','type':'SECRET'}}
+  with patch.object(Path,'open',side_effect=AssertionError('no read')),patch.object(Path,'resolve',side_effect=AssertionError('no resolve')):value=ad.AuditContext(state,{}).public()
+  self.assertNotIn('SECRET',json.dumps(value));self.assertEqual(value['restoreFields']['libraries']['type'],'boolean')
+ def test_real_cache_failure_original_reason_and_count(self):
+  import audit
+  with tempfile.TemporaryDirectory() as tmp:
+   with self.assertRaises(ValueError) as caught:audit.cache_audit(Path(tmp))
+  self.assertEqual(caught.exception.args,('Official package cache is empty',));self.assertEqual(caught.exception.audit_context.public()['archiveCount'],0)
+ def test_real_restore_name_mismatch_uses_known_project_not_exception_text(self):
+  import audit,test_hosted,copy
+  helper=test_hosted.RestoredAudit()
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)/'source';root.mkdir();packages=Path(tmp)/'packages';packages.mkdir();cache,documents=helper.synthetic_assets(root,packages)
+   name=next(iter(documents));path,value=documents[name];value['project']['restore']['projectName']='SECRET';path.write_text(json.dumps(value))
+   edges={key:value['references'] for key,value in audit.CATALOG['projects'].items()}
+   with patch.object(audit,'static_graph',return_value=edges),patch.object(audit,'cache_audit',return_value=cache):
+    with self.assertRaises(ValueError) as caught:audit.restored(root,packages)
+  self.assertEqual(caught.exception.args,('Wrong actual RestoreProjectName',));data=caught.exception.audit_context.public();self.assertEqual(data['knownProject']['name'],name);self.assertNotIn('SECRET',json.dumps(data))
+ def test_original_and_independent_attach_failure_order(self):
+  import audit,audit_diagnostics as ad
+  original=ValueError('Original project restore reported warning/error');diagnostic=OSError('SECRET')
+  with patch.object(audit,'_restored',side_effect=original),patch.object(ad,'AuditContext',side_effect=diagnostic):
+   with self.assertRaises(BaseExceptionGroup) as caught:audit.restored(Path('/unused'),Path('/unused'))
+  self.assertIs(caught.exception.exceptions[0],original);self.assertIs(caught.exception.exceptions[1],diagnostic)
+ def test_outer_wrapper_keeps_inner_cache_context(self):
+  import audit,audit_diagnostics as ad
+  original=ValueError('Installed bytes differ from official archive');ad.attach(original,{'phase':'cache-member','installedRelative':'SECRET'},audit.CATALOG['projects']);context=original.audit_context
+  with patch.object(audit,'_restored',side_effect=original):
+   with self.assertRaises(ValueError) as caught:audit.restored(Path('/unused'),Path('/unused'))
+  self.assertIs(caught.exception,original);self.assertIs(caught.exception.audit_context,context)
+ def test_invalid_diagnostic_publication_keeps_original_first(self):
+  from types import SimpleNamespace
+  import audit_diagnostics as ad
+  original=ValueError('Wrong actual RestoreProjectName');ad.attach(original,{'phase':'SECRET'},{});lane=SimpleNamespace(final_guards=lambda:[],stage='restore-baseline',results=[],commands_started=7,sink=SimpleNamespace(write=lambda x:None,close=lambda:None))
+  with patch('builtins.print'):
+   with self.assertRaises(BaseExceptionGroup) as caught:r.finish(lane,[original])
+  self.assertIs(caught.exception.exceptions[0],original);self.assertIsInstance(caught.exception.exceptions[1],ValueError)
+
 if __name__=='__main__':unittest.main(verbosity=2)

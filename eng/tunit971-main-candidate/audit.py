@@ -12,6 +12,7 @@ import re
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 from classify import require, read_json
+import audit_diagnostics as diagnostic
 CATALOG=read_json(Path(__file__).with_name('ACCEPT-SOURCE.json'))
 NAMES=tuple(CATALOG['projects'])
 PROJECTS={name:value['path'] for name,value in CATALOG['projects'].items()}
@@ -58,27 +59,39 @@ def content_hash_matches(assets_hash, metadata_hash):
 
 
 def cache_audit(packages):
+    context={'phase':'cache-start'}
+    try:return _cache_audit(packages,context)
+    except BaseException as original:
+        diagnostic.attach(original,context,CATALOG['projects']);raise
+
+
+def _cache_audit(packages,context):
     archives = sorted(packages.glob('*/*/*.nupkg'))
+    context.update(archiveCount=len(archives))
     require(archives, 'Official package cache is empty')
     identities = {}
     folders = {archive.parent for archive in archives}
     for path in packages.rglob('*'):
+        context.update(phase='cache-tree',installedRelative=path.relative_to(packages).as_posix())
         require(not path.is_symlink(), 'Symlink anywhere in official cache')
         require(path.is_file() or path.is_dir(), 'Special file in official cache')
         require(any(path.is_relative_to(folder) or (path.is_dir() and folder.is_relative_to(path)) for folder in folders), 'Orphan cache file/directory without archive')
     for archive in archives:
         folder = archive.parent
         identifier, version = folder.parent.name, folder.name
+        context.clear();context.update(phase='cache-archive',packageRelative=folder.relative_to(packages).as_posix(),archiveCount=len(archives))
         raw = archive.read_bytes()
         sidecar = archive.with_suffix('.nupkg.sha512')
         require(hash512(sidecar.read_text().strip()) == hashlib.sha512(raw).digest(), 'Raw archive/sidecar SHA512 mismatch')
         metadata = read_json(folder / '.nupkg.metadata')
+        context.update(metadata=metadata)
         require(metadata.get('source') == 'https://api.nuget.org/v3/index.json', 'Package was not restored from sole official source')
         canonical = metadata.get('contentHash')
         hash512(canonical)  # Shape only: canonical signed-content hash is not raw ZIP hash.
         with ZipFile(archive) as zipped:
             names = {x.lower(): x for x in zipped.namelist() if not x.endswith('/')}
             require(len(names) == len([x for x in zipped.namelist() if not x.endswith('/')]), 'Archive duplicate/case alias')
+            context.update(archiveMemberCount=len(names))
             nuspec = [x for x in names if x.endswith('.nuspec') and '/' not in x]
             require(len(nuspec) == 1, 'Package nuspec missing/duplicate')
             tree = ET.fromstring(zipped.read(names[nuspec[0]]))
@@ -89,6 +102,7 @@ def cache_audit(packages):
                 if not file.is_file() or file in (archive, sidecar, folder / '.nupkg.metadata'):
                     continue
                 rel = file.relative_to(folder).as_posix().lower()
+                context.update(phase='cache-member',installedRelative=rel,installedMemberPresent=rel in names)
                 require(rel in names, 'Installed file absent from official archive')
                 require(file.read_bytes() == zipped.read(names[rel]), 'Installed bytes differ from official archive')
         identities[identifier + '/' + version] = {'archiveSHA256':digest(archive), 'archiveSHA512':base64.b64encode(hashlib.sha512(raw).digest()).decode(), 'canonicalContentHash':canonical}
@@ -142,22 +156,34 @@ def require_project_edges(name,mandatory,optional,refs):
 
 
 def restored(root, packages):
+    context={'phase':'restore-start'}
+    try:return _restored(root,packages,context)
+    except BaseException as original:
+        diagnostic.attach(original,context,CATALOG['projects']);raise
+
+
+def _restored(root, packages,context):
     edges=static_graph(root)
     expected={(Path(path).parent/'obj/project.assets.json').as_posix() for path in PROJECTS.values()}
     found={p.relative_to(root).as_posix() for p in root.rglob('project.assets.json')}
+    context.update(phase='restore-assets',expectedAssets=expected,foundAssets=found)
     require(found==expected,'Actual assets differ from original19 project closure')
     cache=cache_audit(packages);documents={};actual_edges={};all_packages={}
     # Identity is per exact project path, never a global restore-name lookup:
     # Dynamic/Replacement intentionally share AssemblyName/RestoreProjectName.
     restored_names={};project_library_paths={name:set() for name in PROJECTS}
     for name,path in PROJECTS.items():
+        context.clear();context.update(phase='restore-name',project=name,expectedProjectPath=str(root/path))
         document=read_json(root/Path(path).parent/'obj/project.assets.json')
+        context.update(document=document)
         actual=document['project']['restore']
         require(Path(actual['projectPath']).resolve()==(root/path).resolve(),'Wrong original restored project identity')
         require(actual.get('projectName')==CATALOG['projects'][name]['restoreName'],'Wrong actual RestoreProjectName')
         restored_names[(root/path).resolve()]=actual['projectName']
     for name,path in PROJECTS.items():
+        context.clear();context.update(phase='restore-project',project=name,expectedProjectPath=str(root/path))
         project=root/path;value=read_json(project.parent/'obj/project.assets.json');documents[name]=value
+        context.update(document=value)
         require(not value.get('logs'),'Original project restore reported warning/error')
         restore=value['project']['restore'];framework=CATALOG['projects'][name]['framework']
         require(Path(restore['projectPath']).resolve()==project.resolve(),'Wrong original restored project identity')
@@ -171,6 +197,7 @@ def restored(root, packages):
         require_project_edges(name,mandatory,optional,refs)
         actual_edges[name]=sorted(refs)
         for identity,library in value['libraries'].items():
+            context.update(phase='restore-library',libraryIdentity=identity,library=library)
             identifier,version=identity.rsplit('/',1)
             if library['type']=='package':
                 require(identity.lower() in cache,'Original asset outside audited official cache')
@@ -192,6 +219,7 @@ def restored(root, packages):
             else:require(False,'Unexpected original asset library kind')
     names_by_path={path:name for name,path in PROJECTS.items()}
     for name,library_paths in project_library_paths.items():
+        context.clear();context.update(phase='restore-closure',project=name)
         reachable=set();pending=list(actual_edges[name])
         while pending:
             path=pending.pop()
@@ -199,6 +227,7 @@ def restored(root, packages):
             reachable.add(path);pending.extend(actual_edges[names_by_path[path]])
         require(library_paths<=reachable,'Project library is outside actual restored reference closure')
     target=documents[ENTRY]
+    context.clear();context.update(phase='restore-target',project=ENTRY,document=target,expectedProjectPath=str(root/PROJECTS[ENTRY]))
     require(set(target['targets'])=={'net10.0'},'Wrong original Integration asset target')
     active=sorted(key for key,item in target['libraries'].items() if item['type']=='package')
     require('TUnit/1.78.0' in active and 'Microsoft.Testing.Platform/2.5.2' in active,'Originalaccept version-specific engine/MTP absent')
