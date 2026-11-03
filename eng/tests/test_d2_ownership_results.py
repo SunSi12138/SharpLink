@@ -84,6 +84,79 @@ class D2ProtocolTests(unittest.TestCase):
         c=copy.deepcopy(CATALOG);c['ancestorInputs']['inputs'].pop('test/Directory.Build.targets')
         with self.assertRaises(ValueError):r.check_ancestors(ROOT,c)
 
+    def test_safe_command_receipt_never_exposes_arbitrary_fields(self):
+        secret='PRIVATE_RECEIPT_MARKER'
+        value=runner.safe_command_record(secret,dict(phase=secret,provenance=secret,receipt=dict(
+            exitCode=secret,timedOut=secret,errors=[secret],cleanupErrors=[secret,secret],
+            reportingErrors=[secret],remainingOwned={'PRIVATE_PID':secret},argv=[secret])))
+        self.assertNotIn(secret,json.dumps(value));self.assertNotIn('PRIVATE_PID',json.dumps(value))
+        self.assertIsNone(value['stage']);self.assertIsNone(value['exitCode'])
+        self.assertEqual(value['executeErrorCount'],1);self.assertEqual(value['cleanupErrorCount'],2)
+        good=runner.safe_command_record('build',dict(phase='owner-call',provenance='original-owner-failure',
+            receipt=dict(exitCode=1,timedOut=False,errors=[],cleanupErrors=[],reportingErrors=[],remainingOwned={})))
+        self.assertEqual((good['stage'],good['exitCode'],good['timedOut'],good['remainingOwnedCount']),('build',1,False,0))
+
+    def test_compiler_diagnostic_is_only_code_and_allowlisted_coordinates(self):
+        with tempfile.TemporaryDirectory() as d:
+            work=Path(d);source=work/'src';logs=work/'logs';logs.mkdir();source.mkdir()
+            known=source/'test'/'Known.cs';known.parent.mkdir();known.write_text('public class Known {}')
+            secret='PRIVATE_COMPILER_MESSAGE'
+            lines=[str(known)+'(12,7): error CS0123: '+secret,
+                   '/_/test/Known.cs(12,7): error CS0123: '+secret,
+                   '/PRIVATE_EXTERNAL_SOURCE.cs(44,2): warning CS9999: '+secret,
+                   'CSC : error CS0006: '+secret,
+                   secret+' raw arbitrary output']
+            (logs/'build.stdout').write_text('\n'.join(lines));(logs/'build.stderr').write_text(secret)
+            value=runner.compiler_diagnostic_summary(logs,source,{known:'hash'})
+            encoded=json.dumps(value)
+            for forbidden in (secret,'PRIVATE_EXTERNAL_SOURCE',str(work),'raw arbitrary output'):self.assertNotIn(forbidden,encoded)
+            self.assertEqual(value['diagnostics'][0],dict(severity='error',code='CS0123',source='test/Known.cs',line=12,column=7,occurrences=2))
+            self.assertIsNone(value['diagnostics'][1]['source']);self.assertIsNone(value['diagnostics'][1]['line'])
+            self.assertEqual(value['diagnostics'][2]['code'],'CS0006')
+            (logs/'build.stdout').write_bytes(b'x'*(1024*1024+2))
+            bounded=runner.compiler_diagnostic_summary(logs,source,{known:'hash'})
+            self.assertTrue(bounded['files'][0]['truncated']);self.assertEqual(bounded['files'][0]['sampledBytes'],1024*1024)
+            (logs/'build.stdout').unlink();(logs/'build.stdout').symlink_to(logs/'build.stderr')
+            with self.assertRaises(OSError):runner.compiler_diagnostic_summary(logs,source,{known:'hash'})
+
+    def test_real_main_owner_failure_keeps_private_graph_and_safe_receipt(self):
+        with tempfile.TemporaryDirectory() as d:
+            private=Path(d)/'lane';private.mkdir();output=io.StringIO()
+            marker=RuntimeError('PRIVATE_ORIGINAL_OWNER_FAILURE')
+            row=dict(stage='head',exitCode=7,timedOut=False,errors=['PRIVATE_ROW_ERROR'],
+                     cleanupErrors=[],reportingErrors=[],remainingOwned={})
+            failure=runner.owner.CommandFailure(row,[marker])
+            try:
+                with mock.patch.object(runner.owner,'enable_subreaper'), \
+                     mock.patch.object(runner.tempfile,'mkdtemp',return_value=str(private)), \
+                     mock.patch.object(runner.owner,'run_owned',side_effect=failure),contextlib.redirect_stdout(output):
+                    self.assertEqual(runner.main(),1)
+                console=output.getvalue()
+                self.assertIn('command-diagnostic:',console);self.assertIn('"exitCode": 7',console)
+                for text in ('PRIVATE_ORIGINAL_OWNER_FAILURE','PRIVATE_ROW_ERROR'):self.assertNotIn(text,console)
+                graph=(private/'failure-graph.json').read_text()
+                self.assertIn('PRIVATE_ORIGINAL_OWNER_FAILURE',graph);self.assertIn('PRIVATE_ROW_ERROR',graph)
+            finally:
+                fd=getattr(runner.main,'private_directory_fd',None)
+                if fd is not None:os.close(fd);del runner.main.private_directory_fd
+
+    def test_diagnostic_failure_does_not_replace_original_owner_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            private=Path(d)/'lane';private.mkdir();output=io.StringIO()
+            primary=RuntimeError('PRIVATE_ORIGINAL');diagnostic=OSError('PRIVATE_DIAGNOSTIC_READ')
+            try:
+                with mock.patch.object(runner.owner,'enable_subreaper'), \
+                     mock.patch.object(runner.tempfile,'mkdtemp',return_value=str(private)), \
+                     mock.patch.object(runner.owner,'run_owned',side_effect=primary), \
+                     mock.patch.object(runner,'report_command_diagnostics',side_effect=diagnostic),contextlib.redirect_stdout(output):
+                    self.assertEqual(runner.main(),1)
+                graph=(private/'failure-graph.json').read_text()
+                for text in ('PRIVATE_ORIGINAL','PRIVATE_DIAGNOSTIC_READ'):
+                    self.assertIn(text,graph);self.assertNotIn(text,output.getvalue())
+            finally:
+                fd=getattr(runner.main,'private_directory_fd',None)
+                if fd is not None:os.close(fd);del runner.main.private_directory_fd
+
     def test_explicit_restore_config_is_not_an_ancestor_input(self):
         with tempfile.TemporaryDirectory() as d:
             work=Path(d);source=work/'src';source.mkdir()

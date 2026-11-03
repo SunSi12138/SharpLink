@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -45,6 +46,81 @@ def initialize():
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def safe_command_record(label, state):
+    fixed = {'head', 'tree', 'clean', 'tracked', 'clone', 'checkout', 'cloned-head',
+             'classifier-checks', 'sdk-version', 'sdk-info', 'runtimes', 'restore', 'build'}
+    selected = isinstance(label, str) and (label in fixed or
+        re.fullmatch(r'list-[0-5]', label) or re.fullmatch(r'case-(?:[0-9]|[12][0-9]|3[0-4])', label))
+    phase = state.get('phase')
+    receipt = state.get('receipt')
+    receipt = receipt if isinstance(receipt, dict) else {}
+    def count(key, kind):
+        value = receipt.get(key)
+        return len(value) if type(value) is kind else None
+    code = receipt.get('exitCode')
+    timeout = receipt.get('timedOut')
+    return dict(stage=label if selected else None,
+        phase=phase if isinstance(phase, str) and phase in {'preflight', 'owner-call', 'receipt-check', 'directory-check', 'log-seal', 'done'} else None,
+        provenance=state.get('provenance') if isinstance(state.get('provenance'), str) and state.get('provenance') in
+            {'original-owner-failure', 'validated-success'} else None,
+        independentCheckErrorCount=state.get('independentCheckErrorCount') if type(state.get('independentCheckErrorCount')) is int else None,
+        receiptPresent=bool(receipt), exitCode=code if type(code) is int and -2147483648 <= code <= 2147483647 else None,
+        timedOut=timeout if type(timeout) is bool else None,
+        executeErrorCount=count('errors', list), cleanupErrorCount=count('cleanupErrors', list),
+        reportingErrorCount=count('reportingErrors', list), remainingOwnedCount=count('remainingOwned', dict))
+
+
+def compiler_diagnostic_summary(logs, source, originals):
+    # Emit only code/severity and allowlisted public source coordinates, never
+    # compiler messages, arbitrary paths or raw lines. This is not an oracle.
+    allowed = {}
+    for path in originals:
+        if path.is_relative_to(source):
+            name = path.relative_to(source).as_posix()
+            if re.fullmatch(r'[A-Za-z0-9_./-]+', name) and name.endswith(('.cs', '.csproj', '.props', '.targets')):
+                for spelling in (str(path), '/_/' + name, name):
+                    allowed[spelling] = name
+    code_pattern = re.compile(r'\b(error|warning) ((?:CS|NU|MSB|NETSDK|TUnit)[0-9]{4}):')
+    location_pattern = re.compile(r'^(.*?)\(([0-9]{1,9})(?:,([0-9]{1,9}))?(?:,[0-9]{1,9},[0-9]{1,9})?\):\s*$')
+    rows = {}; files = []; omitted = 0; long_lines = 0
+    for suffix in ('.stdout', '.stderr'):
+        path = logs / ('build' + suffix)
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            files.append(dict(stream=suffix[1:], present=False)); continue
+        with os.fdopen(fd, 'rb') as stream:
+            require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'Diagnostic input is not a regular file')
+            raw = stream.read(1024 * 1024 + 1)
+        truncated = len(raw) > 1024 * 1024
+        raw = raw[:1024 * 1024]
+        files.append(dict(stream=suffix[1:], present=True, sampledBytes=len(raw), truncated=truncated,
+                          sampledSha256=hashlib.sha256(raw).hexdigest()))
+        for line in raw.decode('utf-8', errors='replace').splitlines():
+            if len(line) > 16384:
+                long_lines += 1; continue
+            match = code_pattern.search(line)
+            if match is None: continue
+            location = location_pattern.fullmatch(line[:match.start()])
+            name = allowed.get(location[1]) if location else None
+            number = int(location[2]) if name else None
+            column = int(location[3]) if name and location[3] else None
+            key = (match[1], match[2], name, number, column)
+            if key in rows: rows[key] += 1
+            elif len(rows) < 64: rows[key] = 1
+            else: omitted += 1
+    return dict(files=files, omittedDiagnosticOccurrences=omitted, ignoredLongLines=long_lines, diagnostics=[dict(severity=k[0], code=k[1], source=k[2], line=k[3], column=k[4], occurrences=v)
+        for k, v in rows.items()], qualification='Bounded diagnostic sample only; original command and all guards still decide acceptance.')
+
+
+def report_command_diagnostics(states, logs, source, originals):
+    for label, state in states.items():
+        if state.get('phase') != 'done':
+            print('command-diagnostic: ' + json.dumps(safe_command_record(label, state), sort_keys=True), flush=True)
+            if label == 'build':
+                print('compiler-diagnostic: ' + json.dumps(compiler_diagnostic_summary(logs, source, originals), sort_keys=True), flush=True)
 
 
 def environment(work):
@@ -219,6 +295,7 @@ def main():
         except BaseException as error:
             checks.append(error)
         if failure is not None or checks:
+            state['independentCheckErrorCount'] = len(checks)
             if failure is not None:
                 checks.insert(0, failure)
             raise BaseExceptionGroup('Command and actual containment checks: ' + label, checks)
@@ -432,6 +509,10 @@ def main():
     if not errors and not all(r['status'] == 'PASS' for r in records):
         errors.append(ValueError('Incomplete finite lane'))
     if errors:
+        try:
+            report_command_diagnostics(command_states, logs, source, original)
+        except BaseException as diagnostic_error:
+            errors.append(diagnostic_error)
         for error in tuple(errors):
             try:
                 summarize_failure(error)
