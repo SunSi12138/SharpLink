@@ -93,7 +93,25 @@ def environment(state):
                GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='core.autocrlf',GIT_CONFIG_VALUE_0='false',
                TUNIT_ENABLE_JUNIT_REPORTER='1',TUNIT_DISABLE_ARTIFACT_UPLOAD='1',TUNIT_DISABLE_GITHUB_REPORTER='1',
                TUNIT_AGGREGATE_REPORTS='off',TUNIT_DISABLE_LOGO='1')
+    if sys.platform=='win32':windows_folders(env,state)
     return env
+
+
+def windows_folders(env,state):
+    # No host user profile/config is imported. Normal Windows per-user folders
+    # are created under this variant's existing private USERPROFILE.
+    home=state/'home';host.ordinary_directory(home)
+    appdata=home/'AppData';appdata.mkdir(parents=False,exist_ok=False);host.ordinary_directory(appdata)
+    for key,leaf in (('APPDATA','Roaming'),('LOCALAPPDATA','Local')):
+        path=appdata/leaf;host.ordinary_directory(appdata);path.mkdir(parents=False,exist_ok=False);host.ordinary_directory(path)
+        env[key]=str(path)
+    # NuGet's machine-wide resolver base reads only these two host locations.
+    # Validate ordinary absolute roots; do not import other environment/config.
+    for key in ('PROGRAMFILES','PROGRAMFILES(X86)'):
+        value=os.environ.get(key)
+        c.require(isinstance(value,str) and bool(value),'Missing required Windows program folder')
+        path=Path(value);c.require(path.is_absolute(),'Windows program folder is not absolute')
+        host.ordinary_directory(path);env[key]=value
 
 
 def clean_baseline_green(error):
@@ -138,6 +156,15 @@ class Lane:
         self.work_id=identity(self.work);self.sink=PrivateSink(self.work)
         self.inputs=inventory(PAYLOAD);self.current={v:inventory(p,checkout_metadata=True) for v,p in roots.items()}
         self.env={v:environment(self.work/v) for v in roots}
+        self.profile_roots={};self.profile_ids={};self.system_folder_ids={};self.profile_current={}
+        if sys.platform=='win32':
+            self.profile_roots={v:Path(e['USERPROFILE']) for v,e in self.env.items()}
+            for e in self.env.values():
+                for path in (Path(e['USERPROFILE']),Path(e['USERPROFILE'])/'AppData',Path(e['APPDATA']),Path(e['LOCALAPPDATA'])):
+                    self.profile_ids[path]=identity(path)
+                for key in ('PROGRAMFILES','PROGRAMFILES(X86)'):
+                    path=Path(e[key]);self.system_folder_ids[path]=identity(path)
+            self.profile_current={v:inventory(path) for v,path in self.profile_roots.items()}
         self.cache={v:inventory(Path(e['NUGET_PACKAGES'])) for v,e in self.env.items()}
         self.dotnet=Path(shutil.which('dotnet') or '').resolve(strict=True)
         c.require(self.dotnet.is_file(),'Selected dotnet host missing');self.host_sha=sha(self.dotnet)
@@ -145,7 +172,13 @@ class Lane:
         self.deadline=time.monotonic()+TOTAL_SECONDS;self.runtimes=set();self.paired_runtime=None
         self.seen_publications=set();self.seen_engine_uids=set();self.all_discovery_uids=set();self.baseline_reproduced=False
         self.active_scope=None;self.active_uid=None
+    def profile_inputs_guard(self):
+        for path,selected_identity in {**self.profile_ids,**self.system_folder_ids}.items():
+            c.require(identity(path)==selected_identity,'Windows folder identity changed')
+        # Private profile ordinary nodes only; no reparse/special/nested .git.
+        for path in self.profile_roots.values():inventory(path)
     def inputs_guard(self):
+        self.profile_inputs_guard()
         c.require(identity(self.work)==self.work_id,'Private work root replaced');self.sink.guard()
         c.require(inventory(PAYLOAD)==self.inputs and sha(PAYLOAD/'CI.json')==self.manifest_sha,'Frozen payload changed')
         c.require(sha(self.dotnet)==self.host_sha,'Observed dotnet host changed')
@@ -155,6 +188,8 @@ class Lane:
         for v,root in self.roots.items():
             diagnostics.require_inventory(inventory(root,checkout_metadata=True),self.current[v],'Protected source/output changed',v,'current',KNOWN_DIAGNOSTIC_PATHS)
             c.require(inventory(Path(self.env[v]['NUGET_PACKAGES']))==self.cache[v],'Protected package cache changed')
+        for v,path in self.profile_roots.items():
+            c.require(inventory(path)==self.profile_current[v],'Protected Windows profile changed')
     def command(self,label,variant,argv,seconds,phase='readonly',expected_exit=0,filtered=False):
         self.stage=label;self.inputs_guard();self.current_guard()
         c.require(time.monotonic()+seconds+16<=self.deadline,'Hosted finite budget exhausted')
@@ -171,6 +206,7 @@ class Lane:
                 if phase=='build':excluded[variant].append(parent/'bin')
         before={v:inventory(p,excluded[v],checkout_metadata=True) for v,p in self.roots.items()}
         caches={v:self.cache[v] for v in self.roots if not(v==variant and phase=='restore')}
+        profiles={v:snapshot for v,snapshot in self.profile_current.items() if not(v==variant and phase in ('restore','build'))}
         env=dict(self.env[variant]);pipe=None;pipe_id=None;errors=[];outcome=None;directory=self.work/label
         try:
             if filtered:
@@ -187,6 +223,7 @@ class Lane:
             checks=[self.inputs_guard]
             checks.extend(lambda v=v,p=p:diagnostics.require_inventory(inventory(p,excluded[v],checkout_metadata=True),before[v],'Source/protected output mutation',v,'phase',KNOWN_DIAGNOSTIC_PATHS) for v,p in self.roots.items())
             checks.extend(lambda v=v,s=s:c.require(inventory(Path(self.env[v]['NUGET_PACKAGES']))==s,'Protected cache mutation') for v,s in caches.items())
+            checks.extend(lambda v=v,snapshot=snapshot:c.require(inventory(self.profile_roots[v])==snapshot,'Protected Windows profile mutation') for v,snapshot in profiles.items())
             if pipe is not None:checks.append(lambda:c.require(pipe_id is not None and identity(pipe)==pipe_id and not list(pipe.iterdir()),'Pipe missing/replaced/nonempty'))
             for check in checks:
                 try:check()
@@ -203,6 +240,7 @@ class Lane:
                 if isinstance(diagnostic,BaseExceptionGroup) and diagnostic.exceptions[0] is original:raise
                 raise BaseExceptionGroup('Original command failure and diagnostic guard failure',[original,diagnostic]) from None
             raise original
+        self.profile_current={v:inventory(path) for v,path in self.profile_roots.items()}
         self.current={v:inventory(p,checkout_metadata=True) for v,p in self.roots.items()}
         self.cache={v:inventory(Path(e['NUGET_PACKAGES'])) for v,e in self.env.items()}
         print(json.dumps({'stage':label,'exit':outcome['exitCode'],'seconds':outcome['seconds'],

@@ -26,7 +26,9 @@ EXCEPTIONS=('System.ArgumentNullException','System.ArgumentException','System.Ty
 KNOWN_REASONS=frozenset(('Unexpected hosted command exit','Source/protected output mutation','Protected source/output changed',
                         'Protected cache mutation','Protected package cache changed','Prior private evidence changed',
                         'Special/reparse guarded input','Unselected or nested git metadata forbidden',
-                        'Pinned config/restore input changed','Frozen payload changed','Hosted total deadline exceeded'))
+                        'Pinned config/restore input changed','Frozen payload changed','Hosted total deadline exceeded',
+                        'Missing required Windows program folder','Windows program folder is not absolute',
+                        'Windows folder identity changed','Protected Windows profile changed','Protected Windows profile mutation'))
 
 
 def stream_summary(raw):

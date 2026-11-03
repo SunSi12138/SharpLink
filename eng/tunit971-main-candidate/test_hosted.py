@@ -399,7 +399,7 @@ class GitMetadataGuard(unittest.TestCase):
         selected=[n for n in calls if any(k.arg=='checkout_metadata' and isinstance(k.value,ast.Constant) and k.value.value is True for k in n.keywords)]
         self.assertEqual(len(selected),5) # initialization/current guard/phase before+after/postcommand refresh
         others=[n for n in calls if n not in selected]
-        self.assertEqual(len(others),8) # payload x2, cache x4, previous-evidence + fresh evidence
+        self.assertEqual(len(others),13) # original8 + Windows profile init/type/current/phase/commit5; none omits .git
         self.assertTrue(all(not n.keywords for n in others))
 
 if __name__=='__main__':unittest.main(verbosity=2)

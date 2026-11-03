@@ -179,4 +179,99 @@ class InventoryDiagnosticControls(unittest.TestCase):
    value=d.stream_summary(raw);self.assertEqual(value['encodingBOM'],bom);self.assertEqual(value['nulByteCount'],raw.count(b'\0'))
    self.assertEqual(value['fixedToolLiterals'],[]) # no speculative decoding or inferred root cause
 
+class WindowsFolderControls(unittest.TestCase):
+ def host_values(self,root):
+  values={'PROGRAMFILES':str(root/'pf'),'PROGRAMFILES(X86)':str(root/'pf86'),'APPDATA':'HOST_PRIVATE','LOCALAPPDATA':'HOST_PRIVATE','SECRET':'never'}
+  (root/'pf').mkdir();(root/'pf86').mkdir();return values
+ def test_windows_uses_owned_conventional_profiles_only_two_host_folders(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);values=self.host_values(root)
+   with patch.dict(os.environ,values,clear=True),patch.object(r.sys,'platform','win32'):env=r.environment(root/'state')
+   self.assertEqual(env['USERPROFILE'],str(root/'state/home'))
+   for key,leaf in [('APPDATA','Roaming'),('LOCALAPPDATA','Local')]:
+    self.assertEqual(env[key],str(root/'state/home/AppData'/leaf));self.assertTrue(Path(env[key]).is_dir())
+   self.assertEqual(env['PROGRAMFILES'],values['PROGRAMFILES']);self.assertEqual(env['PROGRAMFILES(X86)'],values['PROGRAMFILES(X86)'])
+   self.assertNotIn('SECRET',env);self.assertNotIn('HOST_PRIVATE',env.values());self.assertNotIn('PROGRAMDATA',env)
+ def test_missing_empty_relative_file_or_symlink_program_folder_rejected(self):
+  for case in ('missing','empty','relative','file','symlink'):
+   with self.subTest(case=case),tempfile.TemporaryDirectory() as tmp:
+    root=Path(tmp);values=self.host_values(root)
+    if case=='missing':values.pop('PROGRAMFILES')
+    elif case=='empty':values['PROGRAMFILES']=''
+    elif case=='relative':values['PROGRAMFILES']='relative'
+    elif case=='file':(root/'file').write_text('x');values['PROGRAMFILES']=str(root/'file')
+    else:(root/'link').symlink_to(root/'pf',target_is_directory=True);values['PROGRAMFILES']=str(root/'link')
+    with patch.dict(os.environ,values,clear=True),patch.object(r.sys,'platform','win32'):
+     with self.assertRaises(ValueError):r.environment(root/'state')
+ def test_preexisting_appdata_link_fails_without_writing_outside(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);state=root/'state';home=state/'home';home.mkdir(parents=True);outside=root/'outside';outside.mkdir();(home/'AppData').symlink_to(outside,target_is_directory=True)
+   with patch.dict(os.environ,self.host_values(root),clear=True):
+    with self.assertRaises((ValueError,OSError)):r.windows_folders({},state)
+   self.assertEqual(list(outside.iterdir()),[])
+ def test_mac_environment_policy_and_no_windows_folders_unchanged(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)
+   with patch.dict(os.environ,{'APPDATA':'PRIVATE','LOCALAPPDATA':'PRIVATE','PROGRAMFILES':'PRIVATE','PATH':'bin'},clear=True),patch.object(r.sys,'platform','darwin'):
+    env=r.environment(root/'state')
+   self.assertEqual(env['PATH'],'bin')
+   for key in ('APPDATA','LOCALAPPDATA','PROGRAMFILES','PROGRAMFILES(X86)'):self.assertNotIn(key,env)
+   self.assertFalse((root/'state/home/AppData').exists())
+ def lane(self,root):
+  import time
+  lane=object.__new__(r.Lane);lane.roots={v:root/v for v in ('baseline','fixed')};lane.env={};lane.current={};lane.cache={};lane.profile_roots={};lane.profile_ids={};lane.system_folder_ids={}
+  for v,p in lane.roots.items():
+   p.mkdir();(p/'.git').mkdir();(p/'source').write_text('source');home=root/(v+'home');home.mkdir();app=home/'AppData';app.mkdir();roaming=app/'Roaming';roaming.mkdir();local=app/'Local';local.mkdir();packages=root/(v+'packages');packages.mkdir()
+   lane.env[v]={'NUGET_PACKAGES':str(packages)};lane.current[v]=r.inventory(p,checkout_metadata=True);lane.cache[v]={};lane.profile_roots[v]=home
+   for folder in (home,app,roaming,local):lane.profile_ids[folder]=r.identity(folder)
+  lane.profile_current={v:r.inventory(p) for v,p in lane.profile_roots.items()};lane.inputs_guard=lane.profile_inputs_guard;lane.work=root/'work';lane.work.mkdir();lane.evidence={};lane.deadline=time.monotonic()+4000;lane.pipes=[]
+  return lane
+ def flatten(self,error):
+  if isinstance(error,BaseExceptionGroup):return sum((self.flatten(x) for x in error.exceptions),[])
+  return [error]
+ def model_command(self,lane,label,phase,mutate):
+  lane.commands_started=r.EXPECTED_STAGES.index(label)
+  def fake(*args,**kwargs):
+   output=kwargs['output'];output.mkdir()
+   for stream in ('stdout','stderr'):(output/(label+'.'+stream)).write_bytes(b'')
+   mutate();return {'exitCode':0,'seconds':0,'directProcessTerminal':True}
+  with patch.object(r.host,'run',side_effect=fake),patch('builtins.print'):
+   return lane.command(label,'baseline',['unused'],30,phase=phase)
+ def test_only_selected_restore_and_build_can_commit_profile_outputs(self):
+  for label,phase in [('restore-baseline','restore'),('build-baseline','build')]:
+   with tempfile.TemporaryDirectory() as tmp:
+    lane=self.lane(Path(tmp));file=lane.profile_roots['baseline']/'AppData/Local/sentinel'
+    self.model_command(lane,label,phase,lambda:file.write_bytes(b''));lane.current_guard();self.assertIn('AppData/Local/sentinel',lane.profile_current['baseline'])
+ def test_other_variant_and_readonly_profile_mutations_reject(self):
+  for label,phase,variant in [('restore-baseline','restore','fixed'),('build-baseline','build','fixed'),('sdk-info','readonly','baseline'),('prepare-baseline','prepare','baseline')]:
+   with self.subTest(label=label,variant=variant),tempfile.TemporaryDirectory() as tmp:
+    lane=self.lane(Path(tmp));file=lane.profile_roots[variant]/'PRIVATE'
+    with self.assertRaises(BaseExceptionGroup) as caught:self.model_command(lane,label,phase,lambda:file.write_bytes(b''))
+    self.assertIn(('Protected Windows profile mutation',),[x.args for x in self.flatten(caught.exception)])
+    with self.assertRaises(ValueError):lane.current_guard()
+ def test_profile_identity_swap_and_special_nodes_fail_even_in_write_phase(self):
+  for kind in ('swap','symlink','fifo','nestedgit'):
+   with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
+    root=Path(tmp);lane=self.lane(root);local=lane.profile_roots['baseline']/'AppData/Local'
+    def mutate():
+     if kind=='swap':local.rename(local.with_name('old'));local.mkdir()
+     elif kind=='symlink':(local/'link').symlink_to(root/'unbound')
+     elif kind=='fifo':os.mkfifo(local/'fifo')
+     else:(local/'.git').mkdir()
+    with self.assertRaises(BaseExceptionGroup):self.model_command(lane,'restore-baseline','restore',mutate)
+ def test_repo_migration_sentinel_is_still_rejected_and_hash_matches_actual(self):
+  import hashlib
+  rel='NuGet/Migrations/1';self.assertEqual(hashlib.sha256(rel.encode()).hexdigest(),'278e95f4c2e4ea01bddb3fcf1d4a2efe61df33a849c35e7e85dcfbce644fc45a')
+  with tempfile.TemporaryDirectory() as tmp:
+   lane=self.lane(Path(tmp));file=lane.roots['baseline']/rel
+   def mutate():file.parent.mkdir(parents=True);file.write_bytes(b'')
+   with self.assertRaises(BaseExceptionGroup) as caught:self.model_command(lane,'restore-baseline','restore',mutate)
+   self.assertIn(('Source/protected output mutation',),[x.args for x in self.flatten(caught.exception)])
+ def test_system_folder_replacement_and_final_profile_change_rejected(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);lane=self.lane(root);system=root/'program';system.mkdir();lane.system_folder_ids[system]=r.identity(system);system.rename(root/'old');system.mkdir()
+   with self.assertRaises(ValueError):lane.profile_inputs_guard()
+   lane.system_folder_ids={};(lane.profile_roots['fixed']/'PRIVATE').write_text('changed')
+   with self.assertRaises(ValueError):lane.current_guard()
+
 if __name__=='__main__':unittest.main(verbosity=2)
