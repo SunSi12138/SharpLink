@@ -92552,5 +92552,11 @@
       "tunit.assertions/1.73.19/buildTransitive/net10.0/TUnit.Assertions.targets": "4819cec7dc7d11ed36323ba07cdda7a6466f679507096257905457f75fe5765c"
     },
     "generatedSource": "test/SharpLink.UnitTests/obj/Release/net10.0/SharpLink.UnitTests.GlobalUsings.g.cs"
+  },
+  "assemblyMetadataProof": {
+    "sdkTarget": "sdk/10.0.114/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.GenerateAssemblyInfo.targets",
+    "sdkTargetSHA256": "aed5db2d53cb2517edb7cae09dfd543b177ae733d5331536bd044d772bad18e8",
+    "packageTarget": "microsoft.testing.platform/2.5.1/buildMultiTargeting/Microsoft.Testing.Platform.targets",
+    "packageTargetSHA256": "00eb786984026f49c3b086450d3b2cc06368293f1c2b3518c4188dd024ad99a4"
   }
 }

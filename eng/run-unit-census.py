@@ -276,7 +276,7 @@ def execute(lane):
     expanded_dir.rename(lane.evidence/'imports');expanded_dir=lane.evidence/'imports'
     lane.seals[expanded_dir]=r.snapshot(expanded_dir);lane.extend_evidence(['imports','imports/unit.xml'])
     built_metadata=lane.run('build',[dotnet,'build',project,'-c','Release','--no-restore','-v:minimal','-target:Build',
-        '-getItem:Compile,Using,ProjectReference,TestingPlatformBuilderHook,TestingPlatformCommandLineOptionDefault',
+        '-getItem:Compile,Using,AssemblyMetadata,ProjectReference,TestingPlatformBuilderHook,TestingPlatformCommandLineOptionDefault',
         '-getProperty:MSBuildProjectFullPath,Configuration,PublishAot,TargetFramework,AssemblyName,DefineConstants,TargetPath,RootNamespace,TestingPlatformHostFactory,GenerateTestingPlatformEntryPoint,GenerateTestingPlatformApplicationHelper,GenerateSelfRegisteredExtensions,Language',
         '-p:UseSharedCompilation=false','-p:PathMap='+r.legacy.compile_path_map(source),'-m:1','-nr:false'],source,600)
     lane.validation_phase='post-build-json';lane.metadata_input=None
@@ -286,6 +286,8 @@ def execute(lane):
     lane.validation_phase='post-build-package-compile'
     post_package_sources=r.package_compile_inputs(source,packages,post_build,actual_imports)
     r.require(post_package_sources==package_sources,'UC_PACKAGE_COMPILE_SET')
+    lane.validation_phase='post-build-assembly-metadata'
+    r.assembly_metadata_qualification(packages,sdkroot,post_build,actual_imports,catalog)
     lane.validation_phase='post-build-compile-set'
     compile_ledger=r.compiled_inputs(source,post_build,catalog,post_package_sources)
     lane.validation_phase='post-build-global-usings'

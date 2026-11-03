@@ -31,6 +31,23 @@ def fixture():
 class Controls(unittest.TestCase):
     def reject(self,fn):
         with self.assertRaises((r.Rejected,ValueError,KeyError,TypeError)):fn()
+    def test_assembly_metadata_items_and_imports(self):
+        proof=r.assembly_metadata_proof();c={'assemblyMetadataProof':proof}
+        packages=Path('/synthetic/packages');sdk=Path('/synthetic/sdk')
+        imports={packages/proof['packageTarget']:proof['packageTargetSHA256'],sdk/proof['sdkTarget']:proof['sdkTargetSHA256']}
+        row={'Identity':'Microsoft.Testing.Platform.Application','Value':'true'}
+        good={'Items':{'AssemblyMetadata':[row]}}
+        with patch.object(r,'file_identity',side_effect=lambda p:[imports[p]]):
+            r.assembly_metadata_qualification(packages,sdk,good,imports,c)
+            for rows in ([],[row,row],[dict(row,Value='false')],[dict(row,Identity='Foreign')]):
+                self.reject(lambda:r.assembly_metadata_qualification(packages,sdk,{'Items':{'AssemblyMetadata':rows}},imports,c))
+            for path in imports:
+                subset=dict(imports);del subset[path]
+                self.reject(lambda:r.assembly_metadata_qualification(packages,sdk,good,subset,c))
+        with patch.object(r,'file_identity',return_value=['wrong']):
+            self.reject(lambda:r.assembly_metadata_qualification(packages,sdk,good,imports,c))
+        self.assertEqual(r.read_json(ROOT/'eng/unit-census.json')['assemblyMetadataProof'],proof)
+
     def using_fixture(self):
         return {'Items':{'Using':[{'Identity':name,'Static':'True' if static else ''} for name,static in
             [('TUnit.Assertions',False),('TUnit.Assertions.Extensions',False),('TUnit.Core',False),('TUnit.Core.HookType',True)]]}}
@@ -364,6 +381,14 @@ class Controls(unittest.TestCase):
             (root/(prefix+'.NETCoreApp,Version=v10.0.AssemblyAttributes.cs')).write_text('using System; using System.Reflection; [assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v10.0", FrameworkDisplayName = ".NET 10.0")]')
             meta={'Items':{'Compile':[{'FullPath':str(root/name)} for name in c['unitSources']+c['generatedCompile']]}}
             self.assertEqual(len(r.compiled_inputs(root,meta,c)),5)
+            info=root/(prefix+'SharpLink.UnitTests.AssemblyInfo.cs');original=info.read_text()
+            c['assemblyMetadataProof']=r.assembly_metadata_proof()
+            self.reject(lambda:r.compiled_inputs(root,meta,c))
+            info.write_text(original+r.MTP_ASSEMBLY_MARKER+'\n')
+            self.assertEqual(len(r.compiled_inputs(root,meta,c)),5)
+            for marker in (r.MTP_ASSEMBLY_MARKER.replace('"true"','"false"'),r.MTP_ASSEMBLY_MARKER.replace('Microsoft.Testing.Platform.Application','Foreign'),r.MTP_ASSEMBLY_MARKER+'\n'+r.MTP_ASSEMBLY_MARKER):
+                info.write_text(original+marker+'\n');self.reject(lambda:r.compiled_inputs(root,meta,c))
+            info.write_text(original+r.MTP_ASSEMBLY_MARKER+'\n')
             with tempfile.TemporaryDirectory() as external:
                 path=Path(external)/'TUnit.Core.GeneratedNamespace.cs';path.write_text('namespace TUnit.Generated {}')
                 package_sources={path:'package:tunit.core/1.73.19/'+r.TUNIT_CORE_SOURCE_MEMBER}
