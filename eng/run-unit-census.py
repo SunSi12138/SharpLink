@@ -89,6 +89,7 @@ class Lane:
         self.work_id=results.legacy.directory_identity_strict(work)
         self.env=environment(work);self.stop=time.monotonic()+3600;self.sequence=0
         self.source=None;self.original={};self.inputs={};self.trees={};self.commands={}
+        self.seal_domains={self.logs:('logs',None),self.evidence:('evidence',None)};self.seal_diagnostics={}
         self.observations=[];self.errors=[];self.stage='bootstrap';self.durable=True;self.validation_phase='not-metadata';self.metadata_input=None;self.metadata_project=None;self.metadata_catalog=None
         self.runtime_inventory={};self.identity={};self.unfiltered=False;self.stable=False;self.source_members=None
 
@@ -104,15 +105,41 @@ class Lane:
         return {p.relative_to(self.source).as_posix() for p in self.source.rglob('*')
                 if not any(part in ('.git','obj','bin') for part in p.relative_to(self.source).parts) and not p.is_dir()}
 
+    def verify_seal(self, root, expected):
+        current=self.r.snapshot(root)
+        if current==expected:return
+        original=self.r.Rejected('UC_SEAL')
+        try:
+            added=set(current)-set(expected);removed=set(expected)-set(current)
+            changed={k for k in set(current)&set(expected) if current[k]!=expected[k]}
+            files={k for k in changed if current[k][0]==expected[k][0]=='file'}
+            facts={'expectedCount':len(expected),'actualCount':len(current),
+                   'addedCount':len(added),'removedCount':len(removed),'changedCount':len(changed),
+                   'changedFileBytesCount':sum(current[k][-1]!=expected[k][-1] for k in files),
+                   'changedFileIdentityOnlyCount':sum(current[k][-1]==expected[k][-1] for k in files),
+                   'addedDirectoryCount':sum(current[k][0]=='directory' for k in added),
+                   'addedFileCount':sum(current[k][0]=='file' for k in added),
+                   'addedTestResultsDirectoryCount':sum(current[k][0]=='directory' and Path(k).name=='TestResults' for k in added),
+                   'addedPathsSHA256':self.r.digest(sorted(added)),
+                   'removedPathsSHA256':self.r.digest(sorted(removed)),
+                   'changedPathsSHA256':self.r.digest(sorted(changed))}
+            domain,index=self.seal_domains.get(root,('unknown',None))
+            facts.update(domain=domain,projectIndex=index)
+            # Latest observed difference per root, not an error-occurrence deduplication.
+            self.seal_diagnostics[root]=facts
+        except BaseException as diagnostic:
+            raise BaseExceptionGroup('seal rejection and independent diagnostic',[original,diagnostic])
+        raise original
+
     def check(self):
         failures=[]
         actions=[lambda:self.r.require(time.monotonic()<self.stop,'UC_TOTAL_BUDGET'),
                  lambda:self.r.legacy.verify_directory(self.work,self.work_id),
-                 lambda:self.r.verify_snapshot(self.logs,self.logseal),
-                 lambda:self.r.verify_snapshot(self.evidence,self.evidenceseal)]
+                 lambda:self.verify_seal(self.logs,self.logseal),
+                 lambda:self.verify_seal(self.evidence,self.evidenceseal)]
         if self.source_members is not None:
             actions.append(lambda:self.r.require(self.source_files()==self.source_members,'UC_SOURCE_MEMBERS'))
-        actions += [lambda p=p,v=v:self.r.verify_snapshot(p,v) for p,v in list(self.seals.items())+list(self.trees.items())]
+        actions += [lambda p=p,v=v:self.verify_seal(p,v) for p,v in list(self.seals.items())+list(self.trees.items())]
         actions += [lambda p=p,v=v:self.r.require(self.r.file_identity(p)==v,'UC_INPUT_CHANGED') for p,v in list(self.original.items())+list(self.inputs.items())]
         for action in actions:
             try:action()
@@ -168,6 +195,7 @@ class Lane:
         self.check()
         directory=self.evidence/('ledger'+str(number));directory.mkdir()
         self.r.write_json(directory,'ledger.json',{'identity':self.identity,'rawJSONSHA256':self.r.sha(raw),'actual':result['rows']})
+        self.seal_domains[directory]=('ledger1' if number==1 else 'ledger2',None)
         self.seals[directory]=self.r.snapshot(directory)
         self.extend_evidence(['ledger'+str(number),'ledger'+str(number)+'/ledger.json'])
         self.observations.append(result['summary'])
@@ -206,7 +234,7 @@ def execute(lane):
     r.require(dotnet.is_file(),'UC_SDK_MISSING')
     sdkroot=dotnet.parent
     lane.inputs[dotnet]=r.file_identity(dotnet)
-    lane.trees[sdkroot]=r.snapshot(sdkroot)
+    lane.trees[sdkroot]=r.snapshot(sdkroot);lane.seal_domains[sdkroot]=('sdk',None)
     sdk=r.stable_read(lane.run('sdk-version',[dotnet,'--version'],source))[0].decode().strip()
     r.require(re.fullmatch(r'10\.0\.1\d\d',sdk) and int(sdk.rsplit('.',1)[1])>=102,'UC_SDK_VERSION')
     lane.run('sdk-info',[dotnet,'--info'],source)
@@ -225,7 +253,7 @@ def execute(lane):
     package_identity=r.legacy.directory_identity_strict(packages)
     lane.run('restore',[dotnet,'restore',project,'--configfile',config,'--disable-parallel','-p:Configuration=Release','-p:RestoreIgnoreFailedSources=false','-m:1','-nr:false'],source,600)
     assets=r.dependencies(source,packages,catalog,package_identity)
-    lane.trees[packages]=r.snapshot(packages)
+    lane.trees[packages]=r.snapshot(packages);lane.seal_domains[packages]=('packages',None)
     for p in source.rglob('project.assets.json'):lane.inputs[p]=r.file_identity(p)
     metadata={};package_sources={}
     for index,name in enumerate(catalog['projects']):
@@ -275,6 +303,7 @@ def execute(lane):
     lane.inputs.update(actual_imports)
     r.verify_snapshot(lane.evidence,lane.evidenceseal)
     expanded_dir.rename(lane.evidence/'imports');expanded_dir=lane.evidence/'imports'
+    lane.seal_domains[expanded_dir]=('imports',None)
     lane.seals[expanded_dir]=r.snapshot(expanded_dir);lane.extend_evidence(['imports','imports/unit.xml'])
     built_metadata=lane.run('build',[dotnet,'build',project,'-c','Release','--no-restore','-v:minimal','-target:Build',
         '-getItem:Compile,Using,AssemblyMetadata,ProjectReference,TestingPlatformBuilderHook,TestingPlatformCommandLineOptionDefault',
@@ -297,10 +326,11 @@ def execute(lane):
     lane.validation_phase='runtime-identity'
     output=r.runtime_identity(source,packages,catalog,assets,lane.runtime_inventory)
     # Seal every original graph output and generated input after the single build.
-    for name in catalog['projects']:
+    for project_index,name in enumerate(catalog['projects']):
         for sub in ('obj','bin'):
             p=(source/name).parent/sub
-            if p.exists():lane.trees[p]=r.snapshot(p)
+            if p.exists():
+                lane.trees[p]=r.snapshot(p);lane.seal_domains[p]=(sub,project_index)
     lane.validation_phase='provider-qualification'
     proof=r.filter_qualification(source,packages,post_build,catalog,lane.env,actual_imports)
     lane.unfiltered=proof['unfilteredQualified']
@@ -354,6 +384,19 @@ def terminal_diagnostic(lane, summary_phase):
                 owners=receipt.get('remainingOwned')
                 if type(owners) is dict:remaining=str(len(owners))
         fields.extend(['"'+label+'State":"'+kind+'"','"'+label+'ExitCode":'+code,'"'+label+'RemainingOwnedCount":'+remaining])
+    seal_rows=[]
+    for facts in lane.seal_diagnostics.values():
+        domain=facts.get('domain');domain=domain if domain in {'logs','evidence','sdk','packages','imports','ledger1','ledger2','obj','bin'} else 'unknown'
+        index=facts.get('projectIndex');index=str(index) if type(index) is int and 0<=index<14 else 'null'
+        row=['"domain":"'+domain+'"','"projectIndex":'+index]
+        for key in ('expectedCount','actualCount','addedCount','removedCount','changedCount','changedFileBytesCount','changedFileIdentityOnlyCount','addedDirectoryCount','addedFileCount','addedTestResultsDirectoryCount'):
+            value=facts.get(key);value=str(value) if type(value) is int and value>=0 else 'null'
+            row.append('"'+key+'":'+value)
+        for key in ('addedPathsSHA256','removedPathsSHA256','changedPathsSHA256'):
+            value=facts.get(key);value='"'+value+'"' if type(value) is str and re.fullmatch('[0-9a-f]{64}',value) else 'null'
+            row.append('"'+key+'":'+value)
+        seal_rows.append('{'+','.join(row)+'}')
+    fields.append('"sealDifferences":['+','.join(seal_rows)+']')
     return ('{'+','.join(fields)+'}\n').encode('ascii')
 
 

@@ -226,6 +226,46 @@ class Controls(unittest.TestCase):
     def test_budget(self):
         self.assertEqual(r.budget(3600,600,0),600)
         self.reject(lambda:r.budget(1024,20,0));self.reject(lambda:r.budget(3600,20,64))
+    def test_seal_difference_exact_and_private(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=runner.Lane(Path(tmp),r,None);root=Path(tmp)/'PRIVATE_SENTINEL';root.mkdir()
+            (root/'keep').write_text('before');(root/'gone').write_text('x')
+            expected=r.snapshot(root);lane.seal_domains[root]=('bin',13)
+            (root/'keep').write_text('after');(root/'gone').unlink();(root/'TestResults').mkdir();(root/'SECRET.txt').write_text('secret')
+            with self.assertRaises(r.Rejected) as caught:lane.verify_seal(root,expected)
+            self.assertEqual(caught.exception.args,('UC_SEAL',));lane.record(caught.exception)
+            raw=runner.terminal_diagnostic(lane,'guard');self.assertNotIn(b'PRIVATE_SENTINEL',raw);self.assertNotIn(b'SECRET',raw)
+            facts=json.loads(raw)['sealDifferences'][0]
+            self.assertEqual((facts['addedCount'],facts['removedCount'],facts['changedCount']),(2,1,1))
+            self.assertEqual((facts['changedFileBytesCount'],facts['addedTestResultsDirectoryCount']),(1,1))
+            self.assertEqual((facts['domain'],facts['projectIndex']),('bin',13))
+            self.assertEqual(facts['addedPathsSHA256'],r.digest(['SECRET.txt','TestResults']))
+            self.assertEqual(expected['keep'][-1],r.hashlib.sha256(b'before').hexdigest())
+    def test_seal_identity_only_and_finite_renderer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=runner.Lane(Path(tmp),r,None);root=Path(tmp)/'data';root.mkdir();p=root/'x';p.write_text('same');expected=r.snapshot(root)
+            p.unlink();p.write_text('same')
+            with self.assertRaises(r.Rejected):lane.verify_seal(root,expected)
+            facts=lane.seal_diagnostics[root];self.assertEqual(facts['changedFileIdentityOnlyCount'],1)
+            facts.update(domain='PRIVATE_SENTINEL',projectIndex=True,addedCount='PRIVATE_SENTINEL',addedPathsSHA256='PRIVATE_SENTINEL')
+            with patch.object(runner.json,'dumps',side_effect=RuntimeError('json')),patch('builtins.print',side_effect=RuntimeError('print')):
+                raw=runner.terminal_diagnostic(lane,'guard')
+            self.assertNotIn(b'PRIVATE_SENTINEL',raw);row=json.loads(raw)['sealDifferences'][0]
+            self.assertEqual(row['domain'],'unknown');self.assertIsNone(row['projectIndex']);self.assertIsNone(row['addedCount']);self.assertIsNone(row['addedPathsSHA256'])
+    def test_seal_diagnostic_failure_preserves_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=runner.Lane(Path(tmp),r,None);root=Path(tmp)/'data';root.mkdir();expected=r.snapshot(root);(root/'new').mkdir()
+            failure=RuntimeError('diagnostic')
+            with patch.object(r,'digest',side_effect=failure),self.assertRaises(BaseExceptionGroup) as caught:lane.verify_seal(root,expected)
+            self.assertEqual(caught.exception.exceptions[0].args,('UC_SEAL',));self.assertIs(caught.exception.exceptions[1],failure)
+    def test_seal_check_repeated_reject_not_rebaseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=runner.Lane(Path(tmp),r,None);root=Path(tmp)/'data';root.mkdir();lane.trees[root]=r.snapshot(root);(root/'new').mkdir()
+            for _ in range(2):
+                with self.assertRaises(BaseExceptionGroup) as caught:lane.check()
+                lane.record(caught.exception)
+            self.assertEqual(len(lane.errors),2);self.assertEqual(len(lane.seal_diagnostics),1)
+            self.assertNotIn('new',lane.trees[root]);self.assertFalse(json.loads(runner.terminal_diagnostic(lane,'guard'))['censusQualified'])
     def test_exact_seals(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);p=root/'x';p.write_text('one');s=r.snapshot(root);p.write_text('two');self.reject(lambda:r.verify_snapshot(root,s))
@@ -458,10 +498,10 @@ class Controls(unittest.TestCase):
         self.assertTrue(seen[0].errors);self.assertNotIn('"censusQualified": true',output.getvalue())
     def test_deadline_crossed_inside_final_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
-            lane=runner.Lane(Path(tmp),r,None);clock=[1.0];lane.stop=2.0;real=r.verify_snapshot
+            lane=runner.Lane(Path(tmp),r,None);clock=[1.0];lane.stop=2.0;real=lane.verify_seal
             def slow(*args):
                 real(*args);clock[0]=3.0
-            with patch.object(runner.time,'monotonic',side_effect=lambda:clock[0]),patch.object(r,'verify_snapshot',side_effect=slow),self.assertRaises(BaseExceptionGroup):lane.check()
+            with patch.object(runner.time,'monotonic',side_effect=lambda:clock[0]),patch.object(lane,'verify_seal',side_effect=slow),self.assertRaises(BaseExceptionGroup):lane.check()
     def test_deadline_crossed_inside_summary_serialization(self):
         clock=[1.0];real=r.write_json
         def success(lane):lane.stable=True;lane.unfiltered=True;lane.stop=2.0
