@@ -1,0 +1,39 @@
+name: Ordinary Unit Release metadata census
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['wip/775-code-recovery-20261102']
+    paths:
+      - '.github/workflows/unit-census.yml'
+      - 'eng/unit-census.json'
+      - 'eng/unit-census-results.py'
+      - 'eng/run-unit-census.py'
+      - 'eng/tests/test_unit_census.py'
+      - 'eng/package-smoke-process.py'
+      - 'eng/route59-results.py'
+      - 'eng/retirement-results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.*'
+      - 'global.json'
+concurrency:
+  group: ordinary-unit-census-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-census:
+    runs-on: ubuntu-24.04
+    # 2260 active + at most 64*16 owned cleanup < 3600 inner seconds.
+    # The outer timeout is NOT evidence of a joined process.
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup repository SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+      - name: Original Unit14 build and two unfiltered metadata discoveries
+        run: python3 eng/run-unit-census.py --configuration Release
