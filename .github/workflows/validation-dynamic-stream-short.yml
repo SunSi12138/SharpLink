@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Exact reviewed payload manifest
-        run: python3 -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('eng/dynamic-stream-short/CI.json').read_bytes()).hexdigest() == '16b7c5e4b56bd601dab739cd93d2471c533120abc9e479461da656878311c96b'"
+        run: python3 -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('eng/dynamic-stream-short/CI.json').read_bytes()).hexdigest() == 'bd777db0fdca1a6e1f90069b8b030b9af7aa88ca3adccf409a6587634be4c124'"
       - name: Source/schema/owner negative controls
         run: python3 -B -m unittest discover -s eng/dynamic-stream-short -p 'test_*.py'
       - name: Finite harmless Linux owner probes (not .NET tests)
@@ -57,7 +57,7 @@ jobs:
           python-version: '3.12'
       - name: Exact reviewed payload manifest
         working-directory: validation
-        run: python3 -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('eng/dynamic-stream-short/CI.json').read_bytes()).hexdigest() == '16b7c5e4b56bd601dab739cd93d2471c533120abc9e479461da656878311c96b'"
+        run: python3 -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('eng/dynamic-stream-short/CI.json').read_bytes()).hexdigest() == 'bd777db0fdca1a6e1f90069b8b030b9af7aa88ca3adccf409a6587634be4c124'"
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           global-json-file: selected-main/global.json

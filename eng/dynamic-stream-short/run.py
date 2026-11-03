@@ -21,6 +21,9 @@ LIMITS=(('git-head',10),('git-tree',10),('sdk-version',30),('restore',600),('bui
         ('consumer-break',150),('normal',150),('cancellation-mid-stream',150))
 
 
+FIXED_REASONS=frozenset(('Ambiguous instrumentation anchor', 'Checkout has untracked source', 'Command directory replaced', 'Command output replaced', 'Discovery FQN/signature', 'Discovery five-mode bijection', 'Discovery parameter identity', 'Discovery schema', 'Discovery source span', 'Duplicate JSON key', 'Empty Git tree', 'Evidence changed while reading', 'Evidence root identity changed', 'Exact main preimage mismatch', 'Expected exact five source arguments', 'Final receipt identity changed', 'Finite budget drift', 'Git executable flag mismatch', 'Git source bytes mismatch', 'Insufficient owned command budget', 'Invalid pidfd readiness', 'JUnit counts', 'JUnit identity/result', 'JUnit metadata', 'JUnit singleton', 'JUnit suites', 'Linux pidfd support required', 'Linux-only diagnostic', 'Malformed stage record', 'Missing Git source', 'Missing selected SDK host', 'Missing selected cases', 'Missing/duplicate actual UID', 'Native actual UID identity', 'Native assembly/version', 'Native class', 'Native duration', 'Native generation', 'Native groups', 'Native non-PASS or retry', 'Native runtime identity', 'Native schema', 'Native singleton', 'Native source span', 'New stage source already exists', 'Nonordinary Git source entry', 'Nonordinary directory', 'Nonordinary evidence file', 'Nonordinary evidence root', 'Nonordinary file', 'Nonordinary inherited stage descriptor', 'Nonordinary original stage receipt', 'Nonordinary/oversized evidence', 'Nonpositive deadline', 'Not singleton PASS', 'Original last-stage receipt replaced', 'Original stage receipt replaced', 'Output directory is not ordinary', 'Oversized stage log', 'Payload changed', 'Payload pin mismatch', 'Pipe path budget', 'Pipe retained entries', 'Prior evidence changed', 'Prior stage evidence changed', 'Readonly cache changed', 'Readonly checkout/output changed', 'Receipt write made no progress', 'Relative selected root', 'SDK host changed', 'Stage GC/terminal sequence', 'Stage ownership prefix', 'Supervisor already has unrelated children', 'Symlink/special root ancestor', 'Total diagnostic deadline', 'Tracked source changed', 'Truncated complete stage record', 'Unexpected SDK band', 'Unexpected actual package identities', 'Unexpected checkout output', 'Unexpected child signal disposition', 'Unexpected instrumentation postimage', 'Unexpected owner error collection', 'Unexpected owner exit type', 'Unexpected owner failure flags', 'Unexpected owner failure stage', 'Unexpected owner failure type', 'Unexpected owner remaining state', 'Unexpected report publication set', 'Unexpected session errors', 'Unknown stage or time regression', 'Unqualified command receipt', 'Unsafe JUnit', 'Unsafe receipt name', 'Wrong main HEAD'))
+
+
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -164,6 +167,74 @@ def report_owner_failure(original,label):
     raise original
 
 
+def require_snapshot(actual,expected,reason,role,evidence):
+    try:r.require(actual==expected,reason)
+    except BaseException as original:
+        try:evidence.append((role,actual,expected))
+        except BaseException as capture:raise BaseExceptionGroup('Guard and diagnostic capture failure',[original,capture])
+        raise
+
+
+def safe_snapshot_diff(role,actual,expected,known):
+    r.require(role in ('checkout','cache','prior-evidence'),'Unknown diagnostic snapshot role')
+    missing=sorted(set(expected)-set(actual));added=sorted(set(actual)-set(expected))
+    changed=sorted(k for k in set(actual)&set(expected) if actual[k]!=expected[k])
+    rows=[]
+    for kind,names in (('removed',missing),('added',added),('changed',changed)):
+        for name in names:
+            if len(rows)>=8:break
+            item={'kind':kind,'pathSHA256':hashlib.sha256(name.encode()).hexdigest()}
+            if role=='checkout' and name in known and len(name)<=240:item['knownRelative']=name
+            for side,tree in (('expected',expected),('actual',actual)):
+                if name not in tree:continue
+                value=tree[name];r.require(type(value) is tuple and value and value[0] in ('file','dir'),'Unknown diagnostic snapshot entry')
+                item[side+'Kind']=value[0]
+                if value[0]=='file':
+                    r.require(type(value[1]) is str and re.fullmatch('[0-9a-f]{64}',value[1]),'Invalid diagnostic content hash')
+                    item[side+'SHA256']=value[1]
+            rows.append(item)
+    total=len(missing)+len(added)+len(changed)
+    return {'role':role,'expectedCount':len(expected),'actualCount':len(actual),'removed':len(missing),'added':len(added),
+            'changed':len(changed),'entries':rows,'truncated':total>len(rows)}
+
+
+def failure_diagnostic(errors,context,snapshots,known):
+    phases={'preflight','pre-guard','owner-prepare','owner-invoked','owner-returned','receipt-guard','pipe-guard','post-guard','command-qualified','restore-assets','seal-built','discovery-schema','body-schema','final-guard'}
+    r.require(context['phase'] in phases and (context['stage'] is None or context['stage'] in dict(LIMITS)),'Unknown diagnostic phase')
+    r.require(type(context['ownerInvoked']) is bool,'Invalid diagnostic owner state')
+    queue=list(errors);seen=set();leaves=[];truncated=False
+    while queue:
+        error=queue.pop(0)
+        if id(error) in seen:continue
+        seen.add(id(error))
+        if len(seen)>64:truncated=True;break
+        if isinstance(error,BaseExceptionGroup):queue[0:0]=list(error.exceptions);continue
+        if len(leaves)>=8:truncated=True;continue
+        name=type(error).__name__
+        item={'type':name if name in {'ValueError','OSError','PermissionError','FileNotFoundError','TimeoutError','InterruptedError','JSONDecodeError','UnicodeDecodeError','CommandFailure'} else 'OtherException'}
+        if type(error) is ValueError and len(error.args)==1 and type(error.args[0]) is str and error.args[0] in FIXED_REASONS:item['fixedReason']=error.args[0]
+        leaves.append(item)
+    terminal=None
+    row=context['terminal']
+    if row is not None:
+        r.require(type(row) is dict and row.get('stage')==context['stage'],'Invalid diagnostic terminal binding')
+        exit_code=row.get('exitCode');r.require(exit_code is None or type(exit_code) is int,'Invalid diagnostic terminal exit')
+        r.require(type(row.get('timedOut')) is bool and type(row.get('cancelled')) is bool,'Invalid diagnostic terminal flags')
+        r.require(all(type(row.get(k)) is list for k in ('errors','cleanupErrors','reportingErrors')),'Invalid diagnostic terminal counts')
+        remain=row.get('remainingOwned');r.require(remain is None or type(remain) is dict,'Invalid diagnostic remaining state')
+        terminal={'exit':exit_code,'timedOut':row['timedOut'],'cancelled':row['cancelled'],'errorCount':len(row['errors']),
+            'cleanupErrorCount':len(row['cleanupErrors']),'reportingErrorCount':len(row['reportingErrors']),
+            'remainingOwnedEmpty':None if remain is None else not bool(remain)}
+    return {'classification':'SHORT_FAILURE_DIAGNOSTIC','stage':context['stage'],'phase':context['phase'],
+            'ownerInvoked':context['ownerInvoked'],'terminal':terminal,'leaves':leaves,'leavesTruncated':truncated,
+            'snapshotFailureCount':len(snapshots),'snapshotDifferences':[safe_snapshot_diff(*x,known) for x in snapshots[:2]],'snapshotDifferencesTruncated':len(snapshots)>2}
+
+
+def emit_failure_diagnostic(errors,context,snapshots,known):
+    try:print(json.dumps(failure_diagnostic(errors,context,snapshots,known)),flush=True)
+    except BaseException as reporting:errors.append(reporting)
+
+
 def main(root):
     r.require(sys.platform=='linux','Linux-only diagnostic')
     kit=Path(__file__).absolute().parent;root=trusted_path(root.absolute())
@@ -177,6 +248,7 @@ def main(root):
     started=time.monotonic();dotnet=None;host_hash=None;env={}
     roots={p:directory_identity(p) for p in (work,root)}
     expected_sources={};seen=set();runtime=None;initial_dirs=set();mutation_phase='none'
+    context={'stage':None,'phase':'preflight','ownerInvoked':False,'terminal':None};failure_context=None;snapshot_failures=[]
     project_paths=r.read_json(kit/'SOURCE.json')['projectPaths']
     def guard():
         for path,identity in roots.items():directory_identity(path,identity)
@@ -188,30 +260,40 @@ def main(root):
             current_tree=snapshot(root,checkout=True)
             allowed=[]
             if source_seal is not None:
-                r.require(current_tree==source_seal,'Readonly checkout/output changed')
+                require_snapshot(current_tree,source_seal,'Readonly checkout/output changed','checkout',snapshot_failures)
                 allowed=[str(Path(p).parent/sub) for p in project_paths for sub in ('bin','obj')]
             if mutation_phase in ('restore','build'):
                 allowed=[str(Path(p).parent/sub) for p in project_paths for sub in (('obj',) if mutation_phase=='restore' else ('bin','obj'))]
             for relative,entry in current_tree.items():
                 if relative in expected_sources or (entry[0]=='dir' and relative in initial_dirs):continue
                 r.require(any(relative==prefix or relative.startswith(prefix+'/') for prefix in allowed),'Unexpected checkout output')
-        if source_seal is not None:r.require(snapshot(root,checkout=True)==source_seal,'Readonly checkout/output changed')
-        if cache_seal is not None:r.require(snapshot(work/'packages')==cache_seal,'Readonly cache changed')
-        for path,sealed in completed:r.require(snapshot(path)==sealed,'Prior evidence changed')
+        if source_seal is not None:require_snapshot(snapshot(root,checkout=True),source_seal,'Readonly checkout/output changed','checkout',snapshot_failures)
+        if cache_seal is not None:require_snapshot(snapshot(work/'packages'),cache_seal,'Readonly cache changed','cache',snapshot_failures)
+        for path,sealed in completed:require_snapshot(snapshot(path),sealed,'Prior evidence changed','prior-evidence',snapshot_failures)
         for path,(identity,digest) in stage_seals.items():
             r.require(file_identity(path)==identity and hashlib.sha256(read_regular(path,16384)).hexdigest()==digest,'Prior stage evidence changed')
     def run(label,argv,seconds,extra=None,fd=()):
         nonlocal current,mutation_phase
+        context.update(stage=label,phase='pre-guard',ownerInvoked=False,terminal=None)
         current=label;mutation_phase=label if label in ('restore','build') else ('build' if source_seal is not None else 'none');guard();r.require(time.monotonic()-started+seconds+16<2100,'Insufficient owned command budget')
+        context['phase']='owner-prepare'
         logs=work/(label+'-command');logs.mkdir();roots[logs]=directory_identity(logs)
         pipe=work/(label+'-pipe');pipe.mkdir();roots[pipe]=directory_identity(pipe);r.require(len(str(pipe).encode())+40<103,'Pipe path budget')
         child=dict(env,TESTINGPLATFORM_PIPE_DIRECTORY=str(pipe));child.update(extra or {})
+        context.update(phase='owner-invoked',ownerInvoked=True)
         try:result=owner.run_owned(label,argv,root,child,logs,seconds,pass_fds=fd)
-        except owner.CommandFailure as original:report_owner_failure(original,label)
+        except owner.CommandFailure as original:
+            context['terminal']=original.outcome
+            report_owner_failure(original,label)
+        context.update(phase='receipt-guard',terminal=result)
         r.require(result['stage']==label and result['argv']==[str(a) for a in argv] and result['timeoutSeconds']==seconds and
             result['exitCode']==0 and result['timedOut'] is False and result['cancelled'] is False and
             result['errors']==result['cleanupErrors']==result['reportingErrors']==[] and result['remainingOwned']=={},'Unqualified command receipt')
-        r.require(not any(pipe.iterdir()),'Pipe retained entries');guard();completed.append((logs,snapshot(logs)))
+        context['phase']='pipe-guard'
+        r.require(not any(pipe.iterdir()),'Pipe retained entries')
+        context['phase']='post-guard'
+        guard();completed.append((logs,snapshot(logs)))
+        context['phase']='command-qualified'
         print(json.dumps({'stage':label,'exit':0,'seconds':result['elapsedSeconds'],'remainingOwned':0}),flush=True)
         return logs/'stdout'
     try:
@@ -233,13 +315,16 @@ def main(root):
         config=work/'NuGet.config';config.write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3"/></packageSources></configuration>')
         project=root/PROJECT;policy=['-p:DisableImplicitLibraryPacksFolder=true','-p:ContinuousIntegrationBuild=true','-p:PathMap='+str(root).rstrip('/')+'/=/_/']
         run('restore',[dotnet,'restore',project,'--configfile',config,*policy],600)
+        context['phase']='restore-assets'
         assets=r.read_json(project.parent/'obj/project.assets.json')
         r.require(set(assets['project']['restore']['sources'])=={'https://api.nuget.org/v3/index.json'} and
                   'TUnit/1.73.19' in assets['libraries'] and 'Microsoft.Testing.Platform/2.5.1' in assets['libraries'],'Unexpected actual package identities')
         run('build',[dotnet,'build',project,'--no-restore','-c','Release','-m:1','-p:UseSharedCompilation=false','-nodeReuse:false',*policy],600)
         dll=project.parent/'bin/Release/net10.0/SharpLink.IntegrationTests.dll';binary=sha(dll)
+        context['phase']='seal-built'
         source_seal=snapshot(root,checkout=True);cache_seal=snapshot(work/'packages')
         p=run('discovery',[dotnet,dll,'--list-tests','json','--treenode-filter',METHOD_FILTER],120)
+        context['phase']='discovery-schema'
         ledger=r.discovery(r.parse_json(read_regular(p).decode('utf-8-sig')),r.read_json(kit/'SOURCE.json')['span'])
         print(json.dumps({'stage':'identity','base':prepare.BASE,'sdk':sdk,'binarySHA256':binary,'discovered':5,'selected':3,'ledgerSHA256':r.digest(ledger)}),flush=True)
         for mode in r.MODES:
@@ -247,6 +332,7 @@ def main(root):
             execute_body_with_stage(dfd,stages,report,roots,lambda stagefd:
                 run(mode,report_args(dotnet,dll,ledger[mode]['uid'],report),150,
                     {'SHARPLINK_STREAM_EXIT_STAGE_FD':str(stagefd)},(stagefd,)),stage_sources)
+            context['phase']='body-schema'
             guard()
             r.require(file_identity(stages)==stage_sources[stages],'Original stage receipt replaced')
             stage_bytes=read_regular(stages,16384);r.stage_records(stage_bytes,complete=True,mode=mode)
@@ -258,8 +344,10 @@ def main(root):
             completed.append((report,snapshot(report)));guard()
             print(json.dumps({'stage':mode,'classification':'SHORT_CASE_PASS','uidSHA256':verdict['uidSHA256']}),flush=True)
         r.require(len(qualified)==3,'Missing selected cases')
-    except BaseException as exc:errors.append(exc)
+    except BaseException as exc:
+        errors.append(exc);failure_context=dict(context)
     finally:
+        if failure_context is None:failure_context=dict(context,phase='final-guard')
         try:guard()
         except BaseException as exc:errors.append(exc)
         if stages is not None:
@@ -269,6 +357,7 @@ def main(root):
                 raw=read_regular(stages,16384);records=r.stage_records(raw)
                 print(json.dumps({'stage':'last-stage','recordCount':len(records),'lastStage':records[-1][0] if records else None,'sha256':hashlib.sha256(raw).hexdigest()}),flush=True)
             except BaseException as exc:errors.append(exc)
+        if errors:emit_failure_diagnostic(errors,failure_context,snapshot_failures,set(expected_sources)|{'.'})
         if final is not None:
             try:
                 directory_identity(work,roots[work])

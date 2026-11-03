@@ -396,6 +396,51 @@ class StageIdentityControls(unittest.TestCase):
         self.assertIn("assert os.read(r,1)==b'R';os.close(r);os._exit(0)",source)
 
 
+class FailureDiagnosticsControls(unittest.TestCase):
+    def context(self,phase='pre-guard',row=None):return dict(stage='discovery',phase=phase,ownerInvoked=row is not None,terminal=row)
+    def row(self):return dict(stage='discovery',exitCode=0,timedOut=False,cancelled=False,errors=[],cleanupErrors=[],reportingErrors=[],remainingOwned={})
+    def test_fixed_reason_and_unknown_private_message(self):
+        private='DO_NOT_LEAK argv=/private/token'
+        out=run.failure_diagnostic([ValueError('Readonly checkout/output changed'),ValueError(private)],self.context(),[],set())
+        self.assertEqual(out['leaves'][0]['fixedReason'],'Readonly checkout/output changed')
+        self.assertNotIn('fixedReason',out['leaves'][1]);self.assertNotIn(private,json.dumps(out))
+    def test_pre_guard_does_not_claim_owner_invocation(self):
+        out=run.failure_diagnostic([ValueError('Prior evidence changed')],self.context(),[],set())
+        self.assertFalse(out['ownerInvoked']);self.assertIsNone(out['terminal']);self.assertEqual(out['phase'],'pre-guard')
+    def test_post_guard_keeps_actual_successful_owner(self):
+        out=run.failure_diagnostic([ValueError('Readonly cache changed')],self.context('post-guard',self.row()),[],set())
+        self.assertTrue(out['ownerInvoked']);self.assertEqual(out['terminal']['exit'],0);self.assertTrue(out['terminal']['remainingOwnedEmpty'])
+    def test_unknown_remaining_stays_unknown(self):
+        row=self.row();row['remainingOwned']=None
+        self.assertIsNone(run.failure_diagnostic([],self.context('owner-invoked',row),[],set())['terminal']['remainingOwnedEmpty'])
+    def test_invalid_terminal_never_prints_raw(self):
+        for key,value in (('stage','SECRET'),('exitCode',True),('timedOut',1),('errors','SECRET'),('remainingOwned',[])):
+            row=self.row();row[key]=value
+            with self.assertRaises(ValueError):run.failure_diagnostic([],self.context('post-guard',row),[],set())
+    def test_snapshot_known_path_and_unknown_hash_only(self):
+        a={'known.cs':('file','a'*64,0o600),'SECRET/path':('file','b'*64,0o600)};b={'known.cs':('file','c'*64,0o600)}
+        out=run.safe_snapshot_diff('checkout',a,b,{'known.cs'})
+        self.assertEqual((out['added'],out['changed']), (1,1));self.assertNotIn('SECRET',json.dumps(out))
+        self.assertEqual(next(x for x in out['entries'] if x['kind']=='changed')['knownRelative'],'known.cs')
+        self.assertNotIn('knownRelative',run.safe_snapshot_diff('cache',a,b,{'known.cs'})['entries'][0])
+    def test_snapshot_bound_and_no_extra_reads(self):
+        a={'private-'+str(i):('file','a'*64,0o600) for i in range(20)}
+        with mock.patch.object(Path,'read_bytes',side_effect=AssertionError('No diagnostic reads')):
+            out=run.safe_snapshot_diff('cache',a,{},set())
+        self.assertEqual(out['added'],20);self.assertEqual(len(out['entries']),8);self.assertTrue(out['truncated'])
+    def test_snapshot_wrapper_preserves_original_predicate(self):
+        evidence=[];run.require_snapshot({'a':1},{'a':1},'Readonly cache changed','cache',evidence);self.assertEqual(evidence,[])
+        with self.assertRaises(ValueError) as cm:run.require_snapshot({'a':1},{'b':2},'Readonly cache changed','cache',evidence)
+        self.assertEqual(cm.exception.args,('Readonly cache changed',));self.assertEqual(len(evidence),1)
+    def test_summary_console_failure_appended_after_original(self):
+        original=ValueError('Readonly cache changed');reporting=OSError('private');errors=[original]
+        with mock.patch('builtins.print',side_effect=reporting):run.emit_failure_diagnostic(errors,self.context(),[],set())
+        self.assertEqual(errors,[original,reporting])
+    def test_nested_leaves_bounded_without_messages(self):
+        errors=[ExceptionGroup('SECRET',[ValueError('SECRET') for _ in range(20)])]
+        out=run.failure_diagnostic(errors,self.context(),[],set());self.assertEqual(len(out['leaves']),8);self.assertTrue(out['leavesTruncated']);self.assertNotIn('SECRET',json.dumps(out))
+
+
 class ProbeControls(unittest.TestCase):
     def outcomes(self):
         def row(timeout):return dict(remainingOwned={},exitCode=-15 if timeout else 0,cancelled=False,reportingErrors=[],cleanupErrors=['OwnedProcessesAfterCommand'],errors=['TimeoutError'] if timeout else [],timedOut=timeout)
