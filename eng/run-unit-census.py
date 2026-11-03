@@ -90,7 +90,7 @@ class Lane:
         self.env=environment(work);self.stop=time.monotonic()+3600;self.sequence=0
         self.source=None;self.original={};self.inputs={};self.trees={};self.commands={}
         self.observations=[];self.errors=[];self.stage='bootstrap';self.durable=True;self.validation_phase='not-metadata';self.metadata_input=None;self.metadata_project=None;self.metadata_catalog=None
-        self.identity={};self.unfiltered=False;self.stable=False;self.source_members=None
+        self.runtime_inventory={};self.identity={};self.unfiltered=False;self.stable=False;self.source_members=None
 
     def record(self, error):
         self.errors.append(error)
@@ -293,7 +293,8 @@ def execute(lane):
     lane.validation_phase='post-build-global-usings'
     r.global_using_qualification(source,packages,sdkroot,post_build,actual_imports,catalog)
     r.write_json(lane.evidence,'compiled-inputs.json',compile_ledger);lane.extend_evidence(['compiled-inputs.json'])
-    output=r.runtime_identity(source,packages,catalog,assets)
+    lane.validation_phase='runtime-identity'
+    output=r.runtime_identity(source,packages,catalog,assets,lane.runtime_inventory)
     # Seal every original graph output and generated input after the single build.
     for name in catalog['projects']:
         for sub in ('obj','bin'):
@@ -331,7 +332,7 @@ def guarded_main():
                 lane.record(diagnostic);qualified=False
         summary={'schemaVersion':1,'identity':lane.identity,'censusQualified':qualified,'stableQualified':qualified,
                  'unfilteredQualified':lane.unfiltered and not errors,'evidenceDurable':lane.durable,'stage':lane.stage,
-                 'errorOccurrences':len(errors),'rejections':r.public_rejections(errors),'validationPhase':lane.validation_phase,'metadataFacts':metadata_facts,'rejectCode':None if qualified else 'UC_FAILED','observations':lane.observations,'exit':0 if qualified else 1,
+                 'errorOccurrences':len(errors),'rejections':r.public_rejections(errors),'validationPhase':lane.validation_phase,'metadataFacts':metadata_facts,'runtimeInventory':lane.runtime_inventory,'rejectCode':None if qualified else 'UC_FAILED','observations':lane.observations,'exit':0 if qualified else 1,
                  'qualification':'Metadata only; no test bodies/results. Digests cannot reconstruct private ledgers.'}
         # Summary serialization/write/render are independent failure points.
         try:

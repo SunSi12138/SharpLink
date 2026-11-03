@@ -416,11 +416,11 @@ def dependencies(root, packages, catalog, package_identity=None):
     return unit
 
 
-def runtime_identity(root, packages, catalog, assets):
+def runtime_identity(root, packages, catalog, assets, inventory_facts=None):
     output=root/Path(catalog['project']).parent/'bin/Release/net10.0'
     deps=read_json(output/'SharpLink.UnitTests.deps.json')
     target=deps['targets'][deps['runtimeTarget']['name']]
-    restored=assets['targets']['net10.0']; known={'SharpLink.UnitTests.dll'}
+    restored=assets['targets']['net10.0']; known={'SharpLink.UnitTests.dll'};resource_destinations=set()
     for identity, item in target.items():
         library=deps['libraries'][identity]
         if library['type']=='package':
@@ -436,18 +436,43 @@ def runtime_identity(root, packages, catalog, assets):
                                 set(entry)<=set(expected)|{'fileVersion','assemblyVersion'}, 'UC_DEPS_RID')
                         dest=relative
                     else:dest=Path(relative).name
+                    require(dest not in resource_destinations,'UC_RESOURCE_COLLISION')
                     require(file_identity(output/dest)[-1]==file_identity(folder/relative)[-1], 'UC_RUNTIME_BYTES')
                     known.add(dest)
+            # SDK ResolvePackageAssets copies restore `resource` assets into
+            # locale/basename; DependencyContextBuilder writes deps `resources`.
+            # Require exact declarations and bytes, never accept a DLL glob.
+            for relative,entry in item.get('resources',{}).items():
+                relative_path=Path(relative)
+                require(not relative_path.is_absolute() and '..' not in relative_path.parts and
+                        '\\' not in relative and relative_path.name.endswith('.resources.dll'),'UC_RESOURCE_PATH')
+                expected=restored[identity].get('resource',{}).get(relative)
+                require(type(entry) is dict and set(entry)=={'locale'} and entry==expected,'UC_RESOURCE_METADATA')
+                locale=entry['locale']
+                import re
+                require(type(locale) is str and re.fullmatch(r'[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*',locale) is not None,'UC_RESOURCE_LOCALE')
+                dest=locale+'/'+relative_path.name
+                require(dest not in known,'UC_RESOURCE_COLLISION')
+                require(file_identity(output/dest)[-1]==file_identity(folder/relative)[-1],'UC_RESOURCE_BYTES')
+                known.add(dest);resource_destinations.add(dest)
         elif library['type']=='project':
             for relative in item.get('runtime',{}):
                 require(not Path(relative).is_absolute() and '..' not in Path(relative).parts and '\\' not in relative, 'UC_DEPS_PROJECT_PATH')
+                require(relative not in resource_destinations,'UC_RESOURCE_COLLISION')
                 if relative=='SharpLink.UnitTests.dll':continue
                 matches=[root/Path(p).parent/'bin/Release/net10.0'/relative for p in catalog['projects']]
                 matches=[p for p in matches if p.exists()]
                 require(matches and all(sha(p)==sha(output/relative) for p in matches), 'UC_RUNTIME_PROJECT')
                 known.add(relative)
         else:require(False, 'UC_DEPS_KIND')
-    require({p.relative_to(output).as_posix() for p in output.rglob('*.dll')} == {p for p in known if p.endswith('.dll')}, 'UC_RUNTIME_INVENTORY')
+    actual_dlls={p.relative_to(output).as_posix() for p in output.rglob('*.dll')}
+    expected_dlls={p for p in known if p.endswith('.dll')}
+    if inventory_facts is not None:
+        inventory_facts.update({'actualDllCount':len(actual_dlls),'expectedDllCount':len(expected_dlls),
+            'missingCount':len(expected_dlls-actual_dlls),'extraCount':len(actual_dlls-expected_dlls),
+            'actualPathsSHA256':digest(sorted(actual_dlls)),'expectedPathsSHA256':digest(sorted(expected_dlls)),
+            'missingPathsSHA256':digest(sorted(expected_dlls-actual_dlls)),'extraPathsSHA256':digest(sorted(actual_dlls-expected_dlls))})
+    require(actual_dlls==expected_dlls, 'UC_RUNTIME_INVENTORY')
     config=read_json(output/'SharpLink.UnitTests.runtimeconfig.json')['runtimeOptions']
     require(config['tfm']=='net10.0' and config['framework']=={'name':'Microsoft.NETCore.App','version':'10.0.0'}, 'UC_RUNTIME_CONFIG')
     return output
@@ -655,7 +680,7 @@ def compiled_inputs(root, value, catalog, package_sources=None):
     return rows
 
 
-PUBLIC_REJECTION_CODES = frozenset(('UC_ASSEMBLY_METADATA_PROOF', 'UC_ASSEMBLY_METADATA_ITEMS', 'UC_GLOBAL_USINGS_ITEMS', 'UC_GLOBAL_USINGS_PROOF', 'UC_GLOBAL_USINGS_SOURCE', 'UC_PACKAGE_COMPILE_SET', 'UC_PACKAGE_COMPILE_BYTES', 'UC_PACKAGE_COMPILE_IMPORT', 'UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
+PUBLIC_REJECTION_CODES = frozenset(('UC_RESOURCE_PATH', 'UC_RESOURCE_METADATA', 'UC_RESOURCE_LOCALE', 'UC_RESOURCE_COLLISION', 'UC_RESOURCE_BYTES', 'UC_ASSEMBLY_METADATA_PROOF', 'UC_ASSEMBLY_METADATA_ITEMS', 'UC_GLOBAL_USINGS_ITEMS', 'UC_GLOBAL_USINGS_PROOF', 'UC_GLOBAL_USINGS_SOURCE', 'UC_PACKAGE_COMPILE_SET', 'UC_PACKAGE_COMPILE_BYTES', 'UC_PACKAGE_COMPILE_IMPORT', 'UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
 
 
 def public_rejections(errors):

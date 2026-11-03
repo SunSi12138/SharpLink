@@ -31,6 +31,65 @@ def fixture():
 class Controls(unittest.TestCase):
     def reject(self,fn):
         with self.assertRaises((r.Rejected,ValueError,KeyError,TypeError)):fn()
+    def resource_fixture(self, temp):
+        root=temp/'src';packages=temp/'packages';output=root/'test/SharpLink.UnitTests/bin/Release/net10.0'
+        output.mkdir(parents=True);(output/'SharpLink.UnitTests.dll').write_bytes(b'unit')
+        relative='lib/net8.0/zh-Hans/K.resources.dll';folder=packages/'known/1.0.0'
+        source=folder/relative;source.parent.mkdir(parents=True);source.write_bytes(b'resource')
+        dest=output/'zh-Hans/K.resources.dll';dest.parent.mkdir();dest.write_bytes(source.read_bytes())
+        resource={relative:{'locale':'zh-Hans'}}
+        deps={'runtimeTarget':{'name':'net10.0'},'targets':{'net10.0':{'Known/1.0.0':{'resources':resource}}},'libraries':{'Known/1.0.0':{'type':'package'}}}
+        assets={'targets':{'net10.0':{'Known/1.0.0':{'resource':copy.deepcopy(resource)}}},'libraries':{'Known/1.0.0':{'path':'known/1.0.0'}}}
+        (output/'SharpLink.UnitTests.deps.json').write_text(json.dumps(deps))
+        (output/'SharpLink.UnitTests.runtimeconfig.json').write_text(json.dumps({'runtimeOptions':{'tfm':'net10.0','framework':{'name':'Microsoft.NETCore.App','version':'10.0.0'}}}))
+        return root,packages,output,{'project':'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','projects':[]},assets,deps
+    def test_runtime_resources_exact_bytes_and_safe_inventory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root,packages,output,c,a,deps=self.resource_fixture(Path(d));facts={}
+            self.assertEqual(r.runtime_identity(root,packages,c,a,facts),output)
+            self.assertEqual(facts['actualDllCount'],2);self.assertEqual(facts['extraCount'],0)
+            (output/'PRIVATE_SENTINEL.dll').write_bytes(b'extra');self.reject(lambda:r.runtime_identity(root,packages,c,a,facts))
+            self.assertEqual(facts['extraCount'],1);self.assertNotIn('PRIVATE_SENTINEL',json.dumps(facts))
+            (output/'PRIVATE_SENTINEL.dll').unlink();(output/'SharpLink.UnitTests.dll').unlink()
+            self.reject(lambda:r.runtime_identity(root,packages,c,a,facts));self.assertEqual(facts['missingCount'],1)
+    def test_runtime_resource_wrong_bytes_unknown_metadata_and_locale(self):
+        for mode in ('bytes','metadata','locale','path','undeclared'):
+            with tempfile.TemporaryDirectory() as d:
+                root,packages,output,c,a,deps=self.resource_fixture(Path(d));resources=deps['targets']['net10.0']['Known/1.0.0']['resources'];relative=next(iter(resources))
+                if mode=='bytes':(output/'zh-Hans/K.resources.dll').write_bytes(b'wrong')
+                elif mode=='metadata':resources[relative]['other']='unknown'
+                elif mode=='locale':resources[relative]['locale']='../escape';a['targets']['net10.0']['Known/1.0.0']['resource'][relative]['locale']='../escape'
+                elif mode=='path':resources['../escape.resources.dll']=resources.pop(relative)
+                else:a['targets']['net10.0']['Known/1.0.0']['resource']={}
+                (output/'SharpLink.UnitTests.deps.json').write_text(json.dumps(deps));self.reject(lambda:r.runtime_identity(root,packages,c,a))
+    def test_runtime_resource_duplicate_destination_and_missing_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root,packages,output,c,a,deps=self.resource_fixture(Path(d))
+            deps['targets']['net10.0']['Other/1.0.0']=copy.deepcopy(deps['targets']['net10.0']['Known/1.0.0'])
+            deps['libraries']['Other/1.0.0']={'type':'package'};a['targets']['net10.0']['Other/1.0.0']=copy.deepcopy(a['targets']['net10.0']['Known/1.0.0']);a['libraries']['Other/1.0.0']={'path':'other/1.0.0'}
+            (output/'SharpLink.UnitTests.deps.json').write_text(json.dumps(deps));self.reject(lambda:r.runtime_identity(root,packages,c,a))
+            del deps['targets']['net10.0']['Other/1.0.0'];(output/'SharpLink.UnitTests.deps.json').write_text(json.dumps(deps));(output/'zh-Hans/K.resources.dll').unlink()
+            with self.assertRaises(FileNotFoundError):r.runtime_identity(root,packages,c,a)
+
+    def test_runtime_resource_cross_kind_same_bytes_both_orders(self):
+        for kind in ('runtimeTargets','project'):
+            for resource_first in (True,False):
+                with self.subTest(kind=kind,resource_first=resource_first),tempfile.TemporaryDirectory() as d:
+                    root,packages,output,c,a,deps=self.resource_fixture(Path(d));dest='zh-Hans/K.resources.dll'
+                    if kind=='runtimeTargets':
+                        entry={'rid':'linux-x64','assetType':'runtime'};other={kind:{dest:entry}}
+                        deps['libraries']['Other/1.0.0']={'type':'package'}
+                        a['targets']['net10.0']['Other/1.0.0']=copy.deepcopy(other);a['libraries']['Other/1.0.0']={'path':'other/1.0.0'}
+                        p=packages/'other/1.0.0'/dest;p.parent.mkdir(parents=True);p.write_bytes((output/dest).read_bytes())
+                    else:
+                        other={'runtime':{dest:{}}};deps['libraries']['Other/1.0.0']={'type':'project'}
+                        c['projects']=['src/Other/Other.csproj'];p=root/'src/Other/bin/Release/net10.0'/dest;p.parent.mkdir(parents=True);p.write_bytes((output/dest).read_bytes())
+                    original=deps['targets']['net10.0']['Known/1.0.0']
+                    deps['targets']['net10.0']=dict([('Known/1.0.0',original),('Other/1.0.0',other)] if resource_first else [('Other/1.0.0',other),('Known/1.0.0',original)])
+                    (output/'SharpLink.UnitTests.deps.json').write_text(json.dumps(deps))
+                    with self.assertRaises(r.Rejected) as caught:r.runtime_identity(root,packages,c,a)
+                    self.assertEqual(caught.exception.code,'UC_RESOURCE_COLLISION')
+
     def test_assembly_metadata_items_and_imports(self):
         proof=r.assembly_metadata_proof();c={'assemblyMetadataProof':proof}
         packages=Path('/synthetic/packages');sdk=Path('/synthetic/sdk')
