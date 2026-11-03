@@ -1,0 +1,67 @@
+name: Dynamic stream short owned diagnosis
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'wip/775-code-recovery-20261102'
+    paths:
+      - '.github/workflows/validation-dynamic-stream-short.yml'
+      - 'eng/dynamic-stream-short/CI.json'
+      - 'eng/dynamic-stream-short/SOURCE.json'
+      - 'eng/dynamic-stream-short/StreamExitStage.cs'
+      - 'eng/dynamic-stream-short/error_graph.py'
+      - 'eng/dynamic-stream-short/owner_probe.py'
+      - 'eng/dynamic-stream-short/prepare.py'
+      - 'eng/dynamic-stream-short/process_owner.py'
+      - 'eng/dynamic-stream-short/results.py'
+      - 'eng/dynamic-stream-short/run.py'
+      - 'eng/dynamic-stream-short/test_preimage/RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs'
+      - 'eng/dynamic-stream-short/test_preimage/RuntimeAssemblyIntegrationTests.Support.cs'
+      - 'eng/dynamic-stream-short/test_preimage/RuntimeAssemblyIntegrationTests.cs'
+      - 'eng/dynamic-stream-short/test_short.py'
+permissions:
+  contents: read
+jobs:
+  controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.12'
+      - name: Exact reviewed payload manifest
+        run: python3 -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('eng/dynamic-stream-short/CI.json').read_bytes()).hexdigest() == '16b7c5e4b56bd601dab739cd93d2471c533120abc9e479461da656878311c96b'"
+      - name: Source/schema/owner negative controls
+        run: python3 -B -m unittest discover -s eng/dynamic-stream-short -p 'test_*.py'
+      - name: Finite harmless Linux owner probes (not .NET tests)
+        run: python3 -B eng/dynamic-stream-short/owner_probe.py
+  three-cases:
+    needs: controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 9d1635c8988870ee295098fe9e65cb49924013d2
+          path: selected-main
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.12'
+      - name: Exact reviewed payload manifest
+        working-directory: validation
+        run: python3 -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('eng/dynamic-stream-short/CI.json').read_bytes()).hexdigest() == '16b7c5e4b56bd601dab739cd93d2471c533120abc9e479461da656878311c96b'"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: selected-main/global.json
+      - name: Three isolated original-semantics diagnostic cases; no soak qualification
+        working-directory: selected-main
+        run: python3 -B ../validation/eng/dynamic-stream-short/run.py "$PWD"
+      # Raw output, stage records, private graphs and reports are intentionally not uploaded.
