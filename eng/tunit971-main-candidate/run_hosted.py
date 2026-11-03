@@ -304,7 +304,15 @@ def filtered_argv(dotnet,assembly,directory,key,listing):
     return argv
 
 
+def restore_source_policy():
+    # SDK-owned switch prevents the implicit local library-packs feed. The
+    # original exact sole-nuget.org assets/cache audit is intentionally unchanged.
+    c.require(sys.platform in ('win32','darwin'),'Unselected hosted restore policy OS')
+    return ['-p:DisableImplicitLibraryPacksFolder=true'] if sys.platform=='win32' else []
+
+
 def execute(lane):
+    source_policy=restore_source_policy()
     for v,root in lane.roots.items():
         lane.command('prepare-'+v,v,[sys.executable,str(PAYLOAD/'candidate.py'),'--checkout',str(root),'--variant',v,
                      '--source-sha256',sha(PAYLOAD/'SOURCE.json')],60,phase='prepare');audit.static_graph(root)
@@ -335,7 +343,7 @@ def execute(lane):
     restored={}
     for v,root in lane.roots.items():
         project=root/audit.PROJECTS[audit.ENTRY]
-        lane.command('restore-'+v,v,[str(lane.dotnet),'restore',str(project),'--configfile',str(config),'--disable-parallel','--force','--verbosity','minimal'],600,phase='restore')
+        lane.command('restore-'+v,v,[str(lane.dotnet),'restore',str(project),'--configfile',str(config),'--disable-parallel','--force','--verbosity','minimal']+source_policy,600,phase='restore')
         restored[v]=audit.restored(root,Path(lane.env[v]['NUGET_PACKAGES']))
         for path in root.rglob('*'):
             if path.is_file() and 'obj' in path.relative_to(root).parts and (path.name.startswith('project.') or '.nuget.' in path.name):lane.pinned[path]=sha(path)
@@ -343,7 +351,7 @@ def execute(lane):
     c.require(restored['baseline']==restored['fixed'],'Variants restored different official packages/graph')
     for v,root in lane.roots.items():
         lane.command('build-'+v,v,[str(lane.dotnet),'build',str(root/audit.PROJECTS[audit.ENTRY]),'-c','Release','--no-restore','-m:1',
-                     '-nodeReuse:false','-p:UseSharedCompilation=false',path_map(root),'--verbosity','minimal'],600,phase='build')
+                     '-nodeReuse:false','-p:UseSharedCompilation=false',path_map(root),'--verbosity','minimal']+source_policy,600,phase='build')
         result=audit.built(root,Path(lane.env[v]['NUGET_PACKAGES']),restored[v]['packages'])
         print(json.dumps({'stage':'build-audit-'+v,**result}),flush=True)
     baseline=lane.filtered('list-baseline-target','baseline','target',listing=True)

@@ -23,10 +23,10 @@
     "hosted_process.py": "cdc47b4aa425a42b507473adad019eb9f29d5d92a8bac0f0a72fa06733059eff",
     "package-preimage.props": "86048cc466737c91b510c77a082ec9283a5d0eeda511b813599557d8c64578c5",
     "report_checks.py": "2ac7570bf49227a8ee2ba431247bd271a93cab8583b3d87e2ee1d32be9376216",
-    "run_hosted.py": "98c5b8766767bb8cd6ed9d3acb57f643a51864c4aae862b16d4cbc1595a7af4b",
+    "run_hosted.py": "72cea5e8a642653611ab355c42a5b9a00b4f4cd8ad1f1a7c4d9dd257892ddaa7",
     "schema_samples.py": "bf1889ef9c221005f203f88f3ec39f8e35ea500cf6b2c8967cb4460359207169",
     "terminal-signal.patch": "2b5dc7af1e2c7a406103fac2991b271958169f2caf71e9ff08207270b3b15e93",
-    "test_diagnostics.py": "69ce8f82248dda15e1a06e7b1fa8a9ee39dfc86e9e8327d94b08e759720357e3",
+    "test_diagnostics.py": "fdd170bede7bf87a2f170e78ed0113c9e224cc43e2920d3d13d1bcc744952f0b",
     "test_foundation.py": "334cbdfc48359e7de215eb76a48b525f0e79a87adeb1946873fa8551398f4659",
     "test_hosted.py": "c0aa364ba0e471466d1dfd356e884cc7b753cc760f30b10af3f63cf7ecd0b6e9"
   },

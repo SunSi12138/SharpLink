@@ -340,4 +340,65 @@ class AuditDiagnosticControls(unittest.TestCase):
    with self.assertRaises(BaseExceptionGroup) as caught:r.finish(lane,[original])
   self.assertIs(caught.exception.exceptions[0],original);self.assertIsInstance(caught.exception.exceptions[1],ValueError)
 
+class RestoreSourcePolicyControls(unittest.TestCase):
+ def test_exact_windows_sdk_switch_mac_empty_and_unknown_os_rejected(self):
+  with patch.dict(os.environ,{'DisableImplicitLibraryPacksFolder':'false','SECRET':'ignored'},clear=True):
+   with patch.object(r.sys,'platform','win32'):self.assertEqual(r.restore_source_policy(),['-p:DisableImplicitLibraryPacksFolder=true'])
+   with patch.object(r.sys,'platform','darwin'):self.assertEqual(r.restore_source_policy(),[])
+   with patch.object(r.sys,'platform','linux'):
+    with self.assertRaises(ValueError):r.restore_source_policy()
+ def test_execute_only_two_loop_commands_gain_same_policy_no_other_delta(self):
+  import ast,hashlib,inspect
+  node=ast.parse(inspect.getsource(r.execute)).body[0];first=node.body.pop(0)
+  self.assertEqual(ast.unparse(first),'source_policy = restore_source_policy()')
+  class Strip(ast.NodeTransformer):
+   count=0
+   def visit_BinOp(self,n):
+    if isinstance(n.op,ast.Add) and isinstance(n.right,ast.Name) and n.right.id=='source_policy':
+     self.count+=1;return n.left
+    return self.generic_visit(n)
+  strip=Strip();node=strip.visit(node);self.assertEqual(strip.count,2)
+  self.assertEqual(hashlib.sha256(ast.dump(node).encode()).hexdigest(),'842cbbf7ae134bdd46a869b20ff3a39762d2e042e9029b5269ff37480fc5dad3')
+ def test_exact_extra_sdk_source_still_fails_original_audit(self):
+  import audit,test_hosted
+  helper=test_hosted.RestoredAudit()
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)/'source';root.mkdir();packages=Path(tmp)/'packages';packages.mkdir();cache,documents=helper.synthetic_assets(root,packages)
+   name=next(iter(documents));path,value=documents[name];value['project']['restore']['sources']['C:\\Program Files\\dotnet\\library-packs']={};path.write_text(json.dumps(value))
+   edges={key:value['references'] for key,value in audit.CATALOG['projects'].items()}
+   with patch.object(audit,'static_graph',return_value=edges),patch.object(audit,'cache_audit',return_value=cache):
+    with self.assertRaises(ValueError) as caught:audit.restored(root,packages)
+  self.assertEqual(caught.exception.args,('Unexpected original restore source',));self.assertEqual(caught.exception.audit_context.public()['restoreFields']['sources']['count'],2)
+ def test_actual_source_set_preimage_matches_retained_observation(self):
+  import audit_diagnostics as ad
+  sources={'https://api.nuget.org/v3/index.json':{},'C:\\Program Files\\dotnet\\library-packs':{}}
+  self.assertEqual(ad.digest(sources),'4909bb5992c22904206cb9e4e949cecb28c81f966569832812d9c31d29e42c3f')
+ def test_dry_interpreter_windows_four_commands_mac_zero_no_extra_budget(self):
+  from types import SimpleNamespace
+  import audit,test_hosted
+  for system,arch in [('win32','x64'),('darwin','arm64')]:
+   with self.subTest(system=system),tempfile.TemporaryDirectory() as tmp:
+    work=Path(tmp);roots={v:work/v for v in ('baseline','fixed')}
+    for root in roots.values():root.mkdir()
+    calls=[];lane=SimpleNamespace(roots=roots,current={v:{r.candidate.COORDINATOR:v,'same':'same'} for v in roots},dotnet=Path('/official/dotnet'),work=work,pinned={},results=[],commands_started=0,host_sha='synthetic',env={v:{'NUGET_PACKAGES':str(work/(v+'packages'))} for v in roots})
+    def command(label,variant,argv,seconds,**kw):
+     calls.append((label,variant,argv,seconds,kw));lane.commands_started+=1;out=work/(label+'.stdout');err=work/(label+'.stderr');err.write_text('')
+     text='10.0.114' if label.startswith('sdk-version') else f'Host:\n  Version: 10.0.14\n  Architecture: {arch}\n\n' if label=='sdk-info' else 'Microsoft.NETCore.App 10.0.14 [/official/shared]\n' if label=='runtime-inventory' else ''
+     out.write_text(text);return work,(out,err)
+    lane.command=command
+    def filtered(label,variant,key,listing=False,scope=None,ledger=None):
+     command(label,variant,r.filtered_argv(lane.dotnet,roots[variant]/'test.dll',work/label,key,listing),120,expected_exit=2 if scope=='baseline' else 0,filtered=True)
+     if listing:return test_hosted.sample('control' if key=='control' else 'baseline')[2]
+     lane.results.append({'classification':{'baseline':'ORIGINAL_ACCEPT_EVENT_REPRODUCED','fixed':'ORIGINAL_ACCEPT_FIXED_PASS','control':'NEIGHBOR_CONTROL_PASS'}[scope]})
+    lane.filtered=filtered;restored={'cache':{},'packages':['TUnit/1.78.0']}
+    with patch.object(r.sys,'platform',system),patch.object(audit,'static_graph'),patch.object(audit,'restored',return_value=restored),patch.object(audit,'built',return_value={}),patch('builtins.print'):r.execute(lane)
+    self.assertEqual(tuple(x[0] for x in calls),r.EXPECTED_STAGES);self.assertEqual(sum(x[3] for x in calls),3360)
+    affected=[]
+    for label,variant,argv,seconds,kw in calls:
+     count=argv.count('-p:DisableImplicitLibraryPacksFolder=true')
+     expected=1 if system=='win32' and label.startswith(('restore-','build-')) else 0
+     self.assertEqual(count,expected)
+     if count:affected.append(label)
+    self.assertEqual(affected,['restore-baseline','restore-fixed','build-baseline','build-fixed'] if system=='win32' else [])
+
 if __name__=='__main__':unittest.main(verbosity=2)
