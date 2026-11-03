@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "scope": "ordinary-unit-release-metadata-only",
   "configuration": "Release",
-  "sourceCheckpoint": "d5e238feb64228bd622dcb61bc77c051b7e4866e",
-  "sourceTree": "0dc075d4ccc2a168c1431e1f06ad70e251a49faa",
+  "sourceCheckpoint": "1832c7e10698d3ec38a5b2dfa0209feb51dc6072",
+  "sourceTree": "e0fb6401d5934025b722b1e5bf7b9e964cdfb8c3",
   "sourceDirectorySHA256": "c5381f6318d495a982b523a94ed3b2027c55a68b7283384ba8db4fc3fceb0e69",
   "project": "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj",
   "projects": [
@@ -1373,7 +1373,7 @@
     "test/SharpLink.UnitTests/Runtime/ReadOwnershipPipeReaderTransportTests.cs": "7fbf0bf4010173d0df6f905d066bd2f54022c2198b5d2822347b0115fd2dc9d2",
     "test/SharpLink.UnitTests/Runtime/RequestManagerTests.DeadlinesAndTerminalRaces.cs": "badd74f472dcbff04f62f34028cc33a97c552fa05940ae314b09de8aad4a9e23",
     "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs": "d74af9666d0653d390ba4c8a532bc366876d4bdd8b20dc1cc950fc2be6ff8a9b",
-    "test/SharpLink.UnitTests/Runtime/RetirementEntryContractTests.cs": "89917ddd9b3ae41aaa5aeae88b655898c62e5d939858ebeeedd2e30975aa5d70",
+    "test/SharpLink.UnitTests/Runtime/RetirementEntryContractTests.cs": "f06328e4ad9fb6c633d11a3517fcd1b16efbd6b44e66fa3af9423ad1bd8b45d3",
     "test/SharpLink.UnitTests/Runtime/RetirementGraceBudgetTests.cs": "f749e353f214fdd764ba0e1e19bec52779a3c936536560605214c016afeb802d",
     "test/SharpLink.UnitTests/Runtime/RetirementOwnedDriverTests.cs": "769e7264d4c8a87328462d9f1114768d625f61cbcbfb86daa5b3645915108c2b",
     "test/SharpLink.UnitTests/Runtime/RetirementTestIsolationScope.cs": "22c3c828e8fac978b88eebdcd66a99a944dfc2aca00d4c5891c00f2f2938932a",
@@ -54164,7 +54164,7 @@
       "return": "System.Threading.Tasks.Task",
       "attributeLine": 157,
       "signatureLine": 158,
-      "endLine": 167,
+      "endLine": 172,
       "configurations": [
         "Release",
         "Debug"
@@ -54184,8 +54184,8 @@
         "arguments": [],
         "conditionalGuards": [],
         "startOffset": 9998,
-        "endOffset": 10853,
-        "spanSHA256": "2ab3864124680765f7c01a163cec2be203a951be0fa32355a7a18c17ca2a8adc",
+        "endOffset": 11211,
+        "spanSHA256": "e9f8e6a78e6f067407706f13536716ace619b873edce3af7af65fa0ca1bde1c4",
         "unknown": []
       }
     },
@@ -54197,9 +54197,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 169,
-      "signatureLine": 170,
-      "endLine": 184,
+      "attributeLine": 174,
+      "signatureLine": 175,
+      "endLine": 189,
       "configurations": [
         "Release",
         "Debug"
@@ -54207,7 +54207,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 169,
+        "testAttributeLine": 174,
         "signature": "public Task MultiClusterRepeatedUnregisterKeepsOuterWinnerBudget()",
         "parameterSyntax": [],
         "attributes": [
@@ -54218,8 +54218,8 @@
         ],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 10859,
-        "endOffset": 12035,
+        "startOffset": 11217,
+        "endOffset": 12393,
         "spanSHA256": "30b3b9ffc4ba1806a7bc3cb494fc289be003c5b4064d4e1d4196abe6bb6548c4",
         "unknown": []
       }
@@ -54232,9 +54232,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 186,
-      "signatureLine": 187,
-      "endLine": 198,
+      "attributeLine": 191,
+      "signatureLine": 192,
+      "endLine": 209,
       "configurations": [
         "Release",
         "Debug"
@@ -54242,7 +54242,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 186,
+        "testAttributeLine": 191,
         "signature": "public Task MultiClusterDirectChildElectionKeepsItsOriginalBudget()",
         "parameterSyntax": [],
         "attributes": [
@@ -54253,9 +54253,9 @@
         ],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 12041,
-        "endOffset": 13040,
-        "spanSHA256": "b38303f9880cf82c8da55513a45dd85442b8ab31d7e5397113de5fa1254cc856",
+        "startOffset": 12399,
+        "endOffset": 13864,
+        "spanSHA256": "6be3334d43805756c345aa2fc0f27a7b5f5396aa27ba62557da68c90c67890b4",
         "unknown": []
       }
     },
@@ -54267,9 +54267,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 200,
-      "signatureLine": 201,
-      "endLine": 209,
+      "attributeLine": 211,
+      "signatureLine": 212,
+      "endLine": 220,
       "configurations": [
         "Release",
         "Debug"
@@ -54277,7 +54277,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 200,
+        "testAttributeLine": 211,
         "signature": "public Task MultiClusterCaptureFailurePreservesRoutesAndRunningModule()",
         "parameterSyntax": [],
         "attributes": [
@@ -54288,8 +54288,8 @@
         ],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 13046,
-        "endOffset": 13658,
+        "startOffset": 13870,
+        "endOffset": 14482,
         "spanSHA256": "4d7db10e86ff7cc7b1d9a951a4269039d0d76100d2a6c2b3f4373f8ec4977202",
         "unknown": []
       }
@@ -54302,9 +54302,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 211,
-      "signatureLine": 212,
-      "endLine": 226,
+      "attributeLine": 222,
+      "signatureLine": 223,
+      "endLine": 237,
       "configurations": [
         "Release",
         "Debug"
@@ -54312,7 +54312,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 211,
+        "testAttributeLine": 222,
         "signature": "public Task MultiClusterReplacementRejectsDisposedRegistrationAfterLoader()",
         "parameterSyntax": [],
         "attributes": [
@@ -54323,8 +54323,8 @@
         ],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 13664,
-        "endOffset": 14865,
+        "startOffset": 14488,
+        "endOffset": 15689,
         "spanSHA256": "450ffeaed4d546fd7496d237d8ef077421cbfe8217a5e138cc35d313c1b24c99",
         "unknown": []
       }
@@ -54337,9 +54337,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 228,
-      "signatureLine": 229,
-      "endLine": 246,
+      "attributeLine": 239,
+      "signatureLine": 240,
+      "endLine": 257,
       "configurations": [
         "Release",
         "Debug"
@@ -54347,7 +54347,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 228,
+        "testAttributeLine": 239,
         "signature": "public Task SharedProviderCannotTransferBudgetBetweenChildRegistries()",
         "parameterSyntax": [],
         "attributes": [
@@ -54358,8 +54358,8 @@
         ],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 14871,
-        "endOffset": 16574,
+        "startOffset": 15695,
+        "endOffset": 17398,
         "spanSHA256": "e888957ef3162179e9309632c0c0af44bea1648aae42f896d01793b2d8bcc21d",
         "unknown": []
       }
@@ -54372,9 +54372,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 248,
-      "signatureLine": 249,
-      "endLine": 261,
+      "attributeLine": 259,
+      "signatureLine": 260,
+      "endLine": 272,
       "configurations": [
         "Release",
         "Debug"
@@ -54382,7 +54382,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 248,
+        "testAttributeLine": 259,
         "signature": "public Task UnsupportedInternalChildIsRejectedBeforeRetirementPublication()",
         "parameterSyntax": [],
         "attributes": [
@@ -54393,8 +54393,8 @@
         ],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 16580,
-        "endOffset": 17665,
+        "startOffset": 17404,
+        "endOffset": 18489,
         "spanSHA256": "96297312b1b567f872e4be6312a3c8185a17d10d301a3bee77b35fb2f1f0c449",
         "unknown": []
       }
@@ -92353,7 +92353,7 @@
       "microsoft.testing.extensions.trxreport/2.5.1": "0bf77e3aedbf86f1fa16220bc951d3b52ba56763"
     }
   },
-  "qualification": "Source-declared per-method expected expansions are not observed runtime counts. Initial Explicit selection is not execution dependency closure. No historical census edited. D2 source overlay rebinding preserves the ordinary Unit method/span directory unchanged; sourceDirectorySHA256 remains its original source-directory artifact identity. No current-source discovery or body results are implied.",
+  "qualification": "Source-declared per-method expected expansions are not observed runtime counts. Initial Explicit selection is not execution dependency closure. No historical census edited. RetirementEntryContractTests.cs source pin and seven affected method span/offset records are rebound to sourceCheckpoint/sourceTree; all method identities, eligibility, expected expansions and other source pins are unchanged. sourceDirectorySHA256 identifies only the original historical source-directory artifact, not a regenerated current directory. Current-source native discovery and C# body outcomes remain unknown.",
   "limits": {
     "commandBudgetSeconds": 3600,
     "restoreSeconds": 600,

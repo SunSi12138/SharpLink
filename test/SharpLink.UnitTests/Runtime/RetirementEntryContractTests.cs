@@ -158,12 +158,17 @@ public sealed class RetirementEntryContractTests
     public Task MultiClusterQueuedUnregisterDoesNotRestartCapturedBudget()
         => Run(Mode.Multi, async f =>
         {
-            f.AcquireCall(); var entry = f.Clock.Peek; var queue = f.NewQueue();
-            var waiter = await f.Result(f.InvokeQueued(queue, () => f.Unregister(TimeSpan.FromSeconds(5))));
-            await f.Within(queue.Posted.Task); Ensure(f.Module.RetirementOperation is null, "no child election before queued continuation");
-            f.Clock.Advance(TimeSpan.FromSeconds(5)); await f.Dispatch(queue); await f.Within(f.Cancelled.Task);
-            Ensure(f.Budget.TimestampOrigin == entry && f.Budget.Duration == TimeSpan.FromSeconds(5), "no post-yield budget reset");
+            f.AcquireCall(); var entry = f.Clock.Peek; var gate = f.HoldRetirementBeforeTracking();
+            var waiter = await f.Result(f.Invoke(() => f.Unregister(TimeSpan.FromSeconds(5))));
+            var owner = await f.Result(gate.Entered.Task);
+            Ensure(f.Module.RetirementOperation is null && !waiter.IsCompleted &&
+                !owner.Worker.IsCompleted && !owner.Observer.IsCompleted, "no child election before the real queued worker is released");
+            f.Clock.Advance(TimeSpan.FromSeconds(5));
+            Ensure(f.Module.RetirementOperation is null && f.Cancels == 0, "elapsed budget alone cannot bypass the held worker");
+            gate.Release.Set(); await f.Within(f.Cancelled.Task);
+            Ensure(f.Budget.TimestampOrigin == entry && f.Budget.Duration == TimeSpan.FromSeconds(5), "no queued-worker budget reset");
             Ensure(!(await f.Result(waiter)).ReferencesReleased, "held actual call yields deferred result"); await f.FinishRetirement();
+            await f.Within(owner.Worker); await f.Within(owner.Observer);
         });
 
     [Test]
@@ -187,14 +192,20 @@ public sealed class RetirementEntryContractTests
     public Task MultiClusterDirectChildElectionKeepsItsOriginalBudget()
         => Run(Mode.Multi, async f =>
         {
-            f.AcquireCall(); var queue = f.NewQueue();
-            var outer = await f.Result(f.InvokeQueued(queue, () => f.Unregister(TimeSpan.FromDays(1)))); await f.Within(queue.Posted.Task);
+            f.AcquireCall(); var gate = f.HoldRetirementBeforeTracking();
+            var outer = await f.Result(f.Invoke(() => f.Unregister(TimeSpan.FromDays(1))));
+            var owner = await f.Result(gate.Entered.Task);
+            Ensure(f.Module.RetirementOperation is null && !outer.IsCompleted &&
+                !owner.Worker.IsCompleted && !owner.Observer.IsCompleted, "outer worker is held before direct child election");
             var direct = f.Own(f.Child!.UnregisterAssemblyAsync(f.OldAssembly, TimeSpan.FromSeconds(3)).AsTask());
-            await f.Within(f.Clock.Armed.Task); var original = f.Module.RetirementOperation; await f.Dispatch(queue);
+            await f.Within(f.Clock.Armed.Task); var original = f.Module.RetirementOperation;
+            Ensure(original is not null && !original.IsCompleted && !outer.IsCompleted, "direct child selected while outer worker remains held");
+            gate.Release.Set();
             f.Clock.Advance(TimeSpan.FromSeconds(3)); await f.Within(f.Cancelled.Task);
             Ensure(!(await f.Result(direct)).ReferencesReleased && !(await f.Result(outer)).ReferencesReleased &&
                 ReferenceEquals(original, f.Module.RetirementOperation) && f.Budget.Duration == TimeSpan.FromSeconds(3) && f.Cancels == 1,
                 "direct child election remains authoritative"); await f.FinishRetirement();
+            await f.Within(owner.Worker); await f.Within(owner.Observer);
         });
 
     [Test]
@@ -309,7 +320,7 @@ public sealed class RetirementEntryContractTests
         private Task? _initialization;
         private readonly List<SharpLinkDynamicModule> _modules = [];
         private readonly List<PluginAssembly> _plugins = [];
-        private readonly List<OwnedQueue> _queues = [];
+        private BeforeTrackingGate? _retirementGate;
         internal readonly List<Exception> Expected = [];
         internal readonly TaskCompletionSource Cancelled = Signal();
         internal readonly ManualResetEventSlim CallbackRelease = new(false);
@@ -334,19 +345,20 @@ public sealed class RetirementEntryContractTests
             lock (_tasksGate) { _tasks.Add(task); _invocations.Add(task); }
             return task;
         }
-        internal Task<T> InvokeQueued<T>(OwnedQueue queue, Func<T> action) => Invoke(() =>
+        internal BeforeTrackingGate HoldRetirementBeforeTracking()
         {
-            var previous = SynchronizationContext.Current;
-            SynchronizationContext.SetSynchronizationContext(queue);
-            try { return action(); }
-            finally { SynchronizationContext.SetSynchronizationContext(previous); }
-        });
-        internal OwnedQueue NewQueue() { var queue = new OwnedQueue(); _queues.Add(queue); return queue; }
-        internal async Task Dispatch(OwnedQueue queue)
-        {
-            while (queue.TryTake(out var item))
-                await Result(Invoke(() =>
-                { try { item.Callback(item.State); return true; } finally { queue.CompleteDispatch(); } }));
+            Ensure(_retirementGate is null && _multi is not null, "one gate for an actual coordinator");
+            var gate = _retirementGate = new BeforeTrackingGate();
+            _multi!.AssemblyRetirementForDiagnostics = (stage, owner) =>
+            {
+                if (stage != "BeforeTracking") return;
+                var worker = Own(Read<Task>(owner, "Worker"));
+                var observer = Own(Read<Task>(owner, "Observer"));
+                // Retain the exact originals before exposing the scheduling gate.
+                gate.Entered.TrySetResult((worker, observer));
+                gate.Release.Wait();
+            };
+            return gate;
         }
         internal Task InitializeOwned() => _initialization = Own(JoinInvocation(Invoke(() => Own(Initialize()))));
 
@@ -586,6 +598,7 @@ public sealed class RetirementEntryContractTests
             List<Exception> failures = [];
             if (bodyFailure is not null) failures.Add(bodyFailure);
             Clock.SampleRelease.Set(); FirstClock?.SampleRelease.Set(); CallbackRelease.Set();
+            _retirementGate?.Release.Set();
             foreach (var plugin in _plugins) plugin.Release.TrySetResult();
             ReleaseCall();
             async Task Join(Task original, string stage)
@@ -610,10 +623,10 @@ public sealed class RetirementEntryContractTests
                 failures.Add(new InvalidOperationException("built coordinator child inventory is incomplete; retain fixture and permit"));
                 throw new AggregateException(failures);
             }
-            foreach (var queue in _queues)
+            if (_retirementGate?.Entered.Task is { IsCompletedSuccessfully: true } entered)
             {
-                try { await Dispatch(queue); }
-                catch (Exception exception) { failures.Add(exception); }
+                await Join(entered.Result.Worker, "coordinator retirement worker");
+                await Join(entered.Result.Observer, "coordinator retirement observer");
             }
             CaptureModules();
             if (_server is not null) await Join(BeginStop(_server, () => _server.StopAsync(TimeSpan.Zero).AsTask()), "server stop");
@@ -653,7 +666,7 @@ public sealed class RetirementEntryContractTests
             var runtimeReleased = new object?[] { _server, Child, FirstChild }.Where(static host => host is not null)
                 .All(host => RuntimeReleased(Read<SharpLinkRuntimeContext>(host!, "_runtimeContext")));
             var ended = stopped && runtimeReleased && Tasks.All(static task => task.IsCompleted) && Outcomes.All(static task => task.IsCompleted) &&
-                _queues.All(static queue => queue.Pending == 0) && Clock.Inner.ActiveTimerCount == 0 &&
+                Clock.Inner.ActiveTimerCount == 0 &&
                 (FirstClock?.Inner.ActiveTimerCount ?? 0) == 0 && modules.All(static module =>
                     module.State == SharpLinkDynamicModuleState.Released &&
                     module.RetirementOperation is { IsCompletedSuccessfully: true } physical && physical.Result.ReferencesReleased &&
@@ -665,6 +678,8 @@ public sealed class RetirementEntryContractTests
                 foreach (var plugin in _plugins) plugin.Dispose();
                 if (_multi is null) _injectedSlot?.ReleaseMetadata();
                 _untransferredCoordinatorLease?.Dispose(); _injectedPreparation?.Dispose();
+                if (_retirementGate is not null)
+                { _multi!.AssemblyRetirementForDiagnostics = null; _retirementGate.Release.Dispose(); }
                 CallbackRelease.Dispose(); Clock.SampleRelease.Dispose();
                 if (FirstClock is not null && !ReferenceEquals(Clock, FirstClock)) FirstClock.SampleRelease.Dispose();
                 OwnersEnded = true;
@@ -760,25 +775,11 @@ public sealed class RetirementEntryContractTests
         }
     }
 
-    private sealed class OwnedQueue : SynchronizationContext
+    private sealed class BeforeTrackingGate
     {
-        private readonly Lock _gate = new();
-        private readonly Queue<Work> _queue = new();
-        private int _running;
-        internal readonly TaskCompletionSource Posted = Signal();
-        internal int Pending { get { lock (_gate) return _queue.Count + _running; } }
-        public override void Post(SendOrPostCallback callback, object? state)
-        { lock (_gate) _queue.Enqueue(new Work(callback, state)); Posted.TrySetResult(); }
-        internal bool TryTake(out Work item)
-        {
-            lock (_gate)
-            {
-                if (!_queue.TryDequeue(out item)) return false;
-                _running++; return true;
-            }
-        }
-        internal void CompleteDispatch() { lock (_gate) _running--; }
-        internal readonly record struct Work(SendOrPostCallback Callback, object? State);
+        internal readonly TaskCompletionSource<(Task Worker, Task Observer)> Entered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly ManualResetEventSlim Release = new(false);
     }
 
     // Deliberately metadata-only injected capability boundary, not fake runtime proof.
