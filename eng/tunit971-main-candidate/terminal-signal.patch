@@ -1,0 +1,29 @@
+--- a/src/SharpLink.Server/ServerLifecycleCoordinator.cs
++++ b/src/SharpLink.Server/ServerLifecycleCoordinator.cs
+@@ -302,8 +302,16 @@
+             }
+ 
+             Volatile.Write(ref _terminalFailure, terminalFailure);
+-            _terminalCompletion.TrySetException(terminalFailure);
++            PublishTerminalFailure(terminalFailure);
+             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalFailure).Throw();
++        }
++
++        private void PublishTerminalFailure(Exception failure)
++        {
++            _terminalCompletion.TrySetException(failure);
++            // The server owns this signal even when callers only await Start/Stop/Dispose.
++            // Observing its exception does not change the fault propagated to later waiters.
++            _ = _terminalCompletion.Task.Exception;
+         }
+ 
+         private async Task WaitForAcceptRuntimeShutdownAsync()
+@@ -480,7 +488,7 @@
+                 return;
+             }
+ 
+-            _terminalCompletion.TrySetException(terminalFailure);
++            PublishTerminalFailure(terminalFailure);
+             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalFailure).Throw();
+         }
+ 

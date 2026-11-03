@@ -1,0 +1,93 @@
+name: Validation TUnit971 main candidate hosted finite controls
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 'wip/775-code-recovery-20261102'
+    paths:
+      - '.github/workflows/validation-tunit971-hosted.yml'
+      - 'eng/tunit971-main-candidate/**'
+
+concurrency:
+  group: validation-tunit971-hosted-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  # Set before checkout. Exact Gitblob/SHA gates reject any CRLF drift.
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: core.autocrlf
+  GIT_CONFIG_VALUE_0: 'false'
+
+jobs:
+  synthetic:
+    name: Python-only logic controls (Linux mocks, not platform execution)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Mock adapter and strict schema/configuration controls only
+        run: |
+          python -B eng/tunit971-main-candidate/test_foundation.py
+          python -B eng/tunit971-main-candidate/test_hosted.py
+  hosted:
+    name: ${{ matrix.os }} standard hosted three-body test/report qualification
+    needs: synthetic
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            architecture: x64
+          - os: macos-15
+            architecture: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact public validation payload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: payload
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout independent exact main baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: SunSi12138/SharpLink
+          ref: 9d1635c8988870ee295098fe9e65cb49924013d2
+          path: baseline
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout independent exact main cold-fix candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: SunSi12138/SharpLink
+          ref: 9d1635c8988870ee295098fe9e65cb49924013d2
+          path: fixed
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.architecture }}
+      - name: Setup official SDK under exact main global policy
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: baseline/global.json
+      - name: Original baseline, fixed target, neighbor (not Linux owner equivalence)
+        run: >-
+          python -B payload/eng/tunit971-main-candidate/run_hosted.py
+          --baseline baseline --fixed fixed
+          --ci-manifest-sha256 5a7bb911b8145f5d355fd1b5c558c7cedba4647e6450b287f61fa536200bbf04

@@ -1,0 +1,51 @@
+{
+  "base": "9d1635c8988870ee295098fe9e65cb49924013d2",
+  "centralBeforeGitBlob": "8106159e925660c1f03f9394538b8a04814557e7",
+  "centralAfterGitBlob": "ec1efcd161c38e72b1d7cd4db3a0d5bda7b41229",
+  "coordinatorAfterSHA256": "5986242bcbb20fd7cbf0b98644dc5af50462122eea9575f5335dc2fee2b22f05",
+  "fixtureSHA256": "f2bf615cc01cab31a45382825138cf47aac5de7b87da3ccf8e38ba4a437e0d2a",
+  "patchSHA256": "2b5dc7af1e2c7a406103fac2991b271958169f2caf71e9ff08207270b3b15e93",
+  "mainPins": {
+    "Directory.Build.props": {
+      "sha256": "1c5beebda0e8deff3fba70c3d6c1390db607c2195a1b2443665f551e8515ae7b",
+      "gitBlob": "450b49da8a59127778d5e0b30539c695a19ac8eb",
+      "localSource": "main-source/Directory.Build.props",
+      "url": "https://github.com/SunSi12138/SharpLink/blob/9d1635c8988870ee295098fe9e65cb49924013d2/Directory.Build.props"
+    },
+    "Directory.Packages.props": {
+      "sha256": "86048cc466737c91b510c77a082ec9283a5d0eeda511b813599557d8c64578c5",
+      "gitBlob": "8106159e925660c1f03f9394538b8a04814557e7",
+      "localSource": "main-source/Directory.Packages.props",
+      "url": "https://github.com/SunSi12138/SharpLink/blob/9d1635c8988870ee295098fe9e65cb49924013d2/Directory.Packages.props"
+    },
+    "src/SharpLink.Server/ServerLifecycleCoordinator.cs": {
+      "sha256": "15f51c31b41ac17cd035d861e9a71da866ffe41c91ceb438c49c15f9bff6c383",
+      "gitBlob": "472ab7117d4b79d01151db1b745af2ff4498d859",
+      "localSource": "main-source/ServerLifecycleCoordinator.cs",
+      "url": "https://github.com/SunSi12138/SharpLink/blob/9d1635c8988870ee295098fe9e65cb49924013d2/src/SharpLink.Server/ServerLifecycleCoordinator.cs"
+    },
+    "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj": {
+      "sha256": "6dac63c122cabc393f00ea4791e84866178d0b9fe9774d9a00d3c945e95167cb",
+      "gitBlob": "b56e80738fbf240ef7f8ce8997fb68af74471457",
+      "localSource": "main-source/SharpLink.UnitTests.csproj",
+      "url": "https://github.com/SunSi12138/SharpLink/blob/9d1635c8988870ee295098fe9e65cb49924013d2/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+    },
+    "test/SharpLink.UnitTests/GlobalUsings.cs": {
+      "sha256": "b4d4cca0923fdb7a5648931ecd89b7bbe9f88b717761067a129467d3d96de8bc",
+      "gitBlob": "e8f7c62511473c4cb4e79a70f30739c81ce0fc60",
+      "localSource": "main-source/GlobalUsings.cs",
+      "url": "https://github.com/SunSi12138/SharpLink/blob/9d1635c8988870ee295098fe9e65cb49924013d2/test/SharpLink.UnitTests/GlobalUsings.cs"
+    },
+    "src/SharpLink.Server/SharpLink.Server.csproj": {
+      "sha256": "b100a680185f4f3aed84fca83d0f1012b0ac4ad729664fb1cf67745f932bd4e0",
+      "gitBlob": "e552c01e2ead42052a76ea086e032e269167827e",
+      "localSource": "main-source/SharpLink.Server.csproj",
+      "url": "https://github.com/SunSi12138/SharpLink/blob/9d1635c8988870ee295098fe9e65cb49924013d2/src/SharpLink.Server/SharpLink.Server.csproj"
+    }
+  },
+  "regressionExpectedCases": {
+    "regular": 7,
+    "explicit": 1
+  },
+  "qualification": "Real main Unit default Compile source integration; compile/discovery/execution UNRUN; no adapter project replaces real Unit graph"
+}
