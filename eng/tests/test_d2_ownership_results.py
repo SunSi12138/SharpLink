@@ -84,6 +84,24 @@ class D2ProtocolTests(unittest.TestCase):
         c=copy.deepcopy(CATALOG);c['ancestorInputs']['inputs'].pop('test/Directory.Build.targets')
         with self.assertRaises(ValueError):r.check_ancestors(ROOT,c)
 
+    def test_explicit_restore_config_is_not_an_ancestor_input(self):
+        with tempfile.TemporaryDirectory() as d:
+            work=Path(d);source=work/'src';source.mkdir()
+            for name in CATALOG['sourcePins']:
+                q=source/name;q.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,q)
+            config=runner.write_restore_config(work)
+            self.assertEqual(config,work/'nuget-config'/'NuGet.Config')
+            self.assertNotIn(config.parent,source.parents)
+            self.assertEqual(config.read_text(),'<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3"/></packageSources></configuration>\n')
+            r.verify_catalog(source,CATALOG)
+            # The first CI's layout is still rejected, with identical config bytes.
+            for name in ('NuGet.Config','nuget.config'):
+                ancestor=work/name;shutil.copyfile(config,ancestor)
+                with self.assertRaisesRegex(ValueError,'External ancestor input exists'):
+                    r.verify_catalog(source,CATALOG)
+                ancestor.unlink()
+                r.verify_catalog(source,CATALOG)
+
     def test_compile_extra_even_rehashed_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             target=Path(d)/'source';target.mkdir();c=copy.deepcopy(CATALOG)

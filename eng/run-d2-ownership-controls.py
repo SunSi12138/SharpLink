@@ -67,6 +67,15 @@ def environment(work):
     return env
 
 
+def write_restore_config(work):
+    # The explicit config must not become an implicit ancestor input of work/src.
+    directory = work / 'nuget-config'
+    directory.mkdir()
+    config = directory / 'NuGet.Config'
+    config.write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3"/></packageSources></configuration>\n')
+    return config
+
+
 def asset_identity(source, catalog, packages, expected_package_identity):
     assets = sorted(p.relative_to(source).as_posix() for p in source.rglob('project.assets.json'))
     expected = sorted(str(Path(p).parent / 'obj/project.assets.json') for p in catalog['projects'])
@@ -294,8 +303,7 @@ def main():
         run('sdk-info', [dotnet, '--info'], source)
         runtimes = run('runtimes', [dotnet, '--list-runtimes'], source).read_text()
         print('identity: ' + json.dumps(dict(head=head, tree=tree, sdk=sdk, dotnetSha256=built[dotnet], projects=8, selected=35)), flush=True)
-        config = work / 'NuGet.Config'
-        config.write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3"/></packageSources></configuration>\n')
+        config = write_restore_config(work)
         project = source / catalog['project']
         run('restore', [dotnet, 'restore', project, '--configfile', config, '--disable-parallel', '-p:Configuration=Release', '-p:RestoreIgnoreFailedSources=false', '-m:1', '-nr:false'], source, limits['restoreSeconds'])
         assets = asset_identity(source, catalog, work / 'packages', package_identity)
