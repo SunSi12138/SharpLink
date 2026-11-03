@@ -203,6 +203,20 @@ class Lane:
         return result
 
 
+def prepare_results_directory(output, results):
+    # MTP 2.5.1 AggregatedConfiguration creates its default TestResults folder
+    # even for discovery. Prepare only this empty directory before sealing the
+    # verified build output; subsequent members/identity/bytes remain immutable.
+    parent_id=results.legacy.directory_identity_strict(output)
+    directory=output/'TestResults'
+    results.require(not os.path.lexists(directory),'UC_DIRECTORY')
+    directory.mkdir(mode=0o700)
+    results.legacy.verify_directory(output,parent_id)
+    identity=results.legacy.directory_identity_strict(directory)
+    results.legacy.verify_directory(directory,identity,empty=True)
+    return directory
+
+
 def execute(lane):
     r=lane.r;catalog=r.read_json(ROOT/'eng/unit-census.json')
     r.require(catalog.get('packageCompileProof')==r.package_compile_proof(),'UC_PACKAGE_COMPILE_BYTES')
@@ -325,6 +339,7 @@ def execute(lane):
     r.write_json(lane.evidence,'compiled-inputs.json',compile_ledger);lane.extend_evidence(['compiled-inputs.json'])
     lane.validation_phase='runtime-identity'
     output=r.runtime_identity(source,packages,catalog,assets,lane.runtime_inventory)
+    prepare_results_directory(output,r)
     # Seal every original graph output and generated input after the single build.
     for project_index,name in enumerate(catalog['projects']):
         for sub in ('obj','bin'):

@@ -266,6 +266,31 @@ class Controls(unittest.TestCase):
                 lane.record(caught.exception)
             self.assertEqual(len(lane.errors),2);self.assertEqual(len(lane.seal_diagnostics),1)
             self.assertNotIn('new',lane.trees[root]);self.assertFalse(json.loads(runner.terminal_diagnostic(lane,'guard'))['censusQualified'])
+    def test_prepare_only_empty_results_directory_then_seal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'bin';output.mkdir();(output/'known.dll').write_bytes(b'known')
+            directory=runner.prepare_results_directory(output,r)
+            self.assertEqual(directory,output/'TestResults');self.assertEqual(list(directory.iterdir()),[])
+            expected=r.snapshot(output);r.verify_snapshot(output,expected)
+            (directory/'report.json').write_text('{}')
+            self.reject(lambda:r.verify_snapshot(output,expected))
+            self.assertEqual((output/'known.dll').read_bytes(),b'known')
+    def test_prepare_results_directory_rejects_all_existing_kinds(self):
+        for kind in ('empty','nonempty','file','symlink','broken-symlink'):
+            with tempfile.TemporaryDirectory() as tmp:
+                output=Path(tmp);directory=output/'TestResults'
+                if kind in ('empty','nonempty'):
+                    directory.mkdir()
+                    if kind=='nonempty':(directory/'x').write_text('x')
+                elif kind=='file':directory.write_text('x')
+                else:directory.symlink_to(output if kind=='symlink' else output/'absent',target_is_directory=True)
+                with self.assertRaises(r.Rejected) as caught:runner.prepare_results_directory(output,r)
+                self.assertEqual(caught.exception.args,('UC_DIRECTORY',))
+    def test_prepare_results_directory_symlink_parent_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'actual').mkdir();(root/'alias').symlink_to(root/'actual',target_is_directory=True)
+            self.reject(lambda:runner.prepare_results_directory(root/'alias',r))
+            self.assertFalse((root/'actual'/'TestResults').exists())
     def test_exact_seals(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);p=root/'x';p.write_text('one');s=r.snapshot(root);p.write_text('two');self.reject(lambda:r.verify_snapshot(root,s))
