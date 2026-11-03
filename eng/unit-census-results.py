@@ -555,6 +555,47 @@ def package_compile_inputs(root, packages, metadata, imports=None):
     return {source:'package:tunit.core/1.73.19/'+TUNIT_CORE_SOURCE_MEMBER}
 
 
+GLOBAL_USINGS_PATH='test/SharpLink.UnitTests/obj/Release/net10.0/SharpLink.UnitTests.GlobalUsings.g.cs'
+GLOBAL_USINGS_TEXT="""global using TUnit.Assertions;
+global using TUnit.Assertions.Extensions;
+global using TUnit.Core;
+global using static TUnit.Core.HookType;
+"""
+
+
+def global_using_proof():
+    return {'sdkTarget':'sdk/10.0.114/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.GenerateGlobalUsings.targets',
+            'sdkTargetSHA256':'ecde6efe033ff19f05aeaedef96a1e34ee7595c48c68b4bf9299fedb413049bb',
+            'packageFiles':{
+                'tunit.core/1.73.19/buildTransitive/net10.0/TUnit.Core.targets':'f1627607a5cbf99f1b64efb0bab78a0f206eb99d284958ea86b0a10a41acca3b',
+                'tunit.assertions/1.73.19/buildTransitive/net10.0/TUnit.Assertions.props':'0d7a4d33688e9a7a1db77cbff3531471dd3949e8928874636850c883dbabca35',
+                'tunit.assertions/1.73.19/buildTransitive/net10.0/TUnit.Assertions.targets':'4819cec7dc7d11ed36323ba07cdda7a6466f679507096257905457f75fe5765c'},
+            'generatedSource':GLOBAL_USINGS_PATH}
+
+
+def global_using_rows(metadata):
+    rows=metadata['Items'].get('Using',[]);actual=[]
+    for row in rows:
+        static=row.get('Static','').lower();alias=row.get('Alias','')
+        require(static in ('','false','true') and alias=='','UC_GLOBAL_USINGS_ITEMS')
+        actual.append((row['Identity'],static=='true'))
+    require(sorted(actual)==[('TUnit.Assertions',False),('TUnit.Assertions.Extensions',False),
+                             ('TUnit.Core',False),('TUnit.Core.HookType',True)],'UC_GLOBAL_USINGS_ITEMS')
+
+
+def global_using_qualification(root, packages, sdkroot, metadata, imports, catalog):
+    proof=global_using_proof()
+    require(catalog.get('globalUsingProof')==proof,'UC_GLOBAL_USINGS_PROOF')
+    global_using_rows(metadata)
+    files={sdkroot/proof['sdkTarget']:proof['sdkTargetSHA256']}
+    files.update({packages/name:sha for name,sha in proof['packageFiles'].items()})
+    for path,expected in files.items():
+        require(path in imports and file_identity(path)[-1]==expected,'UC_GLOBAL_USINGS_PROOF')
+    path=root/GLOBAL_USINGS_PATH
+    require(sum(Path(row['FullPath'])==path for row in metadata['Items']['Compile'])==1,'UC_GLOBAL_USINGS_SOURCE')
+    require(generated_tokens(stable_read(path)[0].decode('utf-8-sig'))==generated_tokens(GLOBAL_USINGS_TEXT),'UC_GLOBAL_USINGS_SOURCE')
+
+
 def compiled_inputs(root, value, catalog, package_sources=None):
     """Complete post-Build MSBuild Compile item ledger, not only bootstrap files.
 
@@ -570,8 +611,8 @@ def compiled_inputs(root, value, catalog, package_sources=None):
         require(path.is_absolute() and '..' not in path.parts and (path.is_relative_to(root) or path in package_sources),'UC_COMPILE_PATH')
         key=package_sources[path] if path in package_sources else path.relative_to(root).as_posix()
         rows[key]=file_identity(path)
-    # The SDK-generated assembly metadata is the only non-bootstrap generated
-    # Compile allowed. Exact semantic skeleton/properties are checked below;
+    # SDK assembly metadata and the separately checked GlobalUsings source are
+    # the only non-bootstrap generated Compile. Exact metadata is checked below;
     # any unknown generator file (even beside valid entrypoints) is rejected.
     attrs=root/'test/SharpLink.UnitTests/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs'
     text=stable_read(attrs)[0].decode('utf-8-sig')
@@ -591,7 +632,7 @@ def compiled_inputs(root, value, catalog, package_sources=None):
     return rows
 
 
-PUBLIC_REJECTION_CODES = frozenset(('UC_PACKAGE_COMPILE_SET', 'UC_PACKAGE_COMPILE_BYTES', 'UC_PACKAGE_COMPILE_IMPORT', 'UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
+PUBLIC_REJECTION_CODES = frozenset(('UC_GLOBAL_USINGS_ITEMS', 'UC_GLOBAL_USINGS_PROOF', 'UC_GLOBAL_USINGS_SOURCE', 'UC_PACKAGE_COMPILE_SET', 'UC_PACKAGE_COMPILE_BYTES', 'UC_PACKAGE_COMPILE_IMPORT', 'UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
 
 
 def public_rejections(errors):
@@ -643,6 +684,12 @@ def metadata_facts(root, name, value, catalog):
             'pathStringCount':len(strings),'uniquePathCount':len(actual),'duplicatePathCount':len(strings)-len(actual),
             'actualPathsSHA256':digest(sorted(actual))}
         if expect is not None:fact.update(expectedCount=len(expect),missingCount=len(expect-actual),extraCount=len(actual-expect))
+        if kind=='Compile' and name==catalog['project']:
+            generated={str(root/p):p for p in catalog['generatedCompile']}
+            package=str(root.parent/'packages/tunit.core/1.73.19'/TUNIT_CORE_SOURCE_MEMBER)
+            fact['knownGeneratedPresent']={label:path in actual for path,label in generated.items()}
+            fact['knownPackageSourcePresent']=package in actual
+            fact['unknownExtraCount']=len(actual-expect-set(generated)-{package})
         facts[kind]=fact
     imports=properties.get('MSBuildAllProjects')
     facts['imports']={'string':type(imports) is str,'count':len([p for p in imports.split(';') if p]) if type(imports) is str else None,'actualSHA256':digest(imports)}

@@ -31,6 +31,42 @@ def fixture():
 class Controls(unittest.TestCase):
     def reject(self,fn):
         with self.assertRaises((r.Rejected,ValueError,KeyError,TypeError)):fn()
+    def using_fixture(self):
+        return {'Items':{'Using':[{'Identity':name,'Static':'True' if static else ''} for name,static in
+            [('TUnit.Assertions',False),('TUnit.Assertions.Extensions',False),('TUnit.Core',False),('TUnit.Core.HookType',True)]]}}
+    def test_global_using_exact_items(self):
+        good=self.using_fixture();r.global_using_rows(good)
+        for mode in ('missing','extra','duplicate','alias','static'):
+            value=copy.deepcopy(good);rows=value['Items']['Using']
+            if mode=='missing':rows.pop()
+            elif mode=='extra':rows.append({'Identity':'Foreign'})
+            elif mode=='duplicate':rows.append(rows[0])
+            elif mode=='alias':rows[0]['Alias']='Foreign'
+            else:rows[0]['Static']='True'
+            self.reject(lambda:r.global_using_rows(value))
+    def test_global_using_source_and_import_guards(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'src';packages=Path(d)/'packages';sdk=Path(d)/'sdk'
+            proof=r.global_using_proof();c={'globalUsingProof':proof};value=self.using_fixture()
+            source=root/r.GLOBAL_USINGS_PATH;source.parent.mkdir(parents=True);source.write_text(r.GLOBAL_USINGS_TEXT)
+            value['Items']['Compile']=[{'FullPath':str(source)}]
+            imports={sdk/proof['sdkTarget']:proof['sdkTargetSHA256']}
+            imports.update({packages/name:sha for name,sha in proof['packageFiles'].items()})
+            with patch.object(r,'file_identity',side_effect=lambda p:[imports[p]]):
+                r.global_using_qualification(root,packages,sdk,value,imports,c)
+                for path in imports:
+                    subset=dict(imports);del subset[path]
+                    self.reject(lambda:r.global_using_qualification(root,packages,sdk,value,subset,c))
+                for text in (r.GLOBAL_USINGS_TEXT+'class Foreign {}',r.GLOBAL_USINGS_TEXT.replace('TUnit.Core;','Foreign;')):
+                    source.write_text(text);self.reject(lambda:r.global_using_qualification(root,packages,sdk,value,imports,c))
+                source.write_text(r.GLOBAL_USINGS_TEXT);value['Items']['Compile'].append(value['Items']['Compile'][0])
+                self.reject(lambda:r.global_using_qualification(root,packages,sdk,value,imports,c))
+    def test_global_using_catalog_and_diagnostic_known_names(self):
+        c=r.read_json(ROOT/'eng/unit-census.json');self.assertEqual(c['globalUsingProof'],r.global_using_proof())
+        facts=r.metadata_facts(ROOT,c['project'],{'Items':{'Compile':[{'FullPath':str(ROOT/r.GLOBAL_USINGS_PATH)},{'FullPath':'/PRIVATE_SENTINEL'}]}},c)
+        self.assertTrue(facts['Compile']['knownGeneratedPresent'][r.GLOBAL_USINGS_PATH]);self.assertEqual(facts['Compile']['unknownExtraCount'],1)
+        self.assertNotIn('PRIVATE_SENTINEL',json.dumps(facts))
+
     def test_catalog_exact_package_compile_proof(self):
         self.assertEqual(r.read_json(ROOT/'eng/unit-census.json')['packageCompileProof'],r.package_compile_proof())
     def package_source_fixture(self, root):

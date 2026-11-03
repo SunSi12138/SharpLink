@@ -92531,7 +92531,8 @@
     "test/SharpLink.UnitTests/obj/Release/net10.0/SharpLink.UnitTests.AssemblyInfo.cs",
     "test/SharpLink.UnitTests/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs",
     "test/SharpLink.UnitTests/obj/Release/net10.0/SelfRegisteredExtensions.cs",
-    "test/SharpLink.UnitTests/obj/Release/net10.0/MicrosoftTestingPlatformEntryPoint.cs"
+    "test/SharpLink.UnitTests/obj/Release/net10.0/MicrosoftTestingPlatformEntryPoint.cs",
+    "test/SharpLink.UnitTests/obj/Release/net10.0/SharpLink.UnitTests.GlobalUsings.g.cs"
   ],
   "packageCompileProof": {
     "package": "tunit.core/1.73.19",
@@ -92541,5 +92542,15 @@
     "propsMember": "buildTransitive/net10.0/TUnit.Core.props",
     "propsSHA256": "caa0fc63c20cc5b05a0857090b76273edd67f941f72e460ba1aefc2918ca4961",
     "sourceCommit": "ff2dc5186b05eddc8f6aea03a18784df3aa6e737"
+  },
+  "globalUsingProof": {
+    "sdkTarget": "sdk/10.0.114/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.GenerateGlobalUsings.targets",
+    "sdkTargetSHA256": "ecde6efe033ff19f05aeaedef96a1e34ee7595c48c68b4bf9299fedb413049bb",
+    "packageFiles": {
+      "tunit.core/1.73.19/buildTransitive/net10.0/TUnit.Core.targets": "f1627607a5cbf99f1b64efb0bab78a0f206eb99d284958ea86b0a10a41acca3b",
+      "tunit.assertions/1.73.19/buildTransitive/net10.0/TUnit.Assertions.props": "0d7a4d33688e9a7a1db77cbff3531471dd3949e8928874636850c883dbabca35",
+      "tunit.assertions/1.73.19/buildTransitive/net10.0/TUnit.Assertions.targets": "4819cec7dc7d11ed36323ba07cdda7a6466f679507096257905457f75fe5765c"
+    },
+    "generatedSource": "test/SharpLink.UnitTests/obj/Release/net10.0/SharpLink.UnitTests.GlobalUsings.g.cs"
   }
 }
