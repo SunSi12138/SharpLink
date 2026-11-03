@@ -9,6 +9,15 @@ import stat
 import hosted_process as host
 
 MAX_CAPTURE=16*1024*1024
+# Fixed literal categories only, never an extracted arbitrary line/message.
+# MSBuild XMake.cs/Strings.resx at the SDK-pinned VMR define the first four.
+TOOL_LITERALS={
+    'msbuild-fatal': 'MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.',
+    'msbuild-logger-unhandled': 'This is an unhandled exception from a logger -- PLEASE OPEN A BUG AGAINST THE LOGGER OWNER.',
+    'msbuild-project-cache-unhandled': 'This is an unhandled exception from a project cache -- PLEASE OPEN A BUG AGAINST THE PROJECT CACHE OWNER.',
+    'msbuild-engine-unhandled': 'This is an unhandled exception in MSBuild Engine -- PLEASE OPEN A BUG AGAINST THE MSBUILD TEAM.',
+}
+
 # Only SDK/NuGet diagnostic identifiers, never surrounding arbitrary text.
 CODES=re.compile(r'(?<![A-Za-z0-9_])(?P<severity>error|warning)\s+(?P<code>NU[0-9]{4}|MSB[0-9]{4}|NETSDK[0-9]{4})(?![A-Za-z0-9_])\s*:',re.I)
 EXCEPTIONS=('System.ArgumentNullException','System.ArgumentException','System.TypeInitializationException',
@@ -26,7 +35,11 @@ def stream_summary(raw):
     counts=Counter((m.group('severity').lower(),m.group('code').upper()) for m in CODES.finditer(text))
     keys=sorted(counts)
     return {'byteCount':len(raw),'rawSHA256':hashlib.sha256(raw).hexdigest(),'decodedLineCount':len(text.splitlines()),
-            'replacementCharacterCount':text.count('\ufffd'),'codeOccurrences':sum(counts.values()),'codeKindCount':len(keys),
+            'replacementCharacterCount':text.count('\ufffd'),'nulByteCount':raw.count(b'\0'),
+            'encodingBOM':('utf8' if raw.startswith(b'\xef\xbb\xbf') else 'utf16le' if raw.startswith(b'\xff\xfe') else 'utf16be' if raw.startswith(b'\xfe\xff') else 'none'),
+            'fixedToolLiterals':[{'category':key,'count':text.count(value)} for key,value in TOOL_LITERALS.items() if value in text],
+            'uncodedErrorLineCount':len(re.findall(r'(?im)^[^\r\n]*?\berror\s*:',text)),
+            'codeOccurrences':sum(counts.values()),'codeKindCount':len(keys),
             'codes':[{'severity':s,'code':c,'count':counts[(s,c)]} for s,c in keys[:16]],'codesTruncated':len(keys)>16,
             'knownExceptionTypes':[{'type':name,'count':len(re.findall(r'(?<![A-Za-z0-9_.])'+re.escape(name)+r'(?![A-Za-z0-9_.])',text))}
                                    for name in EXCEPTIONS if re.search(r'(?<![A-Za-z0-9_.])'+re.escape(name)+r'(?![A-Za-z0-9_.])',text)]}
@@ -94,3 +107,52 @@ def attach(original,work,directory,label):
                                            stream_summary(read_capture(work,directory,label,'stderr')))
     except BaseException as diagnostic:
         raise BaseExceptionGroup('Original command failure and safe diagnostic failure',[original,diagnostic]) from None
+
+
+@dataclass(frozen=True)
+class ProtectedInventory:
+    variant:str
+    boundary:str
+    summary:dict
+    def public(self):
+        return {'variant':self.variant,'boundary':self.boundary,**self.summary,
+                'qualification':'Diagnostic inventory difference only; original equality rejection unchanged'}
+
+
+def inventory_difference(expected,actual,known_paths):
+    # Inputs are already computed original guard snapshots. No filesystem reads,
+    # path resolution, or arbitrary basename/content/message publication here.
+    if not isinstance(expected,dict) or not isinstance(actual,dict) or not isinstance(known_paths,frozenset):
+        raise ValueError('Invalid diagnostic inventory inputs')
+    for values in (expected,actual):
+        if any(not isinstance(k,str) or not isinstance(v,str) or not re.fullmatch(r'[0-9a-f]{64}',v) for k,v in values.items()):
+            raise ValueError('Invalid diagnostic inventory shape')
+    if any(not isinstance(k,str) or not k or k.startswith('/') or '\\' in k or ':' in k or any(x in ('','..','.') for x in k.split('/')) for k in known_paths):
+        raise ValueError('Invalid known diagnostic path catalog')
+    keys=sorted(k for k in expected.keys()|actual.keys() if expected.get(k)!=actual.get(k))
+    counts=Counter('added' if k not in expected else 'removed' if k not in actual else 'changed' for k in keys)
+    rows=[]
+    for key in keys[:16]:
+        row={'kind':'added' if key not in expected else 'removed' if key not in actual else 'changed',
+             'pathSHA256':hashlib.sha256(key.encode()).hexdigest(),
+             'beforeSHA256':expected.get(key),'afterSHA256':actual.get(key),
+             'pathClass':'catalog-known' if key in known_paths else 'unknown-relative-hash-only'}
+        if key in known_paths:row['knownRelativePath']=key
+        rows.append(row)
+    return {'expectedFiles':len(expected),'actualFiles':len(actual),'differenceCount':len(keys),
+            'added':counts['added'],'removed':counts['removed'],'changed':counts['changed'],
+            'records':rows,'truncated':len(keys)>len(rows)}
+
+
+def require_inventory(actual,expected,reason,variant,boundary,known_paths):
+    # Same equality predicate and original ValueError. Diagnostic errors are
+    # independently appended, never replacing the guard or accepting mutation.
+    if actual==expected:return
+    original=ValueError(reason)
+    try:
+        if reason not in ('Source/protected output mutation','Protected source/output changed') or variant not in ('baseline','fixed') or boundary not in ('phase','current'):
+            raise ValueError('Unselected diagnostic inventory guard')
+        original.protected_inventory=ProtectedInventory(variant,boundary,inventory_difference(expected,actual,known_paths))
+    except BaseException as diagnostic:
+        raise BaseExceptionGroup('Original inventory rejection and diagnostic failure',[original,diagnostic]) from None
+    raise original

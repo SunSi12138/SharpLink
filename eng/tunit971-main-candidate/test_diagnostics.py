@@ -114,4 +114,69 @@ class DiagnosticControls(unittest.TestCase):
   self.assertEqual(matrices,[[{'os':'windows-2025','architecture':'x64'},{'os':'macos-15','architecture':'arm64'}],[{'os':'windows-2025','architecture':'x64'}]])
   self.assertIn('test_diagnostics.py',text)
 
+class InventoryDiagnosticControls(unittest.TestCase):
+ def test_exact_known_changed_removed_and_unknown_added_counts(self):
+  old={'Directory.Build.props':'a'*64,'known/removed.cs':'b'*64};new={'Directory.Build.props':'c'*64,'PRIVATE/token-file':'d'*64}
+  value=d.inventory_difference(old,new,frozenset(old))
+  self.assertEqual((value['changed'],value['added'],value['removed']),(1,1,1));self.assertEqual(value['differenceCount'],3)
+  self.assertNotIn('PRIVATE',json.dumps(value));self.assertNotIn('token-file',json.dumps(value))
+  known=next(x for x in value['records'] if x.get('knownRelativePath')=='Directory.Build.props')
+  self.assertEqual(known['beforeSHA256'],'a'*64);self.assertEqual(known['afterSHA256'],'c'*64)
+ def test_unknown_absolute_traversal_case_alias_not_published(self):
+  paths=['/SECRET/path','../SECRET','D:/SECRET','Directory.build.props']
+  value=d.inventory_difference({},dict.fromkeys(paths,'a'*64),frozenset(('Directory.Build.props',)))
+  self.assertTrue(all(x['pathClass']=='unknown-relative-hash-only' and 'knownRelativePath' not in x for x in value['records']))
+  self.assertNotIn('SECRET',json.dumps(value));self.assertNotIn('Directory.build.props',json.dumps(value))
+ def test_at_most_sixteen_records_complete_counts(self):
+  value=d.inventory_difference({}, {f'PRIVATE/{x}':'a'*64 for x in range(30)},frozenset())
+  self.assertEqual(value['differenceCount'],30);self.assertEqual(value['added'],30);self.assertEqual(len(value['records']),16);self.assertTrue(value['truncated'])
+ def test_no_filesystem_access_or_equality_change(self):
+  with patch.object(Path,'open',side_effect=AssertionError('no filesystem')),patch.object(Path,'resolve',side_effect=AssertionError('no resolve')):
+   self.assertIsNone(d.require_inventory({'x':'a'*64},{'x':'a'*64},'Protected source/output changed','fixed','current',frozenset()))
+   with self.assertRaises(ValueError) as caught:d.require_inventory({'x':'b'*64},{'x':'a'*64},'Protected source/output changed','fixed','current',frozenset())
+  self.assertEqual(caught.exception.args,('Protected source/output changed',));self.assertEqual(caught.exception.protected_inventory.public()['changed'],1)
+ def test_diagnostic_failure_preserves_original_guard_first(self):
+  diagnostic=OSError('PRIVATE')
+  with patch.object(d,'inventory_difference',side_effect=diagnostic):
+   with self.assertRaises(BaseExceptionGroup) as caught:d.require_inventory({'x':'a'*64},{},'Source/protected output mutation','baseline','phase',frozenset())
+  self.assertEqual(caught.exception.exceptions[0].args,('Source/protected output mutation',));self.assertIs(caught.exception.exceptions[1],diagnostic)
+ def test_invalid_catalog_and_digest_reject_without_echo(self):
+  for catalog in (frozenset(('../PRIVATE',)),frozenset(('/PRIVATE',)),frozenset(('D:/PRIVATE',)), {'safe'}):
+   with self.assertRaises(ValueError):d.inventory_difference({}, {'PRIVATE':'a'*64},catalog)
+  with self.assertRaises(ValueError):d.inventory_difference({}, {'PRIVATE':'not-hash'},frozenset())
+ def test_real_inventory_still_excludes_only_declared_obj_and_rejects_other_mutation(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/'.git').mkdir();obj=root/'project/obj';obj.mkdir(parents=True)
+   known=root/'Directory.Build.props';known.write_text('old');before=r.inventory(root,[obj],checkout_metadata=True)
+   (obj/'project.assets.json').write_text('allowed');self.assertEqual(r.inventory(root,[obj],checkout_metadata=True),before)
+   known.write_text('new');actual=r.inventory(root,[obj],checkout_metadata=True)
+   with self.assertRaises(ValueError) as caught:d.require_inventory(actual,before,'Source/protected output mutation','baseline','phase',r.KNOWN_DIAGNOSTIC_PATHS)
+   self.assertEqual(caught.exception.protected_inventory.public()['records'][0]['knownRelativePath'],'Directory.Build.props')
+ def test_current_and_phase_hooks_keep_same_original_inventory_arguments(self):
+  import ast,inspect
+  tree=ast.parse(inspect.getsource(r));calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='require_inventory']
+  self.assertEqual(len(calls),2)
+  reasons={n.args[2].value for n in calls};self.assertEqual(reasons,{'Protected source/output changed','Source/protected output mutation'})
+  self.assertEqual({n.args[4].value for n in calls},{'current','phase'})
+  for n in calls:
+   self.assertEqual(n.args[0].func.id,'inventory');self.assertEqual(n.args[0].keywords[0].arg,'checkout_metadata');self.assertIs(n.args[0].keywords[0].value.value,True)
+  self.assertIn("'protected_inventory'",inspect.getsource(r.finish))
+ def test_public_inventory_console_failure_cannot_mask_original(self):
+  from types import SimpleNamespace
+  try:d.require_inventory({'PRIVATE':'a'*64},{},'Protected source/output changed','baseline','current',frozenset())
+  except ValueError as error:original=error
+  sink=SimpleNamespace(write=lambda x:None,close=lambda:None)
+  lane=SimpleNamespace(final_guards=lambda:[],stage='restore-baseline',results=[],commands_started=7,sink=sink)
+  console=OSError('console')
+  with patch('builtins.print',side_effect=console):
+   with self.assertRaises(BaseExceptionGroup) as caught:r.finish(lane,[original])
+  self.assertIs(caught.exception.exceptions[0],original);self.assertIs(caught.exception.exceptions[1],console)
+ def test_fixed_tool_literals_uncoded_error_and_encoding_are_count_only(self):
+  raw=('PRIVATE : error : PRIVATE\n'+d.TOOL_LITERALS['msbuild-fatal']+' PRIVATE').encode()
+  value=d.stream_summary(raw);self.assertEqual(value['uncodedErrorLineCount'],1)
+  self.assertEqual(value['fixedToolLiterals'],[{'category':'msbuild-fatal','count':1}]);self.assertNotIn('PRIVATE',json.dumps(value))
+  for raw,bom in ((b'\xff\xfeA\0','utf16le'),(b'\xfe\xff\0A','utf16be'),(b'\xef\xbb\xbfA','utf8')):
+   value=d.stream_summary(raw);self.assertEqual(value['encodingBOM'],bom);self.assertEqual(value['nulByteCount'],raw.count(b'\0'))
+   self.assertEqual(value['fixedToolLiterals'],[]) # no speculative decoding or inferred root cause
+
 if __name__=='__main__':unittest.main(verbosity=2)

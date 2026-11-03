@@ -98,4 +98,4 @@ jobs:
         run: >-
           python -B payload/eng/tunit971-main-candidate/run_hosted.py
           --baseline baseline --fixed fixed
-          --ci-manifest-sha256 eb76c8fba147c00eb5565013336b93020d8a86ff657eac1f1fceed4f0c376ef3
+          --ci-manifest-sha256 f6067728a949df45bb48a1e37c7a68a6fc16e7d3529f825363f448853df2b33e

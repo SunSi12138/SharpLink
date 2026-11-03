@@ -34,6 +34,8 @@ ACTIVE_SECONDS=3360
 CLEANUP_SECONDS=16*16
 TOTAL_SECONDS=3900
 QUALIFICATION='Standard GitHub-hosted test/report qualification; no independent descendant join or full SDK/input seal'
+# Only immutable catalog spellings can be printed; all other changed paths hash-only.
+KNOWN_DIAGNOSTIC_PATHS=frozenset(audit.CATALOG['sourcePins'])|frozenset(c.read_json(PAYLOAD/'SOURCE.json')['mainPins'])|frozenset((candidate.FIXTURE,))
 
 
 def sha(path):
@@ -151,7 +153,7 @@ class Lane:
         for path,snapshot in self.evidence.items():c.require(inventory(path)==snapshot,'Prior private evidence changed')
     def current_guard(self):
         for v,root in self.roots.items():
-            c.require(inventory(root,checkout_metadata=True)==self.current[v],'Protected source/output changed')
+            diagnostics.require_inventory(inventory(root,checkout_metadata=True),self.current[v],'Protected source/output changed',v,'current',KNOWN_DIAGNOSTIC_PATHS)
             c.require(inventory(Path(self.env[v]['NUGET_PACKAGES']))==self.cache[v],'Protected package cache changed')
     def command(self,label,variant,argv,seconds,phase='readonly',expected_exit=0,filtered=False):
         self.stage=label;self.inputs_guard();self.current_guard()
@@ -183,7 +185,7 @@ class Lane:
         except BaseException as error:errors.append(error)
         finally:
             checks=[self.inputs_guard]
-            checks.extend(lambda v=v,p=p:c.require(inventory(p,excluded[v],checkout_metadata=True)==before[v],'Source/protected output mutation') for v,p in self.roots.items())
+            checks.extend(lambda v=v,p=p:diagnostics.require_inventory(inventory(p,excluded[v],checkout_metadata=True),before[v],'Source/protected output mutation',v,'phase',KNOWN_DIAGNOSTIC_PATHS) for v,p in self.roots.items())
             checks.extend(lambda v=v,s=s:c.require(inventory(Path(self.env[v]['NUGET_PACKAGES']))==s,'Protected cache mutation') for v,s in caches.items())
             if pipe is not None:checks.append(lambda:c.require(pipe_id is not None and identity(pipe)==pipe_id and not list(pipe.iterdir()),'Pipe missing/replaced/nonempty'))
             for check in checks:
@@ -345,7 +347,7 @@ def finish(lane,errors):
     def diagnostics(error):
         if isinstance(error,BaseExceptionGroup):
             for child in error.exceptions:diagnostics(child)
-        for name in ('raw_events','discovery_paths','project_edges','rid_asset','command_codes'):
+        for name in ('raw_events','discovery_paths','project_edges','rid_asset','command_codes','protected_inventory'):
             value=getattr(error,name,None)
             if value is not None:print(json.dumps({'stage':lane.stage,'diagnostic':name,'data':value.public()}),flush=True)
     if errors:
