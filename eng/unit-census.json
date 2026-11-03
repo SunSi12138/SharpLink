@@ -92262,34 +92262,54 @@
         "packageRoot": "microsoft.testing.platform.msbuild/2.5.1",
         "basename": "Microsoft.Testing.Platform.MSBuild.props",
         "allowedSHA256": [
-          "38fcc819423bbb00c910abcc479c929bc115e0e05c5af9269ba7addb9bcedbd6",
-          "d478cd5d5dcd8a17814ec6a25d2b62105c47cda81fe4635c77d5851361ffd77a"
+          "1e50703f770e4b417f45ebd0f33b7a0d72776582be47d10416b3ffebfe876541",
+          "404f747b86370ae894cccf28fcd59295230fa81add338d7f9097b5c6002ebb41"
         ],
         "requiredSHA256": [
-          "d478cd5d5dcd8a17814ec6a25d2b62105c47cda81fe4635c77d5851361ffd77a"
-        ]
+          "1e50703f770e4b417f45ebd0f33b7a0d72776582be47d10416b3ffebfe876541"
+        ],
+        "members": {
+          "build/Microsoft.Testing.Platform.MSBuild.props": "404f747b86370ae894cccf28fcd59295230fa81add338d7f9097b5c6002ebb41",
+          "buildMultiTargeting/Microsoft.Testing.Platform.MSBuild.props": "1e50703f770e4b417f45ebd0f33b7a0d72776582be47d10416b3ffebfe876541",
+          "buildTransitive/Microsoft.Testing.Platform.MSBuild.props": "404f747b86370ae894cccf28fcd59295230fa81add338d7f9097b5c6002ebb41"
+        }
       },
       {
         "packageRoot": "microsoft.testing.platform.msbuild/2.5.1",
         "basename": "Microsoft.Testing.Platform.MSBuild.targets",
         "allowedSHA256": [
-          "1979cf5fd9789a57203ca79303603775e08357f56df60537cade1168cf7b46c8",
-          "73deddc3055a40d46008335083bad291bec52bdd5ff9d001be900e1f09f7b81f"
+          "3985dc8c53c5da5a1de93f25f14bb1757f3b93aa150a3ffcefdd1fde8482c6f0",
+          "dd1aeb1ad6144f5e0a814b8ee9b83032106d1bfe7ce513f8f12a5a17b2b264d3"
         ],
         "requiredSHA256": [
-          "1979cf5fd9789a57203ca79303603775e08357f56df60537cade1168cf7b46c8"
-        ]
+          "3985dc8c53c5da5a1de93f25f14bb1757f3b93aa150a3ffcefdd1fde8482c6f0"
+        ],
+        "members": {
+          "build/Microsoft.Testing.Platform.MSBuild.targets": "dd1aeb1ad6144f5e0a814b8ee9b83032106d1bfe7ce513f8f12a5a17b2b264d3",
+          "buildMultiTargeting/Microsoft.Testing.Platform.MSBuild.targets": "3985dc8c53c5da5a1de93f25f14bb1757f3b93aa150a3ffcefdd1fde8482c6f0",
+          "buildTransitive/Microsoft.Testing.Platform.MSBuild.targets": "dd1aeb1ad6144f5e0a814b8ee9b83032106d1bfe7ce513f8f12a5a17b2b264d3"
+        }
       },
       {
         "packageRoot": "microsoft.testing.extensions.trxreport/2.5.1",
         "basename": "Microsoft.Testing.Extensions.TrxReport.props",
         "allowedSHA256": [
-          "0d2b7ac6390f6f2b752ba59286f63538b0d563d346063a525138fe37fd28ce72",
-          "4f66ffd57536cce85706e23341db65976d66297d5ab1e62f085aca7935acc0a5"
+          "49792970a3700cc38fcef33c6a21aefaa5ff9ce3015d40c6cfc7ec27057f00bf",
+          "5e9a68e08f888023b63f51b564b03cb19ad27b51947723b42be9433c72cca279",
+          "edfd2abed8dcb4b9daab2d0a5047c83ae20880948684cde5b56e996ca6ba2514"
         ],
         "requiredSHA256": [
-          "4f66ffd57536cce85706e23341db65976d66297d5ab1e62f085aca7935acc0a5"
-        ]
+          "49792970a3700cc38fcef33c6a21aefaa5ff9ce3015d40c6cfc7ec27057f00bf"
+        ],
+        "members": {
+          "build/net8.0/Microsoft.Testing.Extensions.TrxReport.props": "5e9a68e08f888023b63f51b564b03cb19ad27b51947723b42be9433c72cca279",
+          "build/net9.0/Microsoft.Testing.Extensions.TrxReport.props": "5e9a68e08f888023b63f51b564b03cb19ad27b51947723b42be9433c72cca279",
+          "build/netstandard2.0/Microsoft.Testing.Extensions.TrxReport.props": "5e9a68e08f888023b63f51b564b03cb19ad27b51947723b42be9433c72cca279",
+          "buildMultiTargeting/Microsoft.Testing.Extensions.TrxReport.props": "49792970a3700cc38fcef33c6a21aefaa5ff9ce3015d40c6cfc7ec27057f00bf",
+          "buildTransitive/net8.0/Microsoft.Testing.Extensions.TrxReport.props": "edfd2abed8dcb4b9daab2d0a5047c83ae20880948684cde5b56e996ca6ba2514",
+          "buildTransitive/net9.0/Microsoft.Testing.Extensions.TrxReport.props": "edfd2abed8dcb4b9daab2d0a5047c83ae20880948684cde5b56e996ca6ba2514",
+          "buildTransitive/netstandard2.0/Microsoft.Testing.Extensions.TrxReport.props": "edfd2abed8dcb4b9daab2d0a5047c83ae20880948684cde5b56e996ca6ba2514"
+        }
       },
       {
         "path": "microsoft.testing.extensions.codecoverage/18.12.0/lib/net8.0/Microsoft.Testing.Extensions.CodeCoverage.dll",
@@ -92303,6 +92323,14 @@
       {
         "path": "microsoft.testing.extensions.codecoverage/18.12.0/microsoft.testing.extensions.codecoverage.18.12.0.nupkg",
         "sha256": "c7098b12bd5892bf72445279056424da89b038595bbeca360186b827f55bb2d9"
+      },
+      {
+        "path": "microsoft.testing.platform.msbuild/2.5.1/microsoft.testing.platform.msbuild.2.5.1.nupkg",
+        "sha256": "335136824e7f9bc8bc77f6700ddf536a264f2b27a307c32143bdfbac12a98f69"
+      },
+      {
+        "path": "microsoft.testing.extensions.trxreport/2.5.1/microsoft.testing.extensions.trxreport.2.5.1.nupkg",
+        "sha256": "f5d37ecaab3f4ad140e86539cbfa95815ac62773fb2bfd3c1a235e1533ced60e"
       }
     ],
     "effectiveDiscoveryFilter": "non-narrowing",

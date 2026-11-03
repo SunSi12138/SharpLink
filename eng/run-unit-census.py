@@ -300,6 +300,7 @@ def execute(lane):
         for sub in ('obj','bin'):
             p=(source/name).parent/sub
             if p.exists():lane.trees[p]=r.snapshot(p)
+    lane.validation_phase='provider-qualification'
     proof=r.filter_qualification(source,packages,post_build,catalog,lane.env,actual_imports)
     lane.unfiltered=proof['unfilteredQualified']
     dll=output/'SharpLink.UnitTests.dll'

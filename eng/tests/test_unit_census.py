@@ -304,6 +304,21 @@ class Controls(unittest.TestCase):
         (output/'Microsoft.Testing.Extensions.CodeCoverage.dll').write_bytes(dll.read_bytes());proof['codeCoverageStaticIL']['assemblySHA256']=r.sha(dll)
         metadata={'Properties':{'RootNamespace':'SharpLink.UnitTests','TestingPlatformHostFactory':'','Language':'C#','GenerateTestingPlatformEntryPoint':'true','GenerateTestingPlatformApplicationHelper':'true','GenerateSelfRegisteredExtensions':'true'},'Items':{'TestingPlatformBuilderHook':hooks,'TestingPlatformCommandLineOptionDefault':[],'Compile':[{'FullPath':str(entry)},{'FullPath':str(registration)}]}}
         return c,packages,metadata,output,obj
+    def test_provider_exact_member_set_raw_bytes_and_import(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);c,packages,meta,output,obj=self.provider_fixture(root)
+            folder=packages/'known/1.0';main=folder/'buildMultiTargeting/K.props';wrapper=folder/'build/K.props'
+            main.parent.mkdir(parents=True);wrapper.parent.mkdir();main.write_bytes(b'<Project/>\r\n');wrapper.write_bytes(b'<Import/>\r\n')
+            row={'packageRoot':'known/1.0','basename':'K.props','allowedSHA256':[r.sha(main),r.sha(wrapper)],'requiredSHA256':[r.sha(main)],'members':{'buildMultiTargeting/K.props':r.sha(main),'build/K.props':r.sha(wrapper)}}
+            c['providerProof']['files'].append(row)
+            self.assertTrue(r.filter_qualification(root,packages,meta,c,{}, {main:None})['unfilteredQualified'])
+            self.reject(lambda:r.filter_qualification(root,packages,meta,c,{}, {wrapper:None}))
+            original=main.read_bytes();main.write_bytes(original.replace(b'\r\n',b'\n'))
+            self.reject(lambda:r.filter_qualification(root,packages,meta,c,{}, {main:None}));main.write_bytes(original)
+            extra=folder/'foreign/K.props';extra.parent.mkdir();extra.write_bytes(main.read_bytes())
+            self.reject(lambda:r.filter_qualification(root,packages,meta,c,{}, {main:None}));extra.unlink()
+            wrapper.rename(folder/'build/Other.props');self.reject(lambda:r.filter_qualification(root,packages,meta,c,{}, {main:None}))
+
     def test_bound_provider_templates_and_actual_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);c,packages,meta,output,obj=self.provider_fixture(root)

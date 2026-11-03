@@ -324,6 +324,9 @@ def filter_qualification(root, packages, metadata, catalog, environment=None, im
             container=packages/item['packageRoot']
             require(not Path(item['packageRoot']).is_absolute() and '..' not in Path(item['packageRoot']).parts,'UC_PROVIDER_PATH')
             paths=list(container.rglob(item['basename']))
+            if 'members' in item:
+                actual={path.relative_to(container).as_posix():file_identity(path)[-1] for path in paths}
+                require(actual==item['members'],'UC_PROVIDER_BYTES')
             hashes={file_identity(path)[-1] for path in paths}
             require(paths and hashes<=set(item['allowedSHA256']) and set(item['requiredSHA256'])<=hashes,'UC_PROVIDER_BYTES')
             require(imports is not None,'UC_PROVIDER_IMPORTS')
