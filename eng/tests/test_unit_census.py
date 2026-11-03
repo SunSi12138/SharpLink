@@ -272,6 +272,57 @@ class Controls(unittest.TestCase):
                 result=original(doc,catalog);raw.write_text('{}');return result
             with patch.object(r,'classify',side_effect=mutate),self.assertRaises(BaseExceptionGroup):lane.ledger(1,raw,c)
             self.assertEqual(lane.observations,[])
+    def test_real_lane_rejected_receipt_never_reports_validated_success(self):
+        owner=load('census_receipt_control_owner',ROOT/'eng/package-smoke-process.py');owner.enable_subreaper()
+        original=r.Rejected('UC_INCOMPLETE')
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=runner.Lane(Path(tmp),r,owner);lane.unfiltered=True
+            # Python-only owned subprocess. Only the discovery argv check is
+            # stubbed so this control exercises real Lane.run and receipt IO.
+            with patch.object(r,'discovery_inputs',return_value=None),patch.object(r.legacy,'verify_receipt',side_effect=original),self.assertRaises(BaseExceptionGroup):
+                lane.run('discovery1',[sys.executable,'-c','pass'],seconds=2)
+            self.assertIn(original,lane.errors)
+            state=lane.commands['discovery1'];self.assertEqual(state['receipt']['exitCode'],0)
+            self.assertEqual(state['receipt']['remainingOwned'],{})
+            self.assertEqual(state['ownerProvenance'],'unvalidated-success-receipt')
+            report=json.loads(runner.terminal_diagnostic(lane,'guard'))
+            self.assertEqual(report['discovery1State'],'invalid-receipt')
+            self.assertIsNone(report['discovery1ExitCode']);self.assertIsNone(report['discovery1RemainingOwnedCount'])
+            self.assertFalse(report['censusQualified']);self.assertIn('UC_INCOMPLETE',report['rejectionCodes'])
+
+    def test_terminal_diagnostic_independent_and_finite(self):
+        with tempfile.TemporaryDirectory() as d:
+            lane=runner.Lane(Path(d),r,None);lane.stage='PRIVATE_SENTINEL';lane.validation_phase='PRIVATE_SENTINEL'
+            lane.errors=[r.Rejected('UC_SEAL'),RuntimeError('PRIVATE_SENTINEL'),r.Rejected('PRIVATE_SENTINEL')]
+            lane.stable=True;lane.unfiltered=True
+            lane.commands={'discovery1':{'ownerProvenance':'original-owner-failure','receipt':{'exitCode':7,'remainingOwned':{},'private':'PRIVATE_SENTINEL'}}}
+            with patch.object(runner.json,'dumps',side_effect=OSError('PRIVATE_SENTINEL')),patch('builtins.print',side_effect=OSError('PRIVATE_SENTINEL')):
+                raw=runner.terminal_diagnostic(lane,'guard')
+            result=json.loads(raw);self.assertNotIn(b'PRIVATE_SENTINEL',raw)
+            self.assertEqual(result['stage'],'unknown');self.assertEqual(result['validationPhase'],'unknown')
+            self.assertFalse(result['censusQualified']);self.assertFalse(result['unfilteredQualified']);self.assertFalse(result['stableQualified'])
+            self.assertEqual(result['rejectionCodes'],['UC_SEAL']);self.assertEqual(result['discovery1ExitCode'],7)
+            self.assertEqual(result['discovery1RemainingOwnedCount'],0);self.assertEqual(result['discovery1State'],'failure-receipt')
+            self.assertEqual(result['discovery2State'],'absent')
+    def test_summary_write_failure_reports_codes_not_private_errors(self):
+        original=r.Rejected('UC_SEAL');seen=[];writes=[];real=r.write_json;original_module=runner.module
+        def modules(name,path):return r if name=='unit_census_results' else original_module(name,path)
+        def execute(lane):seen.append(lane);lane.stage='discovery1';raise original
+        def write(directory,name,value):
+            if name=='summary.json':raise OSError('PRIVATE_SENTINEL')
+            return real(directory,name,value)
+        with patch.object(runner,'module',side_effect=modules),patch.object(runner,'execute',side_effect=execute),patch.object(r,'write_json',side_effect=write),patch.object(runner.os,'write',side_effect=lambda fd,data:writes.append(data) or len(data)):
+            self.assertEqual(runner.guarded_main(),1)
+        self.assertIs(seen[0].errors[0],original);self.assertTrue(any(type(e) is OSError for e in seen[0].errors))
+        self.assertEqual(writes[0],b'UNIT_CENSUS_FAILED_SUMMARY\n');self.assertNotIn(b'PRIVATE_SENTINEL',b''.join(writes))
+        record=json.loads(writes[1]);self.assertEqual(record['summaryFailurePhase'],'write');self.assertEqual(record['rejectionCodes'],['UC_SEAL'])
+    def test_terminal_diagnostic_failure_keeps_prior_roots(self):
+        original=RuntimeError('original');diagnostic=OSError('diagnostic');seen=[]
+        def execute(lane):seen.append(lane);raise original
+        with patch.object(runner,'execute',side_effect=execute),patch('builtins.print',side_effect=OSError('render')),patch.object(runner,'terminal_diagnostic',side_effect=diagnostic),patch.object(runner.os,'write',side_effect=lambda fd,data:len(data)):
+            self.assertEqual(runner.guarded_main(),1)
+        self.assertIs(seen[0].errors[0],original);self.assertIs(seen[0].errors[-1],diagnostic)
+
     def test_summary_render_failure_keeps_original(self):
         original=RuntimeError('body');seen=[]
         def fail(lane):

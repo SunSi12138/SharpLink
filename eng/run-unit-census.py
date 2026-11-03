@@ -140,8 +140,9 @@ class Lane:
         try:
             output=self.owner.run_owned(label,args,cwd or ROOT,child,self.logs,actual)
             receipt=self.r.read_json(self.logs/(label+'.json'))
-            state.update(receipt=receipt,ownerProvenance='validated-original-success')
+            state.update(receipt=receipt,ownerProvenance='unvalidated-success-receipt')
             self.r.legacy.verify_receipt(receipt,label,args,actual)
+            state['ownerProvenance']='validated-original-success'
         except BaseException as error:
             failures.append(error);self.record(error)
             if isinstance(error,self.owner.CommandFailure):state.update(receipt=error.outcome,ownerProvenance='original-owner-failure')
@@ -307,9 +308,53 @@ def execute(lane):
     lane.identity={'head':head,'tree':tree,'configuration':'Release','os':'ubuntu-24.04','sdk':sdk,'installedRuntimes':runtime_rows,'runtimeRequest':'Microsoft.NETCore.App/10.0.0','tunit':'1.73.19','mtp':'2.5.1',
                    'binarySHA256':r.sha(dll),'sourceManifestSHA256':r.digest({str(p.relative_to(source)):v[-1] for p,v in lane.original.items() if p.is_relative_to(source)}),
                    'sdkManifestSHA256':r.digest(lane.trees[sdkroot]),'packageManifestSHA256':r.digest(lane.trees[packages]),'providerProofSHA256':proof['proofSHA256']}
-    first=lane.ledger(1,lane.run('discovery1',[dotnet,dll,'--list-tests','json'],source,180),catalog)
-    second=lane.ledger(2,lane.run('discovery2',[dotnet,dll,'--list-tests','json'],source,180),catalog)
-    lane.stable=r.stable(first,second)
+    lane.validation_phase='discovery1-command'
+    first_raw=lane.run('discovery1',[dotnet,dll,'--list-tests','json'],source,180)
+    lane.validation_phase='discovery1-parse';first=lane.ledger(1,first_raw,catalog)
+    lane.validation_phase='discovery2-command'
+    second_raw=lane.run('discovery2',[dotnet,dll,'--list-tests','json'],source,180)
+    lane.validation_phase='discovery2-parse';second=lane.ledger(2,second_raw,catalog)
+    lane.validation_phase='discovery-stability';lane.stable=r.stable(first,second)
+
+
+def terminal_diagnostic(lane, summary_phase):
+    """Finite fail-only record independent of the failed JSON/render pipeline.
+
+    No messages, paths, exception type names, metadata or arbitrary strings.
+    This is not a sealed evidence replacement and can never grant qualification.
+    """
+    stages={'bootstrap','head','tree','clean','tracked','clone','checkout','clone-head','python-controls',
+            'sdk-version','sdk-info','sdk-runtimes','restore','expanded-imports','build','discovery1','discovery2'}|{'metadata'+str(i) for i in range(14)}
+    phases={'not-metadata','metadata-command','metadata-json','project-properties','compile-set',
+            'project-reference-membership','package-compile-input','compile-paths','import-paths','metadata-complete',
+            'post-build-json','post-build-properties','post-build-package-compile','post-build-assembly-metadata',
+            'post-build-compile-set','post-build-global-usings','runtime-identity','provider-qualification',
+            'discovery1-command','discovery2-command','discovery1-parse','discovery2-parse','discovery-stability'}
+    stage=lane.stage if type(lane.stage) is str and lane.stage in stages else 'unknown'
+    phase=lane.validation_phase if type(lane.validation_phase) is str and lane.validation_phase in phases else 'unknown'
+    summary_phase=summary_phase if summary_phase in {'write','seal','guard','render','budget','emit','emitted-budget'} else 'unknown'
+    rejection=lane.r.public_rejections(lane.errors)
+    codes=[code for code in rejection['codes'] if type(code) is str and code in lane.r.PUBLIC_REJECTION_CODES and re.fullmatch(r'UC_[A-Z0-9_]+',code)]
+    # Values interpolated below are fixed vocabulary or built-in numeric counts.
+    fields=['"schemaVersion":1','"terminalDiagnostic":true','"censusQualified":false',
+            '"stableQualified":false','"unfilteredQualified":false','"exit":1',
+            '"stage":"'+stage+'"','"validationPhase":"'+phase+'"','"summaryFailurePhase":"'+summary_phase+'"',
+            '"errorOccurrences":'+str(len(lane.errors)),
+            '"rejectionCodes":['+','.join('"'+code+'"' for code in codes)+']']
+    for label in ('discovery1','discovery2'):
+        state=lane.commands.get(label);kind='absent';code='null';remaining='null'
+        if type(state) is dict:
+            kind='prepared';provenance=state.get('ownerProvenance');receipt=state.get('receipt')
+            if provenance=='validated-original-success':kind='success-receipt'
+            elif provenance=='original-owner-failure':kind='failure-receipt'
+            elif provenance=='unvalidated-success-receipt':kind='invalid-receipt'
+            if type(receipt) is dict and kind in ('success-receipt','failure-receipt'):
+                value=receipt.get('exitCode')
+                if type(value) is int and -255<=value<=255:code=str(value)
+                owners=receipt.get('remainingOwned')
+                if type(owners) is dict:remaining=str(len(owners))
+        fields.extend(['"'+label+'State":"'+kind+'"','"'+label+'ExitCode":'+code,'"'+label+'RemainingOwnedCount":'+remaining])
+    return ('{'+','.join(fields)+'}\n').encode('ascii')
 
 
 def guarded_main():
@@ -336,17 +381,20 @@ def guarded_main():
                  'errorOccurrences':len(errors),'rejections':r.public_rejections(errors),'validationPhase':lane.validation_phase,'metadataFacts':metadata_facts,'runtimeInventory':lane.runtime_inventory,'rejectCode':None if qualified else 'UC_FAILED','observations':lane.observations,'exit':0 if qualified else 1,
                  'qualification':'Metadata only; no test bodies/results. Digests cannot reconstruct private ledgers.'}
         # Summary serialization/write/render are independent failure points.
+        summary_phase='write'
         try:
             r.write_json(lane.evidence,'summary.json',summary)
-            lane.extend_evidence(['summary.json'])
-            lane.check()
-            rendered=json.dumps(summary,sort_keys=True,allow_nan=False)
-            r.require(time.monotonic()<lane.stop,'UC_SUMMARY_BUDGET')
-            print(rendered,flush=True)
-            r.require(time.monotonic()<lane.stop,'UC_EMIT_BUDGET')
+            summary_phase='seal';lane.extend_evidence(['summary.json'])
+            summary_phase='guard';lane.check()
+            summary_phase='render';rendered=json.dumps(summary,sort_keys=True,allow_nan=False)
+            summary_phase='budget';r.require(time.monotonic()<lane.stop,'UC_SUMMARY_BUDGET')
+            summary_phase='emit';print(rendered,flush=True)
+            summary_phase='emitted-budget';r.require(time.monotonic()<lane.stop,'UC_EMIT_BUDGET')
         except BaseException as error:
             lane.record(error)
             os.write(2,b'UNIT_CENSUS_FAILED_SUMMARY\n')
+            try:os.write(2,terminal_diagnostic(lane,summary_phase))
+            except BaseException as diagnostic:lane.record(diagnostic)
             return 1
         return 0 if qualified else 1
     except BaseException as error:
