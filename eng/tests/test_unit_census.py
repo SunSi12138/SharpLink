@@ -31,6 +31,51 @@ def fixture():
 class Controls(unittest.TestCase):
     def reject(self,fn):
         with self.assertRaises((r.Rejected,ValueError,KeyError,TypeError)):fn()
+    def test_catalog_exact_package_compile_proof(self):
+        self.assertEqual(r.read_json(ROOT/'eng/unit-census.json')['packageCompileProof'],r.package_compile_proof())
+    def package_source_fixture(self, root):
+        from zipfile import ZipFile
+        import hashlib
+        packages=root/'packages';folder=packages/'tunit.core/1.73.19'
+        source=folder/r.TUNIT_CORE_SOURCE_MEMBER;props=folder/r.TUNIT_CORE_PROPS_MEMBER
+        source.parent.mkdir(parents=True);source.write_bytes(b'namespace TUnit.Generated {}')
+        props.write_bytes(b'<Project/>');archive=folder/'tunit.core.1.73.19.nupkg'
+        with ZipFile(archive,'w') as zipped:
+            zipped.writestr(r.TUNIT_CORE_SOURCE_MEMBER,source.read_bytes())
+            zipped.writestr(r.TUNIT_CORE_PROPS_MEMBER,props.read_bytes())
+        hashes={'TUNIT_CORE_ARCHIVE_SHA256':hashlib.sha256(archive.read_bytes()).hexdigest(),
+                'TUNIT_CORE_PROPS_SHA256':hashlib.sha256(props.read_bytes()).hexdigest(),
+                'TUNIT_CORE_NAMESPACE_SHA256':hashlib.sha256(source.read_bytes()).hexdigest()}
+        metadata={'Items':{'Compile':[{'FullPath':str(source)},{'FullPath':str(root/'src/K.cs')}]}}
+        return packages,source,props,archive,hashes,metadata
+    def test_exact_package_source_and_import(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);packages,source,props,archive,hashes,meta=self.package_source_fixture(root)
+            with patch.multiple(r,**hashes):
+                allowed=r.package_compile_inputs(root/'src',packages,meta,{props:None})
+                self.assertEqual(allowed,{source:'package:tunit.core/1.73.19/'+r.TUNIT_CORE_SOURCE_MEMBER})
+                self.reject(lambda:r.package_compile_inputs(root/'src',packages,meta,{}))
+    def test_package_source_wrong_missing_duplicate_or_extra(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);packages,source,props,archive,hashes,meta=self.package_source_fixture(root)
+            cases=[[],meta['Items']['Compile'][1:],list(reversed(meta['Items']['Compile'])),
+                   meta['Items']['Compile']+[{'FullPath':str(source)}],
+                   meta['Items']['Compile']+[{'FullPath':str(packages/'foreign.cs')}],
+                   [{'FullPath':str(source).replace('/net10.0/','/net8.0/')},meta['Items']['Compile'][1]]]
+            with patch.multiple(r,**hashes):
+                for rows in cases:self.reject(lambda:r.package_compile_inputs(root/'src',packages,{'Items':{'Compile':rows}}))
+    def test_package_source_archive_props_and_source_tampering(self):
+        for which in ('source','props','archive'):
+            with tempfile.TemporaryDirectory() as d:
+                root=Path(d);packages,source,props,archive,hashes,meta=self.package_source_fixture(root)
+                {'source':source,'props':props,'archive':archive}[which].write_bytes(b'changed')
+                with patch.multiple(r,**hashes):self.reject(lambda:r.package_compile_inputs(root/'src',packages,meta))
+    def test_package_source_symlink_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);packages,source,props,archive,hashes,meta=self.package_source_fixture(root)
+            target=root/'target';source.rename(target);source.symlink_to(target)
+            with patch.multiple(r,**hashes):self.reject(lambda:r.package_compile_inputs(root/'src',packages,meta))
+
     def test_params_token_repeat_display(self):
         c,d=fixture();a=r.classify(d,c);self.assertEqual(a['summary']['observed'],2);self.assertTrue(r.stable(a,r.classify(d,c)))
         self.assertEqual(a['rows'][0]['native']['traits'],d['tests'][0]['traits'])
@@ -283,6 +328,14 @@ class Controls(unittest.TestCase):
             (root/(prefix+'.NETCoreApp,Version=v10.0.AssemblyAttributes.cs')).write_text('using System; using System.Reflection; [assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v10.0", FrameworkDisplayName = ".NET 10.0")]')
             meta={'Items':{'Compile':[{'FullPath':str(root/name)} for name in c['unitSources']+c['generatedCompile']]}}
             self.assertEqual(len(r.compiled_inputs(root,meta,c)),5)
+            with tempfile.TemporaryDirectory() as external:
+                path=Path(external)/'TUnit.Core.GeneratedNamespace.cs';path.write_text('namespace TUnit.Generated {}')
+                package_sources={path:'package:tunit.core/1.73.19/'+r.TUNIT_CORE_SOURCE_MEMBER}
+                self.reject(lambda:r.compiled_inputs(root,meta,c,package_sources))
+                extended=copy.deepcopy(meta);extended['Items']['Compile'].insert(0,{'FullPath':str(path)})
+                ledger=r.compiled_inputs(root,extended,c,package_sources)
+                self.assertEqual(len(ledger),6);self.assertIn(package_sources[path],ledger)
+                self.reject(lambda:r.compiled_inputs(root,extended,c))
             with (root/(prefix+'SharpLink.UnitTests.AssemblyInfo.cs')).open('a') as file:file.write('class ForeignBootstrap {}')
             self.reject(lambda:r.compiled_inputs(root,meta,c))
     def test_public_rejection_codes_never_echo_unknown_errors(self):

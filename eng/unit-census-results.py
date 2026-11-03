@@ -512,19 +512,64 @@ def project_metadata(root, name, value, catalog):
     return {'constants':sorted(constants),'references':sorted(expected['references']),'targetFramework':expected['targetFramework']}
 
 
-def compiled_inputs(root, value, catalog):
+# Exact official TUnit.Core 1.73.19 package source, not a generated test body.
+# https://github.com/thomhurst/TUnit/blob/ff2dc5186b05eddc8f6aea03a18784df3aa6e737/src/TUnit.Core/TUnit.Core.props
+TUNIT_CORE_ARCHIVE_SHA256='d74daa05bb1467612e48435228ae3e7e77fc3f62eaeb8c5755c116620b1c55ec'
+TUNIT_CORE_PROPS_SHA256='caa0fc63c20cc5b05a0857090b76273edd67f941f72e460ba1aefc2918ca4961'
+TUNIT_CORE_NAMESPACE_SHA256='d05ade924c6f7728fe7bfa9eaae17da7963f63d3d3ed0b4f091b45a9fac66002'
+TUNIT_CORE_SOURCE_MEMBER='buildTransitive/net10.0/TUnit.Core.GeneratedNamespace.cs'
+TUNIT_CORE_PROPS_MEMBER='buildTransitive/net10.0/TUnit.Core.props'
+
+
+def package_compile_proof():
+    return {'package':'tunit.core/1.73.19','archiveSHA256':TUNIT_CORE_ARCHIVE_SHA256,
+            'sourceMember':TUNIT_CORE_SOURCE_MEMBER,'sourceSHA256':TUNIT_CORE_NAMESPACE_SHA256,
+            'propsMember':TUNIT_CORE_PROPS_MEMBER,'propsSHA256':TUNIT_CORE_PROPS_SHA256,
+            'sourceCommit':'ff2dc5186b05eddc8f6aea03a18784df3aa6e737'}
+
+
+def package_compile_inputs(root, packages, metadata, imports=None):
+    """The one official package source must be exact, unique and first.
+
+    Pre-build evaluation binds official archive members and actual Compile input;
+    before Build the expanded import set must also prove the matching props used.
+    Whole package extraction and all ancestors are independently sealed by caller.
+    """
+    from zipfile import ZipFile
+    from io import BytesIO
+    folder=packages/'tunit.core/1.73.19'
+    source=folder/TUNIT_CORE_SOURCE_MEMBER;props=folder/TUNIT_CORE_PROPS_MEMBER
+    archive=folder/'tunit.core.1.73.19.nupkg'
+    paths=[Path(item['FullPath']) for item in metadata['Items']['Compile']]
+    require(paths and paths[0]==source and len(paths)==len(set(paths)) and
+            {path for path in paths if not path.is_relative_to(root)}=={source},'UC_PACKAGE_COMPILE_SET')
+    raw=stable_read(archive)[0]
+    require(hashlib.sha256(raw).hexdigest()==TUNIT_CORE_ARCHIVE_SHA256,'UC_PACKAGE_COMPILE_BYTES')
+    with ZipFile(BytesIO(raw)) as zipped:
+        for member,path,sha in ((TUNIT_CORE_SOURCE_MEMBER,source,TUNIT_CORE_NAMESPACE_SHA256),
+                                (TUNIT_CORE_PROPS_MEMBER,props,TUNIT_CORE_PROPS_SHA256)):
+            require(zipped.namelist().count(member)==1,'UC_PACKAGE_COMPILE_BYTES')
+            data=stable_read(path)[0]
+            require(data==zipped.read(member) and hashlib.sha256(data).hexdigest()==sha,'UC_PACKAGE_COMPILE_BYTES')
+    if imports is not None:require(props in imports,'UC_PACKAGE_COMPILE_IMPORT')
+    return {source:'package:tunit.core/1.73.19/'+TUNIT_CORE_SOURCE_MEMBER}
+
+
+def compiled_inputs(root, value, catalog, package_sources=None):
     """Complete post-Build MSBuild Compile item ledger, not only bootstrap files.
 
     This is not an inventory of Roslyn internal source-generator syntax trees.
     Those remain bound by the original source/analyzer/package/output identities.
     """
     paths=[Path(item['FullPath']) for item in value['Items']['Compile']]
-    expected={root/p for p in catalog['unitSources']+catalog['linkedSources']+catalog['generatedCompile']}
+    package_sources=package_sources or {}
+    expected={root/p for p in catalog['unitSources']+catalog['linkedSources']+catalog['generatedCompile']}|set(package_sources)
     require(len(paths)==len(set(paths)) and set(paths)==expected,'UC_POST_COMPILE_SET')
     rows={}
     for path in paths:
-        require(path.is_absolute() and '..' not in path.parts and path.is_relative_to(root),'UC_COMPILE_PATH')
-        rows[path.relative_to(root).as_posix()]=file_identity(path)
+        require(path.is_absolute() and '..' not in path.parts and (path.is_relative_to(root) or path in package_sources),'UC_COMPILE_PATH')
+        key=package_sources[path] if path in package_sources else path.relative_to(root).as_posix()
+        rows[key]=file_identity(path)
     # The SDK-generated assembly metadata is the only non-bootstrap generated
     # Compile allowed. Exact semantic skeleton/properties are checked below;
     # any unknown generator file (even beside valid entrypoints) is rejected.
@@ -546,7 +591,7 @@ def compiled_inputs(root, value, catalog):
     return rows
 
 
-PUBLIC_REJECTION_CODES = frozenset(('UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
+PUBLIC_REJECTION_CODES = frozenset(('UC_PACKAGE_COMPILE_SET', 'UC_PACKAGE_COMPILE_BYTES', 'UC_PACKAGE_COMPILE_IMPORT', 'UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
 
 
 def public_rejections(errors):

@@ -92532,5 +92532,14 @@
     "test/SharpLink.UnitTests/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs",
     "test/SharpLink.UnitTests/obj/Release/net10.0/SelfRegisteredExtensions.cs",
     "test/SharpLink.UnitTests/obj/Release/net10.0/MicrosoftTestingPlatformEntryPoint.cs"
-  ]
+  ],
+  "packageCompileProof": {
+    "package": "tunit.core/1.73.19",
+    "archiveSHA256": "d74daa05bb1467612e48435228ae3e7e77fc3f62eaeb8c5755c116620b1c55ec",
+    "sourceMember": "buildTransitive/net10.0/TUnit.Core.GeneratedNamespace.cs",
+    "sourceSHA256": "d05ade924c6f7728fe7bfa9eaae17da7963f63d3d3ed0b4f091b45a9fac66002",
+    "propsMember": "buildTransitive/net10.0/TUnit.Core.props",
+    "propsSHA256": "caa0fc63c20cc5b05a0857090b76273edd67f941f72e460ba1aefc2918ca4961",
+    "sourceCommit": "ff2dc5186b05eddc8f6aea03a18784df3aa6e737"
+  }
 }

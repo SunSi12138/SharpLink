@@ -176,6 +176,7 @@ class Lane:
 
 def execute(lane):
     r=lane.r;catalog=r.read_json(ROOT/'eng/unit-census.json')
+    r.require(catalog.get('packageCompileProof')==r.package_compile_proof(),'UC_PACKAGE_COMPILE_BYTES')
     os_release=dict(line.split('=',1) for line in r.stable_read(Path('/etc/os-release').resolve())[0].decode().splitlines() if '=' in line and not line.startswith('#'))
     r.require(sys.platform=='linux' and os_release.get('ID','').strip('\"')=='ubuntu' and os_release.get('VERSION_ID','').strip('\"')=='24.04','UC_OS')
     r.require(sys.argv[1:]==['--configuration','Release'],'UC_ARGUMENTS')
@@ -225,7 +226,7 @@ def execute(lane):
     assets=r.dependencies(source,packages,catalog,package_identity)
     lane.trees[packages]=r.snapshot(packages)
     for p in source.rglob('project.assets.json'):lane.inputs[p]=r.file_identity(p)
-    metadata={}
+    metadata={};package_sources={}
     for index,name in enumerate(catalog['projects']):
         lane.validation_phase='metadata-command';lane.metadata_input=None;lane.metadata_project=name;lane.metadata_catalog=catalog
         raw=lane.run('metadata'+str(index),[dotnet,'msbuild',source/name,'-p:Configuration=Release','-getItem:Compile,ProjectReference,TestingPlatformBuilderHook,TestingPlatformCommandLineOptionDefault','-getProperty:MSBuildProjectFullPath,Configuration,PublishAot,TargetFramework,AssemblyName,DefineConstants,MSBuildAllProjects,TargetPath,RootNamespace,TestingPlatformHostFactory','-m:1','-nr:false'],source,20)
@@ -242,11 +243,14 @@ def execute(lane):
         lane.validation_phase='project-reference-membership'
         for item in value['Items'].get('ProjectReference',[]):
             r.require(Path(item['FullPath']) in {source/p for p in catalog['projects']},'UC_PROJECT_REFERENCE')
+        if name==catalog['project']:
+            lane.validation_phase='package-compile-input'
+            package_sources=r.package_compile_inputs(source,packages,value)
         lane.validation_phase='compile-paths'
         for item in value['Items']['Compile']:
             p=Path(item['FullPath'])
             r.require(p.is_absolute() and '..' not in p.parts and p.resolve()==p,'UC_COMPILE_PATH')
-            r.require(p.is_relative_to(source) and (p in lane.original or 'obj' in p.relative_to(source).parts),'UC_COMPILE_FOREIGN')
+            r.require(p in package_sources and name==catalog['project'] or p.is_relative_to(source) and (p in lane.original or 'obj' in p.relative_to(source).parts),'UC_COMPILE_FOREIGN')
         lane.validation_phase='import-paths'
         for imported in value['Properties']['MSBuildAllProjects'].split(';'):
             if imported:
@@ -266,6 +270,7 @@ def execute(lane):
                 r.legacy.directory_identity_strict(path);continue
             known[path]=r.file_identity(path)
     actual_imports=r.import_origins(expanded,source,packages,sdkroot,known)
+    r.package_compile_inputs(source,packages,metadata[catalog['project']],actual_imports)
     lane.inputs.update(actual_imports)
     r.verify_snapshot(lane.evidence,lane.evidenceseal)
     expanded_dir.rename(lane.evidence/'imports');expanded_dir=lane.evidence/'imports'
@@ -276,7 +281,9 @@ def execute(lane):
         '-p:UseSharedCompilation=false','-p:PathMap='+r.legacy.compile_path_map(source),'-m:1','-nr:false'],source,600)
     post_build=r.read_json(built_metadata)
     r.project_metadata(source,catalog['project'],post_build,catalog)
-    compile_ledger=r.compiled_inputs(source,post_build,catalog)
+    post_package_sources=r.package_compile_inputs(source,packages,post_build,actual_imports)
+    r.require(post_package_sources==package_sources,'UC_PACKAGE_COMPILE_SET')
+    compile_ledger=r.compiled_inputs(source,post_build,catalog,post_package_sources)
     r.write_json(lane.evidence,'compiled-inputs.json',compile_ledger);lane.extend_evidence(['compiled-inputs.json'])
     output=r.runtime_identity(source,packages,catalog,assets)
     # Seal every original graph output and generated input after the single build.
