@@ -20,6 +20,7 @@ import candidate
 import classify as c
 import hosted_process as host
 import report_checks as reports
+import failure_diagnostics as diagnostics
 
 PAYLOAD=Path(__file__).resolve().parent
 FOCUSED='test/SharpLink.IntegrationTests'
@@ -191,7 +192,15 @@ class Lane:
             try:
                 if directory.exists():self.evidence[directory]=inventory(directory)
             except BaseException as error:errors.append(error)
-        if errors:raise BaseExceptionGroup('Hosted command failed; original errors retained',errors)
+        if errors:
+            original=BaseExceptionGroup('Hosted command failed; original errors retained',errors)
+            try:
+                self.inputs_guard()
+                diagnostics.attach(original,self.work,directory,label)
+            except BaseException as diagnostic:
+                if isinstance(diagnostic,BaseExceptionGroup) and diagnostic.exceptions[0] is original:raise
+                raise BaseExceptionGroup('Original command failure and diagnostic guard failure',[original,diagnostic]) from None
+            raise original
         self.current={v:inventory(p,checkout_metadata=True) for v,p in self.roots.items()}
         self.cache={v:inventory(Path(e['NUGET_PACKAGES'])) for v,e in self.env.items()}
         print(json.dumps({'stage':label,'exit':outcome['exitCode'],'seconds':outcome['seconds'],
@@ -318,6 +327,8 @@ def safe_leaves(errors):
         count+=1
         if len(rows)>=8:return
         row={'type':type(e).__name__}
+        reason=diagnostics.known_reason(e)
+        if reason is not None:row['reason']=reason
         if isinstance(e,host.HostedCommandFailure):
             o=e.outcome;row.update(exit=o.get('exitCode'),timedOut=o.get('timedOut'),cancelled=o.get('cancelled'),
                                   directProcessTerminal=o.get('directProcessTerminal'),cleanupErrors=len(o.get('cleanupErrors',[])),
@@ -334,7 +345,7 @@ def finish(lane,errors):
     def diagnostics(error):
         if isinstance(error,BaseExceptionGroup):
             for child in error.exceptions:diagnostics(child)
-        for name in ('raw_events','discovery_paths','project_edges','rid_asset'):
+        for name in ('raw_events','discovery_paths','project_edges','rid_asset','command_codes'):
             value=getattr(error,name,None)
             if value is not None:print(json.dumps({'stage':lane.stage,'diagnostic':name,'data':value.public()}),flush=True)
     if errors:

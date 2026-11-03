@@ -4,6 +4,15 @@ permissions:
   contents: read
 
 on:
+  workflow_dispatch:
+    inputs:
+      platform_scope:
+        description: 'Windows diagnostic follow-up or both hosted platform gates'
+        type: choice
+        default: windows
+        options:
+          - windows
+          - both
   push:
     branches:
       - 'wip/775-code-recovery-20261102'
@@ -41,17 +50,16 @@ jobs:
         run: |
           python -B eng/tunit971-main-candidate/test_foundation.py
           python -B eng/tunit971-main-candidate/test_hosted.py
+          python -B eng/tunit971-main-candidate/test_diagnostics.py
   hosted:
     name: ${{ matrix.os }} standard hosted three-body test/report qualification
     needs: synthetic
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-2025
-            architecture: x64
-          - os: macos-15
-            architecture: arm64
+        # This diagnostic push selects Windows only. Manual 'both' retains the
+        # macOS publication gate; the earlier938bdd macOS PASS stays separate.
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platform_scope == 'both' && '[{"os":"windows-2025","architecture":"x64"},{"os":"macos-15","architecture":"arm64"}]' || '[{"os":"windows-2025","architecture":"x64"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
     steps:
@@ -90,4 +98,4 @@ jobs:
         run: >-
           python -B payload/eng/tunit971-main-candidate/run_hosted.py
           --baseline baseline --fixed fixed
-          --ci-manifest-sha256 5a7bb911b8145f5d355fd1b5c558c7cedba4647e6450b287f61fa536200bbf04
+          --ci-manifest-sha256 eb76c8fba147c00eb5565013336b93020d8a86ff657eac1f1fceed4f0c376ef3
