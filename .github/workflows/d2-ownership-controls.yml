@@ -1,0 +1,45 @@
+name: D2 ownership 35 isolated controls
+
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['wip/775-code-recovery-20261102']
+    paths:
+      - '.github/workflows/d2-ownership-controls.yml'
+      - 'eng/d2-ownership-controls.json'
+      - 'eng/d2-ownership-results.py'
+      - 'eng/run-d2-ownership-controls.py'
+      - 'eng/tests/test_d2_ownership_results.py'
+      - 'eng/package-smoke-process.py'
+      - 'eng/retirement-results.py'
+      - 'eng/route59-results.py'
+      - 'eng/tests/test_retirement_results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.Build.props'
+      - 'Directory.Build.targets'
+      - 'Directory.Packages.props'
+      - 'global.json'
+      - 'NuGet.Config'
+      - 'nuget.config'
+concurrency:
+  group: d2-ownership35-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  d2ownership35:
+    runs-on: ubuntu-24.04
+    # 35*180 body + 120 discovery + build/restore/metadata + owned cleanup.
+    # 9600s inner budget; outer timeout is never proof of an owned join.
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup repository SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Build focused8 and execute 35 distinct actual UIDs
+        run: python3 eng/run-d2-ownership-controls.py

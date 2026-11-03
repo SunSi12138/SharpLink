@@ -24,6 +24,7 @@ public static class EntryState
     public static TaskCompletionSource? ManifestRelease;
     public static Exception? StubFailure;
     public static Exception? ScopeFailure;
+    public static Action? ScopeDisposing;
     public static Exception? ManifestFailureObserved;
     public static int ManifestCount;
     public static int StubCount;
@@ -40,6 +41,7 @@ public sealed class EntryManifest : ISharpLinkGeneratedAssemblyManifest
         Interlocked.Increment(ref EntryState.ManifestCount);
         var stubFailure = EntryState.StubFailure;
         var scopeFailure = EntryState.ScopeFailure;
+        var scopeDisposing = EntryState.ScopeDisposing;
         var contract = typeof(IEntryContract);
         Contracts = [new(contract, contract.FullName!, ContractId, new string('e', 64), [],
             static (_, _) => throw new NotSupportedException("No proxy is constructed by these controls."),
@@ -53,7 +55,7 @@ public sealed class EntryManifest : ISharpLinkGeneratedAssemblyManifest
             })];
         Services = [new(contract, typeof(EntryService), contract.FullName!, typeof(EntryService).FullName!,
             ContractId, new string('e', 64), SharpLinkServiceLifetime.Call, [], static _ => new EntryService())];
-        Codecs = [new EntryCodecFactory(scopeFailure)];
+        Codecs = [new EntryCodecFactory(scopeFailure, scopeDisposing)];
         EntryState.ManifestEntered?.TrySetResult();
         try { EntryState.ManifestRelease?.Task.GetAwaiter().GetResult(); }
         catch (Exception exception) { EntryState.ManifestFailureObserved = exception; throw; }
@@ -71,26 +73,26 @@ public sealed class EntryManifest : ISharpLinkGeneratedAssemblyManifest
     public IReadOnlyList<string> Dependencies => [];
 }
 
-internal sealed class EntryCodecFactory(Exception? cleanupFailure) : IRpcGeneratedCodecFactory
+internal sealed class EntryCodecFactory(Exception? cleanupFailure, Action? disposing) : IRpcGeneratedCodecFactory
 {
     public Type TargetType => typeof(string);
     public RpcHash128 CodecHash => new(0x656e747279636f64UL, 1);
     public string AdapterId => "retirement-entry/v1";
-    public IRpcCodecAdapter Adapter { get; } = new EntryAdapter(cleanupFailure);
+    public IRpcCodecAdapter Adapter { get; } = new EntryAdapter(cleanupFailure, disposing);
     public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
         => (adapterScope ?? throw new ArgumentNullException(nameof(adapterScope))).CreateCodec<string>();
     public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<string>;
 }
-internal sealed class EntryAdapter(Exception? cleanupFailure) : IRpcCodecAdapter
+internal sealed class EntryAdapter(Exception? cleanupFailure, Action? disposing) : IRpcCodecAdapter
 {
     public string AdapterId => "retirement-entry/v1";
     public IRpcCodecAdapterScope CreateScope()
     {
         Interlocked.Increment(ref EntryState.ScopeCreated);
-        return new EntryScope(cleanupFailure);
+        return new EntryScope(cleanupFailure, disposing);
     }
 }
-internal sealed class EntryScope(Exception? cleanupFailure) : IRpcCodecAdapterScope
+internal sealed class EntryScope(Exception? cleanupFailure, Action? disposing) : IRpcCodecAdapterScope
 {
     public IRpcCodec<T> CreateCodec<T>() => (IRpcCodec<T>)(object)new EntryStringCodec();
     public void Dispose()
@@ -98,6 +100,7 @@ internal sealed class EntryScope(Exception? cleanupFailure) : IRpcCodecAdapterSc
         Interlocked.Increment(ref EntryState.ScopeDisposeEntered);
         try
         {
+            disposing?.Invoke();
             if (cleanupFailure is not null)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
         }

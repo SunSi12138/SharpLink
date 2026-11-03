@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.UnitTests</RootNamespace>
+    <AssemblyTitle>SharpLink.D2OwnershipTests selected-source controls</AssemblyTitle>
+    <Description>D2 coordinator ownership controls. Each discovered UID requires a fresh owned process.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="D2Ownership-v1" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj" />
+    <ProjectReference Include="../SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../SharpLink.RetirementBudgetOwnershipTests/GlobalUsings.cs" Link="GlobalUsings.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Compile Include="D2AssemblyRetirementFixture.cs" />
+    <Compile Include="D2AssemblyRetirement.Decorator.cs" />
+    <Compile Include="D2AssemblyRetirement.SelectionTests.cs" />
+    <Compile Include="D2AssemblyRetirement.PublicationTests.cs" />
+    <Compile Include="D2AssemblyRetirement.AccountingTests.cs" />
+    <Compile Include="D2AssemblyRetirement.OutcomesTests.cs" />
+    <Compile Include="D2AssemblyRetirement.CustodyTests.cs" />
+  </ItemGroup>
+  <ItemGroup><TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" /></ItemGroup>
+</Project>

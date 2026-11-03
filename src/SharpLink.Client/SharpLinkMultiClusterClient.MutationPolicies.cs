@@ -33,8 +33,10 @@ internal sealed partial class SharpLinkMultiClusterClient
                 "Cluster slot lifecycle operations are unavailable while the coordinator is starting.");
             return false;
         }
-        if (_slotMutationInProgress || _activeAssemblyReplacements != 0 ||
-            _unregisterOperations.Count != 0 || _drainingRegistrations.Count != 0)
+        if (_slotMutationInProgress || _assemblyWindow is not null || _assemblyPublicationFailed ||
+            _assemblyOwnerCount != 0 || _failedAssemblyCapacities is not null || _activeAssemblyReplacements != 0 ||
+            _unregisterOperations.Count != 0 || _drainingRegistrations.Count != 0 ||
+            _dynamicRegistrations.Any(static registration => registration.HasUncertifiedClone))
         {
             rejection = Reject(
                 SharpLinkClusterMutationFailureCode.Busy,
@@ -60,6 +62,12 @@ internal sealed partial class SharpLinkMultiClusterClient
         out MutationRejection rejection)
     {
         snapshot = Volatile.Read(ref _snapshot);
+        if (_assemblyWindow is not null || _assemblyPublicationFailed || _assemblySealed)
+        {
+            rejection = Reject(SharpLinkClusterMutationFailureCode.Busy,
+                "An assembly publication or sealed retirement owner prevents this slot commit.");
+            return false;
+        }
         var state = (SharpLinkMultiClusterState)_state;
         var lifecycle = LifecycleState;
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted ||

@@ -202,276 +202,253 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         return (route.ContractId, route.Fingerprint); // Scalars only; no unretained map/slot/type escapes.
     }
 
-    // Metadata-only coordinator double: real retained prepared metadata, simulated child publication.
-    // It never constructs a provider, codec registry, contract channel, or generated proxy.
+    // These coordinator controls wrap a real child. Only caller delivery/rejection
+    // is controlled here; module election, original tasks and release evidence are
+    // always supplied by the actual client registry through the exact mailbox.
     private sealed class ControlledDynamicAssemblyClient : ISharpLinkClient,
         ISharpLinkPreparedAssemblyClient, IDynamicAssemblyRegistrationInspector
     {
+        private static readonly FieldInfo RegistryField = typeof(SharpLinkClient)
+            .GetField("_assemblyRegistry", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Real child registry field is missing.");
         private readonly Lock _gate = new();
-        private readonly Dictionary<Assembly, PreparedRegistration> _registeredAssemblies =
-            new(ReferenceEqualityComparer.Instance);
-        private bool _disposed;
-        private readonly TaskCompletionSource _shutdown =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _lifecycle = (int)SharpLinkClientLifecycleState.Running;
-        public SharpLinkClientLifecycleState LifecycleState =>
-            (SharpLinkClientLifecycleState)Volatile.Read(ref _lifecycle);
-        public SharpLinkReadinessState Readiness => LifecycleState == SharpLinkClientLifecycleState.Running
-            ? SharpLinkReadinessState.Ready : SharpLinkReadinessState.NotReady;
-        public SharpLinkClusterState ClusterState => LifecycleState switch
-        {
-            SharpLinkClientLifecycleState.Running => SharpLinkClusterState.Ready,
-            SharpLinkClientLifecycleState.Draining => SharpLinkClusterState.Draining,
-            SharpLinkClientLifecycleState.Stopped => SharpLinkClusterState.Stopped,
-            _ => SharpLinkClusterState.Unavailable
-        };
-        public ValueTask StartAsync(CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (LifecycleState != SharpLinkClientLifecycleState.Running)
-                throw new InvalidOperationException("This prepared-metadata fixture cannot restart.");
-            return ValueTask.CompletedTask;
-        }
-        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (LifecycleState != SharpLinkClientLifecycleState.Running)
-                throw new InvalidOperationException("This prepared-metadata fixture is not ready.");
-            return ValueTask.CompletedTask;
-        }
-        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default)
-            => _shutdown.Task.WaitAsync(cancellationToken);
-
-
-        private sealed class PreparedRegistration : IDisposable
-        {
-            private IDisposable? _metadata;
-            internal PreparedRegistration(PreparedGeneratedManifest manifest)
-            {
-                Assembly = manifest.OwnerAssembly;
-                _metadata = manifest.Preparation.Retain();
-            }
-            internal Assembly Assembly { get; }
-            public void Dispose() => Interlocked.Exchange(ref _metadata, null)?.Dispose();
-        }
+        private SharpLinkClient? _inner;
+        private ClientAssemblyRegistry? _registry;
+        private Lock? _registryGate;
         private readonly SharpLinkAssemblyRegistrationResult _registrationResult;
+        private readonly List<(Task Original, Exception? Expected)> _operations = [];
+        private readonly TaskCompletionSource _deliverUnregister =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly InvalidOperationException _rejection = new("controlled child unregister rejected");
+        private readonly InvalidOperationException _replacementCleanupFailure = new("controlled replacement cleanup failure");
+        private TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? _rejectedUnregister;
+        private Task? _stopTask;
+        private Assembly? _heldAssembly;
+        private SharpLinkDynamicModuleLease _heldCall;
         private int _unregisterCalls;
         private int _rejectNextUnregister;
         private int _blockNextUnregisterRejection;
         private int _publishReplacementThenFailCleanup;
 
         internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
+            => _registrationResult = registrationResult;
+        private SharpLinkClient Inner => _inner ??
+            throw new InvalidOperationException("This prepared coordinator control has not materialized its actual child.");
+        private ISharpLinkPreparedAssemblyClient Prepared => Inner;
+        private void EnsureChild(PreparedGeneratedManifest manifest)
         {
-            _registrationResult = registrationResult;
+            lock (_gate)
+            {
+                if (_stopTask is not null) throw new ObjectDisposedException(nameof(ControlledDynamicAssemblyClient));
+                if (_inner is not null)
+                {
+                    if (!ReferenceEquals(((SharpLinkRuntimeContext)_inner.RuntimeContext).Domain.Authority,
+                        manifest.Preparation.Authority))
+                        throw new InvalidOperationException("This child cannot cross metadata authorities.");
+                    return;
+                }
+                // The first actual prepared source supplies the authority. Building
+                // an independent public .Build() here would make Share reject it.
+                // A child domain preserves the real parent/child shutdown boundary.
+                var domain = manifest.Preparation.Authority.CreateDomain(manifest.Preparation.Domain);
+                var builder = SharpClientBuilder.Create().DisableRequestTimeout()
+                    .UseTcp(IPAddress.Loopback.ToString(), 1);
+                var plan = builder.CompileForMultiCluster([], domain);
+                // Materialize owns its synchronous transaction and rollback; never
+                // discard the same plan again after a failed ownership transfer.
+                _inner = (SharpLinkClient)builder.MaterializeCompiledPlan(plan);
+                _registry = (ClientAssemblyRegistry)RegistryField.GetValue(_inner)!;
+                _registryGate = (Lock)typeof(ClientAssemblyRegistry)
+                    .GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_registry)!;
+            }
         }
-
         internal TaskCompletionSource<bool> FirstUnregisterStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-
         internal TaskCompletionSource<bool> RejectedUnregisterStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        private TaskCompletionSource<SharpLinkAssemblyUnregisterResult> FirstUnregisterCompletion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        private TaskCompletionSource<SharpLinkAssemblyUnregisterResult> RejectedUnregisterCompletion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
+        public SharpLinkConnectionState State => Inner.State;
+        public SharpLinkClientLifecycleState LifecycleState => Inner.LifecycleState;
+        public SharpLinkReadinessState Readiness => Inner.Readiness;
+        public SharpLinkClusterState ClusterState => Inner.ClusterState;
+        public ValueTask StartAsync(CancellationToken cancellationToken = default) => Inner.StartAsync(cancellationToken);
+        public ValueTask WaitForReadyAsync(CancellationToken cancellationToken = default) => Inner.WaitForReadyAsync(cancellationToken);
+        public Task WaitForShutdownAsync(CancellationToken cancellationToken = default) => Inner.WaitForShutdownAsync(cancellationToken);
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => Inner.ConnectAsync(cancellationToken);
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(CancellationToken cancellationToken = default)
+            => Inner.CheckHealthAsync(cancellationToken);
+        public IRpcRuntimeContext RuntimeContext => Inner.RuntimeContext;
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+            => Inner.CreateProxy<TContract>(options);
+        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService => Inner.GetLocalContract<TContract>();
+        public RpcLocalContract GetLocalContract(Assembly registeredAssembly, long contractId)
+            => Inner.GetLocalContract(registeredAssembly, contractId);
+        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
+            => Inner.CreateContractChannel(local, options);
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
-            => throw new NotSupportedException("This coordinator double requires prepared metadata.");
-
+            => throw new NotSupportedException("This coordinator control requires prepared metadata.");
         public SharpLinkAssemblyRegistrationResult RegisterPreparedAssembly(PreparedGeneratedManifest manifest,
             Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication = null)
         {
-            PreparedRegistration? candidate = new(manifest);
-            try
-            {
-                // The coordinator callback takes its own gate; never call it under the child gate.
-                return publication is null ? Commit() : publication(Commit);
-            }
-            finally
-            {
-                // Conflict/duplicate rejection before Commit retains no child metadata owner.
-                candidate?.Dispose();
-            }
-
-            SharpLinkAssemblyRegistrationResult Commit()
-            {
-                lock (_gate)
-                {
-                    ObjectDisposedException.ThrowIf(_disposed, this);
-                    var owned = candidate ?? throw new InvalidOperationException("Candidate already committed.");
-                    if (!_registrationResult.Succeeded) return _registrationResult;
-                    _registeredAssemblies.Add(owned.Assembly, owned);
-                    candidate = null; // Exact ownership transfers only after successful publication.
-                    return _registrationResult;
-                }
-            }
+            if (!_registrationResult.Succeeded) return _registrationResult;
+            EnsureChild(manifest);
+            return Prepared.RegisterPreparedAssembly(manifest, publication);
         }
-
-        // This double owns prepared metadata only; it has no physical drain clock.
         public ClientRetirementBudget CaptureRetirementBudget(TimeSpan gracefulTimeout)
-            => new(this, RetirementGraceBudget.Capture(gracefulTimeout, TimeProvider.System));
+            => Prepared.CaptureRetirementBudget(gracefulTimeout);
 
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
-            Assembly assembly, ClientRetirementBudget budget)
+            Assembly assembly, ClientRetirementBudget budget, ChildAssemblySelectionMailbox? mailbox = null)
         {
-            _ = budget.GetFor(this);
-            return UnregisterCore(assembly);
-        }
-
-        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
-            Assembly assembly,
-            TimeSpan gracefulTimeout,
-            CancellationToken cancellationToken = default)
-            => UnregisterCore(assembly);
-
-        private ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterCore(Assembly assembly)
-        {
-            _ = assembly;
             if (Interlocked.Exchange(ref _rejectNextUnregister, 0) != 0)
             {
-                return ValueTask.FromException<SharpLinkAssemblyUnregisterResult>(
-                    new InvalidOperationException("controlled child unregister rejected"));
+                mailbox?.FinalizeDisposition(); // No Claim, no selected module, no invented physical task.
+                return new ValueTask<SharpLinkAssemblyUnregisterResult>(
+                    Own(Task.FromException<SharpLinkAssemblyUnregisterResult>(_rejection), _rejection));
             }
             if (Interlocked.Exchange(ref _blockNextUnregisterRejection, 0) != 0)
             {
+                var rejected = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                lock (_gate) _rejectedUnregister = rejected;
+                mailbox?.FinalizeDisposition();
+                var original = Own(rejected.Task, _rejection);
                 RejectedUnregisterStarted.TrySetResult(true);
-                return new ValueTask<SharpLinkAssemblyUnregisterResult>(RejectedUnregisterCompletion.Task);
+                return new ValueTask<SharpLinkAssemblyUnregisterResult>(original);
             }
             if (Interlocked.Increment(ref _unregisterCalls) == 1)
             {
+                // A real acquired module lease, not a manufactured deferred result.
+                // No other operation mutates this exact child registration here.
+                lock (_registryGate ?? throw new InvalidOperationException("Real child registry is not initialized."))
+                {
+                    var module = _registry!.DynamicModules[assembly];
+                    lock (_gate)
+                    {
+                        if (_heldCall.IsAcquired || !module.TryAcquire(stream: false, out _heldCall))
+                            throw new InvalidOperationException("Could not acquire the actual deferred retirement call.");
+                        _heldAssembly = assembly;
+                    }
+                }
+                var original = Own(Prepared.UnregisterAssemblyAsync(assembly, budget, mailbox).AsTask());
+                var delivery = Own(DeliverUnregisterAsync(original));
                 FirstUnregisterStarted.TrySetResult(true);
-                return new ValueTask<SharpLinkAssemblyUnregisterResult>(FirstUnregisterCompletion.Task);
+                return new ValueTask<SharpLinkAssemblyUnregisterResult>(delivery);
             }
-            return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+            return new ValueTask<SharpLinkAssemblyUnregisterResult>(
+                Own(Prepared.UnregisterAssemblyAsync(assembly, budget, mailbox).AsTask()));
         }
-
-        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
-            Assembly oldAssembly,
-            Assembly newAssembly,
-            TimeSpan gracefulTimeout,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("This coordinator double requires prepared metadata.");
-
-        public ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
-            Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget)
+        private async Task<SharpLinkAssemblyUnregisterResult> DeliverUnregisterAsync(Task<SharpLinkAssemblyUnregisterResult> original)
         {
-            _ = budget.GetFor(this);
+            await _deliverUnregister.Task.ConfigureAwait(false);
+            return await original.ConfigureAwait(false);
+        }
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly, TimeSpan gracefulTimeout, CancellationToken cancellationToken = default)
+        {
+            var original = UnregisterAssemblyAsync(assembly, CaptureRetirementBudget(gracefulTimeout)).AsTask();
+            return cancellationToken.CanBeCanceled ? new(original.WaitAsync(cancellationToken)) : new(original);
+        }
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This coordinator control requires prepared metadata.");
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
+            Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget,
+            ChildAssemblySelectionMailbox? mailbox = null)
+        {
             if (Interlocked.Exchange(ref _publishReplacementThenFailCleanup, 0) == 0)
                 throw new NotSupportedException();
-            PreparedRegistration? candidate = new(manifest);
-            PreparedRegistration? retired = null;
-            try
-            {
-                lock (_gate)
-                {
-                    ObjectDisposedException.ThrowIf(_disposed, this);
-                    if (!_registeredAssemblies.TryGetValue(oldAssembly, out retired))
-                        throw new InvalidOperationException("Original registration is missing.");
-                    // Add before remove: failed candidate publication cannot lose the old owner.
-                    _registeredAssemblies.Add(candidate.Assembly, candidate);
-                    candidate = null;
-                    _registeredAssemblies.Remove(oldAssembly);
-                }
-                retired.Dispose();
-            }
-            finally { candidate?.Dispose(); }
-            // Deliberately already faulted: exercise the coordinator's catch/reconciliation path,
-            // not the pending-operation optimistic publication path.
-            return ValueTask.FromException<SharpLinkAssemblyReplacementResult>(
-                new InvalidOperationException("controlled replacement cleanup failure"));
+            var original = Own(Prepared.ReplacePreparedAssemblyAsync(oldAssembly, manifest, budget, mailbox).AsTask());
+            return new ValueTask<SharpLinkAssemblyReplacementResult>(Own(
+                CompleteReplacementCleanupAsync(original, mailbox), _replacementCleanupFailure));
+        }
+        private async Task<SharpLinkAssemblyReplacementResult> CompleteReplacementCleanupAsync(
+            Task<SharpLinkAssemblyReplacementResult> original, ChildAssemblySelectionMailbox? mailbox)
+        {
+            var result = await original.ConfigureAwait(false);
+            if (!result.Succeeded) return result;
+            // Independent decorator cleanup after REAL child publication/retirement.
+            // This is not a fabricated child physical-task fault or release certificate.
+            mailbox?.RecordInvocationFailure(_replacementCleanupFailure);
+            throw _replacementCleanupFailure;
         }
 
-        public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        private Task<T> Own<T>(Task<T> original, Exception? expected = null)
+        {
+            lock (_gate) _operations.Add((original, expected));
+            return original;
+        }
+        public bool IsDynamicAssemblyRegistered(Assembly assembly) => Inner.IsDynamicAssemblyRegistered(assembly);
+        internal void CompleteTimedOutUnregister() => _deliverUnregister.TrySetResult();
+        internal void ReleaseAssembly(Assembly assembly)
+        {
+            lock (_gate)
+            {
+                if (!ReferenceEquals(_heldAssembly, assembly) || !_heldCall.IsAcquired)
+                    throw new InvalidOperationException("The requested assembly does not own the held module call.");
+                var original = _heldCall; _heldCall = default; _heldAssembly = null;
+                original.Dispose();
+            }
+        }
+        internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
+        internal void BlockAndRejectNextUnregister() => Volatile.Write(ref _blockNextUnregisterRejection, 1);
+        internal void PublishReplacementThenFailCleanup() => Volatile.Write(ref _publishReplacementThenFailCleanup, 1);
+        internal void CompleteRejectedUnregister()
+        {
+            lock (_gate)
+                (_rejectedUnregister ?? throw new InvalidOperationException("No original rejection is pending."))
+                    .TrySetException(_rejection);
+        }
+        internal int UnregisterCalls => Volatile.Read(ref _unregisterCalls);
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
-            // Coordinator teardown calls Stop, not Dispose. Cleanup is unconditional even when
-            // the caller's token is canceled; this double has no asynchronous transport shutdown.
-            _ = cancellationToken;
-            return DisposeAsync();
+            Task original;
+            lock (_gate) original = _stopTask ??= StopCoreAsync();
+            return cancellationToken.CanBeCanceled ? new(original.WaitAsync(cancellationToken)) : new(original);
         }
-
-        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
-
-        // None of the four coordinator controls invokes child factories or runtime services.
-        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
-        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
-            => throw new NotSupportedException();
-        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService
-            => throw new NotSupportedException();
-        public RpcLocalContract GetLocalContract(Assembly registeredAssembly, long contractId)
-            => throw new NotSupportedException();
-        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
-            => throw new NotSupportedException();
-
-        public ValueTask DisposeAsync()
+        public ValueTask DisposeAsync() => StopAsync();
+        private async Task StopCoreAsync()
         {
-            PreparedRegistration[] owners;
+            await Task.Yield();
+            List<Exception> failures = [];
+            _deliverUnregister.TrySetResult();
             lock (_gate)
             {
-                if (_disposed) return new ValueTask(_shutdown.Task);
-                _disposed = true;
-                Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Draining);
-                owners = _registeredAssemblies.Values.ToArray();
-                _registeredAssemblies.Clear();
+                _rejectedUnregister?.TrySetException(_rejection);
+                if (_heldCall.IsAcquired)
+                {
+                    var held = _heldCall; _heldCall = default; _heldAssembly = null;
+                    try { held.Dispose(); } catch (Exception failure) { failures.Add(failure); }
+                }
             }
-            List<Exception>? errors = null;
-            foreach (var owner in owners)
+            Task? stop = null;
+            try
             {
-                try { owner.Dispose(); }
-                catch (Exception error) { (errors ??= []).Add(error); }
+                if (_inner is not null)
+                { stop = _inner.StopAsync().AsTask(); await stop.ConfigureAwait(false); }
             }
-            if (errors is null)
+            catch (Exception failure) { failures.Add(stop is null ? failure : OriginalFailure(stop, failure)); }
+            (Task Original, Exception? Expected)[] originals;
+            lock (_gate) originals = _operations.ToArray();
+            foreach (var item in originals)
             {
-                Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Stopped);
-                _shutdown.TrySetResult();
+                try { await item.Original.ConfigureAwait(false); }
+                catch (Exception failure)
+                {
+                    var graph = OriginalFailure(item.Original, failure);
+                    // Only this exact source task's predefined expected marker is
+                    // consumed; arbitrary OCE and unrelated stage faults are not.
+                    if (!ReferenceEquals(graph, item.Expected)) failures.Add(graph);
+                }
             }
-            else
-            {
-                Volatile.Write(ref _lifecycle, (int)SharpLinkClientLifecycleState.Faulted);
-                _shutdown.TrySetException(new AggregateException(errors));
-            }
-            return new ValueTask(_shutdown.Task);
+            if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures.Count != 0) throw new AggregateException(failures);
         }
-
-        public bool IsDynamicAssemblyRegistered(Assembly assembly)
-        {
-            lock (_gate)
-                return _registeredAssemblies.ContainsKey(assembly);
-        }
-
-        internal void CompleteTimedOutUnregister()
-            => FirstUnregisterCompletion.TrySetResult(new SharpLinkAssemblyUnregisterResult
-            {
-                ReferencesReleased = false,
-                RemainingCalls = 1
-            });
-
-        internal void ReleaseAssembly(Assembly assembly)
-        {
-            PreparedRegistration? owner;
-            lock (_gate)
-                _registeredAssemblies.Remove(assembly, out owner);
-            owner?.Dispose();
-        }
-
-        internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
-
-        internal void BlockAndRejectNextUnregister() => Volatile.Write(ref _blockNextUnregisterRejection, 1);
-
-        internal void PublishReplacementThenFailCleanup()
-            => Volatile.Write(ref _publishReplacementThenFailCleanup, 1);
-
-        internal void CompleteRejectedUnregister()
-            => RejectedUnregisterCompletion.TrySetException(
-                new InvalidOperationException("controlled child unregister rejected"));
-
-        internal int UnregisterCalls => Volatile.Read(ref _unregisterCalls);
+        private static Exception OriginalFailure(Task original, Exception awaited)
+            => original.Exception is { } graph
+                ? graph.InnerExceptions.Count == 1 ? graph.InnerExceptions[0] : graph : awaited;
     }
 
     private sealed class BlockingConnectClient : ISharpLinkClient

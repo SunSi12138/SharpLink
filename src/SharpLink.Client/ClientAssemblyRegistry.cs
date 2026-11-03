@@ -227,16 +227,19 @@ internal sealed partial class ClientAssemblyRegistry
         => ReplaceAssemblyCore(oldAssembly, newAssembly, gracefulTimeout, null, cancellationToken, null);
 
     internal ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
-        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget)
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget,
+        ChildAssemblySelectionMailbox? mailbox = null)
     {
         ArgumentNullException.ThrowIfNull(manifest);
-        return ReplaceAssemblyCore(oldAssembly, manifest.OwnerAssembly, TimeSpan.Zero, budget, default, manifest);
+        mailbox?.DeclareReturnedSourceProjection();
+        try { return ReplaceAssemblyCore(oldAssembly, manifest.OwnerAssembly, TimeSpan.Zero, budget, default, manifest, mailbox); }
+        finally { mailbox?.FinalizeDisposition(); }
     }
 
     private ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyCore(
         Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout,
         ClientRetirementBudget? suppliedBudget, CancellationToken cancellationToken,
-        PreparedGeneratedManifest? preparedManifest)
+        PreparedGeneratedManifest? preparedManifest, ChildAssemblySelectionMailbox? mailbox = null)
     {
         ArgumentNullException.ThrowIfNull(oldAssembly);
         ArgumentNullException.ThrowIfNull(newAssembly);
@@ -287,6 +290,7 @@ internal sealed partial class ClientAssemblyRegistry
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;
+        RetirementTransfer<SharpLinkRuntimeContext.PreparedGeneratedCodecPublication>? publicationTransfer = null;
         Exception? CompleteRetirementActions(bool committed)
         {
             Exception? failure = committed ? publicationFailure : null;
@@ -382,10 +386,13 @@ internal sealed partial class ClientAssemblyRegistry
                 }
 
                 candidateSnapshot = candidate.Proxies;
-                using var publicationTransfer = new RetirementTransfer<SharpLinkRuntimeContext.PreparedGeneratedCodecPublication>(
+                publicationTransfer = new RetirementTransfer<SharpLinkRuntimeContext.PreparedGeneratedCodecPublication>(
                     _runtimeContext.PrepareGeneratedCodecPublication(
                         candidate.Codecs, codecRegistration, adoptPendingRegistration: true, sourceSnapshot: codecSource));
                 var codecPublication = publicationTransfer.Resource;
+                // Last external reservation handoff; no child registry gate is held.
+                mailbox?.Claim();
+                AssemblyConstructionForDiagnostics?.Invoke("BeforeFinalValidation");
                 lock (_gate)
                 {
                     if (generation != _generation || !DependencyPinsRemainCurrent(dependencyPins) ||
@@ -425,7 +432,7 @@ internal sealed partial class ClientAssemblyRegistry
                         _dynamicModules.EnsureCapacity(checked(_dynamicModules.Count + 1));
                         ownedPublication = codecPublication;
                         retirement = CreateRetirementLocked(oldAssembly, oldModule,
-                            RetirementOrigin.PublicReplacement, retirementBudget, CompleteRetirementActions);
+                            RetirementOrigin.PublicReplacement, retirementBudget, CompleteRetirementActions, out retirement, mailbox);
                         drainOperation = oldModule.RetirementOperation;
                         drainObservation = oldModule.RetirementObservation;
                         // The rooted stage owns these on both Abort and Commit.
@@ -449,6 +456,16 @@ internal sealed partial class ClientAssemblyRegistry
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
+            if (retirement is not null)
+            {
+                // CreateRetirement may fail AFTER it returned the exact out root.
+                // That stage, not the public using tails, owns these resources.
+                publicationTransfer?.Relinquish();
+                codecSourceTransfer.Relinquish();
+                preparationTransfer.Relinquish();
+                drainOperation = retirement.Module.RetirementOperation;
+                drainObservation = retirement.Module.RetirementObservation;
+            }
             if (published) AddRetirementFailure(ref publicationFailure, exception);
             else
             {
@@ -458,12 +475,16 @@ internal sealed partial class ClientAssemblyRegistry
                     $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
                     newAssembly);
                 var rejection = SharpLinkAssemblyReplacementResult.Failure(rollbackError);
+                if (retirement is not null && (drainOperation is null || drainObservation is null)) throw;
                 return retirement is null ? ValueTask.FromResult(rejection)
                     : WaitForRejectedReplacementAsync(drainOperation!, retirement, drainObservation!, rejection, cancellationToken);
             }
         }
         finally
         {
+            // This precedes every rollback Dispose and Activate, including a
+            // final-gate rejection on the same synchronous invocation stack.
+            mailbox?.FinalizeDisposition();
             if (retirement is not null)
             {
                 // No notification/Dispose may precede gate-exit activation or
@@ -477,6 +498,7 @@ internal sealed partial class ClientAssemblyRegistry
                 codecSourceTransfer.Relinquish();
                 preparationTransfer.Relinquish();
                 Exception? cleanupFailure = null;
+                AttemptRetirementCleanup(publicationTransfer, ref cleanupFailure);
                 AttemptRetirementCleanup(retainedSourceOwners, ref cleanupFailure);
                 AttemptRetirementCleanup(candidateSnapshot, ref cleanupFailure);
                 AttemptRetirementCleanup(codecRegistration, ref cleanupFailure);
@@ -522,14 +544,18 @@ internal sealed partial class ClientAssemblyRegistry
     }
 
     internal ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
-        Assembly assembly, ClientRetirementBudget budget, CancellationToken cancellationToken = default)
+        Assembly assembly, ClientRetirementBudget budget, CancellationToken cancellationToken = default,
+        ChildAssemblySelectionMailbox? mailbox = null)
     {
         ArgumentNullException.ThrowIfNull(assembly);
-        return UnregisterAssemblyCore(assembly, ValidateRetirementBudget(budget), cancellationToken);
+        mailbox?.DeclareReturnedSourceProjection();
+        try { return UnregisterAssemblyCore(assembly, ValidateRetirementBudget(budget), cancellationToken, mailbox); }
+        finally { mailbox?.FinalizeDisposition(); }
     }
 
     private ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyCore(
-        Assembly assembly, RetirementGraceBudget budget, CancellationToken cancellationToken)
+        Assembly assembly, RetirementGraceBudget budget, CancellationToken cancellationToken,
+        ChildAssemblySelectionMailbox? mailbox = null)
     {
         Task<SharpLinkAssemblyUnregisterResult> operation;
         SharpLinkDynamicModule module;
@@ -538,6 +564,7 @@ internal sealed partial class ClientAssemblyRegistry
         RetirementControl? control;
         try
         {
+            mailbox?.Claim();
             lock (_gate)
             {
                 if (_unregisterOperations.TryGetValue(assembly, out var existing))
@@ -546,8 +573,15 @@ internal sealed partial class ClientAssemblyRegistry
                         throw new InvalidOperationException("An unregister operation belongs to another module generation.");
                     operation = existing.Task;
                     module = existing.Module;
+                    mailbox?.Select(module.RetirementControl!, joined: true);
+                    mailbox?.CaptureRoots();
                     if (module.RetirementControl is { IsCommitted: false })
+                    {
+                        // The coordinator owns explicit Abort join and a fresh
+                        // stage/budget-preserving election, not a hidden retry.
+                        if (mailbox is not null) return ValueTask.FromResult(default(SharpLinkAssemblyUnregisterResult));
                         return RetryUnregisterAfterStageAsync(assembly, budget, operation, module.RetirementObservation!, cancellationToken);
+                    }
                 }
                 else
                 {
@@ -556,7 +590,7 @@ internal sealed partial class ClientAssemblyRegistry
                     EnsureNoDynamicDependants(module);
                     var retiredControls = CaptureLocalControlsLocked(module);
                     selected = CreateRetirementLocked(assembly, module, RetirementOrigin.PublicUnregister,
-                        budget, committed => committed ? NotifyRetirementControls(retiredControls) : null);
+                        budget, committed => committed ? NotifyRetirementControls(retiredControls) : null, out selected, mailbox);
                     // No allocation/callback occurs between rooted owner and the
                     // old admission cut. Gate-exit finally activates exact choice.
                     RetireLocalControls(retiredControls);
@@ -568,7 +602,7 @@ internal sealed partial class ClientAssemblyRegistry
                 observation = module.RetirementObservation;
             }
         }
-        finally { selected?.Activate(); }
+        finally { mailbox?.FinalizeDisposition(); selected?.Activate(); }
         return WaitForControlledRetirementAsync(operation, control!, observation!, cancellationToken);
     }
 

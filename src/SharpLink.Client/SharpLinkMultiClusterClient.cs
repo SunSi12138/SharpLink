@@ -20,7 +20,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
     private readonly HashSet<DynamicAssemblyRegistration> _drainingRegistrations =
         new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<DynamicAssemblyRegistration, Task<SharpLinkAssemblyUnregisterResult>>
+    private readonly Dictionary<DynamicAssemblyRegistration, CoordinatorAssemblyRetirement>
         _unregisterOperations = new(ReferenceEqualityComparer.Instance);
     private Task? _connectTask;
     private Task? _stopTask;
@@ -48,6 +48,13 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         if (metadataPreparation is null) _metadataPreparation.Complete();
         try
         {
+        _metadataPreparation.ReserveCollection(checked(32 + 3 * options.MaxClusters));
+        _assemblyStopEntries = new AssemblyStopEntry[options.MaxClusters];
+        _assemblyStopFailures = new Exception?[8];
+        _assemblyOperationMapCapacity = _metadataPreparation.ReserveCollection(0);
+        _assemblyDrainingMapCapacity = _metadataPreparation.ReserveCollection(0);
+        _assemblyRegistrationListCapacity = _metadataPreparation.ReserveCollection(0);
+        _assemblyStopError = new AssemblyStopFailure(this);
         InitializeClusterDialLimiter(options, clusters.Values);
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger = _loggerFactory.CreateLogger<SharpLinkMultiClusterClient>();
@@ -77,6 +84,8 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     }
     private void PublishSnapshotLocked(MultiClusterSnapshot snapshot)
     {
+        if (_assemblyWindow is not null || _assemblyPublicationFailed)
+            throw new InvalidOperationException("A foreign assembly publication window owns the snapshot.");
         var old = _snapshot;
         Volatile.Write(ref _snapshot, snapshot);
         old.Dispose();
@@ -168,7 +177,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            if (_assemblyPublicationFailed || state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             {
                 return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                     $"Multi-cluster client state '{state}' does not accept runtime assembly registration.", assembly);
@@ -194,7 +203,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            if (_assemblyPublicationFailed || state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             {
                 return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                     $"Multi-cluster client state '{state}' does not accept runtime assembly registration.", assembly);
@@ -212,7 +221,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                     $"Contract-owning assembly '{assembly.FullName}' is already routed to another cluster.", assembly);
             }
 
-            if (_slotMutationInProgress)
+            if (_slotMutationInProgress || _assemblyWindow is not null || _assemblyPublicationFailed || _assemblySealed)
             {
                 return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                     "A cluster slot lifecycle mutation is in progress.", assembly);
@@ -241,6 +250,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             MultiClusterSnapshot? candidateSnapshot = null;
             DynamicAssemblyRegistration? nextRegistration = null;
             var routePublished = false;
+            Exception? candidateFailure = null;
             try
             {
                 preparation.ReserveCollection(checked(currentRoutes.Count + manifest.Contracts.Count));
@@ -254,28 +264,58 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                         contract.ContractType, contract.ContractId, contract.Fingerprint, slot, assembly));
                 }
                 var frozenRoutes = nextRoutes.ToFrozenDictionary();
-                nextRegistration = new DynamicAssemblyRegistration(slot, assembly, manifest);
+                nextRegistration = new DynamicAssemblyRegistration(slot, assembly, manifest, this);
+                nextRegistration.Capacity = CreateAssemblyCapacityLocked(preparation);
                 var registrationCapacity = checked(_dynamicRegistrations.Count + 1);
-                preparation.ReserveCollection(registrationCapacity);
+                _assemblyRegistrationListCapacity.GrowTo(registrationCapacity);
                 if (_dynamicRegistrations.Capacity < registrationCapacity)
                     _dynamicRegistrations.Capacity = registrationCapacity;
                 candidateSnapshot = MultiClusterSnapshot.Create(snapshot.Clusters, frozenRoutes,
                     snapshot.ConfiguredConnectionBudget, preparation, snapshot, manifest);
                 var childResult = commit();
                 if (!childResult.Succeeded) return childResult;
-                PublishSnapshotLocked(candidateSnapshot);
+                // Both collections were prebuilt under this gate. Mark the
+                // actual publication before any fallible old-snapshot cleanup.
+                var oldSnapshot = _snapshot;
+                Volatile.Write(ref _snapshot, candidateSnapshot);
                 _dynamicRegistrations.Add(nextRegistration);
                 routePublished = true;
+                try { oldSnapshot.Dispose(); }
+                catch (Exception failure)
+                {
+                    nextRegistration.RecordSnapshotFailure(oldSnapshot, failure);
+                    throw;
+                }
                 return SharpLinkAssemblyRegistrationResult.Success();
             }
             catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
             {
+                candidateFailure = exception;
                 return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                     $"Cluster route candidate publication failed: {exception.GetType().Name}: {exception.Message}", assembly);
             }
             finally
             {
-                if (!routePublished) { candidateSnapshot?.Dispose(); nextRegistration?.Dispose(); }
+                if (!routePublished)
+                {
+                    Exception? cleanup = null;
+                    try { candidateSnapshot?.Dispose(); }
+                    catch (Exception failure)
+                    {
+                        // The snapshot is created only after its registration.
+                        // Keep its original owner and prohibit capacity refund.
+                        nextRegistration!.RecordSnapshotFailure(candidateSnapshot!, failure);
+                        cleanup = failure;
+                    }
+                    try { nextRegistration?.Dispose(); }
+                    catch (Exception failure)
+                    { cleanup = cleanup is null ? failure : new AggregateException(cleanup, failure); }
+                    if (cleanup is not null)
+                    {
+                        if (candidateFailure is not null) throw new AggregateException(candidateFailure, cleanup);
+                        ExceptionDispatchInfo.Capture(cleanup).Throw();
+                    }
+                }
             }
         }
         }
@@ -295,7 +335,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            if (_assemblyPublicationFailed || state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
 
             slot = GetSlot(cluster);
@@ -304,7 +344,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             if (registration is null)
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
             if (_unregisterOperations.TryGetValue(registration, out var activeOperation))
-                return WaitForOperationAsync(activeOperation, cancellationToken);
+                return WaitAssemblyUnregisterAsync(activeOperation, cancellationToken);
 
             if (_slotMutationInProgress)
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
@@ -322,33 +362,9 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             if (!CapturedAssemblyRegistrationIsCurrentLocked(cluster, slot, registration))
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
             if (_unregisterOperations.TryGetValue(registration, out var activeOperation))
-                return WaitForOperationAsync(activeOperation, cancellationToken);
-            using var metadata = CreateMetadataStorage();
-            var snapshot = Volatile.Read(ref _snapshot);
-            metadata.ReserveCollection(snapshot.Routes.Count);
-            metadata.ReserveCollection(snapshot.Routes.Count);
-            var nextRoutes = snapshot.Routes
-                .Where(pair => !ReferenceEquals(pair.Value.OwnerAssembly, assembly))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            PublishSnapshotLocked(MultiClusterSnapshot.Create(snapshot.Clusters, nextRoutes,
-                snapshot.ConfiguredConnectionBudget, metadata, snapshot));
-
-            var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            var operation = completion.Task;
-            _unregisterOperations.Add(registration, operation);
-            _drainingRegistrations.Add(registration);
-            _ = CompleteSharedUnregisterAsync(
-                slot,
-                registration,
-                budget,
-                completion);
-            TrackFrameworkTask(
-                operation,
-                "MultiClusterAssemblyUnregister",
-                TaskObservationMode.ExternallyObserved);
-            return WaitForOperationAsync(operation, cancellationToken);
+                return WaitAssemblyUnregisterAsync(activeOperation, cancellationToken);
+            var owner = StartAssemblyOwnerLocked(registration, budget, null);
+            return WaitAssemblyUnregisterAsync(owner, cancellationToken);
         }
     }
 
@@ -368,7 +384,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            if (_assemblyPublicationFailed || state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             {
                 return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
@@ -408,7 +424,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         lock (_gate)
         {
             var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            if (_assemblyPublicationFailed || state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             {
                 return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
@@ -434,16 +450,9 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                     SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                     "A cluster slot lifecycle mutation is in progress.", newAssembly)));
             }
-            _activeAssemblyReplacements++;
+            var owner = StartAssemblyOwnerLocked(registration, budget, newManifest);
+            return WaitAssemblyReplacementAsync(owner, cancellationToken);
         }
-
-        var operation = CompleteTrackedReplacementAsync(
-            slot, registration!, newAssembly, newManifest!, budget, preparation.Retain());
-        TrackFrameworkTask(
-            operation,
-            "MultiClusterAssemblyReplacement",
-            TaskObservationMode.ExternallyObserved);
-        return WaitForOperationAsync(operation, cancellationToken);
     }
 
     // No metadata getter, retained lease or callback occurs in this identity check.
@@ -453,7 +462,8 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     {
         var state = (SharpLinkMultiClusterState)_state;
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted ||
-            _slotMutationInProgress || !_snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
+            _slotMutationInProgress || _assemblyWindow is not null || _assemblyPublicationFailed || _assemblySealed ||
+            !_snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
             !ReferenceEquals(currentSlot, slot))
             return false;
         foreach (var current in _dynamicRegistrations)
@@ -496,51 +506,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         }
     }
 
-    private async Task StopCoreAsync()
-    {
-        Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Draining);
-        _frameworkTasks.Seal();
-        var failures = new List<Exception>();
-        // Seal under the already-held publication gate; joining below never waits under it.
-        var metadataJoined = _metadataDomain.SealAndJoinAsync();
-        await Task.Yield();
-        // Signal outside the publication gate before joining admitted work: a metadata
-        // callback may itself be waiting for shutdown cancellation to leave preparation.
-        // Cancellation callback failures do not skip that join or child/provider cleanup.
-        try { await _shutdown.CancelAsync().ConfigureAwait(false); }
-        catch (Exception exception) { failures.Add(exception); }
-        try { await metadataJoined.ConfigureAwait(false); }
-        catch (Exception exception) { failures.Add(exception); }
-        await _mutationGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            using var snapshotLease = AcquireSnapshot();
-            var slots = snapshotLease.Slots;
-            await StopSlotsAsync(slots, failures).ConfigureAwait(false);
-            try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
-            catch (Exception exception) { failures.Add(exception); }
-            lock (_gate)
-            {
-                PublishSnapshotLocked(MultiClusterSnapshot.Empty);
-                foreach (var registration in _dynamicRegistrations) registration.Dispose();
-                _dynamicRegistrations.Clear();
-                _drainingRegistrations.Clear();
-                _unregisterOperations.Clear();
-                _transitionConnectionBudget = 0;
-            }
-        }
-        finally
-        {
-            _mutationGate.Release();
-        }
-        Interlocked.Exchange(ref _metadataOwner, null)?.Dispose();
-        _shutdown.Dispose();
-        Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Stopped);
-        if (failures.Count == 1)
-            ExceptionDispatchInfo.Capture(failures[0]).Throw();
-        if (failures.Count > 1)
-            throw new AggregateException(failures);
-    }
+    private Task StopCoreAsync() => StopAssemblyCoordinatorAsync();
 
     private static async Task StopSlotsAsync(IEnumerable<SharpLinkClusterSlot> slots, List<Exception> failures)
     {
@@ -551,272 +517,6 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             finally { slot.ReleaseMetadata(); }
         }
     }
-
-    private async Task<SharpLinkAssemblyUnregisterResult> CompleteUnregisterAsync(
-        SharpLinkClusterSlot slot,
-        DynamicAssemblyRegistration registration,
-        ClientRetirementBudget budget)
-    {
-        SharpLinkAssemblyUnregisterResult result;
-        try
-        {
-            result = await ((ISharpLinkPreparedAssemblyClient)slot.Client).UnregisterAssemblyAsync(
-                registration.Assembly, budget).ConfigureAwait(false);
-        }
-        catch
-        {
-            RestoreRoutesAfterRejectedUnregister(registration);
-            lock (_gate)
-                _drainingRegistrations.Remove(registration);
-            throw;
-        }
-        if (result.ReferencesReleased)
-        {
-            lock (_gate)
-            {
-                _dynamicRegistrations.Remove(registration);
-                _drainingRegistrations.Remove(registration);
-                registration.Dispose();
-            }
-        }
-        else
-        {
-            TrackFrameworkTask(
-                CompleteDeferredUnregisterAsync(slot, registration),
-                "MultiClusterDeferredAssemblyUnregister");
-        }
-        return result;
-    }
-
-    private async Task CompleteSharedUnregisterAsync(
-        SharpLinkClusterSlot slot,
-        DynamicAssemblyRegistration registration,
-        ClientRetirementBudget budget,
-        TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
-    {
-        // The caller publishes tracking under _gate; child lifecycle callbacks run after it leaves.
-        await Task.Yield();
-        try
-        {
-            completion.TrySetResult(await CompleteUnregisterAsync(
-                slot,
-                registration,
-                budget).ConfigureAwait(false));
-        }
-        catch (Exception exception)
-        {
-            completion.TrySetException(exception);
-        }
-        finally
-        {
-            lock (_gate)
-                _unregisterOperations.Remove(registration);
-        }
-    }
-
-    private void RestoreRoutesAfterRejectedUnregister(DynamicAssemblyRegistration registration)
-    {
-        using var metadata = CreateMetadataStorage();
-        if (registration.Slot.Client is not IDynamicAssemblyRegistrationInspector inspector ||
-            !inspector.IsDynamicAssemblyRegistered(registration.Assembly))
-        {
-            return;
-        }
-
-        lock (_gate)
-        {
-            var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped ||
-                !_dynamicRegistrations.Contains(registration))
-            {
-                return;
-            }
-
-            var snapshot = Volatile.Read(ref _snapshot);
-            var capacity = checked(snapshot.Routes.Count + registration.Manifest.Contracts.Count);
-            for (var copy = 0; copy < 3; copy++) metadata.ReserveCollection(capacity);
-            var nextRoutes = new Dictionary<Type, SharpLinkClusterRouteRegistration>(capacity);
-            var routeIds = new HashSet<long>(capacity);
-            foreach (var pair in snapshot.Routes)
-            { nextRoutes.Add(pair.Key, pair.Value); routeIds.Add(pair.Value.ContractId); }
-            foreach (var contract in registration.Manifest.Contracts)
-            {
-                if (nextRoutes.ContainsKey(contract.ContractType) || !routeIds.Add(contract.ContractId))
-                {
-                    throw new InvalidOperationException(
-                        $"Cannot restore contract '{contract.ContractName}' ({contract.ContractId}) because its route is already owned by another assembly or cluster.");
-                }
-                nextRoutes.Add(contract.ContractType, new SharpLinkClusterRouteRegistration(
-                    contract.ContractType,
-                    contract.ContractId,
-                    contract.Fingerprint,
-                    registration.Slot,
-                    registration.Assembly));
-            }
-            PublishSnapshotLocked(MultiClusterSnapshot.Create(snapshot.Clusters, nextRoutes.ToFrozenDictionary(),
-                snapshot.ConfiguredConnectionBudget, metadata, snapshot, (PreparedGeneratedManifest)registration.Manifest));
-        }
-    }
-
-    private async Task CompleteDeferredUnregisterAsync(
-        SharpLinkClusterSlot slot,
-        DynamicAssemblyRegistration registration)
-    {
-        while ((SharpLinkMultiClusterState)Volatile.Read(ref _state) is not SharpLinkMultiClusterState.Stopped)
-        {
-            await Task.Delay(
-                TimeSpan.FromMilliseconds(100),
-                GetTimeProvider(slot.Client),
-                _shutdown.Token).ConfigureAwait(false);
-            if (slot.Client is IDynamicAssemblyRegistrationInspector inspector)
-            {
-                if (!inspector.IsDynamicAssemblyRegistered(registration.Assembly))
-                {
-                    lock (_gate)
-                    {
-                        _dynamicRegistrations.Remove(registration);
-                        _drainingRegistrations.Remove(registration);
-                        registration.Dispose();
-                    }
-                    return;
-                }
-                continue;
-            }
-
-            try
-            {
-                var result = await slot.Client.UnregisterAssemblyAsync(
-                    registration.Assembly, TimeSpan.Zero).ConfigureAwait(false);
-                if (!result.ReferencesReleased && IsDynamicAssemblyStillRegistered(slot, registration.Assembly))
-                    continue;
-                lock (_gate)
-                {
-                    _dynamicRegistrations.Remove(registration);
-                    _drainingRegistrations.Remove(registration);
-                    registration.Dispose();
-                }
-                return;
-            }
-            catch
-            {
-                // The owning child performs its own final module cleanup during StopAsync.
-                return;
-            }
-        }
-    }
-
-    private async Task<SharpLinkAssemblyReplacementResult> CompleteTrackedReplacementAsync(
-        SharpLinkClusterSlot slot,
-        DynamicAssemblyRegistration registration,
-        Assembly newAssembly,
-        ISharpLinkGeneratedAssemblyManifest newManifest,
-        ClientRetirementBudget budget,
-        IDisposable metadataOwner)
-    {
-        try
-        {
-            return await CompleteReplacementAsync(
-                slot, registration, newAssembly, newManifest, budget).ConfigureAwait(false);
-        }
-        finally
-        {
-            metadataOwner.Dispose();
-            lock (_gate)
-                _activeAssemblyReplacements--;
-        }
-    }
-
-    private async Task<SharpLinkAssemblyReplacementResult> CompleteReplacementAsync(
-        SharpLinkClusterSlot slot,
-        DynamicAssemblyRegistration registration,
-        Assembly newAssembly,
-        ISharpLinkGeneratedAssemblyManifest newManifest,
-        ClientRetirementBudget budget)
-    {
-        if (slot.Client is not ISharpLinkPreparedAssemblyClient preparedChild ||
-            newManifest is not PreparedGeneratedManifest prepared)
-            return SharpLinkAssemblyReplacementResult.Failure(Error(
-                SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                "The internal child does not implement the prepared metadata transaction.", newAssembly));
-        var childOperation = preparedChild.ReplacePreparedAssemblyAsync(
-            registration.Assembly, prepared, budget);
-
-        try
-        {
-            if (childOperation.IsCompleted)
-            {
-                var completedResult = await childOperation.ConfigureAwait(false);
-                if (completedResult.Succeeded)
-                    PublishReplacement(registration, newAssembly, newManifest);
-                return completedResult;
-            }
-
-            // SharpLinkClient publishes the replacement before returning its pending drain operation.
-            // Keep the coordinator route in the same state while old calls drain.
-            PublishReplacement(registration, newAssembly, newManifest);
-            return await childOperation.ConfigureAwait(false);
-        }
-        catch (Exception childException)
-        {
-            try
-            {
-                if (slot.Client is IDynamicAssemblyRegistrationInspector inspector &&
-                    inspector.IsDynamicAssemblyRegistered(newAssembly))
-                {
-                    PublishReplacement(registration, newAssembly, newManifest);
-                }
-            }
-            catch (Exception reconciliationException)
-            {
-                throw new AggregateException(childException, reconciliationException);
-            }
-            ExceptionDispatchInfo.Capture(childException).Throw();
-            throw;
-        }
-    }
-
-    private void PublishReplacement(
-        DynamicAssemblyRegistration registration,
-        Assembly newAssembly,
-        ISharpLinkGeneratedAssemblyManifest newManifest)
-    {
-        using var metadata = CreateMetadataStorage();
-        lock (_gate)
-        {
-            var state = (SharpLinkMultiClusterState)_state;
-            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped)
-                return;
-            var index = _dynamicRegistrations.IndexOf(registration);
-            if (index < 0) return;
-            var snapshot = _snapshot;
-            var capacity = checked(snapshot.Routes.Count + newManifest.Contracts.Count);
-            metadata.ReserveCollection(capacity);
-            metadata.ReserveCollection(capacity);
-            var nextRoutes = new Dictionary<Type, SharpLinkClusterRouteRegistration>(capacity);
-            foreach (var pair in snapshot.Routes) nextRoutes.Add(pair.Key, pair.Value);
-            foreach (var contract in registration.Manifest.Contracts) nextRoutes.Remove(contract.ContractType);
-            foreach (var contract in newManifest.Contracts)
-                nextRoutes[contract.ContractType] = new SharpLinkClusterRouteRegistration(
-                    contract.ContractType, contract.ContractId, contract.Fingerprint, registration.Slot, newAssembly);
-            var replacement = new DynamicAssemblyRegistration(registration.Slot, newAssembly, newManifest);
-            MultiClusterSnapshot? nextSnapshot = null;
-            var published = false;
-            try
-            {
-                nextSnapshot = MultiClusterSnapshot.Create(snapshot.Clusters, nextRoutes.ToFrozenDictionary(),
-                    snapshot.ConfiguredConnectionBudget, metadata, snapshot, (PreparedGeneratedManifest)newManifest);
-                _dynamicRegistrations[index] = replacement;
-                PublishSnapshotLocked(nextSnapshot);
-                published = true;
-                registration.Dispose();
-            }
-            finally { if (!published) { nextSnapshot?.Dispose(); replacement.Dispose(); } }
-        }
-    }
-
-    private static bool IsDynamicAssemblyStillRegistered(SharpLinkClusterSlot slot, Assembly assembly)
-        => slot.Client is not IDynamicAssemblyRegistrationInspector client ||
-           client.IsDynamicAssemblyRegistered(assembly);
 
     private static ValueTask<T> WaitForOperationAsync<T>(Task<T> operation, CancellationToken cancellationToken)
         => cancellationToken.CanBeCanceled
@@ -893,27 +593,100 @@ internal sealed record DynamicAssemblyRegistration : IDisposable
 {
     private ISharpLinkGeneratedAssemblyManifest? _manifest;
     private IDisposable? _metadata;
+    private IDisposable? _failedMetadata;
+    private IDisposable? _failedCloneMetadata;
+    private Exception? _cloneFailure;
+    private SharpLinkMultiClusterClient? _custodyOwner;
+    internal DynamicAssemblyRegistration? FailedNext;
+    internal bool CustodyRetained;
+    internal bool DisposalReportedByOuter;
+    internal MultiClusterSnapshot? FailedSnapshot;
+    internal Exception? SnapshotFailure;
+    internal Exception? DisposalFailure => _disposeFailure ?? _cloneFailure;
+    private bool _disposeAttempted;
+    private Exception? _disposeFailure;
+    internal CoordinatorAssemblyCapacity? Capacity;
+    internal Exception? StopFailure;
+    internal bool HasUncertifiedClone => _cloneFailure is not null || _failedCloneMetadata is not null;
     internal DynamicAssemblyRegistration(SharpLinkClusterSlot slot, Assembly assembly,
-        ISharpLinkGeneratedAssemblyManifest manifest)
+        ISharpLinkGeneratedAssemblyManifest manifest, SharpLinkMultiClusterClient? custodyOwner = null)
     {
+        _custodyOwner = custodyOwner;
         Slot = slot; Assembly = assembly; _manifest = manifest;
         _metadata = (manifest as PreparedGeneratedManifest)?.Preparation.Retain() ??
             throw new InvalidOperationException("Coordinator registrations require prepared metadata ownership.");
     }
     private DynamicAssemblyRegistration(DynamicAssemblyRegistration original)
     {
+        if (original._cloneFailure is { } prior) ExceptionDispatchInfo.Capture(prior).Throw();
+        _custodyOwner = original._custodyOwner;
         Slot = original.Slot; Assembly = original.Assembly; _manifest = original.Manifest;
         _metadata = ((PreparedGeneratedManifest)_manifest).Preparation.Retain();
+        try { Capacity = original.Capacity?.RetainForClone(); }
+        catch (Exception primary)
+        {
+            var acquired = _metadata;
+            _metadata = null;
+            try { acquired?.Dispose(); }
+            catch (Exception cleanup)
+            {
+                // The original registration remains the durable root when copy
+                // construction fails. Never lose this actually acquired lease or
+                // overwrite a prior failed clone with another attempt.
+                original._failedCloneMetadata = acquired;
+                original._cloneFailure = new AggregateException(primary, cleanup);
+                original._custodyOwner?.RetainFailedAssemblyRegistration(original);
+                throw original._cloneFailure;
+            }
+            throw;
+        }
     }
     internal SharpLinkClusterSlot Slot { get; init; }
     internal Assembly Assembly { get; }
     internal ISharpLinkGeneratedAssemblyManifest Manifest => _manifest ??
         throw new ObjectDisposedException(nameof(DynamicAssemblyRegistration));
+    internal void AttachCustodyOwner(SharpLinkMultiClusterClient owner)
+    {
+        if (_custodyOwner is not null && !ReferenceEquals(_custodyOwner, owner))
+            throw new InvalidOperationException("Registration custody belongs to another coordinator.");
+        _custodyOwner = owner;
+    }
+    internal void RecordSnapshotFailure(MultiClusterSnapshot snapshot, Exception failure)
+    {
+        // One original candidate/retired snapshot cleanup per registration.
+        FailedSnapshot = snapshot;
+        SnapshotFailure = failure;
+        _custodyOwner?.RetainFailedAssemblyRegistration(this);
+    }
     public void Dispose()
     {
+        if (_disposeAttempted)
+        {
+            if (_disposeFailure is { } prior) ExceptionDispatchInfo.Capture(prior).Throw();
+            return;
+        }
+        _disposeAttempted = true;
+        Exception? failure = _cloneFailure;
+        _failedMetadata = _metadata;
+        _metadata = null;
+        try { _failedMetadata?.Dispose(); _failedMetadata = null; }
+        catch (Exception exception) { failure = failure is null ? exception : new AggregateException(failure, exception); }
+        // The fixed96 custody cannot refund while any of its actual metadata or
+        // snapshot cleanup remains uncertified. Successful clone decref is not a
+        // final refund; its sibling still owns the exact shared unit.
+        if (failure is null && SnapshotFailure is null)
+        {
+            try { Capacity?.Dispose(); }
+            catch (Exception exception) { failure = exception; }
+        }
+        _disposeFailure = failure;
+        if (failure is not null || SnapshotFailure is not null)
+            _custodyOwner?.RetainFailedAssemblyRegistration(this);
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+        if (SnapshotFailure is not null) return;
         _manifest = null;
-        Interlocked.Exchange(ref _metadata, null)?.Dispose();
     }
+
 }
 
 internal interface IDynamicAssemblyRegistrationInspector

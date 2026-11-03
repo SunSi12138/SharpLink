@@ -1,0 +1,2578 @@
+{
+  "schemaVersion": 1,
+  "scope": "d2-ownership35",
+  "sourceCheckpoint": "ffc6dba7d8cb1058d9f72488893c339cb6f3b307",
+  "sourceQualification": "SOURCE only; actual UIDs and all C# bodies UNRUN",
+  "project": "test/SharpLink.D2OwnershipTests/SharpLink.D2OwnershipTests.csproj",
+  "projects": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+    "test/SharpLink.D2OwnershipTests/SharpLink.D2OwnershipTests.csproj",
+    "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj",
+    "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj"
+  ],
+  "assemblyFullName": "SharpLink.UnitTests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "tunitPackageVersion": "1.73.19",
+  "tunitRuntimeVersion": "1.73.19.0",
+  "mtpPackageVersion": "2.5.1",
+  "expectedCaseCount": 35,
+  "expectedMethodCount": 35,
+  "expectedFixtureInstances": 41,
+  "sourcePins": {
+    ".github/workflows/contract-route-controls.yml": "54d27fa6c9c3688d382f88b4fe371e4fc80f0a1ad568149d0a9e30f774bc1839",
+    "Directory.Build.props": "8e6b542c7afaf25e1b510f514f534a3f0c924ceaf8681e98995ade24a76c56cb",
+    "Directory.Packages.props": "aa1d59627ad4c4b6542e59f2ecb95ccdaa772c8ddf1300dc2cbc707aea90b570",
+    "eng/package-smoke-process.py": "ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3",
+    "eng/retirement-results.py": "6774c8bdd8bd8b3f618c01aee34e429d8a3b8218cdb169e752cd81ab6a9e79eb",
+    "eng/route59-controls.json": "83a69485cc952a61caab5800b71434ac45e95f22bd547aba1e5462dff9bc5f6d",
+    "eng/route59-results.py": "eb95aaf6a6799b0c216ee3687d71e5e1aeb5651867d515e3a4db16561bfcda8b",
+    "eng/run-route59-controls.py": "c9f5d778b125d57e55b5c33fe81183d7fea60ba9ad74b790762d244ac7f74586",
+    "eng/tests/test_retirement_results.py": "47a46c4c575690d54b3e2e143b5690ab8e3459031f415059a214d536adb8946b",
+    "eng/tests/test_route59_results.py": "a28e3ddd1f6af6a4ad95f23de00c195c95cba4235cc87367c3d09541073841d2",
+    "global.json": "099805cd1161ca87a57c0b0241c614b0ec35b5fce384c3fd1c86a16e5364f6e4",
+    "src/Directory.Build.props": "5dbaadda54a281d25c9ddc263532e23eb0c5c937af3d70b10d866a80b850cd86",
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj": "026d3726e13ae7ce0791eb2864413308ad6393ff1091b950bc2eace90d12cecc",
+    "src/SharpLink.Client/SharpLink.Client.csproj": "c4be86cce056d56ee28ca8b25ca539f787ce9953e8c117d728dd1420999c466d",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj": "1f320f0d94da2b4448e9259e51c2e3c07647e577d58cc59eb2a5ba5957368be9",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj": "7364a80e389fa7e16b2cde1bdf5f897f2360b817af74a3b3fd50d625406013ae",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj": "134e70627bd80c89d2aab4b3930df1da5e0a1a0b945035f2903afcc66d06c117",
+    "test/Directory.Build.props": "8637c25314ba6ec567157f89484c088634e7f311d36d5e21cb60261d22144690",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.Decorator.cs": "26de142a7df63f4a1d54cd3259f79fbbfe5fb9243ed8398c27125fca5f9dac96",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+    "test/SharpLink.D2OwnershipTests/D2AssemblyRetirementFixture.cs": "02fb5909552363b78f52f202249925101963d11acdc703a5d560c027beb0c7a0",
+    "test/SharpLink.D2OwnershipTests/SharpLink.D2OwnershipTests.csproj": "46b062060b0f5022293cbcb57881bd724edbe735ae5c488b83ac54db20571983",
+    "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj": "827c858118188f2ce41a488f48e3e5d68fa483aba6ed975fee8a2885cf0e693d",
+    "test/SharpLink.RetirementBudgetOwnershipTests/GlobalUsings.cs": "08689bdefef3bd285503a7150add98ba8bd0344c3ff8b9e986d0235e9cf8667e",
+    "test/SharpLink.RetirementEntryPlugin/RetirementEntryManifest.cs": "53ce78d5cdb1a395864c587b3c622dc1b47a75de09a5a07045ca96f07da7ae9c",
+    "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj": "e12b7397fcaa32ee14ddeb42967ce55b266acd0cbece2980a0ab5be321246c86",
+    "test/SharpLink.UnitTests/Runtime/ManualTimeProvider.cs": "9ceab2d8803c754d4a8d44ad420ff66c5176f78049ccf09cc11dd57b85f8bc2b"
+  },
+  "helperPins": {
+    "eng/route59-results.py": "eb95aaf6a6799b0c216ee3687d71e5e1aeb5651867d515e3a4db16561bfcda8b",
+    "eng/retirement-results.py": "6774c8bdd8bd8b3f618c01aee34e429d8a3b8218cdb169e752cd81ab6a9e79eb",
+    "eng/package-smoke-process.py": "ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3",
+    "eng/tests/test_retirement_results.py": "47a46c4c575690d54b3e2e143b5690ab8e3459031f415059a214d536adb8946b"
+  },
+  "ancestorInputs": {
+    "projects": {
+      "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj": [
+        "src/SharpLink.Abstractions/Directory.Build.props",
+        "src/SharpLink.Abstractions/Directory.Build.targets",
+        "src/SharpLink.Abstractions/Directory.Packages.props",
+        "src/SharpLink.Abstractions/NuGet.Config",
+        "src/SharpLink.Abstractions/nuget.config",
+        "src/SharpLink.Abstractions/global.json",
+        "src/Directory.Build.props",
+        "src/Directory.Build.targets",
+        "src/Directory.Packages.props",
+        "src/NuGet.Config",
+        "src/nuget.config",
+        "src/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "src/SharpLink.Client/SharpLink.Client.csproj": [
+        "src/SharpLink.Client/Directory.Build.props",
+        "src/SharpLink.Client/Directory.Build.targets",
+        "src/SharpLink.Client/Directory.Packages.props",
+        "src/SharpLink.Client/NuGet.Config",
+        "src/SharpLink.Client/nuget.config",
+        "src/SharpLink.Client/global.json",
+        "src/Directory.Build.props",
+        "src/Directory.Build.targets",
+        "src/Directory.Packages.props",
+        "src/NuGet.Config",
+        "src/nuget.config",
+        "src/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "src/SharpLink.Runtime/SharpLink.Runtime.csproj": [
+        "src/SharpLink.Runtime/Directory.Build.props",
+        "src/SharpLink.Runtime/Directory.Build.targets",
+        "src/SharpLink.Runtime/Directory.Packages.props",
+        "src/SharpLink.Runtime/NuGet.Config",
+        "src/SharpLink.Runtime/nuget.config",
+        "src/SharpLink.Runtime/global.json",
+        "src/Directory.Build.props",
+        "src/Directory.Build.targets",
+        "src/Directory.Packages.props",
+        "src/NuGet.Config",
+        "src/nuget.config",
+        "src/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj": [
+        "test/SharpLink.RetirementEntryPlugin/Directory.Build.props",
+        "test/SharpLink.RetirementEntryPlugin/Directory.Build.targets",
+        "test/SharpLink.RetirementEntryPlugin/Directory.Packages.props",
+        "test/SharpLink.RetirementEntryPlugin/NuGet.Config",
+        "test/SharpLink.RetirementEntryPlugin/nuget.config",
+        "test/SharpLink.RetirementEntryPlugin/global.json",
+        "test/Directory.Build.props",
+        "test/Directory.Build.targets",
+        "test/Directory.Packages.props",
+        "test/NuGet.Config",
+        "test/nuget.config",
+        "test/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj": [
+        "test/SharpLink.MultiClusterTest.Contracts/Directory.Build.props",
+        "test/SharpLink.MultiClusterTest.Contracts/Directory.Build.targets",
+        "test/SharpLink.MultiClusterTest.Contracts/Directory.Packages.props",
+        "test/SharpLink.MultiClusterTest.Contracts/NuGet.Config",
+        "test/SharpLink.MultiClusterTest.Contracts/nuget.config",
+        "test/SharpLink.MultiClusterTest.Contracts/global.json",
+        "test/Directory.Build.props",
+        "test/Directory.Build.targets",
+        "test/Directory.Packages.props",
+        "test/NuGet.Config",
+        "test/nuget.config",
+        "test/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "src/SharpLink.Sdk/SharpLink.Sdk.csproj": [
+        "src/SharpLink.Sdk/Directory.Build.props",
+        "src/SharpLink.Sdk/Directory.Build.targets",
+        "src/SharpLink.Sdk/Directory.Packages.props",
+        "src/SharpLink.Sdk/NuGet.Config",
+        "src/SharpLink.Sdk/nuget.config",
+        "src/SharpLink.Sdk/global.json",
+        "src/Directory.Build.props",
+        "src/Directory.Build.targets",
+        "src/Directory.Packages.props",
+        "src/NuGet.Config",
+        "src/nuget.config",
+        "src/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "src/SharpLink.Generator/SharpLink.Generator.csproj": [
+        "src/SharpLink.Generator/Directory.Build.props",
+        "src/SharpLink.Generator/Directory.Build.targets",
+        "src/SharpLink.Generator/Directory.Packages.props",
+        "src/SharpLink.Generator/NuGet.Config",
+        "src/SharpLink.Generator/nuget.config",
+        "src/SharpLink.Generator/global.json",
+        "src/Directory.Build.props",
+        "src/Directory.Build.targets",
+        "src/Directory.Packages.props",
+        "src/NuGet.Config",
+        "src/nuget.config",
+        "src/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ],
+      "test/SharpLink.D2OwnershipTests/SharpLink.D2OwnershipTests.csproj": [
+        "test/SharpLink.D2OwnershipTests/Directory.Build.props",
+        "test/SharpLink.D2OwnershipTests/Directory.Build.targets",
+        "test/SharpLink.D2OwnershipTests/Directory.Packages.props",
+        "test/SharpLink.D2OwnershipTests/NuGet.Config",
+        "test/SharpLink.D2OwnershipTests/nuget.config",
+        "test/SharpLink.D2OwnershipTests/global.json",
+        "test/Directory.Build.props",
+        "test/Directory.Build.targets",
+        "test/Directory.Packages.props",
+        "test/NuGet.Config",
+        "test/nuget.config",
+        "test/global.json",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "NuGet.Config",
+        "nuget.config",
+        "global.json"
+      ]
+    },
+    "inputs": {
+      "Directory.Build.props": {
+        "present": true,
+        "sha256": "8e6b542c7afaf25e1b510f514f534a3f0c924ceaf8681e98995ade24a76c56cb",
+        "bytes": 5702
+      },
+      "Directory.Build.targets": {
+        "present": false
+      },
+      "Directory.Packages.props": {
+        "present": true,
+        "sha256": "aa1d59627ad4c4b6542e59f2ecb95ccdaa772c8ddf1300dc2cbc707aea90b570",
+        "bytes": 2476
+      },
+      "NuGet.Config": {
+        "present": false
+      },
+      "global.json": {
+        "present": true,
+        "sha256": "099805cd1161ca87a57c0b0241c614b0ec35b5fce384c3fd1c86a16e5364f6e4",
+        "bytes": 169
+      },
+      "nuget.config": {
+        "present": false
+      },
+      "src/Directory.Build.props": {
+        "present": true,
+        "sha256": "5dbaadda54a281d25c9ddc263532e23eb0c5c937af3d70b10d866a80b850cd86",
+        "bytes": 348
+      },
+      "src/Directory.Build.targets": {
+        "present": false
+      },
+      "src/Directory.Packages.props": {
+        "present": false
+      },
+      "src/NuGet.Config": {
+        "present": false
+      },
+      "src/SharpLink.Abstractions/Directory.Build.props": {
+        "present": false
+      },
+      "src/SharpLink.Abstractions/Directory.Build.targets": {
+        "present": false
+      },
+      "src/SharpLink.Abstractions/Directory.Packages.props": {
+        "present": false
+      },
+      "src/SharpLink.Abstractions/NuGet.Config": {
+        "present": false
+      },
+      "src/SharpLink.Abstractions/global.json": {
+        "present": false
+      },
+      "src/SharpLink.Abstractions/nuget.config": {
+        "present": false
+      },
+      "src/SharpLink.Client/Directory.Build.props": {
+        "present": false
+      },
+      "src/SharpLink.Client/Directory.Build.targets": {
+        "present": false
+      },
+      "src/SharpLink.Client/Directory.Packages.props": {
+        "present": false
+      },
+      "src/SharpLink.Client/NuGet.Config": {
+        "present": false
+      },
+      "src/SharpLink.Client/global.json": {
+        "present": false
+      },
+      "src/SharpLink.Client/nuget.config": {
+        "present": false
+      },
+      "src/SharpLink.Generator/Directory.Build.props": {
+        "present": false
+      },
+      "src/SharpLink.Generator/Directory.Build.targets": {
+        "present": false
+      },
+      "src/SharpLink.Generator/Directory.Packages.props": {
+        "present": false
+      },
+      "src/SharpLink.Generator/NuGet.Config": {
+        "present": false
+      },
+      "src/SharpLink.Generator/global.json": {
+        "present": false
+      },
+      "src/SharpLink.Generator/nuget.config": {
+        "present": false
+      },
+      "src/SharpLink.Runtime/Directory.Build.props": {
+        "present": false
+      },
+      "src/SharpLink.Runtime/Directory.Build.targets": {
+        "present": false
+      },
+      "src/SharpLink.Runtime/Directory.Packages.props": {
+        "present": false
+      },
+      "src/SharpLink.Runtime/NuGet.Config": {
+        "present": false
+      },
+      "src/SharpLink.Runtime/global.json": {
+        "present": false
+      },
+      "src/SharpLink.Runtime/nuget.config": {
+        "present": false
+      },
+      "src/SharpLink.Sdk/Directory.Build.props": {
+        "present": false
+      },
+      "src/SharpLink.Sdk/Directory.Build.targets": {
+        "present": false
+      },
+      "src/SharpLink.Sdk/Directory.Packages.props": {
+        "present": false
+      },
+      "src/SharpLink.Sdk/NuGet.Config": {
+        "present": false
+      },
+      "src/SharpLink.Sdk/global.json": {
+        "present": false
+      },
+      "src/SharpLink.Sdk/nuget.config": {
+        "present": false
+      },
+      "src/global.json": {
+        "present": false
+      },
+      "src/nuget.config": {
+        "present": false
+      },
+      "test/Directory.Build.props": {
+        "present": true,
+        "sha256": "8637c25314ba6ec567157f89484c088634e7f311d36d5e21cb60261d22144690",
+        "bytes": 141
+      },
+      "test/Directory.Build.targets": {
+        "present": false
+      },
+      "test/Directory.Packages.props": {
+        "present": false
+      },
+      "test/NuGet.Config": {
+        "present": false
+      },
+      "test/SharpLink.D2OwnershipTests/Directory.Build.props": {
+        "present": false
+      },
+      "test/SharpLink.D2OwnershipTests/Directory.Build.targets": {
+        "present": false
+      },
+      "test/SharpLink.D2OwnershipTests/Directory.Packages.props": {
+        "present": false
+      },
+      "test/SharpLink.D2OwnershipTests/NuGet.Config": {
+        "present": false
+      },
+      "test/SharpLink.D2OwnershipTests/global.json": {
+        "present": false
+      },
+      "test/SharpLink.D2OwnershipTests/nuget.config": {
+        "present": false
+      },
+      "test/SharpLink.MultiClusterTest.Contracts/Directory.Build.props": {
+        "present": false
+      },
+      "test/SharpLink.MultiClusterTest.Contracts/Directory.Build.targets": {
+        "present": false
+      },
+      "test/SharpLink.MultiClusterTest.Contracts/Directory.Packages.props": {
+        "present": false
+      },
+      "test/SharpLink.MultiClusterTest.Contracts/NuGet.Config": {
+        "present": false
+      },
+      "test/SharpLink.MultiClusterTest.Contracts/global.json": {
+        "present": false
+      },
+      "test/SharpLink.MultiClusterTest.Contracts/nuget.config": {
+        "present": false
+      },
+      "test/SharpLink.RetirementEntryPlugin/Directory.Build.props": {
+        "present": false
+      },
+      "test/SharpLink.RetirementEntryPlugin/Directory.Build.targets": {
+        "present": false
+      },
+      "test/SharpLink.RetirementEntryPlugin/Directory.Packages.props": {
+        "present": false
+      },
+      "test/SharpLink.RetirementEntryPlugin/NuGet.Config": {
+        "present": false
+      },
+      "test/SharpLink.RetirementEntryPlugin/global.json": {
+        "present": false
+      },
+      "test/SharpLink.RetirementEntryPlugin/nuget.config": {
+        "present": false
+      },
+      "test/global.json": {
+        "present": false
+      },
+      "test/nuget.config": {
+        "present": false
+      }
+    },
+    "outsideCheckout": "Each ancestor above the fresh checkout through filesystem root must have none of these six input filenames; reject before restore. No implicit inherited config allowed."
+  },
+  "sourceSpans": [
+    {
+      "id": "D2-01",
+      "method": "D201RejectedChildHasNoFabricatedPhysicalReceipt",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D201RejectedChildHasNoFabricatedPhysicalReceipt",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 8,
+        "attributeLine": 8,
+        "signatureLine": 9,
+        "bodyBeginLine": 10,
+        "endLineInclusive": 32,
+        "byteStart": 159,
+        "byteEndExclusive": 2051,
+        "bytes": 1892,
+        "sha256": "13834ae50fbc8de700282d4c8b16c4fd9c7fe72ace19b8b167054fdd5223d234",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D201RejectedChildHasNoFabricatedPhysicalReceipt()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 34,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-02",
+      "method": "D202SelectedChildThrowRetainsExactOriginalTasks",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D202SelectedChildThrowRetainsExactOriginalTasks",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 360,
+        "attributeLine": 360,
+        "signatureLine": 361,
+        "bodyBeginLine": 362,
+        "endLineInclusive": 385,
+        "byteStart": 25380,
+        "byteEndExclusive": 27590,
+        "bytes": 2210,
+        "sha256": "680895a8bd0f50a72b67e303a6cee2491bd6f7963b60721d4fc2cbff992c0178",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D202SelectedChildThrowRetainsExactOriginalTasks()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        }, decorate: true);",
+        "nextBoundary": {
+          "line": 386,
+          "text": "}"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-03",
+      "method": "D203PartialStartFailureAbortsAndJoinsStartedRoots",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D203PartialStartFailureAbortsAndJoinsStartedRoots",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 34,
+        "attributeLine": 34,
+        "signatureLine": 35,
+        "bodyBeginLine": 36,
+        "endLineInclusive": 72,
+        "byteStart": 2052,
+        "byteEndExclusive": 4767,
+        "bytes": 2715,
+        "sha256": "a35ff5544c6c46dc0ddb33c6ad5d88e351b750e0692107eb1540c3b79c6994f5",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D203PartialStartFailureAbortsAndJoinsStartedRoots()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 74,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-04",
+      "method": "D204PreclaimCapacityFailureDoesNotPublishOrLeakRetains",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D204PreclaimCapacityFailureDoesNotPublishOrLeakRetains",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 195,
+        "attributeLine": 195,
+        "signatureLine": 196,
+        "bodyBeginLine": 197,
+        "endLineInclusive": 230,
+        "byteStart": 12749,
+        "byteEndExclusive": 15201,
+        "bytes": 2452,
+        "sha256": "4bc51ad47dae57240469a054103a12afc7672090f802da027642246b0a6021b6",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D204PreclaimCapacityFailureDoesNotPublishOrLeakRetains()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 232,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-05",
+      "method": "D205ConcurrentUnregisterSharesExactWinnerAndBudget",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D205ConcurrentUnregisterSharesExactWinnerAndBudget",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 74,
+        "attributeLine": 74,
+        "signatureLine": 75,
+        "bodyBeginLine": 76,
+        "endLineInclusive": 98,
+        "byteStart": 4768,
+        "byteEndExclusive": 6503,
+        "bytes": 1735,
+        "sha256": "6849ccf7a27896485874392b4f6ec5bae5e0ce7e2fd91fbf2d4fa9a4ad2350e6",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D205ConcurrentUnregisterSharesExactWinnerAndBudget()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 100,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-06",
+      "method": "D206CertifiedAbortReelectsWithOriginalBudget",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D206CertifiedAbortReelectsWithOriginalBudget",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 232,
+        "attributeLine": 232,
+        "signatureLine": 233,
+        "bodyBeginLine": 234,
+        "endLineInclusive": 306,
+        "byteStart": 15202,
+        "byteEndExclusive": 21500,
+        "bytes": 6298,
+        "sha256": "040501814ad4386656c1df8c8a76ff4f06be7cf53199279ec61c3d7b82b02c59",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D206CertifiedAbortReelectsWithOriginalBudget()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 308,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-07",
+      "method": "D207CallbackBeforeClaimCannotHoldPublicationGate",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D207CallbackBeforeClaimCannotHoldPublicationGate",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 100,
+        "attributeLine": 100,
+        "signatureLine": 101,
+        "bodyBeginLine": 102,
+        "endLineInclusive": 120,
+        "byteStart": 6504,
+        "byteEndExclusive": 7840,
+        "bytes": 1336,
+        "sha256": "e489624cd15030457c34abfcf1562272849e9a6d8d3e1b560807cc44c38a0371",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D207CallbackBeforeClaimCannotHoldPublicationGate()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 122,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-08",
+      "method": "D208RegisterRejectsForeignPublicationWindowBeforeChildCommit",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D208RegisterRejectsForeignPublicationWindowBeforeChildCommit",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 33,
+        "attributeLine": 33,
+        "signatureLine": 34,
+        "bodyBeginLine": 35,
+        "endLineInclusive": 53,
+        "byteStart": 2006,
+        "byteEndExclusive": 3621,
+        "bytes": 1615,
+        "sha256": "d7cb3e8ce900f894f11dd2b54da6ba9628191ef64ac8cd62312139fbb1aacd14",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D208RegisterRejectsForeignPublicationWindowBeforeChildCommit()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        }, secondary: true);",
+        "nextBoundary": {
+          "line": 55,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-09",
+      "method": "D209CompetingAssemblyMutationCannotReplayStaleSnapshot",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D209CompetingAssemblyMutationCannotReplayStaleSnapshot",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 55,
+        "attributeLine": 55,
+        "signatureLine": 56,
+        "bodyBeginLine": 57,
+        "endLineInclusive": 75,
+        "byteStart": 3622,
+        "byteEndExclusive": 5102,
+        "bytes": 1480,
+        "sha256": "063ca0f5f9a379c085b28e30309f756195be647830deaa04cf11c89b3ddc132e",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D209CompetingAssemblyMutationCannotReplayStaleSnapshot()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 77,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-10",
+      "method": "D210SlotMutationAndAssemblyWindowAreMutuallyExclusive",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D210SlotMutationAndAssemblyWindowAreMutuallyExclusive",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 77,
+        "attributeLine": 77,
+        "signatureLine": 78,
+        "bodyBeginLine": 79,
+        "endLineInclusive": 113,
+        "byteStart": 5103,
+        "byteEndExclusive": 7353,
+        "bytes": 2250,
+        "sha256": "9dfec295854e191f7d5521fe74353783a2a5822ce7946f159e2361a9ffc32658",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D210SlotMutationAndAssemblyWindowAreMutuallyExclusive()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 115,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 2,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        },
+        {
+          "ordinal": 2,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-11",
+      "method": "D211StopSealCannotDropCommittedOuterPublication",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D211StopSealCannotDropCommittedOuterPublication",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 115,
+        "attributeLine": 115,
+        "signatureLine": 116,
+        "bodyBeginLine": 117,
+        "endLineInclusive": 141,
+        "byteStart": 7354,
+        "byteEndExclusive": 9150,
+        "bytes": 1796,
+        "sha256": "1c14dda2eade5515cd9d53da55d19d2e6b234976a59d763da7c8d385b70a1fe4",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D211StopSealCannotDropCommittedOuterPublication()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 143,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-12",
+      "method": "D212PostcommitFailureStillCompletesMandatorySwap",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D212PostcommitFailureStillCompletesMandatorySwap",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 143,
+        "attributeLine": 143,
+        "signatureLine": 144,
+        "bodyBeginLine": 145,
+        "endLineInclusive": 160,
+        "byteStart": 9151,
+        "byteEndExclusive": 10516,
+        "bytes": 1365,
+        "sha256": "a223a3f1e0d01d28804d634971a1c5c147cbbb37e039184731d9997a62018d0f",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D212PostcommitFailureStillCompletesMandatorySwap()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 162,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-13",
+      "method": "D213PublishedReplacementRetainsOldPhysicalOwner",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D213PublishedReplacementRetainsOldPhysicalOwner",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 7,
+        "attributeLine": 7,
+        "signatureLine": 8,
+        "bodyBeginLine": 9,
+        "endLineInclusive": 32,
+        "byteStart": 120,
+        "byteEndExclusive": 2006,
+        "bytes": 1886,
+        "sha256": "b130d9070c3bc7a890f21ef4f58765d76868e9c5cd75cf9911803214d3d84cef",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D213PublishedReplacementRetainsOldPhysicalOwner()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 33,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-14",
+      "method": "D214UnknownTimerExitDoesNotCertifyPhysicalRelease",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D214UnknownTimerExitDoesNotCertifyPhysicalRelease",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 139,
+        "attributeLine": 139,
+        "signatureLine": 140,
+        "bodyBeginLine": 141,
+        "endLineInclusive": 184,
+        "byteStart": 9555,
+        "byteEndExclusive": 13141,
+        "bytes": 3586,
+        "sha256": "4d2f295025d8fbf1442cc4674b3ef376654f38cdbf0ceb30e07af4f05ea89cb9",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D214UnknownTimerExitDoesNotCertifyPhysicalRelease()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 186,
+          "text": "    private sealed class RetainedTimerClock(Exception failure) : TimeProvider"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-15",
+      "method": "D215ModuleReleaseDoesNotCertifyFailedChildRefund",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D215ModuleReleaseDoesNotCertifyFailedChildRefund",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 364,
+        "attributeLine": 364,
+        "signatureLine": 365,
+        "bodyBeginLine": 366,
+        "endLineInclusive": 396,
+        "byteStart": 26187,
+        "byteEndExclusive": 28792,
+        "bytes": 2605,
+        "sha256": "b5e347b7839124b0914263e061a67d02a9b98e88d52b96371c019bc8149f9aab",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D215ModuleReleaseDoesNotCertifyFailedChildRefund()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 398,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-16",
+      "method": "D216OuterCleanupFailureRetainsItsOwnTypedOwner",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D216OuterCleanupFailureRetainsItsOwnTypedOwner",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 65,
+        "attributeLine": 65,
+        "signatureLine": 66,
+        "bodyBeginLine": 67,
+        "endLineInclusive": 97,
+        "byteStart": 4090,
+        "byteEndExclusive": 6456,
+        "bytes": 2366,
+        "sha256": "bbe8bd809ae9e861057db0a4d6c4d5b21e8a7e551d9e3b73b6a1296f23ed64d0",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D216OuterCleanupFailureRetainsItsOwnTypedOwner()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 99,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-17",
+      "method": "D217OriginalPhysicalAndObserverFaultGraphsStayComplete",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D217OriginalPhysicalAndObserverFaultGraphsStayComplete",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 398,
+        "attributeLine": 398,
+        "signatureLine": 399,
+        "bodyBeginLine": 400,
+        "endLineInclusive": 436,
+        "byteStart": 28793,
+        "byteEndExclusive": 32025,
+        "bytes": 3232,
+        "sha256": "b746ab758c5bfa3851cd3dda00e84bb17eb08e1a6f9471d84dc9c3797fa65505",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D217OriginalPhysicalAndObserverFaultGraphsStayComplete()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 437,
+          "text": "}"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-18",
+      "method": "D218SourceOccurrenceAndIndependentOccurrencesStayDistinct",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D218SourceOccurrenceAndIndependentOccurrencesStayDistinct",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 99,
+        "attributeLine": 99,
+        "signatureLine": 100,
+        "bodyBeginLine": 101,
+        "endLineInclusive": 137,
+        "byteStart": 6457,
+        "byteEndExclusive": 9554,
+        "bytes": 3097,
+        "sha256": "04cbee209da4e1053c062e8f4f8ab90ab47cc2bd574cf97200e1abfd7d3016b4",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D218SourceOccurrenceAndIndependentOccurrencesStayDistinct()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 139,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-19",
+      "method": "D219SupervisorTerminalCannotReleaseDurableOwner",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D219SupervisorTerminalCannotReleaseDurableOwner",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 38,
+        "attributeLine": 38,
+        "signatureLine": 39,
+        "bodyBeginLine": 40,
+        "endLineInclusive": 63,
+        "byteStart": 2250,
+        "byteEndExclusive": 4089,
+        "bytes": 1839,
+        "sha256": "381b04789521f7d56f5ad3f684c652d33aa9a37ff8f226fc30884dd333f85aa3",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D219SupervisorTerminalCannotReleaseDurableOwner()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 65,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-20",
+      "method": "D220StopSealsAndTraversesPrepaidOwnerInventory",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D220StopSealsAndTraversesPrepaidOwnerInventory",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 250,
+        "attributeLine": 250,
+        "signatureLine": 251,
+        "bodyBeginLine": 252,
+        "endLineInclusive": 296,
+        "byteStart": 17655,
+        "byteEndExclusive": 21518,
+        "bytes": 3863,
+        "sha256": "9beed1bc42ed248a510685d0b41c3826494ffeb6adbeedf6748d8256a1b4a500",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D220StopSealsAndTraversesPrepaidOwnerInventory()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 298,
+          "text": "    private sealed class D2CallOwner : IDisposable"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-21",
+      "method": "D221FailedChildStopDoesNotReleaseItsMetadata",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D221FailedChildStopDoesNotReleaseItsMetadata",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 213,
+        "attributeLine": 213,
+        "signatureLine": 214,
+        "bodyBeginLine": 215,
+        "endLineInclusive": 248,
+        "byteStart": 14778,
+        "byteEndExclusive": 17654,
+        "bytes": 2876,
+        "sha256": "a542407a7dfba5f88109b884780e544d8a2a83fac286a8f602a0ab31a24544d7",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D221FailedChildStopDoesNotReleaseItsMetadata()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        }, secondary: true);",
+        "nextBoundary": {
+          "line": 250,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-22",
+      "method": "D222CapacityIncludesRetainedAndCandidateOwners",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D222CapacityIncludesRetainedAndCandidateOwners",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 314,
+        "attributeLine": 314,
+        "signatureLine": 315,
+        "bodyBeginLine": 316,
+        "endLineInclusive": 362,
+        "byteStart": 22066,
+        "byteEndExclusive": 26186,
+        "bytes": 4120,
+        "sha256": "a052f8856ab53bc34ce8316cd52471c38cd40d543ef9ba5c1c84fae2e2b4a0bb",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D222CapacityIncludesRetainedAndCandidateOwners()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 364,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-23",
+      "method": "D223RepeatedStopAndCanceledWaitersRetainOriginalOwners",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D223RepeatedStopAndCanceledWaitersRetainOriginalOwners",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "fileSha256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "fileBytes": 32027,
+      "span": {
+        "startLine": 8,
+        "attributeLine": 8,
+        "signatureLine": 9,
+        "bodyBeginLine": 10,
+        "endLineInclusive": 36,
+        "byteStart": 139,
+        "byteEndExclusive": 2249,
+        "bytes": 2110,
+        "sha256": "cc65d1c641cbade83a2c72a0a01e3ae76bd3217050f7715ca1dd6a76c276e86f",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D223RepeatedStopAndCanceledWaitersRetainOriginalOwners()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 38,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-24",
+      "method": "D224SelectedChildBudgetSurvivesCoordinatorD2Path",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D224SelectedChildBudgetSurvivesCoordinatorD2Path",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 200,
+        "attributeLine": 200,
+        "signatureLine": 201,
+        "bodyBeginLine": 202,
+        "endLineInclusive": 232,
+        "byteStart": 12979,
+        "byteEndExclusive": 15255,
+        "bytes": 2276,
+        "sha256": "3d1234825861811db03a3b25bade253e2a812200196596b619f6862ff6ddb34f",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D224SelectedChildBudgetSurvivesCoordinatorD2Path()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 234,
+          "text": "    private sealed class EntryOnlyClock : TimeProvider"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-25",
+      "method": "D225NoSelectionFinalGateRejectionFinalizesBeforeRollback",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D225NoSelectionFinalGateRejectionFinalizesBeforeRollback",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 308,
+        "attributeLine": 308,
+        "signatureLine": 309,
+        "bodyBeginLine": 310,
+        "endLineInclusive": 358,
+        "byteStart": 21501,
+        "byteEndExclusive": 25379,
+        "bytes": 3878,
+        "sha256": "acbf8ad4f4e45cdc82d61501d2b21ac425ed30d756c8ce1657892f8d5b8b8f24",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D225NoSelectionFinalGateRejectionFinalizesBeforeRollback()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        }, secondary: true);",
+        "nextBoundary": {
+          "line": 360,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-26",
+      "method": "D226AbortAndCommitFinalizeBeforeActualActivation",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D226AbortAndCommitFinalizeBeforeActualActivation",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 151,
+        "attributeLine": 151,
+        "signatureLine": 152,
+        "bodyBeginLine": 153,
+        "endLineInclusive": 193,
+        "byteStart": 9607,
+        "byteEndExclusive": 12748,
+        "bytes": 3141,
+        "sha256": "ae8d2cafd6bd6ecd719fd8c8748f211702d093acbbd89feed738d04d45bf11da",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D226AbortAndCommitFinalizeBeforeActualActivation()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 195,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 2,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        },
+        {
+          "ordinal": 2,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-27",
+      "method": "D227TrackFailureAbortsBeforeChildInvocation",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D227TrackFailureAbortsBeforeChildInvocation",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "fileSha256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "fileBytes": 27592,
+      "span": {
+        "startLine": 122,
+        "attributeLine": 122,
+        "signatureLine": 123,
+        "bodyBeginLine": 124,
+        "endLineInclusive": 149,
+        "byteStart": 7841,
+        "byteEndExclusive": 9606,
+        "bytes": 1765,
+        "sha256": "5afe40cefd0d09be243397c6e6616933d1eaa4f796589b97c1591941cd982668",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D227TrackFailureAbortsBeforeChildInvocation()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 151,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 2,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        },
+        {
+          "ordinal": 2,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-28",
+      "method": "D228DormantCloneOwnsIndependentLeasesWithoutActiveOwner",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D228DormantCloneOwnsIndependentLeasesWithoutActiveOwner",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "fileSha256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "fileBytes": 15787,
+      "span": {
+        "startLine": 54,
+        "attributeLine": 54,
+        "signatureLine": 55,
+        "bodyBeginLine": 56,
+        "endLineInclusive": 109,
+        "byteStart": 3312,
+        "byteEndExclusive": 7276,
+        "bytes": 3964,
+        "sha256": "c8e2274c276d35ecab18f6fdb7306a318c210e7b8067e16426161a255eed3751",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D228DormantCloneOwnsIndependentLeasesWithoutActiveOwner()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 111,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 3,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        },
+        {
+          "ordinal": 2,
+          "expectedDisposition": "normal-certified-cleanup"
+        },
+        {
+          "ordinal": 3,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-29",
+      "method": "D229AbortRefundPrecedesFreshStageAndCapacity",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D229AbortRefundPrecedesFreshStageAndCapacity",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "fileSha256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "fileBytes": 15787,
+      "span": {
+        "startLine": 149,
+        "attributeLine": 149,
+        "signatureLine": 150,
+        "bodyBeginLine": 151,
+        "endLineInclusive": 224,
+        "byteStart": 10332,
+        "byteEndExclusive": 15785,
+        "bytes": 5453,
+        "sha256": "79919886cddb8fe74e3c2e34a78410d480e7a3903a50eb1cdddfbfdd83acb299",
+        "attributeText": "    [Test]",
+        "signatureText": "    public async Task D229AbortRefundPrecedesFreshStageAndCapacity()",
+        "signatureContinuationText": "    {",
+        "closingLineText": "    }",
+        "nextBoundary": {
+          "line": 225,
+          "text": "}"
+        }
+      },
+      "fixtureInstances": 2,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        },
+        {
+          "ordinal": 2,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-30",
+      "method": "D230UncertifiedOwnerKeepsLegacyGlobalSlotBusy",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D230UncertifiedOwnerKeepsLegacyGlobalSlotBusy",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "fileSha256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "fileBytes": 15912,
+      "span": {
+        "startLine": 162,
+        "attributeLine": 162,
+        "signatureLine": 163,
+        "bodyBeginLine": 164,
+        "endLineInclusive": 178,
+        "byteStart": 10517,
+        "byteEndExclusive": 11598,
+        "bytes": 1081,
+        "sha256": "193a3138690508eceedbe11017379c3ee782162371acc93ff0201add57ba89a4",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D230UncertifiedOwnerKeepsLegacyGlobalSlotBusy()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 180,
+          "text": "    private static async Task AssertSlotBusy(Fixture f)"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-31",
+      "method": "D231LivePreparationDoesNotRetainDetachedOuter96Charge",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D231LivePreparationDoesNotRetainDetachedOuter96Charge",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "fileSha256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "fileBytes": 15787,
+      "span": {
+        "startLine": 8,
+        "attributeLine": 8,
+        "signatureLine": 9,
+        "bodyBeginLine": 10,
+        "endLineInclusive": 52,
+        "byteStart": 139,
+        "byteEndExclusive": 3311,
+        "bytes": 3172,
+        "sha256": "2f54a8aa6641e6bdd0022fd3a73ec20bd0aa4ea0e117c65f0f9ccb79edf3e948",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D231LivePreparationDoesNotRetainDetachedOuter96Charge()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 54,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "normal-certified-cleanup"
+        }
+      ],
+      "hasExpectedQuarantine": false,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-32",
+      "method": "D232CloneDecrefCannotFabricateFinalRefund",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D232CloneDecrefCannotFabricateFinalRefund",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "fileSha256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "fileBytes": 15787,
+      "span": {
+        "startLine": 111,
+        "attributeLine": 111,
+        "signatureLine": 112,
+        "bodyBeginLine": 113,
+        "endLineInclusive": 147,
+        "byteStart": 7277,
+        "byteEndExclusive": 10331,
+        "bytes": 3054,
+        "sha256": "ef13d3f914791674af8264a79d1c648774e283e1248090f1dd8ed42a1cd93ba0",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D232CloneDecrefCannotFabricateFinalRefund()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 149,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-33",
+      "method": "D233SlotCloneOldReleaseFailureKeepsBothExactCustodians",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D233SlotCloneOldReleaseFailureKeepsBothExactCustodians",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs",
+      "fileSha256": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+      "fileBytes": 10339,
+      "span": {
+        "startLine": 9,
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "bodyBeginLine": 11,
+        "endLineInclusive": 60,
+        "byteStart": 157,
+        "byteEndExclusive": 4057,
+        "bytes": 3900,
+        "sha256": "7f7a4218db0b44b60363d52a1a35338b39b446597f8c4c9ba497e7e6a6d99558",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D233SlotCloneOldReleaseFailureKeepsBothExactCustodians()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 62,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-34",
+      "method": "D234SlotRemoveReleaseFailureKeepsOriginalRegistration",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D234SlotRemoveReleaseFailureKeepsOriginalRegistration",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs",
+      "fileSha256": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+      "fileBytes": 10339,
+      "span": {
+        "startLine": 62,
+        "attributeLine": 62,
+        "signatureLine": 63,
+        "bodyBeginLine": 64,
+        "endLineInclusive": 95,
+        "byteStart": 4058,
+        "byteEndExclusive": 6446,
+        "bytes": 2388,
+        "sha256": "f76bb9d7a08c23c0ad605b72262afe96ea1edf71b31beea2803b71d935f778ca",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D234SlotRemoveReleaseFailureKeepsOriginalRegistration()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        });",
+        "nextBoundary": {
+          "line": 97,
+          "text": "    [Test]"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    },
+    {
+      "id": "D2-35",
+      "method": "D235UnpublishedRegistrationRollbackRetainsExact96Custody",
+      "fullyQualifiedMethod": "SharpLink.UnitTests.Client.D2AssemblyRetirementTests.D235UnpublishedRegistrationRollbackRetainsExact96Custody",
+      "actualUid": null,
+      "plannedUidCount": 1,
+      "runtimeStatus": "UNRUN",
+      "file": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs",
+      "fileSha256": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+      "fileBytes": 10339,
+      "span": {
+        "startLine": 97,
+        "attributeLine": 97,
+        "signatureLine": 98,
+        "bodyBeginLine": 99,
+        "endLineInclusive": 146,
+        "byteStart": 6447,
+        "byteEndExclusive": 10337,
+        "bytes": 3890,
+        "sha256": "59c83c5a264603b6bcba3bb850ad727df797dea0265487585ff5478939550b64",
+        "attributeText": "    [Test]",
+        "signatureText": "    public Task D235UnpublishedRegistrationRollbackRetainsExact96Custody()",
+        "signatureContinuationText": "        => Run(async f =>",
+        "closingLineText": "        }, secondary: true);",
+        "nextBoundary": {
+          "line": 147,
+          "text": "}"
+        }
+      },
+      "fixtureInstances": 1,
+      "fixtureSequence": [
+        {
+          "ordinal": 1,
+          "expectedDisposition": "retained-after-inspected-faulted-Stop"
+        }
+      ],
+      "hasExpectedQuarantine": true,
+      "proposedProcessLimitSeconds": 180
+    }
+  ],
+  "cases": [
+    {
+      "designId": "D2-01",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D201RejectedChildHasNoFabricatedPhysicalReceipt",
+      "displayName": "D201RejectedChildHasNoFabricatedPhysicalReceipt",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-01",
+      "span": {
+        "attributeLine": 8,
+        "signatureLine": 9,
+        "endLine": 32
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-02",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D202SelectedChildThrowRetainsExactOriginalTasks",
+      "displayName": "D202SelectedChildThrowRetainsExactOriginalTasks",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-02",
+      "span": {
+        "attributeLine": 360,
+        "signatureLine": 361,
+        "endLine": 385
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-03",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D203PartialStartFailureAbortsAndJoinsStartedRoots",
+      "displayName": "D203PartialStartFailureAbortsAndJoinsStartedRoots",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-03",
+      "span": {
+        "attributeLine": 34,
+        "signatureLine": 35,
+        "endLine": 72
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-04",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D204PreclaimCapacityFailureDoesNotPublishOrLeakRetains",
+      "displayName": "D204PreclaimCapacityFailureDoesNotPublishOrLeakRetains",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-04",
+      "span": {
+        "attributeLine": 195,
+        "signatureLine": 196,
+        "endLine": 230
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-05",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D205ConcurrentUnregisterSharesExactWinnerAndBudget",
+      "displayName": "D205ConcurrentUnregisterSharesExactWinnerAndBudget",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-05",
+      "span": {
+        "attributeLine": 74,
+        "signatureLine": 75,
+        "endLine": 98
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-06",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D206CertifiedAbortReelectsWithOriginalBudget",
+      "displayName": "D206CertifiedAbortReelectsWithOriginalBudget",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-06",
+      "span": {
+        "attributeLine": 232,
+        "signatureLine": 233,
+        "endLine": 306
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-07",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D207CallbackBeforeClaimCannotHoldPublicationGate",
+      "displayName": "D207CallbackBeforeClaimCannotHoldPublicationGate",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-07",
+      "span": {
+        "attributeLine": 100,
+        "signatureLine": 101,
+        "endLine": 120
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-08",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D208RegisterRejectsForeignPublicationWindowBeforeChildCommit",
+      "displayName": "D208RegisterRejectsForeignPublicationWindowBeforeChildCommit",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-08",
+      "span": {
+        "attributeLine": 33,
+        "signatureLine": 34,
+        "endLine": 53
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-09",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D209CompetingAssemblyMutationCannotReplayStaleSnapshot",
+      "displayName": "D209CompetingAssemblyMutationCannotReplayStaleSnapshot",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-09",
+      "span": {
+        "attributeLine": 55,
+        "signatureLine": 56,
+        "endLine": 75
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-10",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D210SlotMutationAndAssemblyWindowAreMutuallyExclusive",
+      "displayName": "D210SlotMutationAndAssemblyWindowAreMutuallyExclusive",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-10",
+      "span": {
+        "attributeLine": 77,
+        "signatureLine": 78,
+        "endLine": 113
+      },
+      "fixtureInstances": 2,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-11",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D211StopSealCannotDropCommittedOuterPublication",
+      "displayName": "D211StopSealCannotDropCommittedOuterPublication",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-11",
+      "span": {
+        "attributeLine": 115,
+        "signatureLine": 116,
+        "endLine": 141
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-12",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D212PostcommitFailureStillCompletesMandatorySwap",
+      "displayName": "D212PostcommitFailureStillCompletesMandatorySwap",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-12",
+      "span": {
+        "attributeLine": 143,
+        "signatureLine": 144,
+        "endLine": 160
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-13",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D213PublishedReplacementRetainsOldPhysicalOwner",
+      "displayName": "D213PublishedReplacementRetainsOldPhysicalOwner",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-13",
+      "span": {
+        "attributeLine": 7,
+        "signatureLine": 8,
+        "endLine": 32
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-14",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D214UnknownTimerExitDoesNotCertifyPhysicalRelease",
+      "displayName": "D214UnknownTimerExitDoesNotCertifyPhysicalRelease",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-14",
+      "span": {
+        "attributeLine": 139,
+        "signatureLine": 140,
+        "endLine": 184
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-15",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D215ModuleReleaseDoesNotCertifyFailedChildRefund",
+      "displayName": "D215ModuleReleaseDoesNotCertifyFailedChildRefund",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-15",
+      "span": {
+        "attributeLine": 364,
+        "signatureLine": 365,
+        "endLine": 396
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-16",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D216OuterCleanupFailureRetainsItsOwnTypedOwner",
+      "displayName": "D216OuterCleanupFailureRetainsItsOwnTypedOwner",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-16",
+      "span": {
+        "attributeLine": 65,
+        "signatureLine": 66,
+        "endLine": 97
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-17",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D217OriginalPhysicalAndObserverFaultGraphsStayComplete",
+      "displayName": "D217OriginalPhysicalAndObserverFaultGraphsStayComplete",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-17",
+      "span": {
+        "attributeLine": 398,
+        "signatureLine": 399,
+        "endLine": 436
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-18",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D218SourceOccurrenceAndIndependentOccurrencesStayDistinct",
+      "displayName": "D218SourceOccurrenceAndIndependentOccurrencesStayDistinct",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-18",
+      "span": {
+        "attributeLine": 99,
+        "signatureLine": 100,
+        "endLine": 137
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-19",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D219SupervisorTerminalCannotReleaseDurableOwner",
+      "displayName": "D219SupervisorTerminalCannotReleaseDurableOwner",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-19",
+      "span": {
+        "attributeLine": 38,
+        "signatureLine": 39,
+        "endLine": 63
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-20",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D220StopSealsAndTraversesPrepaidOwnerInventory",
+      "displayName": "D220StopSealsAndTraversesPrepaidOwnerInventory",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-20",
+      "span": {
+        "attributeLine": 250,
+        "signatureLine": 251,
+        "endLine": 296
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-21",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D221FailedChildStopDoesNotReleaseItsMetadata",
+      "displayName": "D221FailedChildStopDoesNotReleaseItsMetadata",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-21",
+      "span": {
+        "attributeLine": 213,
+        "signatureLine": 214,
+        "endLine": 248
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-22",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D222CapacityIncludesRetainedAndCandidateOwners",
+      "displayName": "D222CapacityIncludesRetainedAndCandidateOwners",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-22",
+      "span": {
+        "attributeLine": 314,
+        "signatureLine": 315,
+        "endLine": 362
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-23",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D223RepeatedStopAndCanceledWaitersRetainOriginalOwners",
+      "displayName": "D223RepeatedStopAndCanceledWaitersRetainOriginalOwners",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.OutcomesTests.cs",
+      "sourceSHA256": "1dd4f2b1725676312ab981ce4dfa4e6968c02258b56caafb043be065e956d568",
+      "spanKey": "D2-23",
+      "span": {
+        "attributeLine": 8,
+        "signatureLine": 9,
+        "endLine": 36
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-24",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D224SelectedChildBudgetSurvivesCoordinatorD2Path",
+      "displayName": "D224SelectedChildBudgetSurvivesCoordinatorD2Path",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-24",
+      "span": {
+        "attributeLine": 200,
+        "signatureLine": 201,
+        "endLine": 232
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-25",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D225NoSelectionFinalGateRejectionFinalizesBeforeRollback",
+      "displayName": "D225NoSelectionFinalGateRejectionFinalizesBeforeRollback",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-25",
+      "span": {
+        "attributeLine": 308,
+        "signatureLine": 309,
+        "endLine": 358
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-26",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D226AbortAndCommitFinalizeBeforeActualActivation",
+      "displayName": "D226AbortAndCommitFinalizeBeforeActualActivation",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-26",
+      "span": {
+        "attributeLine": 151,
+        "signatureLine": 152,
+        "endLine": 193
+      },
+      "fixtureInstances": 2,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-27",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D227TrackFailureAbortsBeforeChildInvocation",
+      "displayName": "D227TrackFailureAbortsBeforeChildInvocation",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.SelectionTests.cs",
+      "sourceSHA256": "66f34f282a7fa6f4c2e04dba2ea84c5950908a77b930dd3efe8a95ce2b01d4cc",
+      "spanKey": "D2-27",
+      "span": {
+        "attributeLine": 122,
+        "signatureLine": 123,
+        "endLine": 149
+      },
+      "fixtureInstances": 2,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-28",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D228DormantCloneOwnsIndependentLeasesWithoutActiveOwner",
+      "displayName": "D228DormantCloneOwnsIndependentLeasesWithoutActiveOwner",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "sourceSHA256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "spanKey": "D2-28",
+      "span": {
+        "attributeLine": 54,
+        "signatureLine": 55,
+        "endLine": 109
+      },
+      "fixtureInstances": 3,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-29",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D229AbortRefundPrecedesFreshStageAndCapacity",
+      "displayName": "D229AbortRefundPrecedesFreshStageAndCapacity",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "sourceSHA256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "spanKey": "D2-29",
+      "span": {
+        "attributeLine": 149,
+        "signatureLine": 150,
+        "endLine": 224
+      },
+      "fixtureInstances": 2,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-30",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D230UncertifiedOwnerKeepsLegacyGlobalSlotBusy",
+      "displayName": "D230UncertifiedOwnerKeepsLegacyGlobalSlotBusy",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.PublicationTests.cs",
+      "sourceSHA256": "70c55b929b2ae6709aa6ca32e587dd5ce1bc723ad6dd3ea058067ac393ef0e68",
+      "spanKey": "D2-30",
+      "span": {
+        "attributeLine": 162,
+        "signatureLine": 163,
+        "endLine": 178
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-31",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D231LivePreparationDoesNotRetainDetachedOuter96Charge",
+      "displayName": "D231LivePreparationDoesNotRetainDetachedOuter96Charge",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "sourceSHA256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "spanKey": "D2-31",
+      "span": {
+        "attributeLine": 8,
+        "signatureLine": 9,
+        "endLine": 52
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": false
+    },
+    {
+      "designId": "D2-32",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D232CloneDecrefCannotFabricateFinalRefund",
+      "displayName": "D232CloneDecrefCannotFabricateFinalRefund",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.AccountingTests.cs",
+      "sourceSHA256": "0261507f980187103934e1a0a7ed20beea3b342d4208fbebf0b2acd02dac76bf",
+      "spanKey": "D2-32",
+      "span": {
+        "attributeLine": 111,
+        "signatureLine": 112,
+        "endLine": 147
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-33",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D233SlotCloneOldReleaseFailureKeepsBothExactCustodians",
+      "displayName": "D233SlotCloneOldReleaseFailureKeepsBothExactCustodians",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs",
+      "sourceSHA256": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+      "spanKey": "D2-33",
+      "span": {
+        "attributeLine": 9,
+        "signatureLine": 10,
+        "endLine": 60
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-34",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D234SlotRemoveReleaseFailureKeepsOriginalRegistration",
+      "displayName": "D234SlotRemoveReleaseFailureKeepsOriginalRegistration",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs",
+      "sourceSHA256": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+      "spanKey": "D2-34",
+      "span": {
+        "attributeLine": 62,
+        "signatureLine": 63,
+        "endLine": 95
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    },
+    {
+      "designId": "D2-35",
+      "namespace": "SharpLink.UnitTests.Client",
+      "className": "D2AssemblyRetirementTests",
+      "methodName": "D235UnpublishedRegistrationRollbackRetainsExact96Custody",
+      "displayName": "D235UnpublishedRegistrationRollbackRetainsExact96Custody",
+      "parameterTypes": [],
+      "returnType": "System.Threading.Tasks.Task",
+      "caseIndex": 0,
+      "actualUID": null,
+      "source": "test/SharpLink.D2OwnershipTests/D2AssemblyRetirement.CustodyTests.cs",
+      "sourceSHA256": "a2e8ce09c7b945df64a6f834fd994fa663bf7e483c3072438c7c8199f114b608",
+      "spanKey": "D2-35",
+      "span": {
+        "attributeLine": 97,
+        "signatureLine": 98,
+        "endLine": 146
+      },
+      "fixtureInstances": 1,
+      "hasExpectedQuarantine": true
+    }
+  ],
+  "limits": {
+    "restoreSeconds": 600,
+    "buildSeconds": 600,
+    "discoverySeconds": 120,
+    "caseSeconds": 180,
+    "engineTimeout": "150s",
+    "ownedCommandCount": 49,
+    "activeMaximumSeconds": 8490,
+    "ownedCleanupAllowanceSeconds": 784,
+    "commandBudgetSeconds": 9600,
+    "workflowMinutes": 180
+  }
+}

@@ -10,15 +10,16 @@ internal sealed partial class SharpLinkClient : ISharpLinkPreparedAssemblyClient
         => _assemblyRegistry.RegisterPreparedAssembly(manifest, publication);
 
     ValueTask<SharpLinkAssemblyReplacementResult> ISharpLinkPreparedAssemblyClient.ReplacePreparedAssemblyAsync(
-        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget)
-        => _assemblyRegistry.ReplacePreparedAssemblyAsync(oldAssembly, manifest, budget);
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget,
+        ChildAssemblySelectionMailbox? mailbox)
+        => _assemblyRegistry.ReplacePreparedAssemblyAsync(oldAssembly, manifest, budget, mailbox);
 
     ClientRetirementBudget ISharpLinkPreparedAssemblyClient.CaptureRetirementBudget(TimeSpan gracefulTimeout)
         => _assemblyRegistry.CaptureRetirementBudget(gracefulTimeout);
 
     ValueTask<SharpLinkAssemblyUnregisterResult> ISharpLinkPreparedAssemblyClient.UnregisterAssemblyAsync(
-        Assembly assembly, ClientRetirementBudget budget)
-        => _assemblyRegistry.UnregisterAssemblyAsync(assembly, budget);
+        Assembly assembly, ClientRetirementBudget budget, ChildAssemblySelectionMailbox? mailbox)
+        => _assemblyRegistry.UnregisterAssemblyAsync(assembly, budget, mailbox: mailbox);
 
     public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
         => _assemblyRegistry.RegisterAssembly(assembly);
@@ -79,8 +80,9 @@ internal interface ISharpLinkPreparedAssemblyClient
     SharpLinkAssemblyRegistrationResult RegisterPreparedAssembly(PreparedGeneratedManifest manifest,
         Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication = null);
     ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
-        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget);
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, ClientRetirementBudget budget,
+        ChildAssemblySelectionMailbox? mailbox = null);
     ClientRetirementBudget CaptureRetirementBudget(TimeSpan gracefulTimeout);
     ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
-        Assembly assembly, ClientRetirementBudget budget);
+        Assembly assembly, ClientRetirementBudget budget, ChildAssemblySelectionMailbox? mailbox = null);
 }

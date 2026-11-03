@@ -260,6 +260,9 @@ internal sealed class SharpLinkDynamicModule
 
     internal CancellationToken ForcedCancellation => _forcedCancellationToken;
 
+    internal ColdMetadataReservation RetirementCapacity => _retirementCapacity ??
+        throw new ObjectDisposedException(nameof(SharpLinkDynamicModule));
+
     internal IDisposable RetainRetirementCapacity() => (_retirementCapacity ??
         throw new ObjectDisposedException(nameof(SharpLinkDynamicModule))).Retain();
 

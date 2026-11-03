@@ -373,20 +373,44 @@ internal sealed partial class SharpLinkMultiClusterClient
                         ReferenceEquals(pair.Value.Slot, existingSlot)
                             ? pair.Value with { Slot = candidate.Slot }
                             : pair.Value);
-                    for (var index = 0; index < _dynamicRegistrations.Count; index++)
+                    // Complete every allocating snapshot/budget prebuild before
+                    // any old D2 registration lease can be released or row changed.
+                    var nextTransitionBudget = checked(_transitionConnectionBudget + existingSlot!.ConfiguredConnectionBudget);
+                    var replacementSnapshot = MultiClusterSnapshot.Create(
+                        nextClusters.ToFrozenDictionary(), nextRoutes.ToFrozenDictionary(), nextBudget, metadata, snapshot);
+                    try
                     {
-                        var registration = _dynamicRegistrations[index];
-                        if (ReferenceEquals(registration.Slot, existingSlot))
+                        for (var index = 0; index < _dynamicRegistrations.Count; index++)
                         {
-                            _dynamicRegistrations[index] = registration with { Slot = candidate.Slot };
-                            registration.Dispose();
+                            var registration = _dynamicRegistrations[index];
+                            if (ReferenceEquals(registration.Slot, existingSlot))
+                            {
+                                _dynamicRegistrations[index] = registration with { Slot = candidate.Slot };
+                                registration.Dispose();
+                            }
                         }
                     }
+                    catch (Exception primary)
+                    {
+                        Exception graph = primary;
+                        try { replacementSnapshot.Dispose(); }
+                        catch (Exception cleanup)
+                        {
+                            // At least one original exists: only the loop's real
+                            // clone/release can enter this catch. Prefer its live
+                            // clone so snapshot uncertainty holds the last96 lease.
+                            var custody = _dynamicRegistrations.FirstOrDefault(
+                                registration => ReferenceEquals(registration.Slot, candidate.Slot)) ?? registrations[0];
+                            custody.RecordSnapshotFailure(replacementSnapshot, cleanup);
+                            graph = new AggregateException(graph, cleanup);
+                        }
+                        ExceptionDispatchInfo.Capture(RollbackAssemblySlotClonesLocked(
+                            registrations, candidate.Slot, graph)).Throw();
+                        throw;
+                    }
 
-                    _transitionConnectionBudget = checked(
-                        _transitionConnectionBudget + existingSlot!.ConfiguredConnectionBudget);
-                    PublishSnapshotLocked(MultiClusterSnapshot.Create(
-                        nextClusters.ToFrozenDictionary(), nextRoutes.ToFrozenDictionary(), nextBudget, metadata, snapshot));
+                    _transitionConnectionBudget = nextTransitionBudget;
+                    PublishSnapshotLocked(replacementSnapshot);
                     _slotMutationInProgress = false;
                     mutationBegan = false;
                     candidate.Publish();
@@ -509,17 +533,38 @@ internal sealed partial class SharpLinkMultiClusterClient
                             .Where(pair => !ReferenceEquals(pair.Value.Slot, existingSlot))
                             .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                             .ToFrozenDictionary();
-                        for (var index = _dynamicRegistrations.Count - 1; index >= 0; index--)
-                        {
-                            var registration = _dynamicRegistrations[index];
-                            if (!ReferenceEquals(registration.Slot, existingSlot)) continue;
-                            _dynamicRegistrations.RemoveAt(index);
-                            registration.Dispose();
-                        }
                         var nextBudget = checked(snapshot.ConfiguredConnectionBudget - existingSlot.ConfiguredConnectionBudget);
-                        _transitionConnectionBudget = checked(
-                            _transitionConnectionBudget + existingSlot.ConfiguredConnectionBudget);
-                        PublishSnapshotLocked(MultiClusterSnapshot.Create(nextClusters, nextRoutes, nextBudget, metadata, snapshot));
+                        var nextTransitionBudget = checked(_transitionConnectionBudget + existingSlot.ConfiguredConnectionBudget);
+                        var removalSnapshot = MultiClusterSnapshot.Create(nextClusters, nextRoutes, nextBudget, metadata, snapshot);
+                        try
+                        {
+                            for (var index = _dynamicRegistrations.Count - 1; index >= 0; index--)
+                            {
+                                var registration = _dynamicRegistrations[index];
+                                if (!ReferenceEquals(registration.Slot, existingSlot)) continue;
+                                // New D2 custody must stay discoverable if its
+                                // exact lease/metadata release fails before publication.
+                                registration.Dispose();
+                                _dynamicRegistrations.RemoveAt(index);
+                            }
+                        }
+                        catch (Exception primary)
+                        {
+                            _assemblyPublicationFailed = true;
+                            try { removalSnapshot.Dispose(); }
+                            catch (Exception cleanup)
+                            {
+                                // Failed Dispose is still linked: unlink follows
+                                // successful release, never the reverse.
+                                var custody = _dynamicRegistrations.First(registration =>
+                                    ReferenceEquals(registration.Slot, existingSlot));
+                                custody.RecordSnapshotFailure(removalSnapshot, cleanup);
+                                throw new AggregateException(primary, cleanup);
+                            }
+                            throw;
+                        }
+                        _transitionConnectionBudget = nextTransitionBudget;
+                        PublishSnapshotLocked(removalSnapshot);
                         _slotMutationInProgress = false;
                         mutationBegan = false;
                         published = true;

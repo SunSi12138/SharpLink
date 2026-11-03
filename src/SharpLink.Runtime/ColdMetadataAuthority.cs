@@ -298,6 +298,9 @@ internal sealed class ColdMetadataReservation : IDisposable
     private int _capacity;
     private int _references = 1;
     private bool _originalDisposed;
+    private bool _originalReleaseSucceeded;
+    private bool _refunded;
+    private Exception? _finalRefundFailureForDiagnostics;
     // Only private, framework-created dependency copies; never a user cleanup callback.
     private System.Reflection.Assembly?[]? _declaredDependencyBindings;
     internal ColdMetadataReservation(ColdMetadataPreparation owner, ColdMetadataScope? scope,
@@ -311,6 +314,26 @@ internal sealed class ColdMetadataReservation : IDisposable
     internal bool IsDetached
     {
         get { lock (_authority.Gate) return _owner is null && Next is null && Previous is null; }
+    }
+
+    // Cold ownership certificates, under the same accounting gate as their
+    // writes. Detach alone cannot turn a throwing release into success.
+    internal bool OriginalReleaseSucceeded { get { lock (_authority.Gate) return _originalReleaseSucceeded; } }
+    internal bool IsRefunded { get { lock (_authority.Gate) return _refunded; } }
+
+    // Exact-instance cold test fault, never a callback under the authority gate.
+    // Once last release has started the token cannot be reset into a refund claim.
+    internal Exception? FinalRefundFailureForDiagnostics
+    {
+        get { lock (_authority.Gate) return _finalRefundFailureForDiagnostics; }
+        set
+        {
+            lock (_authority.Gate)
+            {
+                ObjectDisposedException.ThrowIf(_references == 0 || _refunded, this);
+                _finalRefundFailureForDiagnostics = value;
+            }
+        }
     }
 
     // The returned lease owns only this token. Disposing the original owner detaches the
@@ -364,6 +387,7 @@ internal sealed class ColdMetadataReservation : IDisposable
             // Remove clears both neighbors. A retained token no longer reaches its preparation,
             // domain, or siblings. An optional private dependency copy stays charged until last release.
             ReleaseReferenceLocked();
+            _originalReleaseSucceeded = true;
         }
     }
     private void ReleaseReference()
@@ -373,6 +397,10 @@ internal sealed class ColdMetadataReservation : IDisposable
     private void ReleaseReferenceLocked()
     {
         if (--_references != 0) return;
+        // This is the actual last original/lease Dispose, not an outer pre-effect
+        // callback. An injected failure leaves all accounting and bindings rooted.
+        if (_finalRefundFailureForDiagnostics is { } failure)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         var bindings = _declaredDependencyBindings;
         _declaredDependencyBindings = null;
         if (bindings is not null) Array.Clear(bindings);
@@ -380,6 +408,7 @@ internal sealed class ColdMetadataReservation : IDisposable
         _bytes = 0;
         _methods = 0;
         _capacity = 0;
+        _refunded = true;
     }
     private sealed class Lease(ColdMetadataReservation reservation) : IDisposable
     {

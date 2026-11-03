@@ -14,44 +14,66 @@ internal sealed class RetirementControl
 {
     // Logical capacity inventory is documented with the SOURCE checkpoint, not
     // inferred from CLR object sizes. All slots are admitted at module creation.
-    internal const int ReservedSlots = 31;
+    internal const int ReservedSlots = 39;
 
     private readonly TaskCompletionSource<bool> _start = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IDisposable? _reservationLease;
     private Func<bool, Exception?>? _actions;
+    private readonly ColdMetadataDomain _domain;
+    private readonly RetirementGraceBudget? _budget;
+    private RetirementCancellationDriver? _driver;
+    private readonly ColdMetadataReservation _capacity;
+    private bool _releaseAttempted;
+
+    internal bool PhysicalExited { get; private set; }
+    internal bool ReservationLeaseReturned { get; private set; }
+    internal bool CapacityRefunded { get; private set; }
+    internal Exception? ReservationReleaseFailure { get; private set; }
+    internal void RecordPhysicalExit(bool noRetainedTimer) => PhysicalExited = noRetainedTimer;
 
     internal RetirementControl(SharpLinkDynamicModule module, ColdMetadataDomain domain,
-        RetirementOrigin origin, RetirementGraceBudget? budget, Func<bool, Exception?>? actions)
+        RetirementOrigin origin, RetirementGraceBudget? budget, Func<bool, Exception?>? actions,
+        bool deferDriver = false)
     {
         Module = module;
         Origin = origin;
         _actions = actions;
         _reservationLease = module.RetainRetirementCapacity();
-        try
+        _domain = domain;
+        _budget = budget;
+        _capacity = module.RetirementCapacity;
+        if (!deferDriver)
         {
-            // Do not retain a caller's active preparation AsyncLocal in the new
-            // suspended cancellation task. Suppression is synchronous, never
-            // held over an await, and does not alter user token registrations.
-            if (ExecutionContext.IsFlowSuppressed())
-                Driver = new RetirementCancellationDriver(module, domain, budget, _start.Task,
-                    forceRequested: origin == RetirementOrigin.Stop);
-            else
+            try { InitializeDriver(); }
+            catch
             {
-                using (ExecutionContext.SuppressFlow())
-                    Driver = new RetirementCancellationDriver(module, domain, budget, _start.Task,
-                        forceRequested: origin == RetirementOrigin.Stop);
+                Interlocked.Exchange(ref _reservationLease, null)?.Dispose();
+                throw;
             }
         }
-        catch
+    }
+
+    // Client coordinated selection roots this control before the first original
+    // suspended task is created. Server/direct construction keeps its existing order.
+    internal void InitializeDriver()
+    {
+        if (_driver is not null) throw new InvalidOperationException("Retirement driver already exists.");
+        if (ExecutionContext.IsFlowSuppressed())
+            _driver = new RetirementCancellationDriver(Module, _domain, _budget, _start.Task,
+                forceRequested: Origin == RetirementOrigin.Stop);
+        else
         {
-            Interlocked.Exchange(ref _reservationLease, null)?.Dispose();
-            throw;
+            using (ExecutionContext.SuppressFlow())
+                _driver = new RetirementCancellationDriver(Module, _domain, _budget, _start.Task,
+                    forceRequested: Origin == RetirementOrigin.Stop);
         }
     }
 
     internal RetirementOrigin Origin { get; }
     internal SharpLinkDynamicModule Module { get; }
-    internal RetirementCancellationDriver Driver { get; }
+    internal RetirementCancellationDriver Driver => _driver ??
+        throw new InvalidOperationException("Retirement driver has not been initialized.");
+    internal RetirementCancellationDriver? CreatedDriver => _driver;
     internal Task<bool> StartDecision => _start.Task;
     internal TaskCompletionSource<Exception?> Tracking { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal TaskCompletionSource<Exception?> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -76,7 +98,38 @@ internal sealed class RetirementControl
     // Observer performs this AFTER physical exit and BEFORE deciding dictionary
     // removal. A refund failure remains an observable, discoverable occurrence.
     internal void ReleaseReservation()
-        => Interlocked.Exchange(ref _reservationLease, null)?.Dispose();
+    {
+        if (_releaseAttempted) return;
+        _releaseAttempted = true;
+        try
+        {
+            // An aborted stage returns only its borrowed lease: the still-running
+            // module must keep its prepaid capacity for a subsequent election.
+            // A released module no longer needs the original storage reference.
+            if (Module.State == SharpLinkDynamicModuleState.Released)
+            {
+                if (!_capacity.OriginalReleaseSucceeded)
+                {
+                    if (_capacity.IsDetached)
+                        throw new InvalidOperationException("The original capacity release has an uncertified outcome.");
+                    _capacity.Dispose();
+                }
+                if (!_capacity.OriginalReleaseSucceeded || !_capacity.IsDetached)
+                    throw new InvalidOperationException("Released retirement capacity remains attached.");
+            }
+            _reservationLease!.Dispose();
+            ReservationLeaseReturned = true;
+            CapacityRefunded = Module.State == SharpLinkDynamicModuleState.Released && _capacity.IsRefunded;
+            if (Module.State == SharpLinkDynamicModuleState.Released && !CapacityRefunded)
+                throw new InvalidOperationException("The exact released module capacity has not refunded.");
+            _reservationLease = null;
+        }
+        catch (Exception failure)
+        {
+            ReservationReleaseFailure = failure;
+            throw;
+        }
+    }
 }
 
 // A precommit using guard. Once the rooted physical owner takes its exact

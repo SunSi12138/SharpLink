@@ -6,37 +6,66 @@ internal sealed partial class ClientAssemblyRegistry
 {
     // Caller holds the existing registry gate. All allocation/capacity work is
     // before the old admission cut. No callback starts until Activate outside it.
+    internal Action<string>? AssemblyConstructionForDiagnostics { get; set; }
+
     private RetirementControl CreateRetirementLocked(Assembly assembly, SharpLinkDynamicModule module,
-        RetirementOrigin origin, RetirementGraceBudget? budget, Func<bool, Exception?>? actions)
+        RetirementOrigin origin, RetirementGraceBudget? budget, Func<bool, Exception?>? actions,
+        out RetirementControl? selected, ChildAssemblySelectionMailbox? mailbox = null)
     {
+        selected = null;
         if (_unregisterOperations.ContainsKey(assembly) || module.RetirementControl is not null)
             throw new InvalidOperationException("The exact module already has a retirement stage.");
         _unregisterOperations.EnsureCapacity(checked(_unregisterOperations.Count + 1));
-        var control = new RetirementControl(module, _runtimeContext.Domain, origin, budget, actions);
-        Task<SharpLinkAssemblyUnregisterResult> operation;
-        Task<(Exception? Failure, bool SupervisorOwned)> observation;
-        if (ExecutionContext.IsFlowSuppressed())
-        {
-            operation = RetireControlledModuleAsync(assembly, module, control);
-            observation = ObserveControlledRetirementAsync(assembly, module, control, operation);
-        }
-        else
-        {
-            using (ExecutionContext.SuppressFlow())
-            {
-                operation = RetireControlledModuleAsync(assembly, module, control);
-                observation = ObserveControlledRetirementAsync(assembly, module, control, operation);
-            }
-        }
+        var control = new RetirementControl(module, _runtimeContext.Domain, origin, budget, actions, deferDriver: true);
+        // Publish every original root BEFORE another operation can throw. The
+        // caller's out receipt also transfers its exact rollback resources.
+        selected = control;
         module.RetirementControl = control;
         module.RetirementRegistration = null;
-        module.RetirementOperation = operation;
         module.RetirementTracking = control.Tracking.Task;
-        module.RetirementObservation = observation;
-        // Reference comparer, exact key preflight and pre-sized capacity: no user
-        // callback or ordinary fallible preparation remains in this root transfer.
-        _unregisterOperations.Add(assembly, (operation, module));
+        mailbox?.Select(control);
+        try
+        {
+            control.InitializeDriver();
+            AssemblyConstructionForDiagnostics?.Invoke("DriverRooted");
+            InitializePhysicalRoots();
+            AssemblyConstructionForDiagnostics?.Invoke("ObserverRooted");
+        }
+        catch
+        {
+            if (control.CreatedDriver is not null)
+            {
+                // A partially constructed selection still needs a real physical
+                // Abort owner to join its actual driver and transferred actions.
+                InitializePhysicalRoots(inject: false);
+            }
+            // If no task was created, retain the prebuilding control fail-closed;
+            // it cannot be mistaken for a completed/refunded selection.
+            throw;
+        }
         return control;
+
+        void InitializePhysicalRoots(bool inject = true)
+        {
+            if (ExecutionContext.IsFlowSuppressed()) Build();
+            else { using (ExecutionContext.SuppressFlow()) Build(); }
+            void Build()
+            {
+                if (module.RetirementOperation is null)
+                {
+                    module.RetirementOperation = RetireControlledModuleAsync(assembly, module, control);
+                    mailbox?.CaptureRoots();
+                    if (inject) AssemblyConstructionForDiagnostics?.Invoke("PhysicalRooted");
+                }
+                if (module.RetirementObservation is null)
+                {
+                    module.RetirementObservation = ObserveControlledRetirementAsync(assembly, module, control, module.RetirementOperation);
+                    mailbox?.CaptureRoots();
+                }
+                if (!_unregisterOperations.ContainsKey(assembly))
+                    _unregisterOperations.Add(assembly, (module.RetirementOperation, module));
+            }
+        }
     }
 
     private async Task<SharpLinkAssemblyUnregisterResult> RetireControlledModuleAsync(
@@ -45,6 +74,7 @@ internal sealed partial class ClientAssemblyRegistry
         var committed = await control.StartDecision.ConfigureAwait(false);
         Exception? failure = null;
         Exception? trackingFailure = null;
+        var driverExited = false;
         try
         {
             if (committed && control.Origin != RetirementOrigin.Stop)
@@ -75,6 +105,7 @@ internal sealed partial class ClientAssemblyRegistry
             // Only this original physical owner consumes driver outcome data.
             // Neither waiter nor Stop aggregates its failures a second time.
             var cancellation = await control.Driver.Task.ConfigureAwait(false);
+            driverExited = !cancellation.HasRetainedTimer;
             cancellation.AppendFailures(ref failure);
             if (committed)
             {
@@ -107,6 +138,7 @@ internal sealed partial class ClientAssemblyRegistry
             control.Tracking.TrySetResult(trackingFailure);
             control.Ready.TrySetResult(failure);
             control.GraceDecision.TrySetResult(null);
+            control.RecordPhysicalExit(driverExited);
         }
         if (failure is not null) throw PhysicalTaskFailureException.From(failure);
         return new SharpLinkAssemblyUnregisterResult { ReferencesReleased = committed };
@@ -254,7 +286,7 @@ internal sealed partial class ClientAssemblyRegistry
                     {
                         if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
                             throw new InvalidOperationException("Shutdown cannot elect an unregistered module generation.");
-                        selected = CreateRetirementLocked(assembly, module, RetirementOrigin.Stop, null, null);
+                        selected = CreateRetirementLocked(assembly, module, RetirementOrigin.Stop, null, null, out selected);
                         module.TryBeginDraining();
                         selected.MarkCommitted();
                         control = selected;
