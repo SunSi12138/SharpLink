@@ -285,6 +285,37 @@ class Controls(unittest.TestCase):
             self.assertEqual(len(r.compiled_inputs(root,meta,c)),5)
             with (root/(prefix+'SharpLink.UnitTests.AssemblyInfo.cs')).open('a') as file:file.write('class ForeignBootstrap {}')
             self.reject(lambda:r.compiled_inputs(root,meta,c))
+    def test_public_rejection_codes_never_echo_unknown_errors(self):
+        known=r.Rejected('UC_COMPILE_SET');unknown=r.Rejected('PRIVATE_SENTINEL');ordinary=RuntimeError('PRIVATE_SENTINEL')
+        result=r.public_rejections([BaseExceptionGroup('PRIVATE_SENTINEL',[known,unknown,ordinary]),known])
+        self.assertEqual(result['codes'],['UC_COMPILE_SET']);self.assertNotIn('PRIVATE_SENTINEL',json.dumps(result));self.assertEqual(result['unclassifiedExceptionNodes'],2)
+    def test_metadata_diagnostics_only_counts_hashes_and_known_labels(self):
+        c=r.read_json(ROOT/'eng/unit-census.json');name=c['project'];value={'Properties':{'DefineConstants':'TRACE;RELEASE;PRIVATE_SENTINEL','MSBuildAllProjects':'PRIVATE_SENTINEL'},'Items':{'Compile':[{'FullPath':'/PRIVATE_SENTINEL'}],'ProjectReference':[]}}
+        result=r.metadata_facts(ROOT,name,value,c);serialized=json.dumps(result)
+        self.assertNotIn('PRIVATE_SENTINEL',serialized);self.assertEqual(result['Compile']['extraCount'],1);self.assertEqual(result['constants']['count'],3)
+        self.assertEqual(r.metadata_facts(ROOT,name,{'Properties':None,'Items':None},c)['Compile']['rowCount'],None)
+    def test_metadata_diagnostics_do_not_change_validation(self):
+        c=r.read_json(ROOT/'eng/unit-census.json');name=c['project'];spec=c['projectMetadata'][name]
+        v={'Properties':{'MSBuildProjectFullPath':str(ROOT/name),'Configuration':'Release','PublishAot':'','TargetFramework':spec['targetFramework'],'AssemblyName':spec['assemblyName'],'TargetPath':str(ROOT/spec['output']),'DefineConstants':'TRACE;RELEASE;PRIVATE_SENTINEL'},'Items':{'ProjectReference':[{'FullPath':str(ROOT/p)} for p in spec['references']]}}
+        before=copy.deepcopy(v);r.metadata_facts(ROOT,name,v,c);self.assertEqual(v,before);self.reject(lambda:r.project_metadata(ROOT,name,v,c))
+    def test_failure_summary_exports_controlled_metadata_only(self):
+        c=r.read_json(ROOT/'eng/unit-census.json');original_module=runner.module
+        def modules(name,path):return r if name=='unit_census_results' else original_module(name,path)
+        def fail(lane):
+            lane.source=ROOT;lane.metadata_project=c['project'];lane.metadata_catalog=c
+            lane.metadata_input={'Properties':{'DefineConstants':'PRIVATE_SENTINEL'},'Items':{}}
+            lane.validation_phase='project-properties';raise r.Rejected('UC_RELEASE_CONSTANTS')
+        with patch.object(runner,'module',side_effect=modules),patch.object(runner,'execute',side_effect=fail),contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(runner.guarded_main(),1)
+        summary=json.loads(out.getvalue());self.assertEqual(summary['rejections']['codes'],['UC_RELEASE_CONSTANTS']);self.assertFalse(summary['censusQualified']);self.assertNotIn('PRIVATE_SENTINEL',out.getvalue())
+    def test_metadata_diagnostic_failure_preserves_original_root(self):
+        c=r.read_json(ROOT/'eng/unit-census.json');original_module=runner.module;seen=[];body=RuntimeError('body')
+        def modules(name,path):return r if name=='unit_census_results' else original_module(name,path)
+        def fail(lane):
+            seen.append(lane);lane.source=ROOT;lane.metadata_project=c['project'];lane.metadata_catalog=c;lane.metadata_input={};raise body
+        with patch.object(runner,'module',side_effect=modules),patch.object(runner,'execute',side_effect=fail),patch.object(r,'metadata_facts',side_effect=ValueError('diagnostic')),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(runner.guarded_main(),1)
+        self.assertIs(seen[0].errors[0],body);self.assertEqual(len(seen[0].errors),2)
     def test_actual_owner_timeout_and_descendant_join(self):
         owner=load('census_test_owner',ROOT/'eng/package-smoke-process.py');owner.enable_subreaper()
         with tempfile.TemporaryDirectory() as tmp:

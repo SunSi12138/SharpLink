@@ -89,7 +89,7 @@ class Lane:
         self.work_id=results.legacy.directory_identity_strict(work)
         self.env=environment(work);self.stop=time.monotonic()+3600;self.sequence=0
         self.source=None;self.original={};self.inputs={};self.trees={};self.commands={}
-        self.observations=[];self.errors=[];self.stage='bootstrap';self.durable=True
+        self.observations=[];self.errors=[];self.stage='bootstrap';self.durable=True;self.validation_phase='not-metadata';self.metadata_input=None;self.metadata_project=None;self.metadata_catalog=None
         self.identity={};self.unfiltered=False;self.stable=False;self.source_members=None
 
     def record(self, error):
@@ -227,25 +227,34 @@ def execute(lane):
     for p in source.rglob('project.assets.json'):lane.inputs[p]=r.file_identity(p)
     metadata={}
     for index,name in enumerate(catalog['projects']):
+        lane.validation_phase='metadata-command';lane.metadata_input=None;lane.metadata_project=name;lane.metadata_catalog=catalog
         raw=lane.run('metadata'+str(index),[dotnet,'msbuild',source/name,'-p:Configuration=Release','-getItem:Compile,ProjectReference,TestingPlatformBuilderHook,TestingPlatformCommandLineOptionDefault','-getProperty:MSBuildProjectFullPath,Configuration,PublishAot,TargetFramework,AssemblyName,DefineConstants,MSBuildAllProjects,TargetPath,RootNamespace,TestingPlatformHostFactory','-m:1','-nr:false'],source,20)
+        lane.validation_phase='metadata-json'
         value=r.read_json(raw);metadata[name]=value
+        lane.metadata_input=value;lane.metadata_project=name;lane.metadata_catalog=catalog
+        lane.validation_phase='project-properties'
         r.project_metadata(source,name,value,catalog)
+        lane.validation_phase='compile-set'
         compile_paths={Path(item['FullPath']) for item in value['Items']['Compile']}
         if name==catalog['project']:
             ordinary_compile={p.relative_to(source).as_posix() for p in compile_paths if p.is_relative_to(source) and 'obj' not in p.relative_to(source).parts}
             r.require(ordinary_compile==set(catalog['unitSources'])|set(catalog['linkedSources']),'UC_COMPILE_SET')
+        lane.validation_phase='project-reference-membership'
         for item in value['Items'].get('ProjectReference',[]):
             r.require(Path(item['FullPath']) in {source/p for p in catalog['projects']},'UC_PROJECT_REFERENCE')
+        lane.validation_phase='compile-paths'
         for item in value['Items']['Compile']:
             p=Path(item['FullPath'])
             r.require(p.is_absolute() and '..' not in p.parts and p.resolve()==p,'UC_COMPILE_PATH')
             r.require(p.is_relative_to(source) and (p in lane.original or 'obj' in p.relative_to(source).parts),'UC_COMPILE_FOREIGN')
+        lane.validation_phase='import-paths'
         for imported in value['Properties']['MSBuildAllProjects'].split(';'):
             if imported:
                 p=Path(imported)
                 r.require(p.is_absolute() and '..' not in p.parts and p.resolve()==p,'UC_IMPORT_PATH')
                 r.require(p in lane.original or p.is_relative_to(packages) or p.is_relative_to(sdkroot) or p.is_relative_to(source) and 'obj' in p.parts,'UC_IMPORT_FOREIGN')
                 lane.inputs[p]=r.file_identity(p)
+    lane.validation_phase='metadata-complete'
     expanded_dir=lane.work/'imports-pending';expanded_dir.mkdir();expanded=expanded_dir/'unit.xml'
     lane.run('expanded-imports',[dotnet,'msbuild',project,'-p:Configuration=Release','-p:UseSharedCompilation=false',
         '-p:PathMap='+r.legacy.compile_path_map(source),'-preprocess:'+str(expanded),'-m:1','-nr:false'],source,20)
@@ -300,9 +309,14 @@ def guarded_main():
         except BaseException as error:lane.record(error)
         errors=lane.errors
         qualified=not errors and lane.stable and lane.unfiltered and lane.durable and time.monotonic()<lane.stop
+        metadata_facts=None
+        if lane.metadata_input is not None:
+            try:metadata_facts=r.metadata_facts(lane.source,lane.metadata_project,lane.metadata_input,lane.metadata_catalog)
+            except BaseException as diagnostic:
+                lane.record(diagnostic);qualified=False
         summary={'schemaVersion':1,'identity':lane.identity,'censusQualified':qualified,'stableQualified':qualified,
                  'unfilteredQualified':lane.unfiltered and not errors,'evidenceDurable':lane.durable,'stage':lane.stage,
-                 'errorOccurrences':len(errors),'rejectCode':None if qualified else 'UC_FAILED','observations':lane.observations,'exit':0 if qualified else 1,
+                 'errorOccurrences':len(errors),'rejections':r.public_rejections(errors),'validationPhase':lane.validation_phase,'metadataFacts':metadata_facts,'rejectCode':None if qualified else 'UC_FAILED','observations':lane.observations,'exit':0 if qualified else 1,
                  'qualification':'Metadata only; no test bodies/results. Digests cannot reconstruct private ledgers.'}
         # Summary serialization/write/render are independent failure points.
         try:

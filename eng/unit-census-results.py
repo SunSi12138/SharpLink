@@ -544,3 +544,61 @@ def compiled_inputs(root, value, catalog):
     require('[assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]' in lines and
             '[assembly: System.Reflection.AssemblyVersionAttribute("3.0.0.0")]' in lines,'UC_ASSEMBLY_ID')
     return rows
+
+
+PUBLIC_REJECTION_CODES = frozenset(('UC_ANCESTOR_OVERRIDE', 'UC_ARCHIVE_HASH', 'UC_ARCHIVE_NAMES', 'UC_ARGUMENTS', 'UC_ASSEMBLY', 'UC_ASSEMBLY_ID', 'UC_ASSEMBLY_INFO', 'UC_ASSETS_GRAPH', 'UC_BUDGET', 'UC_CARDINALITY', 'UC_CATALOG_METHODS', 'UC_CLONE_BYTES', 'UC_CLONE_HEAD', 'UC_COMMAND_CAP', 'UC_COMPILED_DUPLICATE', 'UC_COMPILE_FOREIGN', 'UC_COMPILE_PATH', 'UC_COMPILE_SET', 'UC_COMPLETED_LOG_MUTATION', 'UC_CONFIG_DEFAULTS', 'UC_CONFIG_OPTIONS', 'UC_CONFIG_SCHEMA', 'UC_DEPS_ASSET', 'UC_DEPS_KIND', 'UC_DEPS_PACKAGE', 'UC_DEPS_PROJECT_PATH', 'UC_DEPS_RID', 'UC_DIRECTORY', 'UC_DIRTY', 'UC_DISCOVERY_ARGV', 'UC_DISCOVERY_EXECUTABLE', 'UC_DISPLAY', 'UC_ELIGIBILITY', 'UC_EMIT_BUDGET', 'UC_ENV_OPTIONS', 'UC_EVIDENCE_MEMBERS', 'UC_FAILED', 'UC_FILE_KIND', 'UC_FINAL_BUDGET', 'UC_FOREIGN_METHOD', 'UC_FRAMEWORK_ATTRIBUTES', 'UC_FRAMEWORK_VERSION', 'UC_GENERATED_CALLS', 'UC_GENERATED_NOT_COMPILED', 'UC_GENERATED_SYNTAX', 'UC_GIT_ID', 'UC_GRAPH', 'UC_GRAPH_EDGES', 'UC_IMPORT_CHANGED', 'UC_IMPORT_CONTAINER', 'UC_IMPORT_ESCAPE', 'UC_IMPORT_FOREIGN', 'UC_IMPORT_IDENTITY', 'UC_IMPORT_KIND', 'UC_IMPORT_MISSING', 'UC_IMPORT_PATH', 'UC_IMPORT_SPELLING', 'UC_INCOMPLETE', 'UC_INPUT_CHANGED', 'UC_JSON_NUMBER', 'UC_JSON_SIZE', 'UC_METADATA', 'UC_METHOD_SOURCE', 'UC_MISSING_METHOD', 'UC_NODE_ALIAS', 'UC_NODE_KIND', 'UC_NUSPEC', 'UC_ORPHAN_PACKAGE', 'UC_OS', 'UC_PACKAGE_CANONICAL_HASH', 'UC_PACKAGE_COMMIT', 'UC_PACKAGE_DIRECTORY_ID', 'UC_PACKAGE_EXTRACTION', 'UC_PACKAGE_FOLDERS', 'UC_PACKAGE_ID', 'UC_PACKAGE_KIND', 'UC_PACKAGE_MISSING', 'UC_PACKAGE_ORIGIN', 'UC_POST_COMPILE_SET', 'UC_PRIVATE_NAME', 'UC_PROJECT_PROPERTIES', 'UC_PROJECT_REFERENCE', 'UC_PROPERTIES', 'UC_PROVIDER_BYTES', 'UC_PROVIDER_ENTRYPOINT', 'UC_PROVIDER_GENERATION', 'UC_PROVIDER_HOOKS', 'UC_PROVIDER_IMPORTS', 'UC_PROVIDER_PATH', 'UC_PROVIDER_SELECTED_ASSET', 'UC_PROVIDER_UNPROVEN', 'UC_READ_CHANGED', 'UC_READ_LENGTH', 'UC_READ_PARENT', 'UC_READ_PARENT_CHANGED', 'UC_READ_PARENT_RACE', 'UC_READ_PATH', 'UC_READ_REPLACED', 'UC_RELEASE_CONSTANTS', 'UC_RESTORE_ORIGIN', 'UC_RESTORE_PROJECT', 'UC_ROW', 'UC_RUNTIME_BYTES', 'UC_RUNTIME_CONFIG', 'UC_RUNTIME_INVENTORY', 'UC_RUNTIME_LOCATION', 'UC_RUNTIME_PROJECT', 'UC_RUNTIME_VERSION', 'UC_SCAN_CHANGED', 'UC_SCAN_FILE_CHANGED', 'UC_SCHEMA', 'UC_SDK_MISSING', 'UC_SDK_VERSION', 'UC_SEAL', 'UC_SIGNATURE', 'UC_SOURCE_INVENTORY', 'UC_SOURCE_MEMBERS', 'UC_SOURCE_PATH', 'UC_SOURCE_PIN', 'UC_SPAN', 'UC_SUMMARY_BUDGET', 'UC_TOTAL_BUDGET', 'UC_TRACKED', 'UC_TUNIT_VERSION', 'UC_TYPE', 'UC_UID', 'UC_UNEXPANDED_IMPORT', 'UC_UNSTABLE'))
+
+
+def public_rejections(errors):
+    """Only finite reviewed codes and counts; private graph stays authoritative."""
+    queue=list(errors);seen=set();codes=set();unknown=0
+    while queue:
+        error=queue.pop()
+        if not isinstance(error,BaseException) or id(error) in seen:continue
+        seen.add(id(error))
+        if type(error) is Rejected and type(error.code) is str and error.code in PUBLIC_REJECTION_CODES:
+            codes.add(error.code)
+        elif not isinstance(error,BaseExceptionGroup):unknown+=1
+        if isinstance(error,BaseExceptionGroup):queue.extend(error.exceptions)
+        if error.__cause__ is not None:queue.append(error.__cause__)
+        if error.__context__ is not None:queue.append(error.__context__)
+    return {"codes":sorted(codes),"uniqueExceptionNodes":len(seen),"unclassifiedExceptionNodes":unknown}
+
+
+def metadata_facts(root, name, value, catalog):
+    """Diagnostic only. Never validate/relax input or export arbitrary names.
+
+    Returned labels are literals or the already pinned original project path.
+    Values from native metadata appear only as booleans, cardinalities or hashes.
+    """
+    require(name in catalog['projectMetadata'],'UC_GRAPH')
+    properties=value.get('Properties',{}) if type(value) is dict else {}
+    items=value.get('Items',{}) if type(value) is dict else {}
+    properties=properties if type(properties) is dict else {}
+    items=items if type(items) is dict else {}
+    expected=catalog['projectMetadata'][name]
+    expected_properties={'MSBuildProjectFullPath':str(root/name),'Configuration':'Release',
+        'TargetFramework':expected['targetFramework'],'AssemblyName':expected['assemblyName'],
+        'TargetPath':str(root/expected['output'])}
+    facts={'knownProject':name,'properties':{key:{'present':key in properties,'equal':properties.get(key)==target,
+        'actualSHA256':digest(properties.get(key))} for key,target in expected_properties.items()}}
+    constants=properties.get('DefineConstants')
+    actual_constants={part for part in constants.split(';') if part} if type(constants) is str else set()
+    required=set(expected['requiredConstants'])
+    facts['constants']={'string':type(constants) is str,'count':len(actual_constants),
+        'requiredMissingCount':len(required-actual_constants),'hasDebug': 'DEBUG' in actual_constants,
+        'actualSHA256':digest(constants),'sortedSetSHA256':digest(sorted(actual_constants))}
+    facts['publishAot']={'present':'PublishAot' in properties,'normal':type(properties.get('PublishAot')) is str and properties['PublishAot'].lower() in ('','false'), 'actualSHA256':digest(properties.get('PublishAot'))}
+    for kind,expect in [('ProjectReference',{str(root/p) for p in expected['references']}),
+                         ('Compile',{str(root/p) for p in catalog['unitSources']+catalog['linkedSources']} if name==catalog['project'] else None)]:
+        rows=items.get(kind)
+        paths=[row.get('FullPath') for row in rows if type(row) is dict] if type(rows) is list else []
+        strings=[p for p in paths if type(p) is str];actual=set(strings)
+        fact={'list':type(rows) is list,'rowCount':len(rows) if type(rows) is list else None,
+            'pathStringCount':len(strings),'uniquePathCount':len(actual),'duplicatePathCount':len(strings)-len(actual),
+            'actualPathsSHA256':digest(sorted(actual))}
+        if expect is not None:fact.update(expectedCount=len(expect),missingCount=len(expect-actual),extraCount=len(actual-expect))
+        facts[kind]=fact
+    imports=properties.get('MSBuildAllProjects')
+    facts['imports']={'string':type(imports) is str,'count':len([p for p in imports.split(';') if p]) if type(imports) is str else None,'actualSHA256':digest(imports)}
+    return facts
