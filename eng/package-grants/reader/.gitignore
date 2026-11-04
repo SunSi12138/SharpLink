@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+.cache/
+.test-output/
+core
+core.*
