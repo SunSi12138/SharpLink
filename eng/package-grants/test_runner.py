@@ -27,6 +27,14 @@ class RunnerTests(unittest.TestCase):
                 InternalsVisibleTo=expected['internalsVisibleTo'][:], IgnoresAccessChecksTo=[]))
         self.inventory = dict(SchemaVersion=1, Assemblies=self.rows)
 
+    def test_cleanup_classification_never_echoes_raw_messages(self):
+        outcome=dict(cleanupErrors=['Owned processes remained after command exit/deadline','private arbitrary detail'],
+                     remainingOwned={'123': ['private arguments']})
+        summary=r.cleanup_classification(outcome)
+        self.assertEqual(dict(ownedProcessesAfterExitCount=1,otherCleanupErrorCount=1,remainingOwnedCount=1),summary)
+        self.assertNotIn('private',json.dumps(summary))
+        self.assertEqual(None,r.cleanup_classification({})['remainingOwnedCount'])
+
     def test_accept_exact_grant_sets(self):
         self.assertEqual(10, len(r.validate_inventory(self.inventory, self.paths)))
 
