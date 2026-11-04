@@ -1,0 +1,27 @@
+{
+  "targetSourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "directions": 6,
+  "axes": 48,
+  "states": {
+    "observed": 18,
+    "partial": 28,
+    "not-run": 2
+  },
+  "currentPassAssertions": 0,
+  "ledgerTests": 38,
+  "fieldShapeMutations": 152,
+  "sourceCheckerTests": 2,
+  "sourceFiles": 7,
+  "qualification": "Local offline structural and static-source checks only. Not semantic, current-head CI or performance acceptance.",
+  "files": {
+    "REPORT.md": "d3d1eedc7fd48d7c5415453b187039fb0b65d9d409960e2c98d7f68e94c37706",
+    "ledger.json": "87d3af6e10cc468259e11e2c22c16a5ff4f015958ba8b001fe3a7e5cce7c0421",
+    "validator.py": "e508738d0a8ddc3d4b74f0d2fbefd95d79624113007a69839fa00eeae22d597b",
+    "test_validator.py": "72cf2ea1c38ac918ba4d614f82ea892d9dbc733a709e83162508b0ec89060388",
+    "source-snapshot.json": "3669128322d23cca364f9faa48140a04ba4b09677ec474127aa642b6fbe85540",
+    "check_source.py": "f6cacb7b9444c7975c87a9f6f3de79e23ef0fde9b122170c148c2b8bbfe81123",
+    "test_source.py": "9ca26bc5fd451a916031eabb3560e8d7e48fe9671df49e28d4fd8f38f0126049",
+    "README.md": "799e68f495d5e16f5b101b37e6a26407216e83442677bcf52bf6c9135d6ac40e",
+    "PROVENANCE.json": "46c2176398498d2e3791487ed07db3f596eb24dc8c7ce6dd81369813eded3f78"
+  }
+}
