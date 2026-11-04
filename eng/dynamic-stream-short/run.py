@@ -21,7 +21,7 @@ LIMITS=(('git-head',10),('git-tree',10),('sdk-version',30),('restore',600),('bui
         ('consumer-break',150),('normal',150),('cancellation-mid-stream',150))
 
 
-FIXED_REASONS=frozenset(('Ambiguous instrumentation anchor', 'Checkout has untracked source', 'Command directory replaced', 'Command output replaced', 'Discovery FQN/signature', 'Discovery five-mode bijection', 'Discovery parameter identity', 'Discovery schema', 'Discovery source span', 'Duplicate JSON key', 'Empty Git tree', 'Evidence changed while reading', 'Evidence root identity changed', 'Exact main preimage mismatch', 'Expected exact five source arguments', 'Final receipt identity changed', 'Finite budget drift', 'Git executable flag mismatch', 'Git source bytes mismatch', 'Insufficient owned command budget', 'Invalid pidfd readiness', 'JUnit counts', 'JUnit identity/result', 'JUnit metadata', 'JUnit singleton', 'JUnit suites', 'Linux pidfd support required', 'Linux-only diagnostic', 'Malformed stage record', 'Missing Git source', 'Missing selected SDK host', 'Missing selected cases', 'Missing/duplicate actual UID', 'Native actual UID identity', 'Native assembly/version', 'Native class', 'Native duration', 'Native generation', 'Native groups', 'Native non-PASS or retry', 'Native runtime identity', 'Native schema', 'Native singleton', 'Native source span', 'New stage source already exists', 'Nonordinary Git source entry', 'Nonordinary directory', 'Nonordinary evidence file', 'Nonordinary evidence root', 'Nonordinary file', 'Nonordinary inherited stage descriptor', 'Nonordinary original stage receipt', 'Nonordinary/oversized evidence', 'Nonpositive deadline', 'Not singleton PASS', 'Original last-stage receipt replaced', 'Original stage receipt replaced', 'Output directory is not ordinary', 'Oversized stage log', 'Payload changed', 'Payload pin mismatch', 'Pipe path budget', 'Pipe retained entries', 'Prior evidence changed', 'Prior stage evidence changed', 'Readonly cache changed', 'Readonly checkout/output changed', 'Receipt write made no progress', 'Relative selected root', 'SDK host changed', 'Stage GC/terminal sequence', 'Stage ownership prefix', 'Supervisor already has unrelated children', 'Symlink/special root ancestor', 'Total diagnostic deadline', 'Tracked source changed', 'Truncated complete stage record', 'Unexpected SDK band', 'Unexpected actual package identities', 'Unexpected checkout output', 'Unexpected child signal disposition', 'Unexpected instrumentation postimage', 'Unexpected owner error collection', 'Unexpected owner exit type', 'Unexpected owner failure flags', 'Unexpected owner failure stage', 'Unexpected owner failure type', 'Unexpected owner remaining state', 'Unexpected report publication set', 'Unexpected session errors', 'Unknown stage or time regression', 'Unqualified command receipt', 'Unsafe JUnit', 'Unsafe receipt name', 'Wrong main HEAD'))
+FIXED_REASONS=frozenset(('Discovery results must be outside sealed checkout', 'Ambiguous instrumentation anchor', 'Checkout has untracked source', 'Command directory replaced', 'Command output replaced', 'Discovery FQN/signature', 'Discovery five-mode bijection', 'Discovery parameter identity', 'Discovery schema', 'Discovery source span', 'Duplicate JSON key', 'Empty Git tree', 'Evidence changed while reading', 'Evidence root identity changed', 'Exact main preimage mismatch', 'Expected exact five source arguments', 'Final receipt identity changed', 'Finite budget drift', 'Git executable flag mismatch', 'Git source bytes mismatch', 'Insufficient owned command budget', 'Invalid pidfd readiness', 'JUnit counts', 'JUnit identity/result', 'JUnit metadata', 'JUnit singleton', 'JUnit suites', 'Linux pidfd support required', 'Linux-only diagnostic', 'Malformed stage record', 'Missing Git source', 'Missing selected SDK host', 'Missing selected cases', 'Missing/duplicate actual UID', 'Native actual UID identity', 'Native assembly/version', 'Native class', 'Native duration', 'Native generation', 'Native groups', 'Native non-PASS or retry', 'Native runtime identity', 'Native schema', 'Native singleton', 'Native source span', 'New stage source already exists', 'Nonordinary Git source entry', 'Nonordinary directory', 'Nonordinary evidence file', 'Nonordinary evidence root', 'Nonordinary file', 'Nonordinary inherited stage descriptor', 'Nonordinary original stage receipt', 'Nonordinary/oversized evidence', 'Nonpositive deadline', 'Not singleton PASS', 'Original last-stage receipt replaced', 'Original stage receipt replaced', 'Output directory is not ordinary', 'Oversized stage log', 'Payload changed', 'Payload pin mismatch', 'Pipe path budget', 'Pipe retained entries', 'Prior evidence changed', 'Prior stage evidence changed', 'Readonly cache changed', 'Readonly checkout/output changed', 'Receipt write made no progress', 'Relative selected root', 'SDK host changed', 'Stage GC/terminal sequence', 'Stage ownership prefix', 'Supervisor already has unrelated children', 'Symlink/special root ancestor', 'Total diagnostic deadline', 'Tracked source changed', 'Truncated complete stage record', 'Unexpected SDK band', 'Unexpected actual package identities', 'Unexpected checkout output', 'Unexpected child signal disposition', 'Unexpected instrumentation postimage', 'Unexpected owner error collection', 'Unexpected owner exit type', 'Unexpected owner failure flags', 'Unexpected owner failure stage', 'Unexpected owner failure type', 'Unexpected owner remaining state', 'Unexpected report publication set', 'Unexpected session errors', 'Unknown stage or time regression', 'Unqualified command receipt', 'Unsafe JUnit', 'Unsafe receipt name', 'Wrong main HEAD'))
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -235,6 +235,18 @@ def emit_failure_diagnostic(errors,context,snapshots,known):
     except BaseException as reporting:errors.append(reporting)
 
 
+def prepare_discovery_results(work,source,roots):
+    directory_identity(work,roots[work]);directory_identity(source,roots[source])
+    output=work/'discovery-results'
+    r.require(not output.is_relative_to(source),'Discovery results must be outside sealed checkout')
+    output.mkdir();roots[output]=directory_identity(output)
+    return output
+
+
+def discovery_args(dotnet,dll,results):
+    return [dotnet,dll,'--list-tests','json','--treenode-filter',METHOD_FILTER,'--results-directory',results]
+
+
 def main(root):
     r.require(sys.platform=='linux','Linux-only diagnostic')
     kit=Path(__file__).absolute().parent;root=trusted_path(root.absolute())
@@ -323,7 +335,9 @@ def main(root):
         dll=project.parent/'bin/Release/net10.0/SharpLink.IntegrationTests.dll';binary=sha(dll)
         context['phase']='seal-built'
         source_seal=snapshot(root,checkout=True);cache_seal=snapshot(work/'packages')
-        p=run('discovery',[dotnet,dll,'--list-tests','json','--treenode-filter',METHOD_FILTER],120)
+        discovery_results=prepare_discovery_results(work,root,roots)
+        p=run('discovery',discovery_args(dotnet,dll,discovery_results),120)
+        completed.append((discovery_results,snapshot(discovery_results)))
         context['phase']='discovery-schema'
         ledger=r.discovery(r.parse_json(read_regular(p).decode('utf-8-sig')),r.read_json(kit/'SOURCE.json')['span'])
         print(json.dumps({'stage':'identity','base':prepare.BASE,'sdk':sdk,'binarySHA256':binary,'discovered':5,'selected':3,'ledgerSHA256':r.digest(ledger)}),flush=True)

@@ -441,6 +441,43 @@ class FailureDiagnosticsControls(unittest.TestCase):
         out=run.failure_diagnostic(errors,self.context(),[],set());self.assertEqual(len(out['leaves']),8);self.assertTrue(out['leavesTruncated']);self.assertNotIn('SECRET',json.dumps(out))
 
 
+class DiscoveryOutputControls(unittest.TestCase):
+    def test_exact_discovery_argv_only_new_output_option(self):
+        args=run.discovery_args(Path('/dotnet'),Path('/dll'),Path('/private/discovery-results'))
+        self.assertEqual(args[:-2],[Path('/dotnet'),Path('/dll'),'--list-tests','json','--treenode-filter',run.METHOD_FILTER])
+        self.assertEqual(args[-2:],['--results-directory',Path('/private/discovery-results')]);self.assertEqual(args.count('--results-directory'),1)
+    def test_owned_output_outside_checkout_preserves_source_seal(self):
+        with tempfile.TemporaryDirectory() as t:
+            source=Path(t)/'source';source.mkdir();work=Path(t)/'work';work.mkdir();roots={p:run.directory_identity(p) for p in (work,source)};before=run.snapshot(source)
+            output=run.prepare_discovery_results(work,source,roots)
+            self.assertFalse(output.is_relative_to(source));self.assertEqual(run.snapshot(source),before)
+            self.assertEqual(roots[output],run.directory_identity(output))
+    def test_original_bin_testresults_still_rejected(self):
+        with tempfile.TemporaryDirectory() as t:
+            source=Path(t);(source/'test/SharpLink.IntegrationTests/bin/Release/net10.0').mkdir(parents=True);before=run.snapshot(source)
+            (source/'test/SharpLink.IntegrationTests/bin/Release/net10.0/TestResults').mkdir()
+            with self.assertRaises(ValueError):run.require_snapshot(run.snapshot(source),before,'Readonly checkout/output changed','checkout',[])
+    def test_output_under_checkout_is_rejected(self):
+        with tempfile.TemporaryDirectory() as t:
+            source=Path(t);work=source/'work';work.mkdir();roots={p:run.directory_identity(p) for p in (source,work)}
+            with self.assertRaises(ValueError):run.prepare_discovery_results(work,source,roots)
+            self.assertFalse((work/'discovery-results').exists())
+    def test_existing_or_symlink_output_is_rejected(self):
+        for link in (False,True):
+            with self.subTest(link=link),tempfile.TemporaryDirectory() as t:
+                source=Path(t)/'source';source.mkdir();work=Path(t)/'work';work.mkdir();roots={p:run.directory_identity(p) for p in (source,work)}
+                output=work/'discovery-results'
+                if link:output.symlink_to(source,target_is_directory=True)
+                else:output.mkdir()
+                with self.assertRaises(FileExistsError):run.prepare_discovery_results(work,source,roots)
+    def test_completed_output_mutation_rejected(self):
+        with tempfile.TemporaryDirectory() as t:
+            output=Path(t);sealed=run.snapshot(output);(output/'extra').write_bytes(b'x')
+            with self.assertRaises(ValueError):run.require_snapshot(run.snapshot(output),sealed,'Prior evidence changed','prior-evidence',[])
+    def test_added_default_directory_hash_is_exact(self):
+        self.assertEqual(hashlib.sha256(b'test/SharpLink.IntegrationTests/bin/Release/net10.0/TestResults').hexdigest(),'cf1fbd93720962dd9c8ed79976f9839e65c3ce21cb2268e89302d75d9941912d')
+
+
 class ProbeControls(unittest.TestCase):
     def outcomes(self):
         def row(timeout):return dict(remainingOwned={},exitCode=-15 if timeout else 0,cancelled=False,reportingErrors=[],cleanupErrors=['OwnedProcessesAfterCommand'],errors=['TimeoutError'] if timeout else [],timedOut=timeout)
