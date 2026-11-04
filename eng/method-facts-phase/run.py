@@ -12,7 +12,7 @@ import time
 
 M0 = '37548b7a35d50803212d2b0a637306636cc0a1d3'
 TOOL_BASE = '47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f'
-FROZEN_TOOL_FILES = {'Program.cs': '75ce82ff3ccb3dc14ab62802a14a68f894e98708696ab93c7865fedb82fd1413', 'OriginalService.cs': 'ea148d46c46f5c3e581921a0bb6764984ce03efc22ea1444ea7e67cfe6492963', 'CausalProbe.csproj': 'f3bedb4a15496b2030e7a05cc95795fc3260028355411e96bb7e49e0478d9f39', 'prepare_controlled.py': '2da0f9af8e4d88115142a2e668b561718c5c60e107cdfd192bcbea98d74fbedf', 'runtime_contract.py': '960dc0a2acee734bfb827d69f40302c280451cd1c06923a4ddf8566483089d11', 'spec.py': '46935b5eaa13417d745e53456e293e3a00e57db489ca4f8dae5c73fd6551307b'}
+FROZEN_TOOL_FILES = {'Program.cs': '65c05541b84d35004e4794962e7ad57b2461654ee7e071074da9f11fd4aa5939', 'OriginalService.cs': 'd215ee91f51acc3490d20579107e62747903a708e8b74bda2dd52d6c85a657db', 'CausalProbe.csproj': '97de399fbba67036f4aee9a4565702ff9230230616a8bc217263c6b7927057dd', 'prepare_controlled.py': 'afce6cf79c6458297089a201f6c714d7383464276213fbf20c41428a42eddea0', 'runtime_contract.py': '1328037bcfd23a60384d4325b6e25ef22bd5c5e5c439d0af9239dbe2366efcf9', 'spec.py': 'dafe9ffbb5edfb0ddf73457742e10dc29d67300fdfb275435ea7f9d5a1c800e3'}
 TRACE_VERSION = '10.0.750501'
 PROVIDERS = 'Microsoft-Windows-DotNETRuntime:0x1000010019:5,SharpLink-MethodFacts-Phases:0xffffffffffffffff:5'
 
