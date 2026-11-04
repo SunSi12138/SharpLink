@@ -1,0 +1,34 @@
+name: Validation 805 packaged forwarding hop
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/805-forwarder-probe-20261104']
+    paths: ['.github/workflows/validation-805-forwarder-probe.yml']
+concurrency:
+  group: validation-805-forwarder-probe-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  frozen-package-forwarding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact validation tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: tools
+          persist-credentials: false
+      - name: Checkout frozen candidate independently
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 8a13b12e799bb70a989eacac0c1b4cea22ab80ae
+          path: source
+          persist-credentials: false
+      - name: Setup current production SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Test validator then build and validate explicit forwarding without RPC
+        run: |
+          python3 tools/eng/forwarder-probe/test_runner.py
+          python3 tools/eng/forwarder-probe/run.py source
