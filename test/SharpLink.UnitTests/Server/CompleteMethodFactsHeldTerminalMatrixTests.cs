@@ -118,10 +118,19 @@ public partial class SharpLinkServerInvocationTests
                 var remaining = read.Buffer;
                 var terminals = 0;
                 var acknowledgements = 0;
+                var accepted = 0;
                 while (ProtocolV2FrameParser.TryReadFrame(ref remaining, harness.Session.RuntimeContext.Protocol,
                            out var header, out var payload))
                 {
                     if (header.RequestId != 7991) continue;
+                    if (header.Type == ProtocolV2FrameType.RequestAccepted)
+                    {
+                        accepted++;
+                        Ensure(kind == RpcMethodKind.DuplexStreaming && terminals == 0 && acknowledgements == 0 &&
+                               header.Flags == ProtocolV2FrameFlags.None && payload.IsEmpty,
+                            "duplex publishes its empty client-route acceptance before any terminal");
+                        continue;
+                    }
                     if (header.Type == ProtocolV2FrameType.Response)
                     {
                         acknowledgements++;
@@ -130,7 +139,7 @@ public partial class SharpLinkServerInvocationTests
                         continue;
                     }
                     Ensure(header.Type == ProtocolV2FrameType.StreamComplete,
-                        "the empty stream emits only its terminal and the normal dispatch acknowledgement");
+                        $"unexpected request frame {header.Type}; only declared acceptance, terminal and acknowledgement are valid");
                     terminals++;
                     Ensure(BinaryPrimitives.ReadUInt16LittleEndian(payload.ToArray()) == 0,
                         "the terminal belongs to the original outbound stream");
@@ -143,7 +152,8 @@ public partial class SharpLinkServerInvocationTests
                         Ensure(error.Code == SharpLinkErrorCode.Internal, "wire terminal preserves the mapped error code");
                     }
                 }
-                Ensure(remaining.IsEmpty && terminals == 1 && acknowledgements == 1,
+                Ensure(remaining.IsEmpty && terminals == 1 && acknowledgements == 1 &&
+                       accepted == (kind == RpcMethodKind.DuplexStreaming ? 1 : 0),
                     "the completed request emits exactly one stream terminal and one normal dispatch acknowledgement");
             }
             finally { output.Reader.AdvanceTo(read.Buffer.End); }
