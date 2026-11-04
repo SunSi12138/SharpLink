@@ -35,9 +35,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "BUILD_DOTNET=$(command -v dotnet)" >> "$GITHUB_ENV"
+          echo "TRACE_DOTNET_ROOT=$(dirname "$(readlink -f "$(command -v dotnet)")")" >> "$GITHUB_ENV"
+          echo "BUILD_DOTNET=$RUNNER_TEMP/method-facts-build-sdk/dotnet" >> "$GITHUB_ENV"
           mkdir "$RUNNER_TEMP/method-facts-phase-runtime"
           curl --fail --silent --show-error --location https://dot.net/v1/dotnet-install.sh --output "$RUNNER_TEMP/dotnet-install-phase.sh"
+          bash "$RUNNER_TEMP/dotnet-install-phase.sh" --version 10.0.102 --architecture x64 --install-dir "$RUNNER_TEMP/method-facts-build-sdk" --no-path > "$RUNNER_TEMP/build-sdk-install.log" 2>&1
           for framework in dotnet aspnetcore; do
             bash "$RUNNER_TEMP/dotnet-install-phase.sh" --runtime "$framework" --version 10.0.11 --architecture x64 --install-dir "$RUNNER_TEMP/method-facts-phase-runtime" --no-path > "$RUNNER_TEMP/runtime-$framework.log" 2>&1
           done
