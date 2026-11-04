@@ -1,4 +1,5 @@
 name: Validation 805 package assembly grants
+# Revision 2: fixture builds explicitly disable reusable compiler/MSBuild servers.
 permissions:
   contents: read
 on:
