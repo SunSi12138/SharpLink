@@ -5,7 +5,8 @@
 ## 本地开发
 
 ### 环境要求
-- .NET SDK 10.0（`global.json` 固定当前 feature band）
+- .NET SDK 10.0.114 或同一 feature band 的更新稳定补丁（`global.json` 固定当前 feature band）
+- 构建 SDK 的选择不代表部署已更新。受影响的 .NET 10 应用应实际使用 10.0.14 或更新的受支持运行时，并在更新后重启。Self-contained 和 NativeAOT 应用须使用已修补的运行时/编译工具包重新构建和部署；移动端及 WebAssembly 还须核实实际 workload/runtime pack。参见 [.NET 10.0.14 安全更新说明](https://github.com/dotnet/core/blob/main/release-notes/10.0/10.0.14/10.0.14.md)。
 - 建议使用最新稳定版 Rider / VS Code / Visual Studio
 
 ### 克隆与初始化

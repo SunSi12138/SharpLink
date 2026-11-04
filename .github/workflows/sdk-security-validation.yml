@@ -1,0 +1,827 @@
+name: SDK Security Validation
+'on':
+  push:
+    branches:
+    - validation/sdk-security-10.0.114-20261104
+permissions:
+  contents: read
+jobs:
+  fast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_ROLL_FORWARD: LatestPatch
+      TMPDIR: ${{ runner.temp }}
+    steps:
+    - name: Checkout exact validation commit
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Setup patched SDK
+      uses: ./.github/actions/setup-dotnet
+    - name: Verify exact patched SDK and bundled runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY_IDENTITY'
+        import json,pathlib
+        p=pathlib.Path('global.json'); d=json.loads(p.read_text())
+        assert d['sdk']['version']=='10.0.114'
+        d['sdk']['rollForward']='disable'
+        p.write_text(json.dumps(d,indent=2)+'\n')
+        PY_IDENTITY
+        cp global.json "$RUNNER_TEMP/global.json"
+        [[ "$(dotnet --version)" == "10.0.114" ]]
+        [[ "$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$DOTNET_ROOT/sdk/10.0.114/Microsoft.NETCoreSdk.BundledVersions.props" | head -n 1)" == "10.0.14" ]]
+        dotnet --list-runtimes | grep -Fq 'Microsoft.NETCore.App 10.0.14 ['
+        echo "Validated SDK 10.0.114 / bundled runtime 10.0.14"
+    - name: Restore
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-01.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-01.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore Sharplink.slnx
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-01"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-01; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Production Project Reference Boundary Guard
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-02.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-02.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        python3 eng/check-project-reference-boundaries.py
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-02"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-02; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify Formatting
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-03.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-03.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-03"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-03; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Maintainability Debt Gate Tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-04.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-04.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        python3 eng/test-verify-maintainability.py
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-04"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-04; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Maintainability Debt Gate
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-05.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-05.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        bash eng/check-maintainability.sh
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-05"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-05; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Build Release
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-06.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-06.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-06"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-06; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify Generated Assemblies Do Not Reference Runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-07.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-07.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./eng/verify-generated-assembly-dependencies.sh
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-07"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-07; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Unit Tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-08.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-08.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-08"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-08; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Generator Tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-09.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-09.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-09"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-09; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Load Test Tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-fast-10.log"
+        script="$RUNNER_TEMP/sdk-validation-fast-10.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS fast-10"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED fast-10; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_ROLL_FORWARD: LatestPatch
+      TMPDIR: ${{ runner.temp }}
+    steps:
+    - name: Checkout exact validation commit
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Setup patched SDK
+      uses: ./.github/actions/setup-dotnet
+    - name: Verify exact patched SDK and bundled runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY_IDENTITY'
+        import json,pathlib
+        p=pathlib.Path('global.json'); d=json.loads(p.read_text())
+        assert d['sdk']['version']=='10.0.114'
+        d['sdk']['rollForward']='disable'
+        p.write_text(json.dumps(d,indent=2)+'\n')
+        PY_IDENTITY
+        cp global.json "$RUNNER_TEMP/global.json"
+        [[ "$(dotnet --version)" == "10.0.114" ]]
+        [[ "$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$DOTNET_ROOT/sdk/10.0.114/Microsoft.NETCoreSdk.BundledVersions.props" | head -n 1)" == "10.0.14" ]]
+        dotnet --list-runtimes | grep -Fq 'Microsoft.NETCore.App 10.0.14 ['
+        echo "Validated SDK 10.0.114 / bundled runtime 10.0.14"
+    - name: Restore
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-01.log"
+        script="$RUNNER_TEMP/sdk-validation-package-01.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore Sharplink.slnx
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-01"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-01; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Build Release
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-02.log"
+        script="$RUNNER_TEMP/sdk-validation-package-02.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-02"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-02; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run ProjectReference trim-only UnsafeBlit smoke
+      env:
+        SHARPLINK_TRIM_RID: linux-x64
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-03.log"
+        script="$RUNNER_TEMP/sdk-validation-package-03.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        bash ./eng/run-project-reference-trim-smoke.sh
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-03"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-03; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run isolated NativeAOT smoke before packaging
+      env:
+        SHARPLINK_AOT_RID: linux-x64
+        SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/pr-package-aot-smoke
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-04.log"
+        script="$RUNNER_TEMP/sdk-validation-package-04.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./eng/run-shared-memory-aot-process-smoke.sh
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-04"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-04; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Pack
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-05.log"
+        script="$RUNNER_TEMP/sdk-validation-package-05.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-05"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-05; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify SDK Contains Generator
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-06.log"
+        script="$RUNNER_TEMP/sdk-validation-package-06.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        package_listing="$(mktemp "$RUNNER_TEMP/sharplink-sdk-package-list.XXXXXX")"
+        trap 'rm -f "$package_listing"' EXIT
+        unzip -l "artifacts/nuget"/SharpLink.Sdk.*.nupkg > "$package_listing"
+        grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll' "$package_listing"
+
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-06"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-06; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify package metadata, XML documentation, and symbols
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-07.log"
+        script="$RUNNER_TEMP/sdk-validation-package-07.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./eng/verify-packages.sh "artifacts/nuget"
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-07"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-07; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify Hosting direct Runtime dependency
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-08.log"
+        script="$RUNNER_TEMP/sdk-validation-package-08.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./eng/verify-hosting-package-dependency.sh "artifacts/nuget"
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-08"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-08; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify Abstractions has no DI dependency
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-09.log"
+        script="$RUNNER_TEMP/sdk-validation-package-09.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./eng/verify-abstractions-package-dependency.sh "artifacts/nuget"
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-09"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-09; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Restore Package Smoke
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-10.log"
+        script="$RUNNER_TEMP/sdk-validation-package-10.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-10"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-10; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run Package Smoke
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-11.log"
+        script="$RUNNER_TEMP/sdk-validation-package-11.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-11"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-11; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Restore packaged trim-only consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-trim-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-12.log"
+        script="$RUNNER_TEMP/sdk-validation-package-12.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore test/SharpLink.PackageTrimSmoke/SharpLink.PackageTrimSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config -r linux-x64 /p:SelfContained=true
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-12"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-12; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Publish packaged trim-only consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-trim-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-13.log"
+        script="$RUNNER_TEMP/sdk-validation-package-13.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet publish test/SharpLink.PackageTrimSmoke/SharpLink.PackageTrimSmoke.csproj --no-restore -c Release -r linux-x64 --self-contained true -o artifacts/package-trim-smoke /p:TrimmerSingleWarn=false
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-13"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-13; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run packaged trim-only consumer
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-14.log"
+        script="$RUNNER_TEMP/sdk-validation-package-14.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./artifacts/package-trim-smoke/SharpLink.PackageTrimSmoke
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-14"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-14; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Restore late-set trimming configuration consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-late-trim-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-15.log"
+        script="$RUNNER_TEMP/sdk-validation-package-15.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-15"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-15; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Verify late-set PackageReference trimming configuration
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-late-trim-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-16.log"
+        script="$RUNNER_TEMP/sdk-validation-package-16.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet msbuild test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj -t:VerifySharpLinkLateTrimConfiguration -v:minimal
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-16"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-16; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Restore packaged partial-trim consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-partial-trim-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-17.log"
+        script="$RUNNER_TEMP/sdk-validation-package-17.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore test/SharpLink.PackagePartialTrimSmoke/SharpLink.PackagePartialTrimSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config -r linux-x64 /p:SelfContained=true
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-17"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-17; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Publish packaged partial-trim consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-partial-trim-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-18.log"
+        script="$RUNNER_TEMP/sdk-validation-package-18.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet publish test/SharpLink.PackagePartialTrimSmoke/SharpLink.PackagePartialTrimSmoke.csproj --no-restore -c Release -r linux-x64 --self-contained true -o artifacts/package-partial-trim-smoke /p:TrimmerSingleWarn=false
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-18"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-18; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run packaged partial-trim consumer
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-19.log"
+        script="$RUNNER_TEMP/sdk-validation-package-19.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./artifacts/package-partial-trim-smoke/SharpLink.PackagePartialTrimSmoke
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-19"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-19; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Restore packaged NativeAOT consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-aot-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-20.log"
+        script="$RUNNER_TEMP/sdk-validation-package-20.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet restore test/SharpLink.PackageAotSmoke/SharpLink.PackageAotSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config -r linux-x64 /p:SelfContained=true
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-20"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-20; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Publish packaged NativeAOT consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-aot-smoke
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-21.log"
+        script="$RUNNER_TEMP/sdk-validation-package-21.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        dotnet publish test/SharpLink.PackageAotSmoke/SharpLink.PackageAotSmoke.csproj --no-restore -c Release -r linux-x64 --self-contained true -o artifacts/package-aot-smoke /p:TrimmerSingleWarn=false
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-21"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-21; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run packaged NativeAOT consumer
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-22.log"
+        script="$RUNNER_TEMP/sdk-validation-package-22.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./artifacts/package-aot-smoke/SharpLink.PackageAotSmoke
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-22"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-22; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi
+    - name: Run Quick Start Package Smoke
+      shell: bash
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/sdk-validation-package-23.log"
+        script="$RUNNER_TEMP/sdk-validation-package-23.sh"
+        cat > "$script" <<'SDK_VALIDATION_SCRIPT'
+        set -euo pipefail
+        ./eng/run-quickstart-package-smoke.sh artifacts/nuget
+        SDK_VALIDATION_SCRIPT
+        if bash "$script" >"$log" 2>&1; then
+          echo "SDK_VALIDATION_STEP_PASS package-23"
+        else
+          echo "::error::SDK_VALIDATION_STEP_FAILED package-23; raw output retained only on disposable runner."
+          python3 - "$log" <<'PY_DIAGNOSTICS'
+        import pathlib,re,sys
+        text=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+        codes=sorted(set(re.findall(r'\b(?:CS|NU|NETSDK|MSB|IL|TUNIT)\d{3,5}\b',text)))
+        print('Diagnostic codes: '+(','.join(codes) if codes else 'none'))
+        PY_DIAGNOSTICS
+          exit 1
+        fi

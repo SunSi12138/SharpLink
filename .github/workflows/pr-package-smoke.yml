@@ -7,6 +7,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
+      - 'global.json'
+      - '.github/actions/setup-dotnet/**'
       - 'README.md'
       - 'samples/**'
       - '.github/actions/package-smoke/**'
