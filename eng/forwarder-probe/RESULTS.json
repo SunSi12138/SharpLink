@@ -1,0 +1,528 @@
+{
+  "packages": [
+    {
+      "assembly_path": "lib/net10.0/SharpLink.Abstractions.dll",
+      "assembly_sha256": "47f7cf34f76bb1c8f55f8b36899798381149f99ef3210bef5181e6c2336bdba1",
+      "id": "SharpLink.Abstractions",
+      "package_sha256": "45d0753ccc7344167bb7aee792f4f153e07eac16676e2578f5547f8945ee503d",
+      "repository_commit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "source": "frozen-local-build",
+      "version": "3.0.0"
+    },
+    {
+      "assembly_path": "lib/net10.0/SharpLink.Sdk.dll",
+      "assembly_sha256": "862b22c379caba0ac7b8fc484efd18c071e109844ae3c79a2a033f00083b68c4",
+      "id": "SharpLink.Sdk",
+      "package_sha256": "831fa2cb7cff2a15be1c28441f91831c519cc89be53e639369b672c37bdef25e",
+      "repository_commit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "source": "frozen-local-build",
+      "version": "3.0.0"
+    }
+  ],
+  "probe": {
+    "abstractions": {
+      "fullIdentity": "SharpLink.Abstractions, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "mvid": "268126d8-9442-4073-ad69-01def3f4b2bc",
+      "sha256": "47f7cf34f76bb1c8f55f8b36899798381149f99ef3210bef5181e6c2336bdba1"
+    },
+    "code": "Pass",
+    "evidenceScope": "ExplicitSdkQualifiedForwardingOnly",
+    "expectedForwarderCount": 20,
+    "historical203AbiProven": false,
+    "mode": "packaged-sdk-forwarding",
+    "ordinaryPackageReferenceConsumerProven": false,
+    "runtime": {
+      "contextAssemblyCount": 2,
+      "freshBoundedCollectibleContext": true,
+      "loadedOriginsVerified": true,
+      "metadataExact20": true,
+      "types": [
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.IService",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.IdempotentAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.NonCancellableAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.OnewayAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcCodecAdapterAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcCodecAdapterRegistrationAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcCodecRouteAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcCodecScope",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcContractAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcIgnoreAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcMemberAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcRequiredAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcSerializableAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcServiceAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.RpcUnionCaseAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.SharpLinkMetadata",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.SharpLinkRpcContractsAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.SharpLinkServiceLifetime",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        },
+        {
+          "assemblyGetTypeSameAsDirect": true,
+          "getForwardedTypesSameAsDirect": true,
+          "name": "SharpLink.Sdk.TimeoutAttribute",
+          "sdkQualifiedTypeGetTypeSameAsDirect": true
+        }
+      ]
+    },
+    "runtimeVersion": "10.0.14",
+    "schemaVersion": 1,
+    "sdk": {
+      "fullIdentity": "SharpLink.Sdk, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "mvid": "042ee775-d909-40d7-a656-06a3582b1a7e",
+      "sha256": "862b22c379caba0ac7b8fc484efd18c071e109844ae3c79a2a033f00083b68c4"
+    },
+    "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+    "success": true
+  },
+  "probeBinarySha256": "c19d9c2142fc3dfd1a68d23c816baa5710c89ed67fb5b3d3f8e5c5f6fae0d85e",
+  "probeSdk": {
+    "executable": "/usr/share/dotnet/dotnet",
+    "executableSha256": "db40da462b13ec4c07df7a75c4b0395223d360b8dc9a477d9e31fb71759b05f4",
+    "hostVersion": "10.0.14",
+    "installedRuntimes": [
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "8.0.6"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "8.0.22"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "8.0.33"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "9.0.6"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "9.0.22"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "10.0.8"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "10.0.11"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "10.0.14"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "8.0.6"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "8.0.22"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "8.0.33"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "9.0.6"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "9.0.22"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "10.0.8"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "10.0.11"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "10.0.14"
+      }
+    ],
+    "qualification": "Observed CLI selection/host/inventory, not proof of app runtime selection",
+    "sdkBasePath": "/usr/share/dotnet/sdk/10.0.114/",
+    "selectedSdkVersion": "10.0.114"
+  },
+  "probeSelfTests": {
+    "code": "Pass",
+    "evidenceScope": "ManufacturedMetadataFixturesNotHistoricalConsumer",
+    "mode": "synthetic-self-test",
+    "passed": 31,
+    "schemaVersion": 1,
+    "success": true,
+    "tests": [
+      {
+        "expectedCode": "Pass",
+        "name": "positive-exact20-all-three-runtime-resolution-paths",
+        "passed": true
+      },
+      {
+        "expectedCode": "Pass",
+        "name": "repeat-in-new-collectible-context",
+        "passed": true
+      },
+      {
+        "expectedCode": "FileHashMismatch",
+        "name": "sdk-hash-mismatch",
+        "passed": true
+      },
+      {
+        "expectedCode": "FileHashMismatch",
+        "name": "abstractions-hash-mismatch",
+        "passed": true
+      },
+      {
+        "expectedCode": "ExportedTypeCountMismatch",
+        "name": "missing-forwarder",
+        "passed": true
+      },
+      {
+        "expectedCode": "ExportedTypeCountMismatch",
+        "name": "extra-forwarder",
+        "passed": true
+      },
+      {
+        "expectedCode": "DuplicateExportedType",
+        "name": "duplicate-forwarder",
+        "passed": true
+      },
+      {
+        "expectedCode": "UnknownExportedType",
+        "name": "unknown-forwarder",
+        "passed": true
+      },
+      {
+        "expectedCode": "LocalSdkImpostor",
+        "name": "local-same-shape-impostor",
+        "passed": true
+      },
+      {
+        "expectedCode": "WrongDestinationIdentity",
+        "name": "wrong-destination-name",
+        "passed": true
+      },
+      {
+        "expectedCode": "WrongDestinationIdentity",
+        "name": "wrong-destination-version",
+        "passed": true
+      },
+      {
+        "expectedCode": "WrongDestinationIdentity",
+        "name": "wrong-destination-culture",
+        "passed": true
+      },
+      {
+        "expectedCode": "WrongDestinationIdentity",
+        "name": "wrong-destination-token",
+        "passed": true
+      },
+      {
+        "expectedCode": "NotAssemblyForwarder",
+        "name": "not-a-forwarder",
+        "passed": true
+      },
+      {
+        "expectedCode": "AssemblyIdentityMismatch",
+        "name": "wrong-sdk-assembly-version",
+        "passed": true
+      },
+      {
+        "expectedCode": "SourceVersionMismatch",
+        "name": "wrong-source-version",
+        "passed": true
+      },
+      {
+        "expectedCode": "MissingDestinationType",
+        "name": "missing-destination-type",
+        "passed": true
+      },
+      {
+        "expectedCode": "DestinationNotPublic",
+        "name": "nonpublic-destination-type",
+        "passed": true
+      },
+      {
+        "expectedCode": "InputNotFound",
+        "name": "missing-abstractions-dll",
+        "passed": true
+      },
+      {
+        "expectedCode": "InputNotFound",
+        "name": "missing-sdk-dll",
+        "passed": true
+      },
+      {
+        "expectedCode": "Pass",
+        "name": "valid-fixed-cli",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-empty",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-extra-argument",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-unknown-name",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-duplicate-name",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-nonhex-hash",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-relative-path",
+        "passed": true
+      },
+      {
+        "expectedCode": "InvalidArguments",
+        "name": "cli-selftest-extra-argument",
+        "passed": true
+      },
+      {
+        "expectedCode": "UnapprovedAssemblyResolution",
+        "name": "alc-rejects-probe-application-assembly",
+        "passed": true
+      },
+      {
+        "expectedCode": "UnapprovedAssemblyResolution",
+        "name": "alc-rejects-arbitrary-missing-dependency",
+        "passed": true
+      },
+      {
+        "expectedCode": "UnapprovedAssemblyResolution",
+        "name": "alc-rejects-mismatched-abstractions-identity",
+        "passed": true
+      }
+    ]
+  },
+  "producerSdk": {
+    "executable": "/usr/share/dotnet/dotnet",
+    "executableSha256": "db40da462b13ec4c07df7a75c4b0395223d360b8dc9a477d9e31fb71759b05f4",
+    "hostVersion": "10.0.14",
+    "installedRuntimes": [
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "8.0.6"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "8.0.22"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "8.0.33"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "9.0.6"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "9.0.22"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "10.0.8"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "10.0.11"
+      },
+      {
+        "name": "Microsoft.AspNetCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.AspNetCore.App",
+        "version": "10.0.14"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "8.0.6"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "8.0.22"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "8.0.33"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "9.0.6"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "9.0.22"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "10.0.8"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "10.0.11"
+      },
+      {
+        "name": "Microsoft.NETCore.App",
+        "path": "/usr/share/dotnet/shared/Microsoft.NETCore.App",
+        "version": "10.0.14"
+      }
+    ],
+    "qualification": "Observed CLI selection/host/inventory, not proof of app runtime selection",
+    "sdkBasePath": "/usr/share/dotnet/sdk/10.0.114/",
+    "selectedSdkVersion": "10.0.114"
+  },
+  "qualification": "Two actual-package explicit forwarding-hop identities only; not old consumer ABI, NuGet closure, RPC, Trim/AOT or security approval",
+  "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "sourceTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "toolsCommit": "e89bf38144a9145efed7fb794ff5be8c470c596e",
+  "runId": 41920333043,
+  "jobId": 126890827598,
+  "workflowConclusion": "success",
+  "completedAt": "2026-11-04T21:54:45Z"
+}
