@@ -1,0 +1,45 @@
+{
+  "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "sourceTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "version": "3.0.0",
+  "helpers": {
+    "eng/run-default-package-smoke.py": "c9c675069580ddd1f4219d1a176831e6d3ca9c8dbf63db98d099f4e27619358b",
+    "eng/package-smoke-process.py": "ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3",
+    "eng/verify-packages.sh": "fd8d6b199b78ee979555404941253568c3541bc2e4fb5d1c53cb906a9fea0293",
+    "eng/verify-package-identities.py": "cd5cbafe4e6ef2b022267ba0077b437df0ce5debca2f9911c264b28e544a621b",
+    "eng/compare-published-api.py": "ddd46a58790d7a39e2d201a6469133df1194e24dc706607d2e207b0271ece349",
+    "eng/verify-public-api.py": "a19b75454dbc7d367de01324e6cd3ec2ee71a17e10ff71d8994bbffbd4d0c0da",
+    "eng/public-api/3.0.0/SharpLink.Sdk.forwarders.txt": "b678367a9421a564697a1b74009d2ce2f604dcfd1d4c26729b41cc67a71ee056"
+  },
+  "projects": [
+    "SharpLink.Abstractions",
+    "SharpLink.Generator",
+    "SharpLink.Sdk"
+  ],
+  "packages": [
+    "SharpLink.Abstractions",
+    "SharpLink.Sdk"
+  ],
+  "forwardedNames": [
+    "SharpLink.Sdk.IService",
+    "SharpLink.Sdk.IdempotentAttribute",
+    "SharpLink.Sdk.NonCancellableAttribute",
+    "SharpLink.Sdk.OnewayAttribute",
+    "SharpLink.Sdk.RpcCodecAdapterAttribute",
+    "SharpLink.Sdk.RpcCodecAdapterRegistrationAttribute",
+    "SharpLink.Sdk.RpcCodecRouteAttribute",
+    "SharpLink.Sdk.RpcCodecScope",
+    "SharpLink.Sdk.RpcContractAttribute",
+    "SharpLink.Sdk.RpcIgnoreAttribute",
+    "SharpLink.Sdk.RpcMemberAttribute",
+    "SharpLink.Sdk.RpcRequiredAttribute",
+    "SharpLink.Sdk.RpcSerializableAttribute",
+    "SharpLink.Sdk.RpcServiceAttribute",
+    "SharpLink.Sdk.RpcUnionCaseAttribute",
+    "SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute",
+    "SharpLink.Sdk.SharpLinkMetadata",
+    "SharpLink.Sdk.SharpLinkRpcContractsAttribute",
+    "SharpLink.Sdk.SharpLinkServiceLifetime",
+    "SharpLink.Sdk.TimeoutAttribute"
+  ]
+}
