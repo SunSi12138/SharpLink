@@ -30,4 +30,3 @@ public sealed class FactsService : IFactsRpc
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
-
