@@ -3,6 +3,8 @@
 import copy
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -184,7 +186,7 @@ class DecisionLedgerTests(unittest.TestCase):
 
     def test_non_boolean_completion_markers_fail(self):
         # JSON strings such as "false" are truthy in Python, but never receipts.
-        for value in ('false', 'true', 1, -1, ['complete'], {'complete': False}, None):
+        for value in ('false', 'true', 0, 1, 1.0, -1, [], {}, ['complete'], {'complete': False}, None):
             for scope in ('inventory', 'target'):
                 with self.subTest(value=value, scope=scope):
                     original = copy.deepcopy(self.coverage)
@@ -192,16 +194,40 @@ class DecisionLedgerTests(unittest.TestCase):
                         self.coverage['complete'] = value
                     else:
                         self.coverage['actualTargets'][0]['complete'] = value
-                    with self.assertRaises(LEDGER.LedgerError):
+                    with self.assertRaisesRegex(LEDGER.LedgerError, 'incomplete or malformed'):
                         self.validate()
                     self.coverage = original
 
     def test_malformed_failure_collections_fail(self):
-        for value in (None, False, 0, '', {}):
+        for value in (None, False, 0, '', {}, ['failed target']):
             with self.subTest(value=value):
                 self.coverage['failures'] = value
-                with self.assertRaises(LEDGER.LedgerError):
+                with self.assertRaisesRegex(LEDGER.LedgerError, 'Inventory coverage is incomplete or malformed'):
                     self.validate()
+
+    def test_missing_completion_fields_fail_cli_without_success_output(self):
+        inventory = self.root / 'inventory'
+        inventory.mkdir()
+        files = {'ledger.json': self.ledger, 'identities.json': self.identities,
+                 'provenance.json': self.provenance, 'decisions.json': self.decisions}
+        for name, value in files.items():
+            (inventory / name).write_text(json.dumps(value), encoding='utf-8')
+        for name, rows in (('symbols.jsonl', self.symbols), ('relations.jsonl', self.relations)):
+            (inventory / name).write_text(''.join(json.dumps(row) + '\n' for row in rows), encoding='utf-8')
+        for scope, field in (('inventory', 'complete'), ('inventory', 'failures'), ('target', 'complete')):
+            with self.subTest(scope=scope, field=field):
+                coverage = copy.deepcopy(self.coverage)
+                target = coverage if scope == 'inventory' else coverage['actualTargets'][0]
+                del target[field]
+                (inventory / 'coverage.json').write_text(json.dumps(coverage), encoding='utf-8')
+                result = subprocess.run([sys.executable, str(ROOT / 'eng/verify-api-decision-ledger.py'),
+                                         str(inventory), '--ledger', str(inventory / 'ledger.json'),
+                                         '--identities', str(inventory / 'identities.json')],
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, '')
+                self.assertIn("API decision ledger failed: '" + field + "'", result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
 
     def test_changed_source_tree_dirty_source_or_host_cannot_reuse_proposal(self):
         for field, value in [('tree', 'new-tree'), ('commit', 'other-commit'), ('status', ' M Source.cs'),
