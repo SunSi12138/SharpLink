@@ -1,0 +1,50 @@
+name: Patched SDK codec servicing validation
+on:
+  push:
+    branches: [validation/sdk-servicing-patched-20261104]
+    paths:
+      - .github/workflows/sdk-servicing-patched-20261104.yml
+      - eng/servicing-patched/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/validation/sdk-servicing-patched-20261104'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          path: validator
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ba91b050cb7ea0c52c808f2e905133b184649d3b
+          persist-credentials: false
+          path: source
+      - name: Python positive and negative controls
+        run: python3 -B validator/eng/servicing-patched/test_run.py
+      - name: Install patched baseline SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/servicing-baseline
+        with:
+          dotnet-version: 10.0.114
+          cache: false
+      - name: Install latest stable .NET 10 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/servicing-latest
+        with:
+          dotnet-version: 10.0.x
+          dotnet-quality: ga
+          cache: false
+      - name: Validate exact source across four codec edges
+        run: >-
+          python3 -B validator/eng/servicing-patched/run.py
+          --tool-commit "${{ github.sha }}"
+          --tools-root validator
+          --source source
+          --baseline-root "${{ runner.temp }}/servicing-baseline"
+          --latest-root "${{ runner.temp }}/servicing-latest"
