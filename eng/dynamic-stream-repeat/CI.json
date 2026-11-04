@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "scope": "100 rounds of three instrumented original-semantics Linux cases; NOT full nightly or two-hour soak",
+  "base": "9d1635c8988870ee295098fe9e65cb49924013d2",
+  "code": {
+    "SOURCE.json": "5f322c7525eb9f49243c3db70d8bd11ccaaf39fca7d725420db3ceea90282ed2",
+    "StreamExitStage.cs": "e8f4657c3b65d5f5f92cd589723cedcedf7d47e0f1d973f00ba8880dc05464fd",
+    "error_graph.py": "e4086c6372477fa4d55f29a77b418654180d9285f6f735afe6c8b72f7aaf6958",
+    "owner_probe.py": "5aaded33271c9e5c9ab41cb5e84836a4429aa941374b70326def6e30562a821e",
+    "plan.py": "59bd5fe32813686bd2db8c2fc7f29c37e31d8269017c7e38d28e3fecf1d42e03",
+    "prepare.py": "18cd5f4e95c42eb84bcaa2aab0bd4ef29f2aa69363540d9bdbf2a0aae5f6f14d",
+    "process_owner.py": "6a32d096f02b2622d47e36fae51f957f507b78689919501fb71a54de2616665a",
+    "results.py": "2c4aff13c79624b7687aa62150608600ed76f950229fb654b8462f86d79b0d84",
+    "run.py": "fd9a14f9e5a64a17d86bf7a28e1bd2e65b1dc88df3efbf4a7cb7e4fadc723a4b",
+    "test_preimage/RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs": "014109c63848e9d64d49c816fd4ae612bb41676171f3431a1efcc7c64a3bbfd6",
+    "test_preimage/RuntimeAssemblyIntegrationTests.Support.cs": "ed54523763b1e768e94189823921432e360e5a0e61a5a8e327d2d1194eded9fa",
+    "test_preimage/RuntimeAssemblyIntegrationTests.cs": "ed1f0a358c835335e16f2bc37d3a547889785d98ffde4e08bd88364e9bacfb3e",
+    "test_repeat.py": "264ebd40905878a8bbe330c7aa864f17bb5ac1742b3fd0bcac5fd80934f9feb6",
+    "test_short.py": "20b9b780055d674c1363db2676ee4dc4fa074968798e8056c939c05ca0252c9f"
+  },
+  "commands": 306,
+  "bodyCommands": 300,
+  "activeBudgetSeconds": 46370,
+  "cleanupAllowanceSeconds": 4896,
+  "supervisorBudgetSeconds": 3600,
+  "jobBudgetSeconds": 4500,
+  "localDotnetExecuted": false,
+  "localRealChildProbesExecuted": true,
+  "plannedRounds": 100,
+  "finalReserveSeconds": 60,
+  "budgetPolicy": "Worst-round and per-command admission; incomplete exhaustion is nonzero, not pass. Maximum per-command sums exceed total by design."
+}

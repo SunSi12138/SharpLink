@@ -1,0 +1,48 @@
+{
+  "base": "9d1635c8988870ee295098fe9e65cb49924013d2",
+  "mainPins": {
+    "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs": "ed1f0a358c835335e16f2bc37d3a547889785d98ffde4e08bd88364e9bacfb3e",
+    "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.Support.cs": "ed54523763b1e768e94189823921432e360e5a0e61a5a8e327d2d1194eded9fa",
+    "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs": "014109c63848e9d64d49c816fd4ae612bb41676171f3431a1efcc7c64a3bbfd6",
+    "Directory.Packages.props": "86048cc466737c91b510c77a082ec9283a5d0eeda511b813599557d8c64578c5",
+    "test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj": "1c8a1f33e8ab77f4de05e8579edcd285b299d8e4303fc11f35305cae0feb8cb4",
+    "test/SharpLink.DynamicServices/DynamicPluginService.cs": "8f23f370fbdceba5957c209ce66c655ba9a0fa77bb1ea5aaadd370b21e42014d",
+    "test/SharpLink.IntegrationTests/AssemblyInfo.cs": "d74e86abf0b16008765564eddbb0d6d87ac67750bb4a5b9a93cafc2a7aba542f"
+  },
+  "instrumented": [
+    "RuntimeAssemblyIntegrationTests.cs",
+    "RuntimeAssemblyIntegrationTests.Support.cs",
+    "RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs"
+  ],
+  "after": {
+    "RuntimeAssemblyIntegrationTests.cs": "d46258ad15d18feb822bc25276304200b8768afc23daabdae67fbeef8fb1ae75",
+    "RuntimeAssemblyIntegrationTests.Support.cs": "3964b479f1b7e457cb9484ff47be8bf070d400fd21a9cf5dfd72089eac97d1c7",
+    "RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs": "01514730b5cde38bd03092737538bf043cc46d5869f513d37830f9115fd3def7"
+  },
+  "span": [
+    338,
+    362
+  ],
+  "noProductionChange": true,
+  "projectPaths": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+    "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+    "src/SharpLink.Server/SharpLink.Server.csproj",
+    "test/SharpLink.AotContracts/SharpLink.AotContracts.csproj",
+    "test/SharpLink.AotServices/SharpLink.AotServices.csproj",
+    "test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj",
+    "test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj",
+    "test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj",
+    "test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj",
+    "test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj",
+    "test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj",
+    "test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj",
+    "test/SharpLink.ReplacementContracts/SharpLink.ReplacementContracts.csproj",
+    "test/SharpLink.ReplacementServices/SharpLink.ReplacementServices.csproj"
+  ]
+}
