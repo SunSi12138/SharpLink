@@ -22,4 +22,3 @@
     <ProjectReference Include="$(EvidenceSourceRoot)/src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>
-
