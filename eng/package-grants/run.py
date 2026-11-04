@@ -30,7 +30,7 @@ def load(name, path):
 
 def git(root, *args):
     return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null', *args], cwd=root,
-                                   text=True, timeout=30).strip()
+                                   text=True, stderr=subprocess.PIPE, timeout=30).strip()
 
 
 def check_source(root):
@@ -120,7 +120,14 @@ def main():
             return smoke._process.run_owned(stage, [str(x) for x in command], cwd, selected_env,
                                             logs, min(seconds, remaining))
         except BaseException as error:
-            smoke.raise_with_diagnostics(error, logs, stage)
+            outcome = getattr(error, 'outcome', {})
+            print('PACKAGE_GRANTS_COMMAND_FAIL ' + json.dumps(dict(
+                stage=stage, category=type(error).__name__, exitCode=outcome.get('exitCode'),
+                timedOut=outcome.get('timedOut'),
+                executionErrorCount=len(outcome.get('errors', [])),
+                cleanupErrorCount=len(outcome.get('cleanupErrors', [])),
+                reportingErrorCount=len(outcome.get('reportingErrors', []))), sort_keys=True), flush=True)
+            raise
     identity = smoke.sdk_identity(run, source, env, logs)
     if identity['selectedSdkVersion'] != '10.0.114':
         raise ValueError('Unexpected SDK selected for frozen package build')
@@ -147,12 +154,18 @@ def main():
     analyzer = extract_analyzer(feed / 'SharpLink.Sdk.3.0.0.nupkg', assemblies / 'SharpLink.Generator.dll')
     reader_root = work / 'reader'
     shutil.copytree(HERE / 'reader', reader_root, ignore=shutil.ignore_patterns('bin', 'obj', '__pycache__', '.cache', '.test-output', 'test-results.json'))
+    (reader_root / 'global.json').write_text(json.dumps(dict(sdk=dict(version='10.0.114', rollForward='disable', allowPrerelease=False))) + '\n')
+    def reader_run(stage, command, cwd, selected_env, seconds):
+        return run('reader-' + stage, command, cwd, selected_env, seconds)
+    reader_identity = smoke.sdk_identity(reader_run, reader_root, env, logs)
+    if reader_identity['selectedSdkVersion'] != '10.0.114':
+        raise ValueError('Unexpected isolated reader SDK')
     project = reader_root / 'SharpLink.AssemblyGrants/SharpLink.AssemblyGrants.csproj'
-    run('reader-self-tests', ['bash', reader_root / 'test.sh'], reader_root, seconds=180)
-    self_tests = json.loads((reader_root / 'test-results.json').read_text())
-    if self_tests.get('Passed') != 42 or len(self_tests.get('Checks', [])) != 42:
+    self_test_output, _ = run('reader-self-tests', ['bash', reader_root / 'test.sh'], reader_root, seconds=180)
+    self_tests = json.loads(self_test_output.read_text())
+    if self_tests.get('Passed') != 44 or len(self_tests.get('Checks', [])) != 44:
         raise ValueError('Reader self-test evidence incomplete')
-    print('reader self-tests=42 passed', flush=True)
+    print('reader self-tests=44 passed', flush=True)
     run('reader-restore', ['dotnet', 'restore', project, '--configfile', config, '--disable-parallel', *serial], reader_root)
     run('reader-build', ['dotnet', 'build', project, '--no-restore', '-c', 'Release',
         '-p:UseSharedCompilation=false', *serial], reader_root)
@@ -165,7 +178,7 @@ def main():
     rows = validate_inventory(inventory, paths)
     check_source(source)
     summary = dict(sourceCommit=EXPECTED['sourceCommit'], sourceTree=EXPECTED['sourceTree'],
-                   toolsCommit=tool_commit, readerSelfTests=42, sdk=identity, packages=records, analyzer=analyzer, assemblies=rows,
+                   toolsCommit=tool_commit, readerSelfTests=44, producerSdk=identity, readerSdk=reader_identity, packages=records, analyzer=analyzer, assemblies=rows,
                    packageHashes={p.name:digest(p) for p in sorted(feed.iterdir())},
                    qualification='Metadata inventory only; no RPC/consumer, no API/ABI/security approval, no Trim/AOT/performance claim')
     (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
@@ -181,5 +194,5 @@ if __name__ == '__main__':
     try:
         main()
     except BaseException as error:
-        print('PACKAGE_GRANTS_FAIL ' + type(error).__name__ + ': ' + str(error)[:1800], flush=True)
+        print('PACKAGE_GRANTS_FAIL category=' + type(error).__name__ + ' detail=retained-locally', flush=True)
         sys.exit(1)
