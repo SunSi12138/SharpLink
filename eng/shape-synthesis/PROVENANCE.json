@@ -1,0 +1,46 @@
+{
+  "snapshotDate": "2026-11-04",
+  "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "sourceTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "ancestorCheck": {
+    "url": "https://api.github.com/repos/SunSi12138/SharpLink/compare/ca993a1aa89864755e10d1e35030a612b43d6069...8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+    "status": "ahead",
+    "aheadBy": 218,
+    "behindBy": 0,
+    "mergeBase": "ca993a1aa89864755e10d1e35030a612b43d6069",
+    "localShallowCheck": "unavailable-commit-object-not-present"
+  },
+  "productionTreeChecks": [
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/2a3bb3f0302a38b1e96beb672ad0c4464f01d796",
+      "head": "2a3bb3f0302a38b1e96beb672ad0c4464f01d796",
+      "srcTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+      "truncated": false
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/8d2ff96ce8f54f8c0e6fa8ee3742bf87a36c29f7",
+      "head": "8d2ff96ce8f54f8c0e6fa8ee3742bf87a36c29f7",
+      "srcTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+      "truncated": false
+    }
+  ],
+  "qualification": "Same production source tree is not same full commit, same tests, or a new CI run at target head.",
+  "resolvedHistoricalCommits": [
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/commits/6ece2f7a7aaa8b3650885124e26608653cb77684",
+      "sha": "6ece2f7a7aaa8b3650885124e26608653cb77684"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/commits/5c5506107148b5d902f6bb9e7a6be5d0d8c2236f",
+      "sha": "5c5506107148b5d902f6bb9e7a6be5d0d8c2236f"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/commits/b98fa48c37340514a09db5eea53b8fa3373436d3",
+      "sha": "b98fa48c37340514a09db5eea53b8fa3373436d3"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/commits/a90c83db0c1c549e9e1352b1f8cdcc2f42df35b7",
+      "sha": "a90c83db0c1c549e9e1352b1f8cdcc2f42df35b7"
+    }
+  ]
+}
