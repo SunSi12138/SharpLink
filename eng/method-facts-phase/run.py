@@ -45,6 +45,44 @@ def run(command, output, *, cwd=None, env=None, timeout=180):
     return command
 
 
+SUMMARY_FIELDS = {'schemaVersion', 'purpose', 'schedulingLimit', 'sidecarMatched', 'parseStatus', 'coverageStatus',
+                  'eventCount', 'firstEventMs', 'lastEventMs', 'lostEvents', 'phaseCount', 'phaseClock', 'zeroMeaning',
+                  'codeVersionMeaning', 'providers', 'targetCoverage', 'unresolvedMethodEvents', 'incompleteGcCollections',
+                  'incompleteSuspensions', 'runtimeEventCounts', 'phaseTargetColumns', 'phaseColumns', 'phases', 'warnings'}
+
+
+def bounded_summary(summary):
+    def bound(value, depth=0):
+        if depth > 12: return 'truncated-depth'
+        if isinstance(value, str): return value[:400]
+        if isinstance(value, list): return [bound(x, depth+1) for x in value[:54]]
+        if isinstance(value, dict): return {str(k)[:100]: bound(v, depth+1) for k,v in list(value.items())[:64]}
+        return value
+    result = bound({k:v for k,v in summary.items() if k in SUMMARY_FIELDS})
+    result['boundedOutputChanged'] = result != {k:v for k,v in summary.items() if k in SUMMARY_FIELDS}
+    if len(json.dumps(result)) > 40000:
+        result.pop('phases', None)
+        result['boundedOutputChanged'] = True
+        result['phaseRowsOmittedFromOutput'] = True
+    if len(json.dumps(result)) > 40000:
+        result = {k:result.get(k) for k in ['parseStatus','coverageStatus','phaseCount','lostEvents','sidecarMatched']}
+        result['boundedOutputChanged'] = True
+    return result
+
+
+def identity_summary(manifest):
+    keys = ['source','toolBase','toolHead','sdk','runtimeListing','traceVersion','providers','frozenToolFiles',
+            'runtimeHostSha256','coreLibSha256','diagnosticSource','binaries','parserBinaries','commands','kernelScheduling']
+    result = {k: manifest.get(k, 'unavailable') for k in keys}
+    topology = manifest.get('topology', {})
+    selected = topology.get('selectedCpus', [])
+    result['selectedCpus'] = selected
+    result['selectedTopology'] = [r for r in topology.get('topology', []) if r['cpu'] in selected]
+    result['actualRuntime'] = {k:manifest.get('describe', {}).get(k, 'unavailable') for k in
+                               ['runtimeVersion','coreFrameworkLocation','processPath','processorCount','allowedCpuList','serverGC','identity']}
+    return result
+
+
 def validate_phases(rows):
     expected = [('process', 'process-start', -1, 0)]
     for cell in ['I/T', 'P/T', 'I/U', 'P/U']:
@@ -105,6 +143,8 @@ def main():
         for project, target in [(stage / 'CausalProbe.csproj', app), (parser / 'TraceParser.csproj', parser_app)]:
             command = [build, 'publish', project, '-c', 'Release', '-m:1', '-nr:false', '-p:UseSharedCompilation=false',
                        f'-p:EvidenceSourceRoot={source}', '-o', target]
+            if target == parser_app:
+                command.append('-p:RestoreLockedMode=true')
             manifest['commands'].append(run(command, output / (target.name + '-build.log'), cwd=source, env=build_env, timeout=900))
         pin_runtimeconfig(app / 'CausalProbe.runtimeconfig.json')
         # Parser is also run on private 10.0.11; it is not part of the target probe.
@@ -128,6 +168,7 @@ def main():
         manifest['diagnosticSource'] = {str(f.relative_to(stage)): sha(f) for f in stage.glob('*.cs*')}
         manifest['allBuildsComplete'] = time.time()
         write(output / 'diagnostic-manifest.json', manifest)
+        print('diagnostic-preflight-identity: ' + json.dumps(identity_summary(manifest)), flush=True)
         for index in range(2):
             folder = output / f'process-{index}'
             folder.mkdir()
@@ -160,11 +201,19 @@ def main():
                 if descriptions[0][key] != metadata[key]:
                     raise ValueError('Child changed frozen identity: ' + key)
             entry.update(status='collected', endUtc=time.time(), traceSha256=sha(target_trace), traceBytes=target_trace.stat().st_size)
-            run([runtime, parser_app / 'TraceParser.dll', target_trace, folder / 'parsed', folder / 'phases.jsonl'], folder / 'parse.log', env=env)
-            summary = json.loads((folder / 'parsed/summary.json').read_text())
-            entry['summary'] = summary
-            write(output / 'diagnostic-manifest.json', manifest)
-            print('phase-diagnostic: ' + json.dumps({'index': index, 'traceSha256': entry['traceSha256'], 'traceBytes': entry['traceBytes'], 'summary': summary}), flush=True)
+            try:
+                run([runtime, parser_app / 'TraceParser.dll', target_trace, folder / 'parsed', folder / 'phases.jsonl'], folder / 'parse.log', env=env)
+            finally:
+                summary_path = folder / 'parsed/summary.json'
+                summary = {'parseStatus': 'summary-unavailable', 'coverageStatus': 'unknown'}
+                if summary_path.is_file():
+                    try:
+                        summary = bounded_summary(json.loads(summary_path.read_text()))
+                    except (ValueError, OSError):
+                        summary = {'parseStatus': 'summary-unreadable', 'coverageStatus': 'unknown'}
+                entry['summary'] = summary
+                write(output / 'diagnostic-manifest.json', manifest)
+                print('phase-diagnostic: ' + json.dumps({'index': index, 'traceSha256': entry['traceSha256'], 'traceBytes': entry['traceBytes'], 'command': entry['command'], 'summary': summary}), flush=True)
         manifest['complete'] = True
         write(output / 'diagnostic-manifest.json', manifest)
         print('diagnostic-complete: ' + json.dumps({'source': M0, 'toolHead': tool_sha, 'processes': 2,
@@ -180,6 +229,7 @@ def main():
         manifest['complete'] = False
         manifest['failure'] = f'{type(error).__name__}: {error}'
         write(output / 'diagnostic-manifest.json', manifest)
+        print('diagnostic-failure-identity: ' + json.dumps(identity_summary(manifest)), flush=True)
         print('diagnostic-failure: ' + manifest['failure'], flush=True)
         raise
 
