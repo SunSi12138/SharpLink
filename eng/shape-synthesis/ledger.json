@@ -1,0 +1,676 @@
+{
+  "schemaVersion": 1,
+  "targetSourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "directions": [
+    {
+      "issueId": 729,
+      "decision": "selected-local-go",
+      "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "candidateCommit": null,
+      "axes": {
+        "characterization": {
+          "state": "observed",
+          "assessment": "Current source has common OneWay selector and plain/streaming internal async cores. This is static characterization, not a new benchmark.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Client/SharpLinkClient.Invokers.cs#L603-L758",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "staticFacts": {
+          "state": "observed",
+          "assessment": "Client stream presence is known from generated call shape; the internal selector chooses distinct async cores.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Client/SharpLinkClient.Invokers.cs#L603-L758",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "runtimeRechecks": {
+          "state": "observed",
+          "assessment": "A common selector remains; internal core split is visible. Source inspection alone does not quantify executed branches.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Client/SharpLinkClient.Invokers.cs#L603-L758",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "jit": {
+          "state": "partial",
+          "assessment": "Historical C reduces suspended allocations about 48/8 B per plain/streaming call; JIT timing intervals cross1 and do not prove latency improvement.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/729#issuecomment-6084630079",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "6ece2f7a7aaa8b3650885124e26608653cb77684"
+            }
+          ]
+        },
+        "nativeAot": {
+          "state": "partial",
+          "assessment": "Historical six-shape image +0.243%, core native +28.5%; full-RPC JIT/AOT×transport sanity is single-round, not stable AOT speedup.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/729#issuecomment-6084630079",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "6ece2f7a7aaa8b3650885124e26608653cb77684"
+            }
+          ]
+        },
+        "codeSize": {
+          "state": "partial",
+          "assessment": "Historical MoveNext IL +16.7%, image +0.243%, core native +28.5%; not extrapolated to larger contracts.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/729#issuecomment-6084630079",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "6ece2f7a7aaa8b3650885124e26608653cb77684"
+            }
+          ]
+        },
+        "abiMaintenance": {
+          "state": "partial",
+          "assessment": "Historical chosen C adds net 29 runtime lines without public/generated ABI expansion; B static entry extra benefit unproven.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/729#issuecomment-6084630079",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "a90c83db0c1c549e9e1352b1f8cdcc2f42df35b7"
+            }
+          ]
+        },
+        "semantics": {
+          "state": "partial",
+          "assessment": "Historical 324 full-RPC sanity cases pass; no fresh exact8a13 full-matrix execution in this audit.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/729#issuecomment-6084630079",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "6ece2f7a7aaa8b3650885124e26608653cb77684"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "issueId": 730,
+      "decision": "no-go",
+      "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "candidateCommit": null,
+      "axes": {
+        "characterization": {
+          "state": "observed",
+          "assessment": "Current generator still emits RpcEmptyRequest plumbing; only the reviewed pooled no-result ValueTask candidate was rejected.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs#L145-L153",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "staticFacts": {
+          "state": "observed",
+          "assessment": "Generator knows empty request and no-result shape; current generated requestType/default uses that knowledge but retains dummy request.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs#L145-L153",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "runtimeRechecks": {
+          "state": "observed",
+          "assessment": "The current emitter still generates the empty request codec/default; no new runtime trace collected.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs#L145-L153",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "jit": {
+          "state": "partial",
+          "assessment": "Historical direct-await low concurrency allocation savings conflict with AsTask/Preserve regressions at concurrency 8/32/128;480 samples reviewed. No timing benefit claim.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/730#issuecomment-6085529107",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "nativeAot": {
+          "state": "not-run",
+          "assessment": "NativeAOT candidate matrix was not performed.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/730#issuecomment-6085529107",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "codeSize": {
+          "state": "not-run",
+          "assessment": "No measured candidate generated IL/native/image cost found in the public conclusion.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/730#issuecomment-6085529107",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "abiMaintenance": {
+          "state": "partial",
+          "assessment": "Dedicated no-result pending architecture and its ABI/maintenance cost remain unmeasured; no old 2.0.3 compatibility requirement is imposed.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/730#issuecomment-6085529107",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "semantics": {
+          "state": "partial",
+          "assessment": "Legal consumption-pattern regression reproduced via TCP. SharedMemory full matrix remains unperformed.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/730#issuecomment-6085529107",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "issueId": 731,
+      "decision": "no-go",
+      "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "candidateCommit": null,
+      "axes": {
+        "characterization": {
+          "state": "observed",
+          "assessment": "Current receive dispatcher retains payloadNullable field and item check; current specialization round is No-Go.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs#L275-L287",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "staticFacts": {
+          "state": "observed",
+          "assessment": "Stream item nullability is static contract information; current dispatcher stores it as a boolean.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs#L275-L287",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "runtimeRechecks": {
+          "state": "observed",
+          "assessment": "Source still checks not-payloadNullable and null item after deserialize; value-type JIT elimination is historical evidence, not a new disassembly.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs#L275-L287",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "jit": {
+          "state": "partial",
+          "assessment": "Historical required-reference receive PGO gain about 0.44 ns/item is smaller than some unchanged-control noise; paired samples are correlated.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/731#issuecomment-6091555833",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "5c5506107148b5d902f6bb9e7a6be5d0d8c2236f"
+            }
+          ]
+        },
+        "nativeAot": {
+          "state": "partial",
+          "assessment": "Historical Nullable<int> AOT regression about 0.24 ns/item; three fixture images equal10,333,712 B. Full-RPC data incomplete.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/731#issuecomment-6091555833",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "5c5506107148b5d902f6bb9e7a6be5d0d8c2236f"
+            }
+          ]
+        },
+        "codeSize": {
+          "state": "partial",
+          "assessment": "Historical pump state 224 B and dispatcher fields unchanged; equal fixture images do not establish scaling to arbitrary contracts.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/731#issuecomment-6091555833",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "5c5506107148b5d902f6bb9e7a6be5d0d8c2236f"
+            }
+          ]
+        },
+        "abiMaintenance": {
+          "state": "partial",
+          "assessment": "No structural reduction; broadened static paths stopped. Candidate source boundary and local-only8KiB correction retained, no compatibility veto.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/731#issuecomment-6091555833",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "5c5506107148b5d902f6bb9e7a6be5d0d8c2236f"
+            }
+          ]
+        },
+        "semantics": {
+          "state": "partial",
+          "assessment": "Full-RPC first case overflowed and overall run failed before complete measurements. Local fixture correction was not published or retried.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/731#issuecomment-6091555833",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "5c5506107148b5d902f6bb9e7a6be5d0d8c2236f"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "issueId": 732,
+      "decision": "open",
+      "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "candidateCommit": null,
+      "axes": {
+        "characterization": {
+          "state": "observed",
+          "assessment": "Current 3.0 source carries immutable scalar RpcMethodFacts in SelectedMethodCall, distinct from historical 2.x B descriptor-query shortcut.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Server/SharpLinkServer.DispatchSelection.cs#L1-L65",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "staticFacts": {
+          "state": "observed",
+          "assessment": "Kind, stream count, response shape, timeout and cancellation support are represented by reusable scalar facts; registration identity remains separate.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Server/SharpLinkServer.DispatchSelection.cs#L1-L65",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "runtimeRechecks": {
+          "state": "observed",
+          "assessment": "Selected binding resolves method facts and carries them; source shape alone does not prove every runtime path once-per-RPC.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Server/SharpLinkServer.DispatchSelection.cs#L1-L65",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "jit": {
+          "state": "partial",
+          "assessment": "Historical B limited PGO gain is not current performance; frozen-M0 diagnostic observes later-tier live-load events with incomplete generated proxy/stub coverage, not acceptance.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/732#issuecomment-6087119294",
+              "scope": "historical",
+              "currentEvidence": false
+            },
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/46bc6dc8489c6e6116b0e2ec040853f6a45f397f/eng/method-facts-phase/RESULTS.md",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "37548b7a35d50803212d2b0a637306636cc0a1d3"
+            }
+          ]
+        },
+        "nativeAot": {
+          "state": "partial",
+          "assessment": "Historical B AOT changes are small and not stable benefits; current 3.0 acceptance is not established by oldB results.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/732#issuecomment-6087119294",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "codeSize": {
+          "state": "partial",
+          "assessment": "Historical B image deltas and local/hosted fixtures cannot be mixed; no current 8a13 complete generated/native/AOT-size cost acceptance established.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/732#issuecomment-6087119294",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "abiMaintenance": {
+          "state": "partial",
+          "assessment": "Current facts API/generated ABI cost must be recorded for3.0; old compatibility is not a veto. Broad acceptance remains open.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/732#issuecomment-6087119294",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "semantics": {
+          "state": "partial",
+          "assessment": "Observer five-kind and held-empty-outbound matrices pass at precise separate test/tool heads with identical production src tree; no inbound duplex, final-lease/ALC, exhaustive cancellation or performance conclusion.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/actions/runs/41895252553",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "2a3bb3f0302a38b1e96beb672ad0c4464f01d796"
+            },
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/actions/runs/41898038816",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "8d2ff96ce8f54f8c0e6fa8ee3742bf87a36c29f7"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "issueId": 733,
+      "decision": "no-go",
+      "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "candidateCommit": null,
+      "axes": {
+        "characterization": {
+          "state": "observed",
+          "assessment": "Current ServiceRegistration retains singleton/connection/call branch strategy; specialization investigation is No-Go.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Server/ServiceRegistration.cs#L200-L211",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "staticFacts": {
+          "state": "observed",
+          "assessment": "Lifetime is known at registration/build time but shared singleton mutable state and reference identity constrain representations.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Server/ServiceRegistration.cs#L200-L211",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "runtimeRechecks": {
+          "state": "observed",
+          "assessment": "Current singleton and connection branches remain in acquisition. No new branch-cost tracing was run.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Server/ServiceRegistration.cs#L200-L211",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "jit": {
+          "state": "partial",
+          "assessment": "Historical removable decision cost bounded about 15ns; tagged actual full-RPC comparison finds no distinguishable benefit and unchanged allocations; local lab is an optimistic estimate, not a strict mathematical upper bound.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/733#issuecomment-5826702894",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "nativeAot": {
+          "state": "partial",
+          "assessment": "Historical AOT image/publish measurements exist, but AOT runtime performance comparison was not reported.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/733#issuecomment-5826702894",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "codeSize": {
+          "state": "partial",
+          "assessment": "Historical Server IL +879B/+0.55%, total AOT image +0.028%, main binary+64B; publish 10.80 to 10.81s in that fixture only.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/733#issuecomment-5826702894",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "abiMaintenance": {
+          "state": "partial",
+          "assessment": "Delegate/sealed indirection and shared singleton/disposal identity add cost; do not copy mutable registration into value types. No exact public candidate SHA located.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/733#issuecomment-5826702894",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        },
+        "semantics": {
+          "state": "partial",
+          "assessment": "Historical 1854 unit tests pass; dynamic/collectible, independent Connection acquisition, SharedMemory/cross-machine remain untested.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/733#issuecomment-5826702894",
+              "scope": "historical",
+              "currentEvidence": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "issueId": 734,
+      "decision": "no-go",
+      "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "candidateCommit": null,
+      "axes": {
+        "characterization": {
+          "state": "observed",
+          "assessment": "Current IRpcContractChannel keeps five method-kind lifecycle invocation entry points plus unrelated preparation API; full/general selective de-folding is No-Go.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Abstractions/IRpcContractChannel.cs#L273-L339",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "staticFacts": {
+          "state": "observed",
+          "assessment": "Generator knows method flags, but chosen default keeps shape facts folded into five lifecycle entries.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Abstractions/IRpcContractChannel.cs#L273-L339",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "runtimeRechecks": {
+          "state": "observed",
+          "assessment": "Each current invocation entry still takes RpcMethodDescriptor; static source observation is not fresh runtime branch/inlining evidence.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/blob/8a13b12e799bb70a989eacac0c1b4cea22ab80ae/src/SharpLink.Abstractions/IRpcContractChannel.cs#L273-L339",
+              "scope": "current",
+              "currentEvidence": true,
+              "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae"
+            }
+          ]
+        },
+        "jit": {
+          "state": "partial",
+          "assessment": "Historical isolated prototype D best JIT−8.94%, C about−3–5%; not production full-RPC base/head benefit.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/734#issuecomment-6072214899",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "b98fa48c37340514a09db5eea53b8fa3373436d3"
+            }
+          ]
+        },
+        "nativeAot": {
+          "state": "partial",
+          "assessment": "Historical C AOT runtime+22.15%, image+13.91%; D image+1059%, build+4333%; all D entries rooted in the experiment.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/734#issuecomment-6072214899",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "b98fa48c37340514a09db5eea53b8fa3373436d3"
+            }
+          ]
+        },
+        "codeSize": {
+          "state": "partial",
+          "assessment": "Historical C112/D8224 entry lattice and1537/88445 source lines; earlier30-shape experiment is different and must not be mixed.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/734#issuecomment-6072214899",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "b98fa48c37340514a09db5eea53b8fa3373436d3"
+            }
+          ]
+        },
+        "abiMaintenance": {
+          "state": "partial",
+          "assessment": "Large entry/generated ABI and maintenance expansion is a measured design cost, not a mandatory old-version compatibility constraint. Small751/752 changes do not reverse architecture decision.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/734#issuecomment-6072214899",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "b98fa48c37340514a09db5eea53b8fa3373436d3"
+            }
+          ]
+        },
+        "semantics": {
+          "state": "partial",
+          "assessment": "Historical 24×3 real-RPC matrix anchors cost scale, not production A/C/D performance equivalence; research749 closed unmerged.",
+          "currentPass": false,
+          "evidence": [
+            {
+              "url": "https://github.com/SunSi12138/SharpLink/issues/734#issuecomment-6072214899",
+              "scope": "historical",
+              "currentEvidence": false,
+              "sourceCommit": "b98fa48c37340514a09db5eea53b8fa3373436d3"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
