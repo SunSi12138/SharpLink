@@ -89,6 +89,14 @@ def validate_inventory(inventory, paths):
     return rows
 
 
+def cleanup_classification(outcome):
+    messages = outcome.get('cleanupErrors', [])
+    owned = sum(message == 'Owned processes remained after command exit/deadline' for message in messages)
+    remaining = outcome.get('remainingOwned')
+    return dict(ownedProcessesAfterExitCount=owned, otherCleanupErrorCount=len(messages) - owned,
+                remainingOwnedCount=len(remaining) if isinstance(remaining, dict) else None)
+
+
 def main():
     if len(sys.argv) != 2 or sys.platform != 'linux':
         raise ValueError('Usage: run.py <clean frozen source checkout> (Linux only)')
@@ -126,7 +134,8 @@ def main():
                 timedOut=outcome.get('timedOut'),
                 executionErrorCount=len(outcome.get('errors', [])),
                 cleanupErrorCount=len(outcome.get('cleanupErrors', [])),
-                reportingErrorCount=len(outcome.get('reportingErrors', []))), sort_keys=True), flush=True)
+                reportingErrorCount=len(outcome.get('reportingErrors', [])),
+                cleanup=cleanup_classification(outcome)), sort_keys=True), flush=True)
             raise
     identity = smoke.sdk_identity(run, source, env, logs)
     if identity['selectedSdkVersion'] != '10.0.114':
