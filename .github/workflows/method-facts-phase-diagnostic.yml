@@ -1,0 +1,47 @@
+name: Frozen M0 phase diagnosis
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/732-phase-diagnostic-20261104']
+    paths:
+      - '.github/workflows/method-facts-phase-diagnostic.yml'
+concurrency:
+  group: method-facts-phase-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout reviewed diagnostic tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: tools
+          persist-credentials: false
+      - name: Checkout frozen M0 product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 37548b7a35d50803212d2b0a637306636cc0a1d3
+          path: source
+          persist-credentials: false
+      - name: Setup original build SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.102
+      - name: Validate phase gates and original invocation loop
+        run: python3 tools/eng/method-facts-phase/test_runner.py
+      - name: Prepare pinned runtime and trace tool before diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "BUILD_DOTNET=$(command -v dotnet)" >> "$GITHUB_ENV"
+          mkdir "$RUNNER_TEMP/method-facts-phase-runtime"
+          curl --fail --silent --show-error --location https://dot.net/v1/dotnet-install.sh --output "$RUNNER_TEMP/dotnet-install-phase.sh"
+          for framework in dotnet aspnetcore; do
+            bash "$RUNNER_TEMP/dotnet-install-phase.sh" --runtime "$framework" --version 10.0.11 --architecture x64 --install-dir "$RUNNER_TEMP/method-facts-phase-runtime" --no-path > "$RUNNER_TEMP/runtime-$framework.log" 2>&1
+          done
+          dotnet tool install dotnet-trace --version 10.0.750501 --tool-path "$RUNNER_TEMP/phase-tools" > "$RUNNER_TEMP/trace-install.log" 2>&1
+      - name: Run exactly two non-comparative phase diagnostics
+        run: python3 tools/eng/method-facts-phase/run.py "$GITHUB_WORKSPACE/tools" "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/method-facts-phase-evidence" "$BUILD_DOTNET" "$RUNNER_TEMP/method-facts-phase-runtime/dotnet" "$RUNNER_TEMP/phase-tools/dotnet-trace"
+      # Raw traces and logs stay only on this ephemeral runner. No artifact upload.
