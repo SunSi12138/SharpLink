@@ -186,17 +186,17 @@ class DecisionLedgerTests(unittest.TestCase):
 
     def test_non_boolean_completion_markers_fail(self):
         # JSON strings such as "false" are truthy in Python, but never receipts.
+        original = copy.deepcopy(self.coverage)
         for value in ('false', 'true', 0, 1, 1.0, -1, [], {}, ['complete'], {'complete': False}, None):
             for scope in ('inventory', 'target'):
                 with self.subTest(value=value, scope=scope):
-                    original = copy.deepcopy(self.coverage)
+                    self.coverage = copy.deepcopy(original)
                     if scope == 'inventory':
                         self.coverage['complete'] = value
                     else:
                         self.coverage['actualTargets'][0]['complete'] = value
                     with self.assertRaisesRegex(LEDGER.LedgerError, 'incomplete or malformed'):
                         self.validate()
-                    self.coverage = original
 
     def test_malformed_failure_collections_fail(self):
         for value in (None, False, 0, '', {}, ['failed target']):
