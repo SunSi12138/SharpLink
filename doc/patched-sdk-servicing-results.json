@@ -1,0 +1,89 @@
+{
+  "repository": "SunSi12138/SharpLink",
+  "runId": 41935832233,
+  "runAttempt": 1,
+  "jobId": 126943912247,
+  "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/41935832233",
+  "conclusion": "success",
+  "summaryEmittedAt": "2026-11-04T23:43:26.6491869Z",
+  "terminalStatusObservedAt": "2026-11-04T23:46:04Z",
+  "artifacts": 0,
+  "pythonControls": {
+    "controls": 16,
+    "failures": 0,
+    "errors": 0
+  },
+  "summary": {
+    "baseline": {
+      "runtime": "10.0.14",
+      "sdk": "10.0.114"
+    },
+    "blockingFailures": 0,
+    "classification": "PATCHED_SDK_SERVICING_COMPATIBLE",
+    "distinctRuntimeVersion": false,
+    "distinctSdkVersion": true,
+    "edgeCount": 4,
+    "edges": [
+      {
+        "blockingFailures": 0,
+        "classifications": {
+          "DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE": 0,
+          "IDENTICAL_BYTES_AND_COMPATIBLE": 58
+        },
+        "consumer": "baseline",
+        "producer": "baseline",
+        "resultCount": 58
+      },
+      {
+        "blockingFailures": 0,
+        "classifications": {
+          "DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE": 0,
+          "IDENTICAL_BYTES_AND_COMPATIBLE": 58
+        },
+        "consumer": "baseline",
+        "producer": "latest",
+        "resultCount": 58
+      },
+      {
+        "blockingFailures": 0,
+        "classifications": {
+          "DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE": 0,
+          "IDENTICAL_BYTES_AND_COMPATIBLE": 58
+        },
+        "consumer": "latest",
+        "producer": "baseline",
+        "resultCount": 58
+      },
+      {
+        "blockingFailures": 0,
+        "classifications": {
+          "DIFFERENT_BYTES_BUT_CROSS_COMPATIBLE": 0,
+          "IDENTICAL_BYTES_AND_COMPATIBLE": 58
+        },
+        "consumer": "latest",
+        "producer": "latest",
+        "resultCount": 58
+      }
+    ],
+    "fixtureCount": 58,
+    "latest": {
+      "runtime": "10.0.14",
+      "sdk": "10.0.403"
+    },
+    "processHelperSha256": "ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3",
+    "resultCount": 232,
+    "sourceCodecTree": "b3f0831484762e74a11b152485bbbd97df62720f",
+    "sourceCommit": "ba91b050cb7ea0c52c808f2e905133b184649d3b",
+    "sourceSrcTree": "ad047ee3f21436af428fe5695649c7e1af22b720",
+    "status": "pass",
+    "summarySha256": "a64b4c1ade8baeb367927723653d6ff44fcf5a3440d8b145bc79759df4714053",
+    "toolCommit": "25cc40a208f8ce655af5dec0f2f00efafb09e136",
+    "validatorSha256": "63299aba5d87640f2ae84eb84df0737e89f8f3db22144f41f9a1fbf007587c7b"
+  },
+  "limitations": [
+    "One Linux x64 hosted runner, CoreCLR only",
+    "Same runtime 10.0.14 in both lanes; no historical runtime bridge",
+    "Security candidate ba91 based main VersionPrefix 2.0.4, not integration8a13",
+    "No D2, full-suite, mobile/WASM, Trim/AOT, performance, deployment or release acceptance"
+  ]
+}
