@@ -14,7 +14,6 @@ jobs:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       TUNIT_MAX_PARALLEL_TESTS: '8'
       DOTNET_ROLL_FORWARD: LatestPatch
-      TMPDIR: ${{ runner.temp }}
     steps:
     - name: Checkout exact validation commit
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -34,6 +33,7 @@ jobs:
         p.write_text(json.dumps(d,indent=2)+'\n')
         PY_IDENTITY
         cp global.json "$RUNNER_TEMP/global.json"
+        echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
         [[ "$(dotnet --version)" == "10.0.114" ]]
         [[ "$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$DOTNET_ROOT/sdk/10.0.114/Microsoft.NETCoreSdk.BundledVersions.props" | head -n 1)" == "10.0.14" ]]
         dotnet --list-runtimes | grep -Fq 'Microsoft.NETCore.App 10.0.14 ['
@@ -266,7 +266,6 @@ jobs:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       TUNIT_MAX_PARALLEL_TESTS: '8'
       DOTNET_ROLL_FORWARD: LatestPatch
-      TMPDIR: ${{ runner.temp }}
     steps:
     - name: Checkout exact validation commit
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -286,6 +285,7 @@ jobs:
         p.write_text(json.dumps(d,indent=2)+'\n')
         PY_IDENTITY
         cp global.json "$RUNNER_TEMP/global.json"
+        echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
         [[ "$(dotnet --version)" == "10.0.114" ]]
         [[ "$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$DOTNET_ROOT/sdk/10.0.114/Microsoft.NETCoreSdk.BundledVersions.props" | head -n 1)" == "10.0.14" ]]
         dotnet --list-runtimes | grep -Fq 'Microsoft.NETCore.App 10.0.14 ['
