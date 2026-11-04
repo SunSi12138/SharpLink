@@ -45,3 +45,4 @@ jobs:
       - name: Run exactly two non-comparative phase diagnostics
         run: python3 tools/eng/method-facts-phase/run.py "$GITHUB_WORKSPACE/tools" "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/method-facts-phase-evidence" "$BUILD_DOTNET" "$RUNNER_TEMP/method-facts-phase-runtime/dotnet" "$RUNNER_TEMP/phase-tools/dotnet-trace"
       # Raw traces and logs stay only on this ephemeral runner. No artifact upload.
+# Reviewed exact-byte preparation correction at 95dfa9e; prior run executed zero RPCs.
