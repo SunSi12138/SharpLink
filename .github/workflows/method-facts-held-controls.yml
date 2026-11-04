@@ -1,0 +1,38 @@
+name: Held stream method facts terminal controls
+
+# Ordinary Unit graph, not all Unit bodies. No secrets, release, or raw artifacts.
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/732-facts-held-20261104']
+    paths:
+      - '.github/workflows/method-facts-held-controls.yml'
+      - 'eng/run-method-facts-held-controls.py'
+      - 'eng/retirement-results.py'
+      - 'eng/method-facts-held-controls.json'
+      - 'eng/package-smoke-process.py'
+      - 'eng/tests/test_retirement_results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+concurrency:
+  group: method-facts-held-controls-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  selected-unit-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup repository SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Build ordinary Unit and validate 17 isolated actual UIDs
+        run: python3 eng/run-method-facts-held-controls.py
