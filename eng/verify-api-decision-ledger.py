@@ -67,7 +67,8 @@ def expand_member(type_doc_id, member):
 def validate(ledger, identities, coverage, provenance, symbols, decisions, relations, root):
     require(ledger['schemaVersion'] == identities['schemaVersion'] == 1, 'Unsupported ledger schema')
     require(ledger['status'] == 'proposal-not-approved', 'This validator only verifies proposals; it cannot grant approval')
-    require(coverage['complete'] and not coverage['failures'], 'Inventory coverage is incomplete')
+    require(coverage['complete'] is True and coverage['failures'] == [],
+            'Inventory coverage is incomplete or malformed')
     require(coverage['scope'] == 'production-declarations', 'Expected production-declarations inventory')
     bound = ledger['inventory']
     source = provenance['source']
@@ -85,7 +86,7 @@ def validate(ledger, identities, coverage, provenance, symbols, decisions, relat
         actual = unique(rows, lambda x: (x['project'], x['framework']), label + ' target')
         same_ids(actual, expected, label + ' target coverage')
         if label == 'actual':
-            require(all(x['complete'] for x in rows), 'A target is incomplete')
+            require(all(x['complete'] is True for x in rows), 'A target is incomplete or malformed')
             for target in rows:
                 require(target.get('sdkVersion') == sdk_version,
                         f"Inventory SDK differs or is missing for {target['project']}@{target['framework']}: "
