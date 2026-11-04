@@ -26,13 +26,12 @@ jobs:
       run: |
         set -euo pipefail
         python3 - <<'PY_IDENTITY'
-        import json,pathlib
+        import json,pathlib,os
         p=pathlib.Path('global.json'); d=json.loads(p.read_text())
         assert d['sdk']['version']=='10.0.114'
         d['sdk']['rollForward']='disable'
-        p.write_text(json.dumps(d,indent=2)+'\n')
+        (pathlib.Path(os.environ['RUNNER_TEMP'])/'global.json').write_text(json.dumps(d,indent=2)+'\n')
         PY_IDENTITY
-        cp global.json "$RUNNER_TEMP/global.json"
         echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
         [[ "$(dotnet --version)" == "10.0.114" ]]
         [[ "$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$DOTNET_ROOT/sdk/10.0.114/Microsoft.NETCoreSdk.BundledVersions.props" | head -n 1)" == "10.0.14" ]]
@@ -278,13 +277,12 @@ jobs:
       run: |
         set -euo pipefail
         python3 - <<'PY_IDENTITY'
-        import json,pathlib
+        import json,pathlib,os
         p=pathlib.Path('global.json'); d=json.loads(p.read_text())
         assert d['sdk']['version']=='10.0.114'
         d['sdk']['rollForward']='disable'
-        p.write_text(json.dumps(d,indent=2)+'\n')
+        (pathlib.Path(os.environ['RUNNER_TEMP'])/'global.json').write_text(json.dumps(d,indent=2)+'\n')
         PY_IDENTITY
-        cp global.json "$RUNNER_TEMP/global.json"
         echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
         [[ "$(dotnet --version)" == "10.0.114" ]]
         [[ "$(sed -nE 's#.*<BundledNETCoreAppPackageVersion[^>]*>([^<]+)</BundledNETCoreAppPackageVersion>.*#\1#p' "$DOTNET_ROOT/sdk/10.0.114/Microsoft.NETCoreSdk.BundledVersions.props" | head -n 1)" == "10.0.14" ]]
