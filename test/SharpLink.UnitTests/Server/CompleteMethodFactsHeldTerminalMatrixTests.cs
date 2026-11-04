@@ -117,13 +117,20 @@ public partial class SharpLinkServerInvocationTests
             {
                 var remaining = read.Buffer;
                 var terminals = 0;
+                var acknowledgements = 0;
                 while (ProtocolV2FrameParser.TryReadFrame(ref remaining, harness.Session.RuntimeContext.Protocol,
                            out var header, out var payload))
                 {
                     if (header.RequestId != 7991) continue;
-                    Ensure(header.Type != ProtocolV2FrameType.Response && header.Type != ProtocolV2FrameType.StreamData,
-                        "an empty outbound stream must not emit a fallback response or data item");
-                    if (header.Type != ProtocolV2FrameType.StreamComplete) continue;
+                    if (header.Type == ProtocolV2FrameType.Response)
+                    {
+                        acknowledgements++;
+                        Ensure(terminals == 1 && header.Flags == ProtocolV2FrameFlags.None && payload.IsEmpty,
+                            "the no-return dispatch acknowledgement follows the stream terminal and carries no payload or error");
+                        continue;
+                    }
+                    Ensure(header.Type == ProtocolV2FrameType.StreamComplete,
+                        "the empty stream emits only its terminal and the normal dispatch acknowledgement");
                     terminals++;
                     Ensure(BinaryPrimitives.ReadUInt16LittleEndian(payload.ToArray()) == 0,
                         "the terminal belongs to the original outbound stream");
@@ -136,7 +143,8 @@ public partial class SharpLinkServerInvocationTests
                         Ensure(error.Code == SharpLinkErrorCode.Internal, "wire terminal preserves the mapped error code");
                     }
                 }
-                Ensure(remaining.IsEmpty && terminals == 1, "the completed request emits exactly one complete terminal frame");
+                Ensure(remaining.IsEmpty && terminals == 1 && acknowledgements == 1,
+                    "the completed request emits exactly one stream terminal and one normal dispatch acknowledgement");
             }
             finally { output.Reader.AdvanceTo(read.Buffer.End); }
         }
