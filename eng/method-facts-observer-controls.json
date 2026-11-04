@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "project": "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj",
+  "assemblyFullName": "SharpLink.UnitTests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "tunitPackageVersion": "1.73.19",
+  "tunitRuntimeVersion": "1.73.19.0",
+  "expectedGroups": {
+    "AB": 9,
+    "Facts": 10
+  },
+  "expectedCaseCount": 19,
+  "projects": [
+    "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+    "src/SharpLink.Generator/SharpLink.Generator.csproj",
+    "src/SharpLink.Hosting/SharpLink.Hosting.csproj",
+    "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+    "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+    "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+    "src/SharpLink.Server/SharpLink.Server.csproj",
+    "test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj",
+    "test/SharpLink.RetirementEntryPlugin/SharpLink.RetirementEntryPlugin.csproj",
+    "test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj",
+    "test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj",
+    "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+  ],
+  "scopes": [
+    {
+      "group": "AB",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "class": "RetirementGraceBudgetTests",
+      "source": "test/SharpLink.UnitTests/Runtime/RetirementGraceBudgetTests.cs",
+      "discovery": "class",
+      "methods": [
+        {
+          "name": "FullTimeSpanRangeShouldNotUseRpcHalfRingNormalization",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "RepeatedFractionalElapsedSamplesShouldPreserveTheirRemainder",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "SubTimeSpanTickSamplesShouldAccumulateBeforeProjection",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "BackwardAndHalfRingSamplesShouldNotMoveAcceptedBaseline",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ObservableTimestampWrapShouldConsumeUnsignedDelta",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "TimerSliceShouldRespectBothNativeRangeAndTimestampWindow",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "ClockShouldKeepEntryOriginAndOriginalProvider",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "EntryCaptureShouldPreserveFrequencyAndTimestampFailuresWithoutConstructingClock",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        },
+        {
+          "name": "SeveralCompleteNativeSlicesShouldNotResetOrRoundTheRemainingBudget",
+          "parameters": [],
+          "return": "System.Void",
+          "qualification": "normal-control"
+        }
+      ]
+    },
+    {
+      "group": "Facts",
+      "namespace": "SharpLink.UnitTests.Server",
+      "class": "SharpLinkServerInvocationTests",
+      "source": "test/SharpLink.UnitTests/Server/CompleteMethodFactsObserverMatrixTests.cs",
+      "discovery": "method",
+      "methods": [
+        {
+          "name": "ColdFactsFailureUnary",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsFailureOneWay",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsFailureClientStreaming",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsFailureServerStreaming",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsFailureDuplexStreaming",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsTelemetryUnary",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsTelemetryOneWay",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsTelemetryClientStreaming",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsTelemetryServerStreaming",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        },
+        {
+          "name": "ColdFactsTelemetryDuplexStreaming",
+          "parameters": [],
+          "return": "System.Threading.Tasks.Task",
+          "qualification": "cold-facts-observer-dispatch-only"
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "commandBudgetSeconds": 1500,
+    "restoreSeconds": 600,
+    "buildSeconds": 600,
+    "discoverySeconds": 120,
+    "caseSeconds": 120,
+    "engineTimeout": "90s"
+  },
+  "qualification": "Nine unchanged path/math controls and ten five-shape observer/mapper controls. No D2, cancellation regression, physical streaming or performance acceptance."
+}
