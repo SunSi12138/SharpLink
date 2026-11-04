@@ -27,8 +27,23 @@ class RunnerTests(unittest.TestCase):
                 InternalsVisibleTo=expected['internalsVisibleTo'][:], IgnoresAccessChecksTo=[]))
         self.inventory = dict(SchemaVersion=1, Assemblies=self.rows)
 
-    def test_accept_exact_multisets(self):
+    def test_accept_exact_grant_sets(self):
         self.assertEqual(10, len(r.validate_inventory(self.inventory, self.paths)))
+
+    def test_accept_emitted_duplicate_count_changes(self):
+        for transform in [lambda values: sorted(set(values)), lambda values: values + values]:
+            inventory=copy.deepcopy(self.inventory)
+            for row in inventory['Assemblies']:
+                row['InternalsVisibleTo']=transform(row['InternalsVisibleTo'])
+            self.assertEqual(10,len(r.validate_inventory(inventory,self.paths)))
+
+    def test_reject_explicit_all_internals_visible(self):
+        for value in [True,False]:
+            inventory=copy.deepcopy(self.inventory)
+            inventory['Assemblies'][0]['RecognizedAttributes']=[dict(
+                TypeName='System.Runtime.CompilerServices.InternalsVisibleToAttribute',
+                AllInternalsVisible=value)]
+            with self.assertRaises(ValueError):r.validate_inventory(inventory,self.paths)
 
     def test_reject_duplicate_identity(self):
         self.rows[-1] = copy.deepcopy(self.rows[0])
@@ -65,7 +80,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_cli_usage_nonzero_no_pass(self):
         proc=subprocess.run([sys.executable,str(Path(r.__file__))],capture_output=True,text=True,timeout=10)
-        self.assertEqual(1,proc.returncode);self.assertIn('Usage:',proc.stdout);self.assertNotIn('PACKAGE_GRANTS_PASS',proc.stdout)
+        self.assertEqual(1,proc.returncode);self.assertIn('category=ValueError',proc.stdout);self.assertNotIn('PACKAGE_GRANTS_PASS',proc.stdout)
 
     def test_cli_non_ci_checkout_nonzero_no_pass(self):
         proc=subprocess.run([sys.executable,str(Path(r.__file__)),str(self.root)],capture_output=True,text=True,timeout=10)
