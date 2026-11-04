@@ -1,0 +1,14 @@
+.gitignore
+NuGet.Config
+README.md
+SharpLink.AssemblyGrants/Program.cs
+SharpLink.AssemblyGrants/SharpLink.AssemblyGrants.csproj
+test.sh
+test-results.json
+tests/Program.cs
+tests/SharpLink.AssemblyGrants.Tests.csproj
+tests/fixtures/Grants/Grants.cs
+tests/fixtures/Grants/Grants.csproj
+tests/fixtures/NoGrants/NoGrants.cs
+tests/fixtures/NoGrants/NoGrants.csproj
+publish-allowlist.txt
