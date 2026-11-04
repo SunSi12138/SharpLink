@@ -72,7 +72,7 @@ def bounded_summary(summary):
 
 def identity_summary(manifest):
     keys = ['source','toolBase','toolHead','sdk','runtimeListing','traceVersion','providers','frozenToolFiles',
-            'runtimeHostSha256','coreLibSha256','diagnosticSource','binaries','parserBinaries','commands','kernelScheduling']
+            'runtimeHostSha256','coreLibSha256','traceToolHostRoot','traceToolRuntimes','diagnosticSource','binaries','parserBinaries','commands','kernelScheduling']
     result = {k: manifest.get(k, 'unavailable') for k in keys}
     topology = manifest.get('topology', {})
     selected = topology.get('selectedCpus', [])
@@ -130,6 +130,8 @@ def main():
         runtimes = subprocess.check_output([runtime, '--list-runtimes'], text=True)
         validate_runtime_listing(runtime, runtimes, sdks)
         manifest['runtimeListing'] = runtimes
+        manifest['traceToolHostRoot'] = os.environ['TRACE_DOTNET_ROOT']
+        manifest['traceToolRuntimes'] = subprocess.check_output([str(Path(os.environ['TRACE_DOTNET_ROOT']) / 'dotnet'), '--list-runtimes'], text=True)
         manifest['sdk'] = subprocess.check_output([build, '--version'], cwd=source, text=True).strip()
         if manifest['sdk'] != '10.0.102':
             raise ValueError('SDK must match original frozen 10.0.102')
@@ -181,7 +183,7 @@ def main():
             manifest['executions'].append(entry)
             write(output / 'diagnostic-manifest.json', manifest)
             # The trace tool uses SDK runtime; its launched child explicitly uses frozen private runtime.
-            trace_env = dict(os.environ, DOTNET_ROOT=str(build.parent), DOTNET_MULTILEVEL_LOOKUP='0')
+            trace_env = dict(os.environ, DOTNET_ROOT=os.environ['TRACE_DOTNET_ROOT'], DOTNET_MULTILEVEL_LOOKUP='0')
             run(command, folder / 'trace.log', env=trace_env, timeout=180)
             phases = [json.loads(l) for l in (folder / 'phases.jsonl').read_text().splitlines()]
             validate_phases(phases)
