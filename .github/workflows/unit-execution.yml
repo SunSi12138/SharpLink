@@ -1,0 +1,48 @@
+name: Ordinary Unit Linux Release execution
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/unit-execution-8a13-20261104']
+    paths:
+      - '.github/workflows/unit-execution.yml'
+      - 'eng/run-unit-execution.py'
+      - 'eng/unit-execution-results.py'
+      - 'eng/tests/test_unit_execution.py'
+      - 'eng/run-unit-census.py'
+      - 'eng/unit-census-results.py'
+      - 'eng/unit-census.json'
+      - 'eng/package-smoke-process.py'
+      - 'eng/route59-results.py'
+      - 'eng/retirement-results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.*'
+      - 'global.json'
+concurrency:
+  group: ordinary-unit-execution-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-execution:
+    runs-on: ubuntu-24.04
+    # Original preparation3600, body phase3000, overall6600; outer is not ownership evidence.
+    timeout-minutes: 135
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup patched pinned SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/unit-execution-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Verify frozen integration product and test source
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD:src)" = "bfc211191d91b5a77c6a8f0085a0c00a459c5583"
+          test "$(git rev-parse HEAD:test)" = "690953054b445203d5b74614f954c8b7dc8d41ba"
+          test "$(dotnet --version)" = "10.0.114"
+      - name: Original Unit14 build, double census, and ordinary execution
+        run: python3 eng/run-unit-execution.py --configuration Release
