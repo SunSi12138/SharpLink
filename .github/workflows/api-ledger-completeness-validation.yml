@@ -1,0 +1,25 @@
+name: API ledger completeness validation
+
+on:
+  push:
+    branches:
+      - 'validation/api-ledger-completeness-20261104'
+
+permissions:
+  contents: read
+
+jobs:
+  api-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: API decision ledger receipt controls
+        run: python3 -m unittest discover -s eng/tests -p 'test_api_decision_ledger.py' -v
+      - name: Published API comparison controls
+        run: python3 -m unittest discover -s eng/tests -p 'test_compare_published_api.py' -v
+      - name: Actual Roslyn and LoggerMessage inventory fixtures
+        run: python3 -m unittest discover -s eng/tests -p 'test_api_inventory.py' -v
