@@ -131,7 +131,6 @@ internal static class Network
     }
 }
 
-
 [EventSource(Name = "SharpLink-MethodFacts-Phases")]
 internal sealed class PhaseEvents : EventSource
 {
