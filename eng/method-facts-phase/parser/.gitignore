@@ -1,0 +1,10 @@
+bin/
+obj/
+.dotnet-home/
+reference/
+**/bin/
+**/obj/
+tests/local-*/
+*.nettrace
+*.log
+core
