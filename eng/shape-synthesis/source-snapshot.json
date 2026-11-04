@@ -1,0 +1,121 @@
+{
+  "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "sourceTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "scope": "static-source-provenance-not-runtime-semantics",
+  "files": [
+    {
+      "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
+      "sha256": "c00545a2b19ffea91eb0e0ecba4a57fa534aa8d2733483c910146330c78eb87d",
+      "anchors": [
+        {
+          "line": 603,
+          "text": "private ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>("
+        },
+        {
+          "line": 615,
+          "text": "private async ValueTask InvokeOneWayPlainCoreAsync<TRequest>("
+        },
+        {
+          "line": 744,
+          "text": "private async ValueTask InvokeOneWayStreamingCoreAsync<TRequest, TStreams>("
+        }
+      ]
+    },
+    {
+      "path": "src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs",
+      "sha256": "7503f108451b9946847ee744840cd9a8f1b6b7dde8998e59ada5b5d3eef80497",
+      "anchors": [
+        {
+          "line": 145,
+          "text": "var requestType = payloadParameters.Length == 0 ? \"RpcEmptyRequest\" : GetHelperTypeReference(model, GetRequestType(model, method));"
+        }
+      ]
+    },
+    {
+      "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs",
+      "sha256": "96b7337e509af1d0c9e879fac3b079804c1f747b139c7f12c70372e0f99a21e7",
+      "anchors": [
+        {
+          "line": 80,
+          "text": "private bool _payloadNullable;"
+        },
+        {
+          "line": 283,
+          "text": "if (!_payloadNullable && default(T) is null && item is null)"
+        }
+      ]
+    },
+    {
+      "path": "src/SharpLink.Server/SharpLinkServer.DispatchSelection.cs",
+      "sha256": "6b646d3ef94058182c60fb7ebcded9d63898c18d5807cd1b31c229e3046abd2b",
+      "anchors": [
+        {
+          "line": 6,
+          "text": "internal readonly record struct SelectedMethodCall(QueuedServiceSelection Selection, RpcMethodFacts Method)"
+        },
+        {
+          "line": 63,
+          "text": "selected = new SelectedMethodCall(new QueuedServiceSelection(entry.Registration), entry.ResolveMethod(methodId));"
+        }
+      ]
+    },
+    {
+      "path": "src/SharpLink.Abstractions/RpcMethodFacts.cs",
+      "sha256": "c25d0ad8a82147cec2e439a59fa19cd20f7422b3776c8082448c10a1f679cc0b",
+      "anchors": [
+        {
+          "line": 10,
+          "text": "public sealed class RpcMethodFacts"
+        }
+      ]
+    },
+    {
+      "path": "src/SharpLink.Server/ServiceRegistration.cs",
+      "sha256": "f95eb1095ca1e31fe1ff82d5962fafb8643dc1888bb0a4561ee2042de30d509e",
+      "anchors": [
+        {
+          "line": 47,
+          "text": "if (Lifetime == SharpLinkServiceLifetime.Singleton)"
+        },
+        {
+          "line": 206,
+          "text": "if (Lifetime == SharpLinkServiceLifetime.Singleton)"
+        },
+        {
+          "line": 209,
+          "text": "if (Lifetime == SharpLinkServiceLifetime.Connection)"
+        },
+        {
+          "line": 278,
+          "text": "if (Lifetime == SharpLinkServiceLifetime.Connection)"
+        }
+      ]
+    },
+    {
+      "path": "src/SharpLink.Abstractions/IRpcContractChannel.cs",
+      "sha256": "6739809733795ef76c3cc6900d022af3efcff25a871affbbdb9f54736fa137e9",
+      "anchors": [
+        {
+          "line": 290,
+          "text": "ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>("
+        },
+        {
+          "line": 299,
+          "text": "ValueTask InvokeOneWayAsync<TRequest, TStreams>("
+        },
+        {
+          "line": 309,
+          "text": "ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>("
+        },
+        {
+          "line": 320,
+          "text": "IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>("
+        },
+        {
+          "line": 329,
+          "text": "IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>("
+        }
+      ]
+    }
+  ]
+}
