@@ -1,0 +1,9 @@
+TraceParser.csproj
+Program.cs
+packages.lock.json
+README.md
+.gitignore
+DELIVERY-FILES.txt
+tests/Synthetic.csproj
+tests/Program.cs
+tests/check.py
