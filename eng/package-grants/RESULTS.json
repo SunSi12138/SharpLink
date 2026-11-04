@@ -1,0 +1,201 @@
+{
+  "runId": 41914187841,
+  "jobId": 126869372741,
+  "conclusion": "success",
+  "sourceCommit": "8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+  "sourceTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "toolsCommit": "fe5d482a9fec60f3ad2065093628a91162b154a8",
+  "producerSdk": "10.0.114",
+  "readerSdk": "10.0.114",
+  "cliHost": "10.0.14",
+  "dotnetExecutableSha256": "db40da462b13ec4c07df7a75c4b0395223d360b8dc9a477d9e31fb71759b05f4",
+  "sdkQualification": "Observed CLI selection/host/inventory, not proof of app runtime selection",
+  "runnerTests": 11,
+  "readerTests": 44,
+  "rpcProcesses": 0,
+  "packageCount": 9,
+  "archiveCount": 18,
+  "assemblyCount": 10,
+  "ivtRows": 23,
+  "ignoresAccessChecksRows": 0,
+  "referenceAssemblyMarkers": 0,
+  "assemblyRefRows": 111,
+  "typeForwarderRows": 20,
+  "packageHashes": {
+    "SharpLink.Abstractions.3.0.0.nupkg": "4897f9cca549652a1bbd1e02eb4c031c5737640c7f25ae6d6418b6871b14d3af",
+    "SharpLink.Abstractions.3.0.0.snupkg": "168b7f259e0c9ca36767620a123e0474a70d5f22288833f7035c410c4edcd0fa",
+    "SharpLink.Client.3.0.0.nupkg": "4f38bc08f97aa7a94da78abd4e2196c93bfa934499c4b3363f57fb408e49c353",
+    "SharpLink.Client.3.0.0.snupkg": "c208b5aea599c6b6e8debfc36373cf85e77ebc5bc2971a5fbf8bb7aa5aa8255f",
+    "SharpLink.Compression.Zstd.3.0.0.nupkg": "35b21dff878554930f5787b9504308de324da7477160be796dc9b12eda1571d7",
+    "SharpLink.Compression.Zstd.3.0.0.snupkg": "0e8f0f4b3f7b5d455ddb9b57c3b9fe535704ac0dc3ee880231d9219621d880fb",
+    "SharpLink.GenerationControl.3.0.0.nupkg": "71389b94d4ee7ce9ba35267fdd9c190c4691a8fdd4b8fe80c30f88cb9919f70b",
+    "SharpLink.GenerationControl.3.0.0.snupkg": "a406a3613a1f0ea0cfc1864ae298eb686e63f13b8aa5822924e41ec85ee0703c",
+    "SharpLink.Hosting.3.0.0.nupkg": "7f89f1f5b94ca021d11f80308da204e4f3f6e90eb4ecc8d2fe932a03f2c83d5d",
+    "SharpLink.Hosting.3.0.0.snupkg": "c7578d36a144a6853167e7aeda776f8c55bd9ee3dbc03d8b5caddecb8bf2355d",
+    "SharpLink.Runtime.3.0.0.nupkg": "1ebba81fe58ff6faaa7a4205f319b75377fc0d3708c3329359ae7087a77f35e0",
+    "SharpLink.Runtime.3.0.0.snupkg": "7e3d97db851f6ad986181d50fade731c355d3d8777d99bb50e5e3bedb40bfd58",
+    "SharpLink.Sdk.3.0.0.nupkg": "c3918e2010bdad18fb17be6b6996495349712b2aaf74e713909b68dc3967b9bb",
+    "SharpLink.Sdk.3.0.0.snupkg": "f3b1e37e13d6c9d480aa18fcb2fc6e2e081bffdc3a6b59394015bf7412faf9a6",
+    "SharpLink.Serializer.SharpPack.3.0.0.nupkg": "a312ba57859d304225f36e154bde44d68d333da50d82fb1a8c88f828c89b3b98",
+    "SharpLink.Serializer.SharpPack.3.0.0.snupkg": "abe2acfcdbe447c90907c4e36a8dac47fb006c4b5bb04f21309ea3e06743f44d",
+    "SharpLink.Server.3.0.0.nupkg": "225b425e07d03032640247e2bc5c5e560eddcb0f0f4895232689ff1af1181c04",
+    "SharpLink.Server.3.0.0.snupkg": "603b662842559a45bfcdfd1d46cca4822e27bf218e363408ded55e72a7dd9849"
+  },
+  "assemblies": [
+    {
+      "name": "SharpLink.Abstractions",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "47f7cf34f76bb1c8f55f8b36899798381149f99ef3210bef5181e6c2336bdba1",
+      "mvid": "268126d8-9442-4073-ad69-01def3f4b2bc",
+      "internalsVisibleTo": [
+        "SharpLink.Server",
+        "SharpLink.Client",
+        "SharpLink.Runtime",
+        "SharpLink.UnitTests",
+        "SharpLink.Benchmarks"
+      ],
+      "assemblyRefCount": 10,
+      "assemblyRefsCanonicalSha256": "87b91f0efd7a8d465dcd576c99e88388709fdef86e9b45fead6869292f57cb0b",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Client",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "2f1f99b2a0a48bc9701d3914c303f8a93948350b22bb04f2c8c640f7aa177c9d",
+      "mvid": "514621a1-0b25-4966-ae73-4f66f79a838a",
+      "internalsVisibleTo": [
+        "SharpLink.Benchmarks",
+        "SharpLink.UnitTests",
+        "SharpLink.Hosting",
+        "SharpLink.IntegrationTests"
+      ],
+      "assemblyRefCount": 23,
+      "assemblyRefsCanonicalSha256": "ade481e4595bb88bf4ad594ef6f00c7aa929b64f086d0dd9d8a2a39e18b7d111",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Compression.Zstd",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "66650532438df3019878061fb4def84ba2f4f980676a16fcbd3a6ef329505c07",
+      "mvid": "389109a8-e66f-4adc-927f-0d689bb213a1",
+      "internalsVisibleTo": [],
+      "assemblyRefCount": 4,
+      "assemblyRefsCanonicalSha256": "d64e425b7b6f956e72b80ec59c32e295ee1658a711d0b089a842032f473a0f02",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.GenerationControl",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "9ca789f2172866e89e2ce41c15a220424bf2a950e5e5c78ec7d807117c18650f",
+      "mvid": "8283b976-c9fc-45b3-8f60-7c842e98f64b",
+      "internalsVisibleTo": [],
+      "assemblyRefCount": 4,
+      "assemblyRefsCanonicalSha256": "c3925bbf4e2a0c6070093f886875d6bcb192d9b2af6bc92135aa718280204192",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Generator",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "87ed7722527f545b3452b4ce8db327b400ced7030500b547ef463afd17011fed",
+      "mvid": "326753bf-2839-4106-89db-d171bdac53c7",
+      "internalsVisibleTo": [],
+      "assemblyRefCount": 7,
+      "assemblyRefsCanonicalSha256": "1937b5e6ac469987c6a6c451841457bd816cc6445d53e987b27a07f1069821ba",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Hosting",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "112d9f1198d015ef217a1047a46263a980571a3b0530654d6581f2ff782eda85",
+      "mvid": "9bd939c9-2385-4db6-80b1-c055a3e9b827",
+      "internalsVisibleTo": [
+        "SharpLink.UnitTests"
+      ],
+      "assemblyRefCount": 13,
+      "assemblyRefsCanonicalSha256": "a74fc4a51a3d7754069c79fdaba0a0a9b4b9e4d493cff53fba8115be8a98517c",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Runtime",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "7ccf06f36bfcedd0a75bb4439fdfb603346e31f8e0e92f6cfd460715a3b06509",
+      "mvid": "134a08a0-5a0e-40a9-926e-26d3e3ae72ce",
+      "internalsVisibleTo": [
+        "SharpLink.Benchmarks",
+        "SharpLink.Client",
+        "SharpLink.Server",
+        "SharpLink.ChaosTests",
+        "SharpLink.UnitTests",
+        "SharpLink.IntegrationTests",
+        "SharpLink.CodecCompatibility"
+      ],
+      "assemblyRefCount": 23,
+      "assemblyRefsCanonicalSha256": "371c4eb83068b40c44c393cf6328c647e6329277cebcf02312a856f58000fd3d",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Sdk",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "862b22c379caba0ac7b8fc484efd18c071e109844ae3c79a2a033f00083b68c4",
+      "mvid": "042ee775-d909-40d7-a656-06a3582b1a7e",
+      "internalsVisibleTo": [],
+      "assemblyRefCount": 2,
+      "assemblyRefsCanonicalSha256": "705b1bfb1124fd1528fed9dc33586d84084b421d66a5767c4535dd7e3b43cfbf",
+      "forwarderCount": 20,
+      "forwardersCanonicalSha256": "6e337f5550d429db73e0a4899c0b0cccda7aec4e30dc1f5a237dda5ac72a58e4"
+    },
+    {
+      "name": "SharpLink.Serializer.SharpPack",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "a39c062918340fc6ad8a641910ff166541edda54ca228f5c8b3b506d65eb51d8",
+      "mvid": "13fdce62-3079-4053-bfc9-c012b297c44c",
+      "internalsVisibleTo": [
+        "SharpLink.UnitTests"
+      ],
+      "assemblyRefCount": 5,
+      "assemblyRefsCanonicalSha256": "1f3eb77f8bdd325ba8fb43e5a4e7bc7e1ef0e9fcbbd2a2c22d5e7f0ab593d8eb",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "SharpLink.Server",
+      "version": "3.0.0.0",
+      "informationalVersion": "3.0.0+8a13b12e799bb70a989eacac0c1b4cea22ab80ae",
+      "sha256": "24b8a638000754067e954f59ca5dd8979e9c8868c254f448a40b505aeaf2e06c",
+      "mvid": "5ab368af-739a-44ec-9330-606076c8b69a",
+      "internalsVisibleTo": [
+        "SharpLink.UnitTests",
+        "SharpLink.IntegrationTests",
+        "SharpLink.Hosting",
+        "SharpLink.Benchmarks",
+        "SharpLink.ChaosTests"
+      ],
+      "assemblyRefCount": 20,
+      "assemblyRefsCanonicalSha256": "5ea7e1aaa6ca5a61de9cdf4e61820edc161c5ea468594fd55e3732c9e1870739",
+      "forwarderCount": 0,
+      "forwardersCanonicalSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "fullMetadataCanonicalSha256": "3b6f0d0489d758de8a2296ccbdac09c61cc5559381422c250bc5be40a5f3e53a",
+  "retainedIdentityCrossCheck": "PASS; validates summary internal bindings, not an independent re-read of absent package bytes",
+  "previousFailedRun": 41912862444,
+  "previousFailure": "reader-self-tests exit0 but cleanup error count1; exact cause unconfirmed",
+  "qualification": "Metadata inventory only; no RPC/consumer, no API/ABI/security approval, no Trim/AOT/performance claim",
+  "canonicalHashDefinition": "SHA256 over UTF-8 bytes of Python json.dumps(value, sort_keys=True, separators=(comma, colon), ensure_ascii=True), without trailing newline; array order preserved. fullMetadataCanonicalSha256 uses the entire parsed PACKAGE_GRANTS_SUMMARY object, not only assemblies. Per-assembly hashes use the respective AssemblyReferences or TypeForwarders array."
+}
