@@ -19,7 +19,9 @@ add exact exception-reference and MethodFacts-reference mapper checks; successfu
 completion must never invoke the mapper. After dispatch and send-queue flush,
 wire parsing requires exactly one stream-0 StreamComplete with the expected
 success/Error status and mapped Internal error code, followed by exactly one
-normal empty success Response acknowledgement; no data or partial frame. Cleanup independently attempts bounded join,
+normal empty success Response acknowledgement. Duplex additionally requires
+exactly one initial empty RequestAccepted before the terminal; ServerStreaming
+requires none. No data or partial frame is accepted. Cleanup independently attempts bounded join,
 registry restoration and bounded harness disposal while preserving primary failures.
 A cleanup timeout fails the case; the existing outer process owner still owns
 process termination/join. No timeout is counted as physical cleanup success.
@@ -51,3 +53,12 @@ async stream error to StreamComplete(Error) and returns normally. The corrected
 wire assertion requires exactly one such ack after exactly one stream terminal,
 retaining the expected terminal status and code. No production change or silent
 reinterpretation of the failed run is made.
+
+The second run 41897113502 on 61e7d8d6ba1a496f925567f735f752b7bd6bd1fc
+passed all nine controls and all four ServerStreaming cases, then rejected the
+first Duplex case because the fixture omitted its initial RequestAccepted frame;
+the final three were unrun. PrepareRequestAccepted explicitly publishes this
+empty None-flag frame for Duplex/ClientStreaming before invocation. The next
+fixture requires exactly one for Duplex before any terminal and zero for
+ServerStreaming, rather than ignoring arbitrary extra frames. Both failed
+attempts remain distinct evidence.
