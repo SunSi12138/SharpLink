@@ -18,8 +18,8 @@ facts reference, and complete owner/permit drainage are required. Fault cases
 add exact exception-reference and MethodFacts-reference mapper checks; successful
 completion must never invoke the mapper. After dispatch and send-queue flush,
 wire parsing requires exactly one stream-0 StreamComplete with the expected
-success/Error status and mapped Internal error code, no response/data fallback
-and no partial frame. Cleanup independently attempts bounded join,
+success/Error status and mapped Internal error code, followed by exactly one
+normal empty success Response acknowledgement; no data or partial frame. Cleanup independently attempts bounded join,
 registry restoration and bounded harness disposal while preserving primary failures.
 A cleanup timeout fails the case; the existing outer process owner still owns
 process termination/join. No timeout is counted as physical cleanup success.
@@ -39,3 +39,15 @@ new singleton UIDs. Actual discovery must match exact source and all results mus
 pass in separate owned/joined processes. No raw runner artifacts are uploaded.
 Local graph/source checks and all 20 existing classifier tests pass; runtime
 results require the actual published commit's hosted run.
+
+## Preserved first-attempt failure
+
+Run 41896553967 on 109f11dc8e54333137fc74f376ddf812c26be220 built and
+discovered all 17 UIDs. The nine controls passed; the first new case failed an
+overstrict fixture assertion forbidding Response. The remaining seven were unrun.
+ContinueRpcDispatch/AwaitDispatchRpcNoReturnAsync intentionally send an empty
+success Response acknowledgement after the pump; ServerGeneratedBridge maps an
+async stream error to StreamComplete(Error) and returns normally. The corrected
+wire assertion requires exactly one such ack after exactly one stream terminal,
+retaining the expected terminal status and code. No production change or silent
+reinterpretation of the failed run is made.
