@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTIVE = {'lane': None, 'errors': [], 'work': None}
 SOURCE_TREES = {'src': 'c3a94c896418a5d5ec62646461f17c67dc89bc96', 'test': '47527763f1de7aa592f94120a346d843456d6cf1'}
 HELPERS = {
+    'eng/protocol70-history/command-cap-failure-result.json': '2854e98a54900ea77fc7f4c889d4cfdf79029c97a710cfbc95a28cbc9e40a0cb',
     'eng/stream-negotiation-history/boolean-display-name-proof.json': '1917416924ccc1f506b7922aff4872d8b7bac20bfa2147da12347129c4cfed6e',
     'eng/run-unit-census.py': 'a445781ba97a6c6a963faa9ba4d7e0bb890a96df6395e482ddb3948f8d12e4bf',
     'eng/unit-census-results.py': 'cbf6ce2096576dfe027b8e196144e9cba57860ad99be48c1f89d7ba73a71414e',
@@ -55,7 +56,7 @@ HELPERS = {
     'eng/protocol70-history/ProtocolV2Tests.cs.txt': '00745a416645a7c5e83a934e47900f75a2c656ab6b072ac9029e8aa3b8aeeb85',
     'eng/protocol70-history/ResponseCompressionPreferenceProtocolTests.cs.txt': 'f903e42a339e9e07e0dab9cf4d496de1e0266017cd800362a800666a08172970',
     'eng/protocol70-history/parent-unit-census.json': '3d05292b01e9ec133f10fad420593895e122469eb82528d6190ac2e9a8dcde12',
-    'eng/tests/test_protocol70_validation.py': '3cd5066fb148ffe47b29dde32b91e475873a01479e150b85163645a742425901',
+    'eng/tests/test_protocol70_validation.py': '76336bea534407afd4386daef6847133f54613b577f6654eb75e44316cae056d',
 }
 SOURCE_PINS = {'test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs': '1e5521926fb04c266f2c8a829399834df5a6e40a0ec273f1ebdfecadbf452748',
  'test/SharpLink.UnitTests/Protocol/Protocol3BindingLimitsCodecTests.cs': 'fe0cb3de4b04d07da0fe70caa7bfa63fd1eb80df5f3f55da2ad96dbc2fb5074a',
@@ -915,9 +916,44 @@ def case_argv(execution, dotnet, dll, uid, report):
     return execution.census.legacy.case_argv(dotnet, dll, uid, report, '60s')
 
 
+# Fixed, source-reviewed command plan. No environment/config override or counter reset.
+COMMAND_LABELS = ('head','tree','clean','tracked','clone','checkout','clone-head',
+    'diagnostic-src-tree','diagnostic-test-tree','python-controls','sdk-version','sdk-info','sdk-runtimes','restore',
+    *('metadata'+str(i) for i in range(14)), 'expanded-imports','build','discovery1','discovery2',
+    'protocol70-python-controls', *('protocol70-case-'+str(i) for i in range(1,71)))
+
+
+class Protocol70Results:
+    """Instance-only budget adaptation; every other reviewed API/type is delegated."""
+    __slots__ = ('_base',)
+
+    def __init__(self, base):
+        object.__setattr__(self, '_base', base)
+
+    def __setattr__(self, name, value):
+        raise AttributeError('immutable protocol70 result adapter')
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
+
+    def budget(self, remaining, requested, commands):
+        self._base.require(type(commands) is int and 0 <= commands < 103, 'UC_COMMAND_CAP')
+        # Same 16-second-per-remaining-command rule, now for the exact103 plan.
+        # This raises the reservation, not the phase, overall or owner deadlines.
+        reserve = 16 * (103 - commands)
+        self._base.require(remaining > reserve, 'UC_BUDGET')
+        return min(requested, remaining - reserve)
+
+
 def lane_type(census, execution):
     class DiagnosticLane(census.Lane):
+        def __init__(self, work, results, owner):
+            super().__init__(work, Protocol70Results(results), owner)
+
         def run(self, label, argv, cwd=None, seconds=20):
+            self.r.require(type(self.sequence) is int and 0 <= self.sequence < 103, 'UC_COMMAND_CAP')
+            self.r.require(len(COMMAND_LABELS) == 103 and label == COMMAND_LABELS[self.sequence] and
+                           tuple(self.commands) == COMMAND_LABELS[:self.sequence], 'PD_COMMANDS')
             output = super().run(label, argv, cwd, seconds)
             if label == 'clone-head':
                 for name, expected in SOURCE_TREES.items():
@@ -1089,21 +1125,26 @@ def finish(lane, census, execution):
     all_passed = bool(complete and all(row['selectedPassed'] is True and row['status'] == 'passed' and row.get('ownerClosed') is True and row.get('bodyExitCode') == 0 for row in lane.case_facts))
     qualified = bool(all_passed and not lane.errors and lane.durable and time.monotonic() < lane.stop)
     try:
-        summary = {'schemaVersion': 1, 'scope': 'seventy-ordinary-protocol-fixture-validation',
+        summary = {'schemaVersion': 1, 'scope': 'seventy-ordinary-protocol-fixture-cap-repair-validation',
             'identity': public_identity(r, lane.identity), 'sourceTrees': dict(SOURCE_TREES),
             'candidateCatalogSHA256': HELPERS['eng/unit-census.json'],
-            'candidateParentHead': '0de69b451c744182f6962d253a1749899fdc29af',
+            'candidateParentHead': '9784e1b08dbd8d6eebc60072bf1fa99ece1f4682',
             'requiredSdk': '10.0.114', 'requiredRuntime': '10.0.14',
             'preparationQualifiedAtHandoff': lane.preparation_complete,
             'candidateValidationComplete': complete, 'candidateValidationQualified': qualified,
             'protocolSliceComplete': complete, 'protocolSliceQualified': qualified,
             'executionModel': 'sequential-one-owned-process-per-selected-UID', 'maximumParallelTestsOption': 1,
-            'plannedCommandCount': 103, 'preparationBudgetSeconds': 3600, 'casePhaseBudgetSeconds': 3600, 'overallBudgetSeconds': 7200,
+            'plannedCommandCount': 103, 'commandCap': 103, 'commandReserveSecondsPerRemaining': 16, 'preparationBudgetSeconds': 3600, 'casePhaseBudgetSeconds': 3600, 'overallBudgetSeconds': 7200,
             'infrastructureQualified': infrastructure_qualified(lane, complete),
             'observedNonpassingCaseCount': sum(not row['selectedPassed'] for row in lane.case_facts),
             'allSelectedPassed': all_passed,
             'fullSuiteQualified': False, 'requiredSelectedCaseCount': 70,
             'expectedOrdinaryMetadataCount': 2879, 'expectedExplicitMetadataCount': 5,
+            'historicalCommandCapFailure': {'runId':41988031636,'jobId':127113338641,
+                'head':'9784e1b08dbd8d6eebc60072bf1fa99ece1f4682','completedCases':31,'passed':31,
+                'observedNonpassingCaseCount':0,'successfulStageCount':64,'complete':False,'qualified':False,
+                'infrastructureQualified':False,'codes':['PD_OWNER','UC_COMMAND_CAP'],
+                'evidenceSHA256':HELPERS['eng/protocol70-history/command-cap-failure-result.json']},
             'historicalFullRun': {'runId':41970862705,'passed':2614,'errors':265,'qualified':False,
                 'evidenceSHA256':HELPERS['eng/protocol70-history/full-ordinary-result.json']},
             'previousFullRun': {'runId':41962521900,'passed':2607,'errors':272,'qualified':False,

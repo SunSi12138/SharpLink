@@ -285,6 +285,7 @@ class Controls(unittest.TestCase):
         for label, value in [('sdk-version', '10.0.115'), ('sdk-runtimes', 'Microsoft.NETCore.App 10.0.15 [/sdk/shared/Microsoft.NETCore.App]')]:
             with tempfile.TemporaryDirectory() as temp:
                 lane = Lane(Path(temp), r, o); path = Path(temp) / 'output'; path.write_text(value)
+                lane.sequence=d.COMMAND_LABELS.index(label);lane.commands=dict.fromkeys(d.COMMAND_LABELS[:lane.sequence])
                 with patch.object(c.Lane, 'run', return_value=path): self.reject(lambda: lane.run(label, ['/sdk/dotnet']))
 
     def test_selection_crossing_original_preparation_deadline_never_hands_off(self):
@@ -564,6 +565,160 @@ class Controls(unittest.TestCase):
             lane=self.make_lane(temp);lane.identity.update(sdk='10.0.114',installedRuntimes=d.RUNTIMES)
             ordinary=ordinary_metadata();explicit={next(iter(ordinary)),*['explicit-'+str(i) for i in range(4)]}
             self.reject(lambda:d.handoff_selections(lane,ordinary,explicit))
+
+
+class CommandCapControls(unittest.TestCase):
+    class FakeOwner:
+        CommandFailure=o.CommandFailure
+        def __init__(self,mode='success'):
+            self.mode=mode;self.calls=[];self.failures=[]
+        def run_owned(self,label,argv,cwd,env,logs,seconds):
+            self.calls.append((label,tuple(argv),seconds))
+            receipt={'stage':label,'argv':argv,'exitCode':0,'timedOut':False,'timeoutSeconds':seconds,
+                     'remainingOwned':{},'errors':[],'cleanupErrors':[],'reportingErrors':[],'elapsedSeconds':0.0}
+            text='control-only'
+            if label.startswith('diagnostic-'):
+                text=d.SOURCE_TREES['src' if label=='diagnostic-src-tree' else 'test']
+            elif label=='sdk-version':text='10.0.114'
+            elif label=='sdk-runtimes':text='\n'.join(row['framework']+' '+row['version']+' [/fake/shared/'+row['framework']+']' for row in d.RUNTIMES)
+            if self.mode in ('nonzero','timeout'):
+                receipt['exitCode']=2
+                if self.mode=='timeout':receipt['timedOut']=True
+            for suffix,value in (('stdout',text),('stderr',''),('json',json.dumps(receipt))):
+                (logs/(label+'.'+suffix)).write_text(value)
+            if self.mode=='log-seal':(logs/'unexpected').write_text(CANARY)
+            if self.mode in ('nonzero','timeout'):
+                failure=o.CommandFailure(receipt,[]);self.failures.append(failure);raise failure
+            return logs/(label+'.stdout'),logs/(label+'.stderr')
+
+    def lane(self,temp,mode='success',index=0):
+        owner=self.FakeOwner(mode);lane=d.lane_type(c,e)(Path(temp),r,owner)
+        lane.source=ROOT;lane.unfiltered=True;lane.stop=4600.0
+        # Synthetic legal prefix for focused boundary controls. Subsequent
+        # commands use real run/check/budget; this is not a103-command execution.
+        lane.sequence=index;lane.commands=dict.fromkeys(d.COMMAND_LABELS[:index])
+        return lane,owner
+
+    def test_adapter_is_instance_only_immutable_and_default64_remains(self):
+        adapted=d.Protocol70Results(r)
+        self.assertIs(adapted.Rejected,r.Rejected);self.assertIs(adapted.require,r.require)
+        self.assertIs(adapted.legacy,r.legacy);self.assertIs(adapted.classify,r.classify)
+        self.assertEqual(r.budget(2000,180,63),180)
+        with self.assertRaises(r.Rejected) as error:r.budget(2000,180,64)
+        self.assertEqual(error.exception.code,'UC_COMMAND_CAP')
+        self.assertEqual(adapted.budget(2000,180,64),180)
+        with self.assertRaises(AttributeError):adapted._base=None
+        for path,sha in (('eng/run-unit-census.py','a445781ba97a6c6a963faa9ba4d7e0bb890a96df6395e482ddb3948f8d12e4bf'),
+                         ('eng/unit-census-results.py','cbf6ce2096576dfe027b8e196144e9cba57860ad99be48c1f89d7ba73a71414e')):
+            self.assertEqual(r.sha(ROOT/path),sha)
+
+    def test_fixed_budget_boundaries_and_reservation_do_not_extend_time(self):
+        adapted=d.Protocol70Results(r)
+        for commands in (0,32,33,63,64,102):
+            reserve=16*(103-commands)
+            self.assertEqual(adapted.budget(reserve+7,180,commands),7)
+            self.assertEqual(adapted.budget(reserve+500,180,commands),180)
+            with self.assertRaises(r.Rejected) as error:adapted.budget(reserve,180,commands)
+            self.assertEqual(error.exception.code,'UC_BUDGET')
+        for commands in (-1,103,104,True,1.0):
+            with self.assertRaises(r.Rejected) as error:adapted.budget(9000,180,commands)
+            self.assertEqual(error.exception.code,'UC_COMMAND_CAP')
+
+    def test_real_lane_phase64_65_103_boundaries_and104_rejection(self):
+        # These prefixes are synthetic setup, not claims that all103 commands ran.
+        # Full70 report/owner/case-order controls remain separate above.
+        for first,last in ((31,34),(63,65),(102,103)):
+            with self.subTest(first=first,last=last),tempfile.TemporaryDirectory() as temp,patch.object(c.time,'monotonic',return_value=1000.0),contextlib.redirect_stdout(io.StringIO()) as output:
+                lane,owner=self.lane(temp,index=first);saved={}
+                while lane.sequence<last:
+                    before=lane.sequence;label=d.COMMAND_LABELS[before]
+                    argv=['/fake/dotnet','/fake/tests.dll','--list-tests','json'] if label.startswith('discovery') else ['/fake/dotnet']
+                    seconds=180 if label.startswith('protocol70-case-') else 90 if label=='protocol70-python-controls' else 20
+                    lane.run(label,argv,ROOT,seconds)
+                    self.assertEqual(lane.sequence,before+1)
+                    self.assertEqual(tuple(lane.commands),d.COMMAND_LABELS[:lane.sequence])
+                    for key,receipt in saved.items():self.assertIs(lane.commands[key]['receipt'],receipt)
+                    saved[label]=lane.commands[label]['receipt']
+                    self.assertEqual(lane.commands[label]['seconds'],seconds)
+                    self.assertEqual(lane.commands[label]['ownerProvenance'],'validated-original-success')
+                self.assertEqual([x[0] for x in owner.calls],list(d.COMMAND_LABELS[first:last]))
+                self.assertEqual(len({id(receipt) for receipt in saved.values()}),last-first)
+                self.assertEqual(len(lane.logseal),1+3*(last-first));lane.check()
+                self.assertEqual(len(output.getvalue().splitlines()),last-first);self.assertEqual(lane.stop,4600.0)
+                if last==103:
+                    before=(lane.sequence,list(owner.calls),set(Path(temp).iterdir()),dict(lane.commands),dict(lane.logseal))
+                    with self.assertRaises(r.Rejected) as error:lane.run('protocol70-case-71',['/fake/dotnet'],ROOT,180)
+                    self.assertEqual(error.exception.code,'UC_COMMAND_CAP')
+                    self.assertEqual(before,(lane.sequence,list(owner.calls),set(Path(temp).iterdir()),dict(lane.commands),dict(lane.logseal)))
+                    self.assertFalse((Path(temp)/'p104').exists())
+
+    def test_real_original_lane_still_rejects65_before_owner_or_pipe(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(c.time,'monotonic',return_value=1000.0),contextlib.redirect_stdout(io.StringIO()):
+            owner=self.FakeOwner();lane=c.Lane(Path(temp),r,owner);lane.stop=4600
+            # Synthetic63-command prefix; real64th command then rejected65th.
+            lane.sequence=63;lane.commands=dict.fromkeys('original-'+str(i) for i in range(63))
+            lane.run('original-63',['/fake/dotnet'])
+            self.assertEqual(lane.sequence,64);self.assertEqual(len(owner.calls),1)
+            receipt=lane.commands['original-63']['receipt']
+            with self.assertRaises(r.Rejected) as error:lane.run('original-64',['/fake/dotnet'])
+            self.assertEqual(error.exception.code,'UC_COMMAND_CAP');self.assertFalse((Path(temp)/'p65').exists())
+            self.assertEqual(len(owner.calls),1);self.assertNotIn('original-64',lane.commands)
+            self.assertIs(lane.commands['original-63']['receipt'],receipt)
+
+    def test_real_lane_short_preparation_body_or_expired_budget_never_starts(self):
+        for index in (0,32,33,63,64,102):
+            for remaining in (0,16*(103-index)):
+                with self.subTest(index=index,remaining=remaining),tempfile.TemporaryDirectory() as temp,patch.object(c.time,'monotonic',return_value=1000.0):
+                    lane,owner=self.lane(temp,index=index);lane.stop=1000+remaining
+                    before=(lane.sequence,dict(lane.commands),set(Path(temp).iterdir()),lane.stop)
+                    with self.assertRaises(BaseException):lane.run(d.COMMAND_LABELS[index],['/fake/dotnet'],ROOT,180)
+                    self.assertEqual(owner.calls,[]);self.assertEqual(before,(lane.sequence,dict(lane.commands),set(Path(temp).iterdir()),lane.stop))
+                    self.assertFalse((Path(temp)/('p'+str(index+1))).exists())
+
+    def test_real_lane_wrong_label_reordered_ledger_or_reset_sequence_rejects(self):
+        for mode in ('wrong-label','missing-ledger','extra-ledger','reordered-ledger','reset-sequence','bool-sequence'):
+            with tempfile.TemporaryDirectory() as temp,patch.object(c.time,'monotonic',return_value=1000.0):
+                lane,owner=self.lane(temp,index=64);label=d.COMMAND_LABELS[64]
+                if mode=='wrong-label':label=d.COMMAND_LABELS[63]
+                elif mode=='missing-ledger':lane.commands.pop(d.COMMAND_LABELS[0])
+                elif mode=='extra-ledger':lane.commands['unplanned']=None
+                elif mode=='reordered-ledger':lane.commands=dict(reversed(list(lane.commands.items())))
+                elif mode=='reset-sequence':lane.sequence=0;label=d.COMMAND_LABELS[0]
+                else:lane.sequence=True
+                before=set(Path(temp).iterdir())
+                with self.assertRaises(r.Rejected):lane.run(label,['/fake/dotnet'])
+                self.assertEqual(owner.calls,[]);self.assertEqual(set(Path(temp).iterdir()),before)
+
+    def test_real_lane_owner_failure_timeout_and_log_seal_preserve_receipt(self):
+        for mode in ('nonzero','timeout','log-seal'):
+            with tempfile.TemporaryDirectory() as temp,patch.object(c.time,'monotonic',return_value=1000.0):
+                lane,owner=self.lane(temp,mode,index=64);label=d.COMMAND_LABELS[64]
+                with self.assertRaises(BaseExceptionGroup):lane.run(label,['/fake/dotnet'],ROOT,180)
+                self.assertEqual(lane.sequence,65);self.assertEqual(len(owner.calls),1);self.assertTrue(lane.errors)
+                if mode!='log-seal':
+                    original=owner.failures[0];self.assertIn(original,lane.errors)
+                    self.assertIs(lane.commands[label]['receipt'],original.outcome)
+                    self.assertEqual(lane.commands[label]['ownerProvenance'],'original-owner-failure')
+                    self.assertEqual(original.outcome['timeoutSeconds'],180)
+                else:self.assertIn('UC_COMPLETED_LOG_MUTATION',r.public_rejections(lane.errors)['codes'])
+                self.assertEqual(lane.stop,4600)
+
+    def test_actual_failed64_command_run_is_preserved_and_does_not_qualify(self):
+        path=ROOT/'eng/protocol70-history/command-cap-failure-result.json'
+        self.assertEqual(r.sha(path),'2854e98a54900ea77fc7f4c889d4cfdf79029c97a710cfbc95a28cbc9e40a0cb')
+        result=r.read_json(path);summary=result['summary']
+        self.assertEqual((result['runId'],result['head']),(41988031636,'9784e1b08dbd8d6eebc60072bf1fa99ece1f4682'))
+        self.assertEqual(len(result['successfulStageRows']),64);self.assertEqual(len(summary['cases']),31)
+        self.assertEqual([row['stage'] for row in result['successfulStageRows']],list(d.COMMAND_LABELS[:64]))
+        self.assertEqual(summary['observedNonpassingCaseCount'],0);self.assertEqual(summary['errorOccurrences'],2)
+        self.assertEqual(summary['rejections']['codes'],['PD_OWNER','UC_COMMAND_CAP'])
+        self.assertFalse(summary['candidateValidationComplete']);self.assertFalse(summary['infrastructureQualified'])
+        self.assertFalse(summary['candidateValidationQualified']);self.assertFalse(summary['fullSuiteQualified'])
+        self.assertEqual(d.HELPERS[str(path.relative_to(ROOT))],r.sha(path))
+        w=(ROOT/'.github/workflows/protocol70-validation.yml').read_text()
+        self.assertIn("branches: ['validation/protocol70-cap-20261105']",w)
+        self.assertIn('timeout-minutes: 145',w)
+        self.assertIn('eng/tests/test_protocol70_validation.py',w)
 
 
 if __name__ == '__main__': unittest.main()

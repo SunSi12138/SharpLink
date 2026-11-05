@@ -1,9 +1,9 @@
-name: Protocol namespace fixture regression
+name: Protocol namespace regression with exact command cap
 permissions:
   contents: read
 on:
   push:
-    branches: ['validation/protocol70-fixtures-20261105']
+    branches: ['validation/protocol70-cap-20261105']
     paths:
       - '.github/workflows/protocol70-validation.yml'
       - 'eng/run-protocol70-validation.py'
@@ -30,7 +30,7 @@ on:
       - 'Directory.*'
       - 'global.json'
 concurrency:
-  group: protocol70-validation-${{ github.ref }}
+  group: protocol70-cap-validation-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   release-execution:
