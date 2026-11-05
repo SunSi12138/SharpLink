@@ -1,0 +1,36 @@
+name: Eleven unchanged parser and handshake diagnostics
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/parser-handshake-diagnostic-20261105']
+    paths:
+      - '.github/workflows/parser-handshake-diagnostic.yml'
+      - 'eng/run-parser-handshake-diagnostic.py'
+      - 'eng/tests/test_parser_handshake_diagnostic.py'
+concurrency:
+  group: parser-handshake-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  diagnose-eleven:
+    runs-on: ubuntu-24.04
+    # Original preparation3600; eleven-case phase1500; overall5100 seconds.
+    timeout-minutes: 110
+    steps:
+      - name: Checkout exact diagnostic candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup isolated pinned SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/parser-handshake-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Verify unchanged product and tests
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD:src)" = "c3a94c896418a5d5ec62646461f17c67dc89bc96"
+          test "$(git rev-parse HEAD:test)" = "6052d7b2a52946f8d9048e76287167768f13c673"
+      - name: One build, two full discoveries, eleven fresh exact UIDs
+        run: python3 eng/run-parser-handshake-diagnostic.py --configuration Release
