@@ -1,0 +1,1090 @@
+{
+  "schemaVersion": 1,
+  "scope": "three-fixture-candidate-catalog-rebase",
+  "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
+  "candidateCatalogSHA256": "ef9b5d58a7e4d2879782a93f431da18127860f8ba66bd68955a1681772b97cb5",
+  "parentCommit": "0d6744866ca59b3b88e24c540f5c4dd3208ddcc0",
+  "parentTree": "f8242e3131a754c00a77591ef4dd2dad8f2421aa",
+  "productTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "frozenTestTree": "690953054b445203d5b74614f954c8b7dc8d41ba",
+  "candidateTestTree": "585fa834a57e1aaf48f007eba23d7d37c7cf0705",
+  "methodCount": 2463,
+  "sourcePinCount": 1599,
+  "changedMethodBodyCount": 3,
+  "unchangedMethodBodyCount": 2460,
+  "deletedMethods": 0,
+  "addedMethods": 0,
+  "changedPins": {
+    "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs": {
+      "old": "d2f827e0f45adae15e78c9db4d9c468de1d247c34eb60ed5e01296b59b584e73",
+      "new": "736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384"
+    },
+    "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs": {
+      "old": "67ffae89508dc0aba7f25f968bec4eb6fa91f997c9acc32784e9defc96a536a9",
+      "new": "0e125fe63685ff1c8f4c4d2a1226d8de434e30290e657104ee3389292f50dffb"
+    }
+  },
+  "affectedMethods": [
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "WriterAndParserShouldRoundTripFrame",
+      "oldLines": [
+        12,
+        13,
+        28
+      ],
+      "newLines": [
+        12,
+        13,
+        28
+      ],
+      "oldOffsets": [
+        258,
+        1237
+      ],
+      "newOffsets": [
+        258,
+        1264
+      ],
+      "bodyChanged": true,
+      "oldSpanSHA256": "7cea9a8b15ed23507bdd2c3fe70f19ec377e410f756ec1e32a40e0ae94e619ab",
+      "newSpanSHA256": "ac9bd2180fc54ad4883a8a201d241d8c2d46e2b732953316d0769eb523a76ca5"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "RawFrameWriterAndTokenShouldRemainInternalImplementationDetails",
+      "oldLines": [
+        30,
+        31,
+        35
+      ],
+      "newLines": [
+        30,
+        31,
+        35
+      ],
+      "oldOffsets": [
+        1243,
+        1502
+      ],
+      "newOffsets": [
+        1270,
+        1529
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "b456dd7c03a24873fdef79b603828d9f375ee13c2f2143e2a2e23d941f9ac7ac",
+      "newSpanSHA256": "b456dd7c03a24873fdef79b603828d9f375ee13c2f2143e2a2e23d941f9ac7ac"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "ZeroThroughFourteenHeaderBytesShouldRemainPartial",
+      "oldLines": [
+        37,
+        38,
+        47
+      ],
+      "newLines": [
+        37,
+        38,
+        47
+      ],
+      "oldOffsets": [
+        1508,
+        2067
+      ],
+      "newOffsets": [
+        1535,
+        2094
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "6742b5b9f17b40039cfa55e65b0b8ac241d86d486d699ed38a0fbdc6a54771c2",
+      "newSpanSHA256": "6742b5b9f17b40039cfa55e65b0b8ac241d86d486d699ed38a0fbdc6a54771c2"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "HeaderWithEveryByteInSeparateSegmentShouldParse",
+      "oldLines": [
+        49,
+        50,
+        57
+      ],
+      "newLines": [
+        49,
+        50,
+        68
+      ],
+      "oldOffsets": [
+        2073,
+        2576
+      ],
+      "newOffsets": [
+        2100,
+        3329
+      ],
+      "bodyChanged": true,
+      "oldSpanSHA256": "f2a1a35950952064c965cc9e2a78f4b8e76b6e4fe201fa0e67877eb5b8aff282",
+      "newSpanSHA256": "f9fbf9943f9cffede28163030ed880f79a1f86bd6beb2ca46a1ac8456c217df9"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "InvalidLengthTypeFlagsAndRequestIdShouldBeRejected",
+      "oldLines": [
+        59,
+        60,
+        83
+      ],
+      "newLines": [
+        70,
+        71,
+        94
+      ],
+      "oldOffsets": [
+        2582,
+        3775
+      ],
+      "newOffsets": [
+        3335,
+        4528
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "8de9a0285e9c0fc15fa48adde5997e56f6da0d13038f2ca76b5741625c031449",
+      "newSpanSHA256": "8de9a0285e9c0fc15fa48adde5997e56f6da0d13038f2ca76b5741625c031449"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "InvalidMagicViolationMustNotEchoAttackerControlledPayloadBytes",
+      "oldLines": [
+        85,
+        86,
+        115
+      ],
+      "newLines": [
+        96,
+        97,
+        126
+      ],
+      "oldOffsets": [
+        3781,
+        5588
+      ],
+      "newOffsets": [
+        4534,
+        6341
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "2ce380791b688e5644ff52800e1acaa55e463f151070b617b1f9a14fb548a1df",
+      "newSpanSHA256": "2ce380791b688e5644ff52800e1acaa55e463f151070b617b1f9a14fb548a1df"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "ParserViolationsShouldCarryFixedLowCardinalityClassification",
+      "oldLines": [
+        117,
+        118,
+        136
+      ],
+      "newLines": [
+        128,
+        129,
+        147
+      ],
+      "oldOffsets": [
+        5594,
+        6589
+      ],
+      "newOffsets": [
+        6347,
+        7342
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "efa07efa9bf28f14115805da6b33a6a0f1daa8b14502b31ebcd79f0db41eba32",
+      "newSpanSHA256": "efa07efa9bf28f14115805da6b33a6a0f1daa8b14502b31ebcd79f0db41eba32"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "ViolationReasonTokensAreFixedAndLowCardinality",
+      "oldLines": [
+        138,
+        139,
+        146
+      ],
+      "newLines": [
+        149,
+        150,
+        157
+      ],
+      "oldOffsets": [
+        6595,
+        7202
+      ],
+      "newOffsets": [
+        7348,
+        7955
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "548511b5d001e563247bb84acbb180c802c9794c70d334d2adbef1fdb45f82ca",
+      "newSpanSHA256": "548511b5d001e563247bb84acbb180c802c9794c70d334d2adbef1fdb45f82ca"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "CompleteHeaderWithPartialPayloadShouldRemainBuffered",
+      "oldLines": [
+        148,
+        149,
+        159
+      ],
+      "newLines": [
+        159,
+        160,
+        170
+      ],
+      "oldOffsets": [
+        7208,
+        7807
+      ],
+      "newOffsets": [
+        7961,
+        8560
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "2930513bf97534f024023ceac7e8dc47d0f44e60337ba3701a555ea6bc1496a7",
+      "newSpanSHA256": "2930513bf97534f024023ceac7e8dc47d0f44e60337ba3701a555ea6bc1496a7"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "HandshakeRequestAndResponseShouldRoundTrip",
+      "oldLines": [
+        161,
+        162,
+        199
+      ],
+      "newLines": [
+        172,
+        173,
+        210
+      ],
+      "oldOffsets": [
+        7813,
+        10219
+      ],
+      "newOffsets": [
+        8566,
+        10972
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "f0bdb65b41b6aeea983e76320fc8cab52ac711e6d5b82f60e8d628a4b9f76710",
+      "newSpanSHA256": "f0bdb65b41b6aeea983e76320fc8cab52ac711e6d5b82f60e8d628a4b9f76710"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether",
+      "oldLines": [
+        201,
+        202,
+        261
+      ],
+      "newLines": [
+        212,
+        213,
+        272
+      ],
+      "oldOffsets": [
+        10225,
+        13605
+      ],
+      "newOffsets": [
+        10978,
+        14358
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "086ef85dbdeb4c035dc515d8118734200d1dc96f16d8ceeff2c69002f17e507b",
+      "newSpanSHA256": "086ef85dbdeb4c035dc515d8118734200d1dc96f16d8ceeff2c69002f17e507b"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets",
+      "oldLines": [
+        263,
+        264,
+        314
+      ],
+      "newLines": [
+        274,
+        275,
+        325
+      ],
+      "oldOffsets": [
+        13611,
+        16189
+      ],
+      "newOffsets": [
+        14364,
+        16942
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "a4eb96f472588c08b6c30086e023a1652ca5cc6afa41d33b5fe43d223c77a3b8",
+      "newSpanSHA256": "a4eb96f472588c08b6c30086e023a1652ca5cc6afa41d33b5fe43d223c77a3b8"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "ControlWritersShouldClassifyInvalidLocalEnumsAsArgumentsWithoutPartialOutput",
+      "oldLines": [
+        316,
+        317,
+        327
+      ],
+      "newLines": [
+        327,
+        328,
+        338
+      ],
+      "oldOffsets": [
+        16195,
+        16877
+      ],
+      "newOffsets": [
+        16948,
+        17630
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "76173991b8c07273ca9b1899ad7f1175adaf45f82a54ce4f26597090e4b527ad",
+      "newSpanSHA256": "76173991b8c07273ca9b1899ad7f1175adaf45f82a54ce4f26597090e4b527ad"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "HandshakeWritersShouldClassifyInvalidLocalLimitsAsArgumentsWithoutPartialOutput",
+      "oldLines": [
+        329,
+        330,
+        356
+      ],
+      "newLines": [
+        340,
+        341,
+        367
+      ],
+      "oldOffsets": [
+        16883,
+        18185
+      ],
+      "newOffsets": [
+        17636,
+        18938
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "be4547f7b4fc80a46ea5ac703b59ed9a76a5ddb0e4cd9a459be326934af24179",
+      "newSpanSHA256": "be4547f7b4fc80a46ea5ac703b59ed9a76a5ddb0e4cd9a459be326934af24179"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "CancelReasonShouldRoundTripAndEnforceNegotiatedShape",
+      "oldLines": [
+        358,
+        359,
+        420
+      ],
+      "newLines": [
+        369,
+        370,
+        431
+      ],
+      "oldOffsets": [
+        18191,
+        21203
+      ],
+      "newOffsets": [
+        18944,
+        21956
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "0701801340938dda0fc18d50b948fc013dc8e50a875fa557ca00b1728daa197c",
+      "newSpanSHA256": "0701801340938dda0fc18d50b948fc013dc8e50a875fa557ca00b1728daa197c"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "BinaryErrorShouldRoundTripAndTruncateOnUtf8Boundary",
+      "oldLines": [
+        422,
+        423,
+        443
+      ],
+      "newLines": [
+        433,
+        434,
+        454
+      ],
+      "oldOffsets": [
+        21209,
+        22218
+      ],
+      "newOffsets": [
+        21962,
+        22971
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "1ebb6de8a721fd6d58f9307bc0a65c5c9bfc8d83d2395e8e64a9d3b4ca92b285",
+      "newSpanSHA256": "1ebb6de8a721fd6d58f9307bc0a65c5c9bfc8d83d2395e8e64a9d3b4ca92b285"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "BinaryErrorShouldPreserveDetailCodeWhenMessageIsFullyTruncated",
+      "oldLines": [
+        445,
+        446,
+        478
+      ],
+      "newLines": [
+        456,
+        457,
+        489
+      ],
+      "oldOffsets": [
+        22224,
+        23753
+      ],
+      "newOffsets": [
+        22977,
+        24506
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "1ccd2ee3d0c2b2cdfd1bec335dccd0cc1ba65f222ea94e084b18378cf2239892",
+      "newSpanSHA256": "1ccd2ee3d0c2b2cdfd1bec335dccd0cc1ba65f222ea94e084b18378cf2239892"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "BinaryErrorShouldPreserveUnknownDetailCode",
+      "oldLines": [
+        480,
+        481,
+        508
+      ],
+      "newLines": [
+        491,
+        492,
+        519
+      ],
+      "oldOffsets": [
+        23759,
+        25033
+      ],
+      "newOffsets": [
+        24512,
+        25786
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "91cd29566f64bd18cb191e2092028bd50547252c865a25010f7d8dbe062bf131",
+      "newSpanSHA256": "91cd29566f64bd18cb191e2092028bd50547252c865a25010f7d8dbe062bf131"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "BinaryErrorWriterShouldRejectUndefinedErrorCodes",
+      "oldLines": [
+        510,
+        511,
+        528
+      ],
+      "newLines": [
+        521,
+        522,
+        539
+      ],
+      "oldOffsets": [
+        25039,
+        25665
+      ],
+      "newOffsets": [
+        25792,
+        26418
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "1685e440379d12344634128f4f7e58ee1b43177b18ace38979b989af52ff316a",
+      "newSpanSHA256": "1685e440379d12344634128f4f7e58ee1b43177b18ace38979b989af52ff316a"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "BinaryErrorShouldRejectReservedUnknownCodeInBothDirections",
+      "oldLines": [
+        530,
+        531,
+        550
+      ],
+      "newLines": [
+        541,
+        542,
+        561
+      ],
+      "oldOffsets": [
+        25671,
+        26650
+      ],
+      "newOffsets": [
+        26424,
+        27403
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "1f393a6874e3bf8f124becd8a18427143704b4ee77b6ff81445788b529cb50f8",
+      "newSpanSHA256": "1f393a6874e3bf8f124becd8a18427143704b4ee77b6ff81445788b529cb50f8"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "BinaryErrorShouldRejectInvalidUtf8",
+      "oldLines": [
+        552,
+        553,
+        575
+      ],
+      "newLines": [
+        563,
+        564,
+        586
+      ],
+      "oldOffsets": [
+        26656,
+        27306
+      ],
+      "newOffsets": [
+        27409,
+        28059
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "0b9cd9a3453906cdb552254543ba9aad1dc9bd6bbfc6a29fa36509cbec007ef6",
+      "newSpanSHA256": "0b9cd9a3453906cdb552254543ba9aad1dc9bd6bbfc6a29fa36509cbec007ef6"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "GeneratedDtoStringShouldPreserveUtf16LeAndRejectOddByteLength",
+      "oldLines": [
+        577,
+        578,
+        609
+      ],
+      "newLines": [
+        588,
+        589,
+        620
+      ],
+      "oldOffsets": [
+        27312,
+        28868
+      ],
+      "newOffsets": [
+        28065,
+        29621
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "5c3cc4f6077ba067b40b6dfe81fcf527cc6f2c9bd7862582ae9edeab18fa04ab",
+      "newSpanSHA256": "5c3cc4f6077ba067b40b6dfe81fcf527cc6f2c9bd7862582ae9edeab18fa04ab"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "LengthVarintsShouldRejectOverlongEncodings",
+      "oldLines": [
+        611,
+        612,
+        625
+      ],
+      "newLines": [
+        622,
+        623,
+        636
+      ],
+      "oldOffsets": [
+        28874,
+        29446
+      ],
+      "newOffsets": [
+        29627,
+        30199
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "30a96ea726ac554ab07545fc96c98983232bd6c72aab6d50b2725bfa52d82298",
+      "newSpanSHA256": "30a96ea726ac554ab07545fc96c98983232bd6c72aab6d50b2725bfa52d82298"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "RequestMetadataMustBeBoundedBeforeSlice",
+      "oldLines": [
+        627,
+        628,
+        649
+      ],
+      "newLines": [
+        638,
+        639,
+        660
+      ],
+      "oldOffsets": [
+        29452,
+        30456
+      ],
+      "newOffsets": [
+        30205,
+        31209
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "a9a200278c57f85f700866763140365a158ffc2f01de13075808a157aac18e44",
+      "newSpanSHA256": "a9a200278c57f85f700866763140365a158ffc2f01de13075808a157aac18e44"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "RequestMetadataShouldRoundTripAcrossSegmentsAndRejectImpossibleCount",
+      "oldLines": [
+        651,
+        652,
+        674
+      ],
+      "newLines": [
+        662,
+        663,
+        685
+      ],
+      "oldOffsets": [
+        30462,
+        31589
+      ],
+      "newOffsets": [
+        31215,
+        32342
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "ca8607845c3e457a1cdc1e617ff7bc7ad766a051c0ac81a6b62bdf00fadc8275",
+      "newSpanSHA256": "ca8607845c3e457a1cdc1e617ff7bc7ad766a051c0ac81a6b62bdf00fadc8275"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "StreamAndWindowPayloadShapesShouldBeValidated",
+      "oldLines": [
+        676,
+        677,
+        711
+      ],
+      "newLines": [
+        687,
+        688,
+        722
+      ],
+      "oldOffsets": [
+        31595,
+        33358
+      ],
+      "newOffsets": [
+        32348,
+        34111
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "1e571e21821bd2ac86343bf3992346005255fa0f4c15c7b20e9479968b6b7069",
+      "newSpanSHA256": "1e571e21821bd2ac86343bf3992346005255fa0f4c15c7b20e9479968b6b7069"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "HealthControlFramesShouldRequireBoundedPayloadAndRequestId",
+      "oldLines": [
+        713,
+        714,
+        759
+      ],
+      "newLines": [
+        724,
+        725,
+        770
+      ],
+      "oldOffsets": [
+        33364,
+        35242
+      ],
+      "newOffsets": [
+        34117,
+        35995
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "452e216d35812ee9b9f4a69afd3ca0fdb7aaf37ee5b376cf48b1145ac34c1c20",
+      "newSpanSHA256": "452e216d35812ee9b9f4a69afd3ca0fdb7aaf37ee5b376cf48b1145ac34c1c20"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "method": "MultipleFramesFollowedByHalfFrameShouldPreserveRemainder",
+      "oldLines": [
+        761,
+        762,
+        777
+      ],
+      "newLines": [
+        772,
+        773,
+        788
+      ],
+      "oldOffsets": [
+        35248,
+        36347
+      ],
+      "newOffsets": [
+        36001,
+        37100
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "72771daca77e15cf818d63590389e1d3cfa7ed6589890547850d839f204e0d70",
+      "newSpanSHA256": "72771daca77e15cf818d63590389e1d3cfa7ed6589890547850d839f204e0d70"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressFrameOvertakesEarlierQueuedBulkFrames",
+      "oldLines": [
+        18,
+        19,
+        70
+      ],
+      "newLines": [
+        19,
+        20,
+        71
+      ],
+      "oldOffsets": [
+        580,
+        3331
+      ],
+      "newOffsets": [
+        605,
+        3356
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "1b2b57103d6a74ebb590771568a2474a7774a5a33b3bcee7ca3ecc6b1ee3b718",
+      "newSpanSHA256": "1b2b57103d6a74ebb590771568a2474a7774a5a33b3bcee7ca3ecc6b1ee3b718"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "CancelNeverOvertakesItsQueuedRequest",
+      "oldLines": [
+        72,
+        73,
+        105
+      ],
+      "newLines": [
+        73,
+        74,
+        106
+      ],
+      "oldOffsets": [
+        3337,
+        4942
+      ],
+      "newOffsets": [
+        3362,
+        4967
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "135cc99cb9c35e6cb08d515352cff5fd591941c5f775cf3cd21c902db78333a2",
+      "newSpanSHA256": "135cc99cb9c35e6cb08d515352cff5fd591941c5f775cf3cd21c902db78333a2"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "StreamCompleteNeverOvertakesQueuedStreamData",
+      "oldLines": [
+        107,
+        108,
+        138
+      ],
+      "newLines": [
+        108,
+        109,
+        139
+      ],
+      "oldOffsets": [
+        4948,
+        6472
+      ],
+      "newOffsets": [
+        4973,
+        6497
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "f211b081ee163d5323e02ba2c2d63258191e4c7a43a0fdc36710584f98a06486",
+      "newSpanSHA256": "f211b081ee163d5323e02ba2c2d63258191e4c7a43a0fdc36710584f98a06486"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "NormalFramesKeepFifoOrderUnderProgressStorm",
+      "oldLines": [
+        140,
+        141,
+        177
+      ],
+      "newLines": [
+        141,
+        142,
+        178
+      ],
+      "oldOffsets": [
+        6478,
+        8200
+      ],
+      "newOffsets": [
+        6503,
+        8225
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "c647e04326d2c405a5d72a77fefef0877d01222f111d801193e0ce1e302fc041",
+      "newSpanSHA256": "c647e04326d2c405a5d72a77fefef0877d01222f111d801193e0ce1e302fc041"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressBurstDoesNotStarveNormalFrames",
+      "oldLines": [
+        179,
+        180,
+        242
+      ],
+      "newLines": [
+        180,
+        181,
+        243
+      ],
+      "oldOffsets": [
+        8206,
+        11997
+      ],
+      "newOffsets": [
+        8231,
+        12022
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "84c232d51b2f0d37d84ecb66dc2d0a1694ebf6338fae225210a50bfac927adba",
+      "newSpanSHA256": "84c232d51b2f0d37d84ecb66dc2d0a1694ebf6338fae225210a50bfac927adba"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressInterleaveServesProgressWhileNormalQueueNeverEmpties",
+      "oldLines": [
+        244,
+        245,
+        294
+      ],
+      "newLines": [
+        245,
+        246,
+        295
+      ],
+      "oldOffsets": [
+        12003,
+        14614
+      ],
+      "newOffsets": [
+        12028,
+        14639
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "a816bac9a07966ce15cd520e84cb4722a1eb65c61d57ac5d8e550373d0910453",
+      "newSpanSHA256": "a816bac9a07966ce15cd520e84cb4722a1eb65c61d57ac5d8e550373d0910453"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressHeadroomAdmitsProgressFramesWhenBulkIsFull",
+      "oldLines": [
+        296,
+        297,
+        354
+      ],
+      "newLines": [
+        297,
+        298,
+        355
+      ],
+      "oldOffsets": [
+        14620,
+        17072
+      ],
+      "newOffsets": [
+        14645,
+        17097
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "220776fe30c54f606bf09b2fd5040f0b3c031ba71d3047ba97087335b7378edf",
+      "newSpanSHA256": "220776fe30c54f606bf09b2fd5040f0b3c031ba71d3047ba97087335b7378edf"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressHeadroomIsBoundedByTheQueueHardLimit",
+      "oldLines": [
+        356,
+        357,
+        410
+      ],
+      "newLines": [
+        357,
+        358,
+        411
+      ],
+      "oldOffsets": [
+        17078,
+        19167
+      ],
+      "newOffsets": [
+        17103,
+        19192
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "e6b749ee2a3c200921045eb647619ee1b11a53f7c76e610eb96332673f9a3361",
+      "newSpanSHA256": "e6b749ee2a3c200921045eb647619ee1b11a53f7c76e610eb96332673f9a3361"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "OversizedNormalFrameNeverOccupiesTheProgressReserve",
+      "oldLines": [
+        412,
+        413,
+        454
+      ],
+      "newLines": [
+        413,
+        414,
+        455
+      ],
+      "oldOffsets": [
+        19173,
+        21028
+      ],
+      "newOffsets": [
+        19198,
+        21053
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "340f91f30be8f392d222d73296ed30c1ef24276d00ea182224f77e2e2c251062",
+      "newSpanSHA256": "340f91f30be8f392d222d73296ed30c1ef24276d00ea182224f77e2e2c251062"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "TransportFaultDrainsBothClassesAndReturnsOwners",
+      "oldLines": [
+        456,
+        457,
+        493
+      ],
+      "newLines": [
+        457,
+        458,
+        494
+      ],
+      "oldOffsets": [
+        21034,
+        22663
+      ],
+      "newOffsets": [
+        21059,
+        22688
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "08ea4332b2a72ce509b8defd9f0c937dddf8b11a03422aa89875250e73a63fd0",
+      "newSpanSHA256": "08ea4332b2a72ce509b8defd9f0c937dddf8b11a03422aa89875250e73a63fd0"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "StopDrainsBothClassesAndCompletesCapacityWaiters",
+      "oldLines": [
+        495,
+        496,
+        541
+      ],
+      "newLines": [
+        496,
+        497,
+        542
+      ],
+      "oldOffsets": [
+        22669,
+        24653
+      ],
+      "newOffsets": [
+        22694,
+        24678
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "fe8dee217c6993888fc15c8188bc0cff1ccb2e9f3e3f3e9d3707721546b9778c",
+      "newSpanSHA256": "fe8dee217c6993888fc15c8188bc0cff1ccb2e9f3e3f3e9d3707721546b9778c"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressFrameInterruptsTimedBatchDeadline",
+      "oldLines": [
+        543,
+        544,
+        590
+      ],
+      "newLines": [
+        544,
+        545,
+        591
+      ],
+      "oldOffsets": [
+        24659,
+        27062
+      ],
+      "newOffsets": [
+        24684,
+        27087
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "ca76457aa214e55597967c8f519f383b46ece63bb110fca256eee80418e6d249",
+      "newSpanSHA256": "ca76457aa214e55597967c8f519f383b46ece63bb110fca256eee80418e6d249"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "HundredThousandMixedFramesKeepByteAccountingBalanced",
+      "oldLines": [
+        592,
+        593,
+        652
+      ],
+      "newLines": [
+        593,
+        594,
+        653
+      ],
+      "oldOffsets": [
+        27068,
+        29453
+      ],
+      "newOffsets": [
+        27093,
+        29478
+      ],
+      "bodyChanged": false,
+      "oldSpanSHA256": "c2db60d7f31c6f2436eecd4c0366b90780ccdd7f7d35a605d0c3e51ee317ad24",
+      "newSpanSHA256": "c2db60d7f31c6f2436eecd4c0366b90780ccdd7f7d35a605d0c3e51ee317ad24"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "method": "ProgressFlagDoesNotGrowOwnedFrame",
+      "oldLines": [
+        654,
+        655,
+        662
+      ],
+      "newLines": [
+        655,
+        656,
+        678
+      ],
+      "oldOffsets": [
+        29459,
+        29937
+      ],
+      "newOffsets": [
+        29484,
+        31031
+      ],
+      "bodyChanged": true,
+      "oldSpanSHA256": "bbd1fd7a829eb62e65f86be82ca31a9ac68f0308dafb92894a9b1bcac236b607",
+      "newSpanSHA256": "bc42df74c3b79a5661911bd85722df4a96f806c156a7f2cead5e431426035286"
+    }
+  ],
+  "historicalFullOrdinaryRun": {
+    "runId": 41940224644,
+    "ordinary": 2879,
+    "passed": 2589,
+    "errors": 290,
+    "failingFiles": 92,
+    "failingMethodStatusRows": 253,
+    "qualified": false
+  },
+  "candidateExecution": "not run",
+  "fullSuiteQualified": false
+}

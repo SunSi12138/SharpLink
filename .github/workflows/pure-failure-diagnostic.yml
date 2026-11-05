@@ -1,20 +1,28 @@
-name: Four ordinary pure failure diagnostics
+name: Six ordinary three-fixture candidate validation
 permissions:
   contents: read
 on:
   push:
-    branches: ['validation/pure-failure-diagnostic-20261105']
+    branches: ['validation/three-fixture-migration-20261105']
     paths:
       - '.github/workflows/pure-failure-diagnostic.yml'
       - 'eng/run-pure-failure-diagnostic.py'
       - 'eng/tests/test_pure_failure_diagnostic.py'
+      - 'eng/rebase-three-fixture-census.py'
+      - 'eng/tests/test_three_fixture_census.py'
+      - 'eng/three-fixture-census-rebase.json'
+      - 'eng/fixture-migration-baseline/**'
+      - 'eng/unit-census.json'
+      - 'eng/unit-execution-results.py'
+      - 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
+      - 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
 concurrency:
-  group: pure-failure-diagnostic-${{ github.ref }}
+  group: three-fixture-validation-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  diagnose-four:
+  validate-six:
     runs-on: ubuntu-24.04
-    # Original preparation3600; four-case phase1500; overall5100 seconds.
+    # Original preparation3600; six-case phase1500; overall5100 seconds.
     timeout-minutes: 110
     steps:
       - name: Checkout exact candidate
@@ -23,14 +31,14 @@ jobs:
           persist-credentials: false
       - name: Setup isolated pinned SDK
         env:
-          DOTNET_INSTALL_DIR: ${{ runner.temp }}/pure-failure-dotnet
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/three-fixture-dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           dotnet-version: '10.0.114'
-      - name: Verify unchanged integration source
+      - name: Verify unchanged product and bound candidate tests
         shell: bash
         run: |
           test "$(git rev-parse HEAD:src)" = "bfc211191d91b5a77c6a8f0085a0c00a459c5583"
-          test "$(git rev-parse HEAD:test)" = "690953054b445203d5b74614f954c8b7dc8d41ba"
-      - name: One build, two metadata discoveries, four fresh exact UIDs
+          test "$(git rev-parse HEAD:test)" = "585fa834a57e1aaf48f007eba23d7d37c7cf0705"
+      - name: One build, two metadata discoveries, six fresh exact UIDs
         run: python3 eng/run-pure-failure-diagnostic.py --configuration Release

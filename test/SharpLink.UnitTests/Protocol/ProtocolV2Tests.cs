@@ -14,7 +14,7 @@ public class ProtocolV2Tests
     {
         var writer = new PooledByteBufferWriter();
         var token = ProtocolV2FrameWriter.BeginFrame(
-            writer, ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, ulong.MaxValue);
+            writer, ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, (ulong)long.MaxValue);
         writer.Write(new byte[ProtocolV2Constants.RequestPrefixBytes + 3]);
         ProtocolV2FrameWriter.EndFrame(writer, token);
 
@@ -22,7 +22,7 @@ public class ProtocolV2Tests
         Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out var header, out var payload), "frame parsed");
         Ensure(header.Type == ProtocolV2FrameType.Request, "frame type");
         Ensure(header.Flags == ProtocolV2FrameFlags.HasReturn, "frame flags");
-        Ensure(header.RequestId == ulong.MaxValue, "unsigned request ID");
+        Ensure(header.RequestId == (ulong)long.MaxValue, "maximum positive 63-bit request ID");
         Ensure(payload.Length == ProtocolV2Constants.RequestPrefixBytes + 3, "payload length");
         Ensure(sequence.IsEmpty, "frame consumed");
     }
@@ -50,10 +50,21 @@ public class ProtocolV2Tests
     public void HeaderWithEveryByteInSeparateSegmentShouldParse()
     {
         var writer = new PooledByteBufferWriter();
-        ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 9);
+        var token = ProtocolV2FrameWriter.BeginFrame(
+            writer, ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 9);
+        ProtocolV2PayloadCodec.WriteCancelReason(writer, ProtocolV2CancelReason.UserCancellation);
+        ProtocolV2FrameWriter.EndFrame(writer, token);
+
         var sequence = CreateSegmented(writer.WrittenMemory.ToArray(), 1);
-        Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out var header, out _), "segmented header");
+        Ensure(!sequence.IsSingleSegment, "frame spans separate byte segments");
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out var header, out var payload), "segmented header");
+        Ensure(header.Type == ProtocolV2FrameType.Cancel, "segmented frame type");
+        Ensure(header.Flags == ProtocolV2FrameFlags.None, "segmented frame flags");
         Ensure(header.RequestId == 9, "segmented request ID");
+        Ensure(payload.Length == 1, "segmented cancellation reason length");
+        Ensure(ProtocolV2PayloadCodec.ReadCancelReason(payload) == ProtocolV2CancelReason.UserCancellation,
+            "segmented cancellation reason");
+        Ensure(sequence.IsEmpty, "segmented frame consumed");
     }
 
     [Test]

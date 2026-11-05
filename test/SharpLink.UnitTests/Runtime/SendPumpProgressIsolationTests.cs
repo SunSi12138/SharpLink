@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
 using System.IO.Pipelines;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -654,24 +655,50 @@ public class SendPumpProgressIsolationTests
     [Test]
     public void ProgressFlagDoesNotGrowOwnedFrame()
     {
-        // The progress-class flag must fit the existing padding: the struct
-        // must stay exactly the size of its pre-flag shape.
+        const BindingFlags fieldFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var fields = typeof(OwnedFrame).GetFields(fieldFlags)
+            .OrderBy(static field => field.MetadataToken)
+            .ToArray();
+        var progressFieldName = $"<{nameof(OwnedFrame.IsProtocolProgress)}>k__BackingField";
+        Ensure(fields.Count(field => field.Name == progressFieldName && field.FieldType == typeof(bool)) == 1,
+            "the comparison must omit exactly the protocol-progress bool field");
+        var currentShape = fields
+            .Where(field => field.Name != progressFieldName)
+            .Select(static field => (field.Name, field.FieldType, field.Attributes));
+        var comparisonShape = typeof(OwnedFrameWithoutProgressFlag).GetFields(fieldFlags)
+            .OrderBy(static field => field.MetadataToken)
+            .Select(static field => (field.Name, field.FieldType, field.Attributes));
+        Ensure(currentShape.SequenceEqual(comparisonShape),
+            "the comparison must mirror every current field in declaration order except the progress flag");
+
+        // The progress-class flag must fit the current shape's existing padding.
         Ensure(Unsafe.SizeOf<OwnedFrame>() == Unsafe.SizeOf<OwnedFrameWithoutProgressFlag>(),
             $"OwnedFrame must not grow with the progress flag " +
             $"(measured {Unsafe.SizeOf<OwnedFrame>()} vs {Unsafe.SizeOf<OwnedFrameWithoutProgressFlag>()})");
     }
 
-    /// <summary>The OwnedFrame shape before the protocol-progress flag existed.</summary>
+    /// <summary>The current OwnedFrame field shape with only the protocol-progress flag omitted.</summary>
     private readonly struct OwnedFrameWithoutProgressFlag(
         IRpcByteBufferWriter owner,
         bool forceFlush,
-        TaskCompletionSource<bool>? flushCompletion)
+        TaskCompletionSource<bool>? flushCompletion,
+        IRequestEmissionFailureObserver? failureObserver,
+        RpcFramePublication? publication,
+        RpcFramePublicationRole publicationRole,
+        ushort streamId)
     {
+        private readonly TaskCompletionSource<bool>? _flushCompletion = flushCompletion;
+        private readonly IRequestEmissionFailureObserver? _failureObserver = failureObserver;
+
         public IRpcByteBufferWriter Owner { get; } = owner;
         public ReadOnlyMemory<byte> Memory { get; } = owner.WrittenMemory;
         public int Length { get; } = owner.WrittenCount;
         public bool ForceFlush { get; } = forceFlush;
-        public TaskCompletionSource<bool>? FlushCompletion { get; } = flushCompletion;
+        public TaskCompletionSource<bool>? FlushCompletion => _flushCompletion;
+        public IRequestEmissionFailureObserver? FailureObserver => _failureObserver;
+        internal RpcFramePublication? Publication { get; } = publication;
+        internal RpcFramePublicationRole PublicationRole { get; } = publicationRole;
+        internal ushort StreamId { get; } = streamId;
     }
 
     // ----- helpers -------------------------------------------------------
