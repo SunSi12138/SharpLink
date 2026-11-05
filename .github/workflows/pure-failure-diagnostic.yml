@@ -1,0 +1,36 @@
+name: Four ordinary pure failure diagnostics
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/pure-failure-diagnostic-20261105']
+    paths:
+      - '.github/workflows/pure-failure-diagnostic.yml'
+      - 'eng/run-pure-failure-diagnostic.py'
+      - 'eng/tests/test_pure_failure_diagnostic.py'
+concurrency:
+  group: pure-failure-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  diagnose-four:
+    runs-on: ubuntu-24.04
+    # Original preparation3600; four-case phase1500; overall5100 seconds.
+    timeout-minutes: 110
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup isolated pinned SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/pure-failure-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Verify unchanged integration source
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD:src)" = "bfc211191d91b5a77c6a8f0085a0c00a459c5583"
+          test "$(git rev-parse HEAD:test)" = "690953054b445203d5b74614f954c8b7dc8d41ba"
+      - name: One build, two metadata discoveries, four fresh exact UIDs
+        run: python3 eng/run-pure-failure-diagnostic.py --configuration Release
