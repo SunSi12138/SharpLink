@@ -70,6 +70,11 @@ public class ProtocolV2Tests
     [Test]
     public async Task InvalidLengthTypeFlagsAndRequestIdShouldBeRejected()
     {
+        var validHeader = MutateHeader();
+        var validSequence = new ReadOnlySequence<byte>(validHeader);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref validSequence, Limits, out _, out _) && validSequence.IsEmpty,
+            "unmutated header fixture should parse");
+
         var invalidMagic = MutateHeader();
         invalidMagic[0] = 0x88;
         await ExpectProtocolViolation(invalidMagic);
@@ -78,13 +83,15 @@ public class ProtocolV2Tests
         await ExpectProtocolViolation(MutateHeader(type: 0xFF));
         await ExpectProtocolViolation(MutateHeader(flags: (byte)ProtocolV2FrameFlags.Error));
 
-        var controlWithRequestId = CreateFrame(ProtocolV2FrameType.Ping, ProtocolV2FrameFlags.None, 1, new byte[8]);
+        var controlWithRequestId = CreateFrame(ProtocolV2FrameType.Ping, ProtocolV2FrameFlags.None, 0, new byte[8]);
+        BinaryPrimitives.WriteUInt64LittleEndian(controlWithRequestId.AsSpan(7, sizeof(ulong)), 1);
         await ExpectProtocolViolation(controlWithRequestId);
         var requestWithZeroId = CreateFrame(
             ProtocolV2FrameType.Request,
             ProtocolV2FrameFlags.None,
-            0,
+            1,
             new byte[ProtocolV2Constants.RequestPrefixBytes]);
+        BinaryPrimitives.WriteUInt64LittleEndian(requestWithZeroId.AsSpan(7, sizeof(ulong)), 0);
         await ExpectProtocolViolation(requestWithZeroId);
         await ExpectProtocolViolation(CreateFrame(
             ProtocolV2FrameType.Request,
@@ -172,16 +179,22 @@ public class ProtocolV2Tests
     [Test]
     public void HandshakeRequestAndResponseShouldRoundTrip()
     {
+        const ProtocolV2Capabilities mandatory = ProtocolV2Capabilities.FlowControl |
+            ProtocolV2Capabilities.CancellationReason | ProtocolV2Capabilities.ContractManifest;
+        var bindingLimits = new Protocol3BindingLimits(512, 8, 16, 12000, 32);
         var requestPayload = new PooledByteBufferWriter();
         var request = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl,
-            ProtocolV2Capabilities.FlowControl,
+            mandatory | ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.Compression,
+            mandatory,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
             new byte[] { 1, 2, 3, 4 },
-            new[] { "test.rle/v1", "test.other/v1" });
+            new[] { "test.rle/v1", "test.other/v1" },
+            ResponseCompressionPreferenceGeneration: 17,
+            AllowResponseCompression: false,
+            BindingLimits: bindingLimits);
         ProtocolV2PayloadCodec.WriteHandshakeRequest(requestPayload, request, Limits);
         var decodedRequest = ProtocolV2PayloadCodec.ReadHandshakeRequest(
             CreateSegmented(requestPayload.WrittenMemory.ToArray(), 2), Limits);
@@ -194,19 +207,29 @@ public class ProtocolV2Tests
         Ensure(decodedRequest.AuthenticationPayload.Span.SequenceEqual(request.AuthenticationPayload.Span), "handshake auth payload");
         Ensure(decodedRequest.CompressionProfiles.Span.SequenceEqual(request.CompressionProfiles.Span),
             "handshake compression profiles");
+        Ensure(decodedRequest.ResponseCompressionPreferenceGeneration == request.ResponseCompressionPreferenceGeneration,
+            "handshake response compression preference generation");
+        Ensure(decodedRequest.AllowResponseCompression == request.AllowResponseCompression,
+            "handshake response compression preference");
+        Ensure(decodedRequest.BindingLimits == bindingLimits, "handshake binding limits");
 
         var responsePayload = new PooledByteBufferWriter();
+        var authority = new Protocol3BindingAuthority(
+            new Guid("00112233-4455-6677-8899-aabbccddeeff"),
+            new Guid("10213243-5465-7687-98a9-bacbdcedfe0f"), bindingLimits);
         var response = new ProtocolV2HandshakeResponse(
-            0,
-            ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,
+            ProtocolV2Constants.MinorVersion,
+            mandatory | ProtocolV2Capabilities.Compression,
             1024 * 1024,
             512 * 1024,
             8 * 1024 * 1024,
-            "test.rle/v1");
+            "test.rle/v1",
+            Authority: authority);
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, response);
         var decodedResponse = ProtocolV2PayloadCodec.ReadHandshakeResponse(
             new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits);
         Ensure(decodedResponse == response, "handshake response round-trip");
+        Ensure(decodedResponse.Authority == authority, "handshake response authority");
     }
 
     [Test]
@@ -747,11 +770,9 @@ public class ProtocolV2Tests
         Ensure(responsePayload.FirstSpan[0] == (byte)SharpLinkHealthStatus.Ready,
             "health response status");
 
-        await ExpectProtocolViolation(CreateFrame(
-            ProtocolV2FrameType.HealthCheck,
-            ProtocolV2FrameFlags.None,
-            0,
-            []));
+        var requestWithZeroId = (byte[])request.Clone();
+        BinaryPrimitives.WriteUInt64LittleEndian(requestWithZeroId.AsSpan(7, sizeof(ulong)), 0);
+        await ExpectProtocolViolation(requestWithZeroId);
         await ExpectProtocolViolation(CreateFrame(
             ProtocolV2FrameType.HealthCheck,
             ProtocolV2FrameFlags.None,
@@ -772,9 +793,12 @@ public class ProtocolV2Tests
     [Test]
     public void MultipleFramesFollowedByHalfFrameShouldPreserveRemainder()
     {
-        var first = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1, []);
-        var second = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 2, []);
-        var third = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 3, []);
+        var first = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1,
+            [(byte)ProtocolV2CancelReason.UserCancellation]);
+        var second = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 2,
+            [(byte)ProtocolV2CancelReason.UserCancellation]);
+        var third = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 3,
+            [(byte)ProtocolV2CancelReason.UserCancellation]);
         var combined = new byte[first.Length + second.Length + 7];
         first.CopyTo(combined, 0);
         second.CopyTo(combined, first.Length);
@@ -785,11 +809,13 @@ public class ProtocolV2Tests
         Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out var two, out _), "second frame");
         Ensure(!ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _), "half frame");
         Ensure(one.RequestId == 1 && two.RequestId == 2 && sequence.Length == 7, "remainder preserved");
+        Ensure(sequence.ToArray().AsSpan().SequenceEqual(third.AsSpan(0, 7)), "remainder bytes preserved");
     }
 
     private static byte[] MutateHeader(int? length = null, byte? type = null, byte? flags = null)
     {
-        var frame = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1, []);
+        var frame = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1,
+            [(byte)ProtocolV2CancelReason.UserCancellation]);
         if (length is { } payloadLength)
             BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(1, 4), payloadLength);
         if (type is { } frameType)

@@ -9,6 +9,8 @@ public class ProtocolV2NegotiatorTests
     [Test]
     public void ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs()
     {
+        const ProtocolV2Capabilities callerRequired =
+            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.Compression;
         var providers = Bindings("client-first", "client-second");
         var policy = ProtocolV2NegotiationPolicy.Create(
             ProtocolV2Constants.MinorVersion,
@@ -21,7 +23,7 @@ public class ProtocolV2NegotiatorTests
 
         var offer = ProtocolV2Negotiator.CreateClientOffer(
             policy,
-            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.Compression,
+            callerRequired,
             authentication);
 
         Ensure(offer.MinorVersion == ProtocolV2Constants.MinorVersion,
@@ -29,8 +31,9 @@ public class ProtocolV2NegotiatorTests
         Ensure(offer.SupportedCapabilities == policy.SupportedCapabilities,
             "the client offer must publish the complete explicit local policy");
         Ensure(offer.RequiredCapabilities ==
-               (ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.Compression),
-            "the caller's required capabilities must remain explicit policy input");
+               (callerRequired | ProtocolV2Capabilities.FlowControl |
+                ProtocolV2Capabilities.CancellationReason | ProtocolV2Capabilities.ContractManifest),
+            "the offer must require the caller's capabilities plus the fixed Protocol3 mandatory set");
         Ensure(offer.MaxFramePayloadBytes == 8192 &&
                offer.StreamReceiveWindowBytes == 2048 &&
                offer.ConnectionReceiveWindowBytes == 4096,
@@ -48,7 +51,8 @@ public class ProtocolV2NegotiatorTests
             ProtocolV2Capabilities.Metadata |
             ProtocolV2Capabilities.FlowControl |
             ProtocolV2Capabilities.HealthCheck |
-            ProtocolV2Capabilities.CancellationReason;
+            ProtocolV2Capabilities.CancellationReason |
+            ProtocolV2Capabilities.ContractManifest;
 
         Ensure(ProtocolV2Negotiator.AlwaysImplementedCapabilities == expected,
             "endpoint implementation support must remain an explicit declaration");

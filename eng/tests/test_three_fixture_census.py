@@ -39,13 +39,13 @@ class Controls(unittest.TestCase):
         self.assertEqual({k: v for k, v in self.frozen.items() if k not in top_changing},
                          {k: v for k, v in self.candidate.items() if k not in top_changing})
 
-    def test_only_four_pins_and_six_bodies_change(self):
+    def test_only_six_pins_and_thirteen_bodies_change(self):
         self.assertEqual({k for k in self.frozen['sourcePins'] if self.frozen['sourcePins'][k] != self.candidate['sourcePins'][k]}, set(g.CANDIDATE_PINS))
         changed = {(old['source'], old['methodName']) for old, new in zip(self.frozen['methods'], self.candidate['methods'])
                    if old['sourceProvenance']['spanSHA256'] != new['sourceProvenance']['spanSHA256']}
         self.assertEqual(changed, g.CHANGED_METHODS)
-        self.assertEqual(len(g.CANDIDATE_PINS), 4)
-        self.assertEqual(self.report['unchangedMethodBodyCount'], 2457)
+        self.assertEqual(len(g.CANDIDATE_PINS), 6)
+        self.assertEqual(self.report['unchangedMethodBodyCount'], 2450)
         self.assertEqual((self.report['deletedMethods'], self.report['addedMethods']), (0, 0))
 
     def test_every_current_method_span_is_bound(self):
@@ -123,6 +123,46 @@ class Controls(unittest.TestCase):
         self.assertEqual(rebound['sourceProvenance']['arguments'], method['sourceProvenance']['arguments'])
         for altered in (new.replace('[Arguments(32)]', '[Arguments(64)]'), new.replace('    [Arguments(1024)]\n', '')):
             with self.assertRaises(ValueError): g.relocate(old, altered, method)
+
+
+    def test_only_mutateheader_helper_delta_is_allowed_outside_test_bodies(self):
+        paths = (g.PROTOCOL, g.NEGOTIATOR, g.COMPATIBILITY)
+        old = {path: (ROOT / g.BASELINE / (path + '.txt')).read_text() for path in paths}
+        new = {path: (ROOT / path).read_text() for path in paths}
+        delta = g.helper_delta(old, new, self.frozen['methods'], self.candidate['methods'])
+        self.assertEqual(delta, self.report['changedHelper'])
+        self.assertEqual(delta['oldSpanSHA256'], '73d6787ce2f764786b689254fd01a1d764b1854ebe2454d80edeb19e615cfcec')
+        self.assertEqual(delta['newSpanSHA256'], '37d028dab77d986a8faa7611d3db61bab2b0e0aaaeb65c8684df71daff30f46f')
+        self.assertEqual(delta['newLines'], [815, 826])
+        for path, before, after in ((g.PROTOCOL, 'ProtocolV2CancelReason.UserCancellation]);\n        if (length', 'ProtocolV2CancelReason.DeadlineExceeded]);\n        if (length'),
+                                     (g.NEGOTIATOR, 'throw new Exception(message);', 'throw new Exception("changed");'),
+                                     (g.COMPATIBILITY, 'throw new Exception(message);', 'throw new Exception("changed");')):
+            changed = dict(new); self.assertIn(before, changed[path]); changed[path] = changed[path].replace(before, after)
+            with self.assertRaises(ValueError): g.helper_delta(old, changed, self.frozen['methods'], self.candidate['methods'])
+
+    def test_new_preimages_and_diagnostic_evidence_mutations_rejected(self):
+        original = Path.read_bytes
+        for name in (g.NEGOTIATOR, g.COMPATIBILITY):
+            for target in (ROOT / name, ROOT / g.BASELINE / (name + '.txt')):
+                def changed(path): return original(path) + (b'\n' if path == target else b'')
+                with patch.object(Path, 'read_bytes', changed):
+                    with self.assertRaises(ValueError): g.generate(ROOT)
+        target = ROOT / g.BASELINE / 'parser-handshake-diagnostic-result.json'
+        def changed(path): return original(path) + (b'\n' if path == target else b'')
+        with patch.object(Path, 'read_bytes', changed):
+            with self.assertRaises(ValueError): g.generate(ROOT)
+
+    def test_current_product_matches_packed_parent_and_histories_remain_distinct(self):
+        self.assertEqual(self.report['candidateProductTree'], g.PARENT_PRODUCT_TREE)
+        self.assertEqual(len(self.report['affectedMethods']), 57)
+        self.assertEqual(self.report['changedMethodBodyCount'], 13)
+        self.assertEqual(self.report['historicalThirteenCaseRun']['runId'], 41954983558)
+        self.assertEqual(self.report['historicalThirteenCaseRun']['passed'], 13)
+        diagnostic = self.report['historicalParserHandshakeDiagnostic']
+        self.assertEqual(diagnostic['runId'], 41957258310)
+        self.assertEqual((diagnostic['passed'], diagnostic['nonpassing'], diagnostic['errorOccurrences']), (4, 7, 21))
+        self.assertFalse(diagnostic['qualified'])
+        self.assertEqual(diagnostic['evidenceSHA256'], g.HISTORICAL_DIAGNOSTIC_SHA256)
 
     def test_changed_target_signature_and_original_span_corruption_rejected(self):
         method = next(m for m in self.frozen['methods'] if (m['source'], m['methodName']) in g.CHANGED_METHODS)
