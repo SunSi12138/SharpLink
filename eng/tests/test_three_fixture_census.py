@@ -39,13 +39,13 @@ class Controls(unittest.TestCase):
         self.assertEqual({k: v for k, v in self.frozen.items() if k not in top_changing},
                          {k: v for k, v in self.candidate.items() if k not in top_changing})
 
-    def test_only_six_pins_and_thirteen_bodies_change(self):
+    def test_only_six_pins_and_twenty_three_bodies_change(self):
         self.assertEqual({k for k in self.frozen['sourcePins'] if self.frozen['sourcePins'][k] != self.candidate['sourcePins'][k]}, set(g.CANDIDATE_PINS))
         changed = {(old['source'], old['methodName']) for old, new in zip(self.frozen['methods'], self.candidate['methods'])
                    if old['sourceProvenance']['spanSHA256'] != new['sourceProvenance']['spanSHA256']}
         self.assertEqual(changed, g.CHANGED_METHODS)
         self.assertEqual(len(g.CANDIDATE_PINS), 6)
-        self.assertEqual(self.report['unchangedMethodBodyCount'], 2450)
+        self.assertEqual(self.report['unchangedMethodBodyCount'], 2440)
         self.assertEqual((self.report['deletedMethods'], self.report['addedMethods']), (0, 0))
 
     def test_every_current_method_span_is_bound(self):
@@ -155,7 +155,7 @@ class Controls(unittest.TestCase):
     def test_current_product_matches_packed_parent_and_histories_remain_distinct(self):
         self.assertEqual(self.report['candidateProductTree'], g.PARENT_PRODUCT_TREE)
         self.assertEqual(len(self.report['affectedMethods']), 57)
-        self.assertEqual(self.report['changedMethodBodyCount'], 13)
+        self.assertEqual(self.report['changedMethodBodyCount'], 23)
         self.assertEqual(self.report['historicalThirteenCaseRun']['runId'], 41954983558)
         self.assertEqual(self.report['historicalThirteenCaseRun']['passed'], 13)
         diagnostic = self.report['historicalParserHandshakeDiagnostic']
@@ -163,6 +163,43 @@ class Controls(unittest.TestCase):
         self.assertEqual((diagnostic['passed'], diagnostic['nonpassing'], diagnostic['errorOccurrences']), (4, 7, 21))
         self.assertFalse(diagnostic['qualified'])
         self.assertEqual(diagnostic['evidenceSHA256'], g.HISTORICAL_DIAGNOSTIC_SHA256)
+
+
+    def test_negotiator_parent_reconstruction_has_exact_ten_bodies_and_helper_region(self):
+        delta=g.negotiation_delta(ROOT,self.frozen,self.candidate)
+        self.assertEqual(delta,self.report['negotiatorDelta'])
+        self.assertEqual({row['method'] for row in delta['changedBodiesAgainstParent']},g.NEW_NEGOTIATOR_METHODS)
+        self.assertEqual(len(delta['changedBodiesAgainstParent']),10)
+        self.assertEqual(delta['preservedPriorBodies'],['ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs','ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized'])
+        self.assertEqual(delta['helperBlock']['changedBodiesUnchangedSignatures'],['CreateOffer','CreatePolicy'])
+        self.assertEqual(delta['helperBlock']['newDeclarations'],['MandatoryCapabilities','TestAuthority','AssertMandatoryCapabilityCannotBeOmitted','CreateExactPolicy'])
+        self.assertEqual(delta['helperBlock']['newLines'],[596,684])
+        self.assertTrue(delta['allOtherParentTestBytesUnchanged'])
+        parent=(ROOT/g.NEGOTIATOR_HISTORY).read_bytes()
+        self.assertEqual(g.tree_id(ROOT/'test',{g.NEGOTIATOR.removeprefix('test/'):parent}),g.PARENT_TEST_TREE)
+
+    def test_unapproved_negotiator_helper_body_or_signature_is_rejected(self):
+        old=(ROOT/g.BASELINE/(g.NEGOTIATOR+'.txt')).read_text();new=(ROOT/g.NEGOTIATOR).read_text()
+        start,end,block=g.negotiation_helper_block(new,True)
+        for changed in (block.replace('supported | MandatoryCapabilities,','supported,',1),
+                        block.replace('private static ProtocolV2HandshakeRequest CreateOffer(','private static ProtocolV2HandshakeRequest RenamedOffer('),
+                        block.replace('Protocol3BindingLimits.Default);','default);',1)):
+            self.assertNotEqual(changed,block)
+            with self.assertRaises(ValueError):g.normalized_negotiator_helpers(old,new[:start]+changed+new[end:])
+        self.assertEqual(g.negotiation_helper_block(old,False)[2],g.negotiation_helper_block((ROOT/g.NEGOTIATOR_HISTORY).read_text(),False)[2])
+
+    def test_pure_history_preimage_diagnostic_and_full_evidence_are_sealed(self):
+        original=Path.read_bytes
+        for target_name in g.PURE_HISTORY_PINS:
+            target=ROOT/target_name
+            def changed(path):return original(path)+(b'\n' if path==target else b'')
+            with patch.object(Path,'read_bytes',changed):
+                with self.assertRaises(ValueError):g.generate(ROOT)
+        self.assertEqual(self.report['historicalCurrentFullRun']['errors'],272)
+        self.assertEqual(self.report['historicalSixteenCaseDiagnostic']['errors'],9)
+        self.assertFalse(self.report['historicalCurrentFullRun']['qualified'])
+        self.assertFalse(self.report['historicalSixteenCaseDiagnostic']['qualified'])
+        self.assertEqual(self.report['historicalTimedFailureResolution'],'unresolved-no-timed-source-change')
 
     def test_changed_target_signature_and_original_span_corruption_rejected(self):
         method = next(m for m in self.frozen['methods'] if (m['source'], m['methodName']) in g.CHANGED_METHODS)

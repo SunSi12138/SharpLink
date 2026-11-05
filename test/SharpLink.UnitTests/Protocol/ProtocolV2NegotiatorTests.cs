@@ -68,32 +68,37 @@ public class ProtocolV2NegotiatorTests
     public void PolicyConstructionShouldRejectEveryIllegalLocalState()
     {
         var binding = Bindings("valid")[0];
-        var cases = new Action[]
+        var valid = CreatePolicy(ProtocolV2Capabilities.None);
+        var validCompression = CreatePolicy(ProtocolV2Capabilities.Compression, [binding]);
+        Ensure(valid.SupportedCapabilities == MandatoryCapabilities &&
+               validCompression.CompressionProviders[0] == binding,
+            "negative local-policy rows must start from valid mandatory and compression policies");
+        var cases = new (Action Create, string Parameter)[]
         {
-            () => CreatePolicy((ProtocolV2Capabilities)(1UL << 63)),
-            () => CreatePolicy(ProtocolV2Capabilities.None,
-                minorVersion: checked((ushort)(ProtocolV2Constants.MinorVersion + 1))),
-            () => CreatePolicy(ProtocolV2Capabilities.None,
-                maxFramePayloadBytes: SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1),
-            () => CreatePolicy(ProtocolV2Capabilities.None,
-                maxFramePayloadBytes: SharpLinkProtocolOptions.MaxMaxFramePayloadBytes + 1),
-            () => CreatePolicy(ProtocolV2Capabilities.None, streamReceiveWindowBytes: 0),
-            () => CreatePolicy(ProtocolV2Capabilities.None,
+            (() => CreatePolicy((ProtocolV2Capabilities)(1UL << 63)), "supportedCapabilities"),
+            (() => CreatePolicy(ProtocolV2Capabilities.None,
+                minorVersion: checked((ushort)(ProtocolV2Constants.MinorVersion + 1))), "minorVersion"),
+            (() => CreatePolicy(ProtocolV2Capabilities.None,
+                maxFramePayloadBytes: SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1), "maxFramePayloadBytes"),
+            (() => CreatePolicy(ProtocolV2Capabilities.None,
+                maxFramePayloadBytes: SharpLinkProtocolOptions.MaxMaxFramePayloadBytes + 1), "maxFramePayloadBytes"),
+            (() => CreatePolicy(ProtocolV2Capabilities.None, streamReceiveWindowBytes: 0), "streamReceiveWindowBytes"),
+            (() => CreatePolicy(ProtocolV2Capabilities.None,
                 streamReceiveWindowBytes: 2,
-                connectionReceiveWindowBytes: 1),
-            () => CreatePolicy(ProtocolV2Capabilities.Compression),
-            () => CreatePolicy(ProtocolV2Capabilities.None, [binding]),
-            () => CreatePolicy(ProtocolV2Capabilities.Compression, [binding, binding]),
-            () => CreatePolicy(
+                connectionReceiveWindowBytes: 1), "connectionReceiveWindowBytes"),
+            (() => CreatePolicy(ProtocolV2Capabilities.Compression), "compressionProviders"),
+            (() => CreatePolicy(ProtocolV2Capabilities.None, [binding]), "compressionProviders"),
+            (() => CreatePolicy(ProtocolV2Capabilities.Compression, [binding, binding]), "compressionProviders"),
+            (() => CreatePolicy(
                 ProtocolV2Capabilities.Compression,
-                [new SharpLinkCompressionProviderBinding("different", binding.Provider)])
+                [new SharpLinkCompressionProviderBinding("different", binding.Provider)]), "compressionProviders")
         };
 
         foreach (var item in cases)
         {
-            var failure = CaptureArgumentException(item);
-            Ensure(failure.ParamName is not null,
-                "every illegal local policy must fail immediately with an actionable argument name");
+            var failure = CaptureArgumentException(item.Create);
+            Ensure(failure.ParamName == item.Parameter,
+                $"the illegal local policy must reject its intended {item.Parameter} input");
         }
     }
 
@@ -120,10 +125,15 @@ public class ProtocolV2NegotiatorTests
                     ? Bindings("shared")
                     : Array.Empty<SharpLinkCompressionProviderBinding>();
                 var offer = CreateOffer(capability, ProtocolV2Capabilities.None, clientProviders);
+                var clientPolicy = CreatePolicy(capability, clientProviders);
+                if ((capability & MandatoryCapabilities) != 0 && !serverSupports)
+                {
+                    AssertMandatoryCapabilityCannotBeOmitted(capability);
+                    continue;
+                }
                 var serverPolicy = CreatePolicy(
                     serverSupports ? capability : ProtocolV2Capabilities.None,
                     serverProviders);
-                var clientPolicy = CreatePolicy(capability, clientProviders);
 
                 var server = ProtocolV2Negotiator.NegotiateServer(
                     offer,
@@ -132,16 +142,17 @@ public class ProtocolV2NegotiatorTests
                     offer,
                     server.Response,
                     clientPolicy);
-                var expected = serverSupports ? capability : ProtocolV2Capabilities.None;
+                var expected = MandatoryCapabilities |
+                    (serverSupports ? capability : ProtocolV2Capabilities.None);
 
                 Ensure(server.Options.Capabilities == expected && client.Capabilities == expected,
                     $"{capability}, server={serverSupports}: both peers must derive the same capability result");
                 Ensure(server.Response.NegotiatedCapabilities == expected,
                     $"{capability}, server={serverSupports}: the wire response must match the immutable result");
                 Ensure((server.Options.CompressionBinding is not null) ==
-                       (expected == ProtocolV2Capabilities.Compression) &&
+                       ((expected & ProtocolV2Capabilities.Compression) != 0) &&
                        (client.CompressionBinding is not null) ==
-                       (expected == ProtocolV2Capabilities.Compression),
+                       ((expected & ProtocolV2Capabilities.Compression) != 0),
                     $"{capability}, server={serverSupports}: compression binding must follow capability selection");
             }
         }
@@ -155,8 +166,8 @@ public class ProtocolV2NegotiatorTests
             unknownOffer,
             unknownServer.Response,
             CreatePolicy(ProtocolV2Capabilities.None));
-        Ensure(unknownServer.Options.Capabilities == ProtocolV2Capabilities.None &&
-               unknownClient.Capabilities == ProtocolV2Capabilities.None,
+        Ensure(unknownServer.Options.Capabilities == MandatoryCapabilities &&
+               unknownClient.Capabilities == MandatoryCapabilities,
             "unknown optional capabilities must be ignored for forward compatibility");
     }
 
@@ -178,12 +189,27 @@ public class ProtocolV2NegotiatorTests
             var providers = capability == ProtocolV2Capabilities.Compression
                 ? Bindings("required")
                 : Array.Empty<SharpLinkCompressionProviderBinding>();
+            if ((capability & MandatoryCapabilities) != 0)
+            {
+                AssertMandatoryCapabilityCannotBeOmitted(capability);
+                continue;
+            }
+            var offer = CreateOffer(capability, capability, providers);
+            var serverPolicy = CreatePolicy(ProtocolV2Capabilities.None);
+            var optional = ProtocolV2Negotiator.NegotiateServer(
+                offer with { RequiredCapabilities = MandatoryCapabilities },
+                serverPolicy);
+            Ensure(optional.Options.Capabilities == MandatoryCapabilities,
+                $"unsupported optional capability {capability} must have a valid mandatory-only baseline");
             var failure = CaptureSharpLinkException(() => ProtocolV2Negotiator.NegotiateServer(
-                CreateOffer(capability, capability, providers),
-                CreatePolicy(ProtocolV2Capabilities.None)));
+                offer,
+                serverPolicy));
+            var expected = (capability & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0
+                ? SharpLinkErrorCode.ProtocolViolation
+                : SharpLinkErrorCode.Unimplemented;
 
-            Ensure(failure.Code == SharpLinkErrorCode.Unimplemented,
-                $"unsupported required capability {capability} must have the stable Unimplemented classification");
+            Ensure(failure.Code == expected,
+                $"required capability {capability} must distinguish unsupported optional support from unknown required bits");
         }
     }
 
@@ -244,7 +270,7 @@ public class ProtocolV2NegotiatorTests
                    result.Response.MaxFramePayloadBytes == item.ExpectedFrame &&
                    result.Response.StreamReceiveWindowBytes == item.ExpectedStream &&
                    result.Response.ConnectionReceiveWindowBytes == item.ExpectedConnection,
-                "server negotiation must select the lower minor and every lower receive limit together");
+                "server negotiation must retain the exact current revision and select every lower receive limit together");
             Ensure(result.Options.ProtocolMinorVersion == item.ExpectedMinor &&
                    result.Options.MaxFramePayloadBytes == item.ExpectedFrame &&
                    result.Options.StreamReceiveWindowBytes == item.ExpectedStream &&
@@ -265,14 +291,20 @@ public class ProtocolV2NegotiatorTests
             offer.RequiredCapabilities,
             offer.MaxFramePayloadBytes,
             offer.StreamReceiveWindowBytes,
-            offer.ConnectionReceiveWindowBytes);
+            offer.ConnectionReceiveWindowBytes,
+            Authority: TestAuthority);
+        var clientPolicy = CreatePolicy(
+            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl);
+        var baseline = ProtocolV2Negotiator.ValidateServerResponse(offer, valid, clientPolicy);
+        Ensure(baseline.Capabilities == valid.NegotiatedCapabilities && baseline.Authority == valid.Authority,
+            "out-of-offer response mutations must start from a valid mandatory response and authority");
         var cases = new[]
         {
             (Response: valid with { MinorVersion = checked((ushort)(offer.MinorVersion + 1)) },
                 Code: SharpLinkErrorCode.Unimplemented, Name: "future minor"),
-            (Response: valid with { NegotiatedCapabilities = ProtocolV2Capabilities.HealthCheck },
+            (Response: valid with { NegotiatedCapabilities = valid.NegotiatedCapabilities | ProtocolV2Capabilities.HealthCheck },
                 Code: SharpLinkErrorCode.ProtocolViolation, Name: "unoffered capability"),
-            (Response: valid with { NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl },
+            (Response: valid with { NegotiatedCapabilities = valid.NegotiatedCapabilities & ~ProtocolV2Capabilities.Metadata },
                 Code: SharpLinkErrorCode.ProtocolViolation, Name: "missing required capability"),
             (Response: valid with { MaxFramePayloadBytes = offer.MaxFramePayloadBytes + 1 },
                 Code: SharpLinkErrorCode.ProtocolViolation, Name: "frame above offer"),
@@ -290,8 +322,7 @@ public class ProtocolV2NegotiatorTests
                 ProtocolV2Negotiator.ValidateServerResponse(
                     offer,
                     item.Response,
-                    CreatePolicy(
-                        ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl)));
+                    clientPolicy));
             Ensure(failure.Code == item.Code,
                 $"{item.Name} must use the expected structured error classification");
         }
@@ -335,12 +366,12 @@ public class ProtocolV2NegotiatorTests
         Ensure(optional.Response.CompressionProfile is null &&
                optional.Options.CompressionBinding is null &&
                optionalClient.CompressionBinding is null &&
-               optionalClient.Capabilities == ProtocolV2Capabilities.None,
+               optionalClient.Capabilities == MandatoryCapabilities,
             "optional compression with no profile intersection must be disabled symmetrically");
 
         var requiredOffer = optionalOffer with
         {
-            RequiredCapabilities = ProtocolV2Capabilities.Compression
+            RequiredCapabilities = optionalOffer.RequiredCapabilities | ProtocolV2Capabilities.Compression
         };
         var requiredFailure = CaptureSharpLinkException(() => ProtocolV2Negotiator.NegotiateServer(
             requiredOffer,
@@ -353,11 +384,15 @@ public class ProtocolV2NegotiatorTests
     public void MalformedOfferMatrixShouldReturnProtocolViolation()
     {
         var valid = CreateOffer(ProtocolV2Capabilities.Metadata, ProtocolV2Capabilities.None, []);
+        var serverPolicy = CreatePolicy(ProtocolV2Capabilities.None);
+        var baseline = ProtocolV2Negotiator.NegotiateServer(valid, serverPolicy);
+        Ensure(baseline.Options.Capabilities == MandatoryCapabilities && baseline.Response.Authority == TestAuthority,
+            "malformed-offer mutations must start from a valid mandatory offer and server authority");
         var cases = new[]
         {
             valid with
             {
-                RequiredCapabilities = ProtocolV2Capabilities.FlowControl
+                RequiredCapabilities = valid.RequiredCapabilities | ProtocolV2Capabilities.HealthCheck
             },
             valid with
             {
@@ -371,22 +406,22 @@ public class ProtocolV2NegotiatorTests
             },
             valid with
             {
-                SupportedCapabilities = ProtocolV2Capabilities.Compression,
+                SupportedCapabilities = valid.SupportedCapabilities | ProtocolV2Capabilities.Compression,
                 CompressionProfiles = ReadOnlyMemory<string>.Empty
             },
             valid with
             {
-                SupportedCapabilities = ProtocolV2Capabilities.Compression,
+                SupportedCapabilities = valid.SupportedCapabilities | ProtocolV2Capabilities.Compression,
                 CompressionProfiles = new[] { "same", "same" }
             },
             valid with
             {
-                SupportedCapabilities = ProtocolV2Capabilities.Compression,
+                SupportedCapabilities = valid.SupportedCapabilities | ProtocolV2Capabilities.Compression,
                 CompressionProfiles = new[] { new string('a', SharpLinkCompressionProfile.MaxAsciiBytes + 1) }
             },
             valid with
             {
-                SupportedCapabilities = ProtocolV2Capabilities.Compression,
+                SupportedCapabilities = valid.SupportedCapabilities | ProtocolV2Capabilities.Compression,
                 CompressionProfiles = Enumerable.Range(0, SharpLinkCompressionOptions.MaxProviders + 1)
                     .Select(static index => $"profile-{index}")
                     .ToArray()
@@ -397,7 +432,7 @@ public class ProtocolV2NegotiatorTests
         {
             var failure = CaptureSharpLinkException(() => ProtocolV2Negotiator.NegotiateServer(
                 item,
-                CreatePolicy(ProtocolV2Capabilities.None)));
+                serverPolicy));
             Ensure(failure.Code == SharpLinkErrorCode.ProtocolViolation,
                 "every malformed offer must fail before authentication with ProtocolViolation");
         }
@@ -413,15 +448,22 @@ public class ProtocolV2NegotiatorTests
             clientProviders);
         var valid = new ProtocolV2HandshakeResponse(
             offer.MinorVersion,
-            ProtocolV2Capabilities.Compression,
+            MandatoryCapabilities | ProtocolV2Capabilities.Compression,
             offer.MaxFramePayloadBytes,
             offer.StreamReceiveWindowBytes,
             offer.ConnectionReceiveWindowBytes,
-            "offered");
+            "offered",
+            TestAuthority);
+        var clientPolicy = CreatePolicy(ProtocolV2Capabilities.Compression, clientProviders);
+        var baseline = ProtocolV2Negotiator.ValidateServerResponse(offer, valid, clientPolicy);
+        Ensure(baseline.Capabilities == valid.NegotiatedCapabilities &&
+               baseline.Authority == valid.Authority &&
+               ReferenceEquals(baseline.CompressionBinding?.Provider, clientProviders[0].Provider),
+            "malformed-response mutations must start from a valid response bound to the offered client provider");
         var cases = new[]
         {
-            valid with { NegotiatedCapabilities = (ProtocolV2Capabilities)(1UL << 63) },
-            valid with { NegotiatedCapabilities = ProtocolV2Capabilities.None },
+            valid with { NegotiatedCapabilities = valid.NegotiatedCapabilities | (ProtocolV2Capabilities)(1UL << 63) },
+            valid with { NegotiatedCapabilities = valid.NegotiatedCapabilities & ~ProtocolV2Capabilities.Compression },
             valid with { CompressionProfile = null },
             valid with { CompressionProfile = "not-offered" }
         };
@@ -432,7 +474,7 @@ public class ProtocolV2NegotiatorTests
                 ProtocolV2Negotiator.ValidateServerResponse(
                     offer,
                     item,
-                    CreatePolicy(ProtocolV2Capabilities.Compression, clientProviders)));
+                    clientPolicy));
             Ensure(failure.Code == SharpLinkErrorCode.ProtocolViolation,
                 "malformed or unoffered response selections must be ProtocolViolation");
         }
@@ -455,12 +497,13 @@ public class ProtocolV2NegotiatorTests
         var offer = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
             offeredCapabilities,
-            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl,
+            MandatoryCapabilities | ProtocolV2Capabilities.Metadata,
             16384,
             8192,
             16384,
             new byte[] { 7, 8 },
-            clientProviders.Select(static binding => binding.WireProfile).ToArray());
+            clientProviders.Select(static binding => binding.WireProfile).ToArray(),
+            BindingLimits: Protocol3BindingLimits.Default);
         var serverPolicy = CreatePolicy(
             offeredCapabilities,
             serverProviders,
@@ -468,7 +511,13 @@ public class ProtocolV2NegotiatorTests
             maxFramePayloadBytes: 8192,
             streamReceiveWindowBytes: 4096,
             connectionReceiveWindowBytes: 8192);
-        var clientPolicy = CreatePolicy(offeredCapabilities, clientProviders);
+        var clientPolicy = CreatePolicy(
+            offeredCapabilities,
+            clientProviders,
+            minorVersion: offer.MinorVersion,
+            maxFramePayloadBytes: offer.MaxFramePayloadBytes,
+            streamReceiveWindowBytes: offer.StreamReceiveWindowBytes,
+            connectionReceiveWindowBytes: offer.ConnectionReceiveWindowBytes);
 
         var server = ProtocolV2Negotiator.NegotiateServer(offer, serverPolicy);
         var client = ProtocolV2Negotiator.ValidateServerResponse(
@@ -480,13 +529,15 @@ public class ProtocolV2NegotiatorTests
                server.Options.Capabilities == client.Capabilities &&
                server.Options.MaxFramePayloadBytes == client.MaxFramePayloadBytes &&
                server.Options.StreamReceiveWindowBytes == client.StreamReceiveWindowBytes &&
-               server.Options.ConnectionReceiveWindowBytes == client.ConnectionReceiveWindowBytes,
+               server.Options.ConnectionReceiveWindowBytes == client.ConnectionReceiveWindowBytes &&
+               server.Options.Authority == client.Authority,
             "server construction and client validation must derive equivalent immutable scalars");
         Ensure(server.Response.MinorVersion == client.ProtocolMinorVersion &&
                server.Response.NegotiatedCapabilities == client.Capabilities &&
                server.Response.MaxFramePayloadBytes == client.MaxFramePayloadBytes &&
                server.Response.StreamReceiveWindowBytes == client.StreamReceiveWindowBytes &&
-               server.Response.ConnectionReceiveWindowBytes == client.ConnectionReceiveWindowBytes,
+               server.Response.ConnectionReceiveWindowBytes == client.ConnectionReceiveWindowBytes &&
+               server.Response.Authority == client.Authority,
             "the wire response must be an exact projection of the immutable result");
         Ensure(server.Options.CompressionBinding?.WireProfile == "shared" &&
                client.CompressionBinding?.WireProfile == "shared" &&
@@ -521,13 +572,14 @@ public class ProtocolV2NegotiatorTests
                first.Options.MaxFramePayloadBytes == second.Options.MaxFramePayloadBytes &&
                first.Options.StreamReceiveWindowBytes == second.Options.StreamReceiveWindowBytes &&
                first.Options.ConnectionReceiveWindowBytes == second.Options.ConnectionReceiveWindowBytes &&
-               first.Options.CompressionBinding == second.Options.CompressionBinding,
+               first.Options.CompressionBinding == second.Options.CompressionBinding &&
+               first.Options.Authority == second.Options.Authority,
             "the same offer and policy must produce equivalent immutable local results");
 
         var unsupported = offer with
         {
-            SupportedCapabilities = (ProtocolV2Capabilities)(1UL << 63),
-            RequiredCapabilities = (ProtocolV2Capabilities)(1UL << 63),
+            SupportedCapabilities = MandatoryCapabilities | (ProtocolV2Capabilities)(1UL << 63),
+            RequiredCapabilities = MandatoryCapabilities | (ProtocolV2Capabilities)(1UL << 63),
             CompressionProfiles = ReadOnlyMemory<string>.Empty
         };
         var firstFailure = CaptureSharpLinkException(() =>
@@ -535,8 +587,51 @@ public class ProtocolV2NegotiatorTests
         var secondFailure = CaptureSharpLinkException(() =>
             ProtocolV2Negotiator.NegotiateServer(unsupported, policy));
 
+        Ensure(firstFailure.Code == SharpLinkErrorCode.ProtocolViolation,
+            "unknown required bits must fail with the current protocol-violation classification");
         Ensure(firstFailure.Code == secondFailure.Code && firstFailure.Message == secondFailure.Message,
             "the same invalid offer and policy must produce the same structured error");
+    }
+
+    private const ProtocolV2Capabilities MandatoryCapabilities =
+        ProtocolV2Capabilities.FlowControl |
+        ProtocolV2Capabilities.CancellationReason |
+        ProtocolV2Capabilities.ContractManifest;
+
+    private static readonly Protocol3BindingAuthority TestAuthority = new(
+        new Guid("b783d520-4bca-4e4e-8f63-11bcd4fa4a01"),
+        new Guid("90901f63-9aa3-44e0-9bd5-32ad6c947f02"),
+        Protocol3BindingLimits.Default);
+
+    private static void AssertMandatoryCapabilityCannotBeOmitted(ProtocolV2Capabilities capability)
+    {
+        var localFailure = CaptureArgumentException(() =>
+            CreateExactPolicy(MandatoryCapabilities & ~capability));
+        Ensure(localFailure.ParamName == "supportedCapabilities",
+            $"a local policy without mandatory {capability} must be rejected at supportedCapabilities");
+
+        var policy = CreatePolicy(ProtocolV2Capabilities.None);
+        var offer = CreateOffer(ProtocolV2Capabilities.None, ProtocolV2Capabilities.None, []);
+        var server = ProtocolV2Negotiator.NegotiateServer(offer, policy);
+        var client = ProtocolV2Negotiator.ValidateServerResponse(offer, server.Response, policy);
+        Ensure(server.Options.Capabilities == MandatoryCapabilities &&
+               client.Capabilities == MandatoryCapabilities,
+            "mandatory omission checks must start from a symmetric valid baseline");
+        var missingRequired = offer with
+        {
+            RequiredCapabilities = offer.RequiredCapabilities & ~capability
+        };
+        var offerFailure = CaptureSharpLinkException(() =>
+            ProtocolV2Negotiator.NegotiateServer(missingRequired, policy));
+        Ensure(offerFailure.Code == SharpLinkErrorCode.ProtocolViolation,
+            $"a peer offer omitting mandatory required {capability} must be ProtocolViolation");
+        var responseFailure = CaptureSharpLinkException(() =>
+            ProtocolV2Negotiator.ValidateServerResponse(
+                offer,
+                server.Response with { NegotiatedCapabilities = server.Response.NegotiatedCapabilities & ~capability },
+                policy));
+        Ensure(responseFailure.Code == SharpLinkErrorCode.ProtocolViolation,
+            $"a peer response omitting mandatory {capability} must be ProtocolViolation");
     }
 
     private static ProtocolV2HandshakeRequest CreateOffer(
@@ -545,15 +640,31 @@ public class ProtocolV2NegotiatorTests
         IReadOnlyList<SharpLinkCompressionProviderBinding> providers)
         => new(
             ProtocolV2Constants.MinorVersion,
-            supported,
-            required,
+            supported | MandatoryCapabilities,
+            required | MandatoryCapabilities,
             8192,
             2048,
             4096,
             ReadOnlyMemory<byte>.Empty,
-            providers.Select(static binding => binding.WireProfile).ToArray());
+            providers.Select(static binding => binding.WireProfile).ToArray(),
+            BindingLimits: Protocol3BindingLimits.Default);
 
     private static ProtocolV2NegotiationPolicy CreatePolicy(
+        ProtocolV2Capabilities supported,
+        IReadOnlyList<SharpLinkCompressionProviderBinding>? providers = null,
+        ushort minorVersion = ProtocolV2Constants.MinorVersion,
+        int maxFramePayloadBytes = 8192,
+        int streamReceiveWindowBytes = 2048,
+        int connectionReceiveWindowBytes = 4096)
+        => CreateExactPolicy(
+            supported | MandatoryCapabilities,
+            providers,
+            minorVersion,
+            maxFramePayloadBytes,
+            streamReceiveWindowBytes,
+            connectionReceiveWindowBytes);
+
+    private static ProtocolV2NegotiationPolicy CreateExactPolicy(
         ProtocolV2Capabilities supported,
         IReadOnlyList<SharpLinkCompressionProviderBinding>? providers = null,
         ushort minorVersion = ProtocolV2Constants.MinorVersion,
@@ -566,7 +677,10 @@ public class ProtocolV2NegotiatorTests
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
-            providers ?? Array.Empty<SharpLinkCompressionProviderBinding>());
+            providers ?? Array.Empty<SharpLinkCompressionProviderBinding>(),
+            bindingLimits: Protocol3BindingLimits.Default,
+            serverInstanceId: TestAuthority.ServerInstanceId,
+            registryEpoch: TestAuthority.RegistryEpoch);
 
     private static SharpLinkCompressionProviderBinding[] Bindings(params string[] profiles)
         => profiles.Select(static profile => new SharpLinkCompressionProviderBinding(

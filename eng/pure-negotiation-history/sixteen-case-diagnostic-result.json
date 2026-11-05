@@ -1,0 +1,918 @@
+{
+  "schemaVersion": 1,
+  "runId": 41966659630,
+  "jobId": 127045117909,
+  "head": "aecea7afdfdd426a1bbbd5cf840bed945ef62e7b",
+  "tree": "a45ca76e278f9b7809db59e32e401d14856f980c",
+  "conclusion": "failure",
+  "runURL": "https://github.com/SunSi12138/SharpLink/actions/runs/41966659630",
+  "jobURL": "https://github.com/SunSi12138/SharpLink/actions/runs/41966659630/job/127045117909",
+  "summary": {
+    "aggregateSiblingCausesObserved": false,
+    "allSelectedPassed": false,
+    "bodyVersusDisposalInference": "known-frames-only-no-causal-inference",
+    "candidateCatalogSHA256": "4b4f7cd616a746b153aee47a2fdd9f2685fdeee18a17ee0693743610642209a0",
+    "cases": [
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "217ee032d5fc75fc82d6dd9e71eaade7dfdd2b4c3f29915acb38598ca99f623e",
+          "kind": "source-literal-boolean",
+          "limitation": "none",
+          "parameter": "expiresDuringEmission",
+          "proof": "pinned-default-display-name-exact-match",
+          "value": true
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 1,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "35446782ad624e7aea3643148449bc7579692bc7a3f5a6178756d15b495e0d2c",
+        "junitFileSHA256": "54a41e0aaa19f3bbca923d27d4a384decad1dc68b29bdfd11161e1f67fbe0988",
+        "method": "SharpLink.UnitTests.Client.SharpLinkClientTimeBudgetTests.TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline",
+        "nativeCanonicalSHA256": "acff3287180ae5a9e67107bf6e8da9d0e1566ac2c0a64c775b9871a658b255d6",
+        "nativeFileSHA256": "a4a94d36a5ed24f5cf729ed258b9ffa55e0ee96d4391d62529a7e0d30992a94b",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "e5d8b393de517c910d52b63e8275cff6481f126e9c001739b9d66aac39305b31",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a653e5dc45fcd2d6c9c3fa2d5d726e9bb2d79e2ea3f935314d8376dc14ca3e08",
+          "kind": "source-literal-boolean",
+          "limitation": "none",
+          "parameter": "expiresDuringEmission",
+          "proof": "pinned-default-display-name-exact-match",
+          "value": false
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 2,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "7d9e2d3a1d90eb905d61e32ad6d75a9244a714934ec1b787ebec760e929292d2",
+        "junitFileSHA256": "5387e461681d17d5190779abe1efd53dacf9c486afe98e75b8412e36e706c14f",
+        "method": "SharpLink.UnitTests.Client.SharpLinkClientTimeBudgetTests.TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline",
+        "nativeCanonicalSHA256": "3274664f77a0fcc829135f6680a5fd08f377ce46d8ab525cea188185fe57ed5c",
+        "nativeFileSHA256": "1ea20127e2cf9817f9f45413363d5762c35d37a9b71fce92169fad3326888ec3",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "0a75d041bab54be6d442b318977e228f7b4f89e9138d3b834516ee12402fe7a3",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "4954df4c28d82465c2725e66599e501594f88cf481203a94a54704586b2b2bb5",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 3,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "67dffd09d90554c4e60cdd8bbf45e3bf25b146e8ac3e0e9407ad4c0fff5183eb",
+        "junitFileSHA256": "8e9f425fa7effa997e982fe674d0e88a81820db4d0d5b98b67403afee731b52e",
+        "method": "SharpLink.UnitTests.Client.SharpLinkClientTimeBudgetTests.ExplicitMethodTimeoutShouldOverrideClientDefaultTimeBudget",
+        "nativeCanonicalSHA256": "8da0ced9152119f4eb128044ee6358e0192bebec3482c0ba6cffb93153e7e541",
+        "nativeFileSHA256": "74e3cad435eebb822d1a9dff50d880f6184de80555aa754bc677b61dc44563fe",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "f47ec0838db096004568fb77ef10fd9b4745e213c78485c7e5d431875a4388f1",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "298a9f30f19481679097cf06405ff105ca66dcc357af95cc710f1ccd58287908",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 4,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "139aa9bf0527442f0770013e699c5ea81362451e0f6a49c0c16853afc30f37a7",
+        "junitFileSHA256": "f1d20e4aa2628ee29a5074928f166fd39ceccc542fa94bcef657b4babc02cf82",
+        "method": "SharpLink.UnitTests.Client.SharpLinkClientTimeBudgetTests.InheritedTimeBudgetShouldCapSelectedMethodPolicyWithoutRestartingIt",
+        "nativeCanonicalSHA256": "6006d5d6c3f25a48f0a002551c6ebc2f172bb645aa51b14e82d01017e4308efb",
+        "nativeFileSHA256": "bd94878d9914615c549d06c1c0801ecb8578a771b803c4c838b667ae91c5b532",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "d98d1b2c844ca333b92530101c73a9a7b2f0949a8aeeb2e3c9c18f1517b3e958",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a71cf2fe6f0ddfb1492f5ddb778372bdd75431ab738d3ccc4166cdd518e3b151",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 5,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b381b099b8cd7ce6641508bb4f1e87fcd1c227011f4a273c698f9ba82d35ffb1",
+        "junitFileSHA256": "5b8cad5ae8ab2a9619c0605ad1bf39e8375aec8f100fe8e982ba7ed40ba617d3",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs",
+        "nativeCanonicalSHA256": "ddd04febcefe2d93c44046f2d65c6480b3ecda9bd6e95929a20664b7146e51c6",
+        "nativeFileSHA256": "a11e2e96e60e6e9bcdf8b5b53c35095845ddb4e24f6a96d7a06325903d94792a",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "f1fa4afbe650090b51651db03f0057eb45c08c13716410720d3623e4338e7f18",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "aafd4e0ad3793d2911129cef5ee68a954bc07b1506612fab41a21395fce5f71a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 6,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "75e71937020f2840745707102395b18b4c1c8c6c90c9d53006f8e8ba3f386450",
+        "junitFileSHA256": "44355470dae765aceb64722943770f5292d31ae6336ced6e755c64903166a921",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized",
+        "nativeCanonicalSHA256": "919f8428750db7843d82d3170cd2272e46aa11201a9ddebef8f5b3eeb34a7763",
+        "nativeFileSHA256": "b9dbcfe5f74495d75b473aa4b1d9ca8bc327f1cb2a236128103165820b19dd91",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dc0731d71dab9fe54574edd509bd61b3aed648a9e79b5a27bb7c5f2a94b47324",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "acd10aeb7b02efe25437d7fbc248bef027672939591401fd7530a5779a0af33c",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 7,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "4977ea54140fe15145b38aadef52a798ad6fa38b55269c75e07cd72d7c90d936",
+        "junitFileSHA256": "b9a77dc940e9967203dcc616fa59e58945dd447cc62685fc2a1d2fa23fa64548",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.PolicyConstructionShouldRejectEveryIllegalLocalState",
+        "nativeCanonicalSHA256": "daf222a159a10431375ab0aa1fb56147a3e9afd6ea74356ab9b1e0abf75571b2",
+        "nativeFileSHA256": "dc3eb726c8c69bf49909e6913fa3ee8d16f9bc285b0493aea395533b7fc478cd",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "0799ea368b58ce96464bab4f0cd18a3be6e3ea78f8b1dbe619704a95ad89cbc9",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "cce27d24c7e08cdec933970e72d533d0614f2197b041abbaa646b5ad41ff4503",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 8,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 123,
+                "member": "CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 9
+          }
+        ],
+        "junitDecodedTextSHA256": "cecd279fd2c45ef84b3923c81fcc631a38ff7147323675758e5a046e0d7aa181",
+        "junitFileSHA256": "6ac9736adfe42ac6ab4523b30567cc29a2ad528457e56c525075ef945f1d2d74",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+        "nativeCanonicalSHA256": "4e2005f0ef7d5f2e3bf59b7c54c1625f237d8ff5f97c23133b824dc6f199362f",
+        "nativeFileSHA256": "6d143ad150707edcb6827703ca035b408f2b7c04ff6bb40eeab4721444435fab",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8ba1ad7253fd3efc681865e102968394578e32b73b9d01a16f8553f6165e42cc",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a8ac89ce6bb41060402fa06d73cc004748a49e6d516141e73aa5643ead7e739d",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 9,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 580,
+                "member": "CaptureSharpLinkException",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 181,
+                "member": "UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 10
+          }
+        ],
+        "junitDecodedTextSHA256": "dcba5cf46a91fca738b861f11f3f480f8cb006a4548a86b71d61888a333aa774",
+        "junitFileSHA256": "4d41727a9e6547b1730131228fdad6ee6067dd0eef5019029432ecb9d85c268f",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+        "nativeCanonicalSHA256": "cbec479f1b113d70473fd3dc7844bd482abceab8a40e9ba251e44d496fa60cb5",
+        "nativeFileSHA256": "79fe9dc8fd485c6b71fcf972d1dc74b0c146c73c0c976a3c55280c2aa288453c",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "4ba763c1d48a8271ed03deadabe0d1cc5bafeff7461c6bd30b5bcad0955c26b5",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "7e129dd280561169f330c0d8ab9fa36d7a07f0ef6051f29c5bb113d1ca47f862",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 10,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 193,
+                "member": "ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 9
+          }
+        ],
+        "junitDecodedTextSHA256": "59f0dc2d6512b32d2b25c63f6e111a88026869979f5370a623698e267e432cbe",
+        "junitFileSHA256": "e7b791635c7ffd2d92a274f00ec9d8160cd15e7afb06619d846072310c7b3a32",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+        "nativeCanonicalSHA256": "cfb56379097557a5168911a60e03dcd92a7537c65cdf4f85dda5134fcd67cb94",
+        "nativeFileSHA256": "c581130bb9ab7c6a151a1955299cfcb7d53977b613eece49ebd3a6d14e366420",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "07403bd5f75daa4542857affced1d15374562e6df1f559afcab0843a763e69d6",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a8c1de798d4010ea727986b27f5712b38c8a4c4064fb3efe0e957116b90e1f92",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 11,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 580,
+                "member": "CaptureSharpLinkException",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 289,
+                "member": "ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 10
+          }
+        ],
+        "junitDecodedTextSHA256": "655e44dd33a41e24ae42d0ac6f477b9e419a815d6586a2eec3346a5b5054989f",
+        "junitFileSHA256": "786bb74eb22bbd2ba777470f6e7d936688e72856f734386c33d15ef8e4566fc3",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+        "nativeCanonicalSHA256": "b9fbfd5b5c265a3dd664ee64afccceee5d5c92fe118855b944bab47a9986a1c0",
+        "nativeFileSHA256": "636eea126b1597a339c32767c6c7961e72a02f1b9b3c98973f84d1b4e4a4ab8a",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "c2a0b0f3e3b3f9d4fef951b9c102e5e5c2f8129bc88ec360816cd817360202f9",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "c2c25f78c2c6772f3d7601f91fc634e68cec6c98a9fd3bc77ff134d7af14a3a6",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 12,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 305,
+                "member": "CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 9
+          }
+        ],
+        "junitDecodedTextSHA256": "483579a10e122956e953c5c06c8fd12b040fe5dc6fa5d773e81d94ede487a27e",
+        "junitFileSHA256": "722230b366ac448c2ca5076c6014020240dd9fb2f5d80f2b39ca093d2bad6d60",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+        "nativeCanonicalSHA256": "3cb86ba816923891bcbe7952a5fd2980174d3b8b80a9a55c3ee6eb22212403a9",
+        "nativeFileSHA256": "0ba68f82210f6e97b0a2c5203eb34117251be2186202f5b98c108ad59d40818a",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "35482dd3c2b4ba9b6ebc65eaa63af7623be367f2b2343f2284cd71212240fbea",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "d7211d0ec08a9ef4c87d9549bb0071497e5307908ea3505671849bf80502f38a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 13,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 580,
+                "member": "CaptureSharpLinkException",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 398,
+                "member": "MalformedOfferMatrixShouldReturnProtocolViolation",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 10
+          }
+        ],
+        "junitDecodedTextSHA256": "3c9d6a6b54ac5e2d51a8ae9e413ce0651d6ee2ebaa22d40cb158dcd64cf0a1dd",
+        "junitFileSHA256": "3b9c666eb74ab4dffed91afb823d9aebe8d17b1ba19a203d9d61757e8cee9b13",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.MalformedOfferMatrixShouldReturnProtocolViolation",
+        "nativeCanonicalSHA256": "548b6bc7d7976120a16fa91e34bcbf3312bea4f6a60bb18be7e5122776f37d31",
+        "nativeFileSHA256": "e0fce0e50b5a2af64026afa7babaed0efb84e8af33c9a54f7afc80073ca9a572",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "cafc1fdfdbfa4ee12183080ee02ef4617010519863f7805f235efb1168196389",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "228da59891121d08212418df670f073e78af2bacbc5cdb613987e2b5f43a44e8",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 14,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "unknown",
+            "category": "argument",
+            "depth": 0,
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 68,
+                "member": "Create",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 563,
+                "member": "CreatePolicy",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 580,
+                "member": "CaptureSharpLinkException",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              },
+              {
+                "line": 431,
+                "member": "MalformedResponseMatrixShouldReturnStructuredFailure",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 10
+          }
+        ],
+        "junitDecodedTextSHA256": "b386291a6b02988510d2e6253a236536daa6639764f1e2d328e63fc3d8156b19",
+        "junitFileSHA256": "39f9feb8b5a513dfea181c01e6779a8c3dac6548c7036e85e1cf348bdeee377e",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.MalformedResponseMatrixShouldReturnStructuredFailure",
+        "nativeCanonicalSHA256": "be1efd4a17da6d93a9b575e1209561fe35de769e99df7e72302af57adc04b193",
+        "nativeFileSHA256": "fa2611f75af9a0efbbccd6a24bef3ab4c464200124c0a60ea5dc3a8ebb865a21",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "7f18cdb99c894be763aee86598df7b545562e922d1cc6acd24eaa336368b3dae",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "830a3ef4f21c4957b52ba2f341d035dedcbdbff34ad048658f40037719cd47ba",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 15,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "peer-binding-limits-invalid",
+            "category": "protocol-violation",
+            "depth": 0,
+            "exactMessageSource": {
+              "line": 352,
+              "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+            },
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 352,
+                "member": "ValidatePeerOffer",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 473,
+                "member": "ServerResultShouldValidateToEquivalentClientSnapshot",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 10
+          }
+        ],
+        "junitDecodedTextSHA256": "1520e368eb6990c19c2f06b09c9e02661d5ba7e0685ed06218c8a83095bb5d96",
+        "junitFileSHA256": "fe2783e20af2c419ab2438f325fd2910a5749ef1459326fc2def5ee0fd18463d",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ServerResultShouldValidateToEquivalentClientSnapshot",
+        "nativeCanonicalSHA256": "92bd5ab69ed9c6cfc3c4985b71ffdaa0f0caa04964b8cbe524c005ac6509bdd2",
+        "nativeFileSHA256": "4ee6922cecb252f45982070e64fa8d7bb57038e4b969d0556813810b3db6cd91",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "5206d8a3de0d1a9423e3161042862298de6ad3bf788e262caf16e6a5f786db17",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "f65fb3238f0eba80c64e200f284d7ad5085e5fcb8fdaca333546de74a86fa6ac",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 2,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 16,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [
+          {
+            "assertionTag": "peer-binding-limits-invalid",
+            "category": "protocol-violation",
+            "depth": 0,
+            "exactMessageSource": {
+              "line": 352,
+              "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+            },
+            "omittedRecognizedStackLineCount": 0,
+            "sourceFrames": [
+              {
+                "line": 352,
+                "member": "ValidatePeerOffer",
+                "source": "src/SharpLink.Runtime/ProtocolV2/ProtocolV2Negotiator.cs"
+              },
+              {
+                "line": 514,
+                "member": "RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+                "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs"
+              }
+            ],
+            "unrecognizedStackLineCount": 10
+          }
+        ],
+        "junitDecodedTextSHA256": "0f868907a9bdaa9500defa0d04120dc709000075f385d1e353b8f974425ca1d2",
+        "junitFileSHA256": "42eee96fb666a74744fd8be42b360c490b47d54092cf94031c63935ddc7dd3e2",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+        "nativeCanonicalSHA256": "97ed0f2d035dc02ec84d1cb4d323a4e94f7c9a42733abde899d7fadcf84c91b3",
+        "nativeFileSHA256": "783abf8cbd5682745b28be20264fb4e9bf8cc01d1beadacea02a81fdba1d7cf3",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "a79965f5cef48c175025b871de543229580f85de443f2ae7ebe6b4237a530c0d",
+        "selectedPassed": false,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "error"
+      }
+    ],
+    "diagnosticComplete": true,
+    "diagnosticQualified": false,
+    "errorOccurrences": 27,
+    "evidenceDurable": true,
+    "exceptionEvidenceScope": "serialized-innerException-chain-only",
+    "exit": 1,
+    "expectedExplicitMetadataCount": 5,
+    "expectedOrdinaryMetadataCount": 2879,
+    "fullSuiteQualified": false,
+    "historicalArgumentMappingAvailable": false,
+    "historicalFullRun": {
+      "errors": 272,
+      "evidenceSHA256": "b53cffd3018fdcd0cced7ea119d3a1268d8d96363f3645343bb14566953285fc",
+      "passed": 2607,
+      "qualified": false,
+      "runId": 41962521900
+    },
+    "identity": {
+      "binarySHA256": "fdc4717e100e23543a34acdddf00ee81dec38cc87b33360ac09ec13d2f823d65",
+      "head": "aecea7afdfdd426a1bbbd5cf840bed945ef62e7b",
+      "packageManifestSHA256": "6531017c679818658a0a6d686181075e7734de10d496f1e7c65ce60f7a3df856",
+      "providerProofSHA256": "bd79bb0a31d39a529346436b4fea1ba9049327bd3941c92699d896d5ee399d66",
+      "sdkManifestSHA256": "efca6824fb29ff90246a5b5a2a573e88248e4c0a61741e6a5ed0fa16c272d598",
+      "sourceManifestSHA256": "990eea7b406904e08793bd5e4ee4ecdb6791001d9da4e6b1fd11f83a44048d2a",
+      "tree": "a45ca76e278f9b7809db59e32e401d14856f980c"
+    },
+    "infrastructureQualified": true,
+    "observedNonpassingCaseCount": 9,
+    "originalFullRun": {
+      "errors": 290,
+      "passed": 2589,
+      "qualified": false,
+      "runId": 41940224644
+    },
+    "preparationQualifiedAtHandoff": true,
+    "rejections": {
+      "codes": [
+        "PD_CASE_FAILED"
+      ],
+      "unclassifiedExceptionNodes": 9
+    },
+    "requiredRuntime": "10.0.14",
+    "requiredSdk": "10.0.114",
+    "requiredSelectedCaseCount": 16,
+    "schemaVersion": 1,
+    "scope": "sixteen-ordinary-timed-stream-negotiation-diagnostic",
+    "sourceTrees": {
+      "src": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
+      "test": "226e6404e69879868bc2f98037624ec357529f49"
+    },
+    "sourceUnchangedFromHead": "72d728bf226ef3d5c9a5ca4d547f798810147880"
+  },
+  "successfulStageRows": [
+    {
+      "stage": "head",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "clean",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "tracked",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "clone",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "checkout",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "clone-head",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "diagnostic-src-tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "diagnostic-test-tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "python-controls",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "sdk-version",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "sdk-info",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "sdk-runtimes",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "restore",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata0",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata3",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata4",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata5",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata6",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata7",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata8",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata9",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata10",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata11",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata12",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata13",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "expanded-imports",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "build",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "discovery1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "discovery2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-python-controls",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-3",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-4",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-5",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-6",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "stream-negotiation-case-7",
+      "exit": 0,
+      "owned": "joined"
+    }
+  ],
+  "rawReportsRetainedInRepository": false,
+  "scope": "Unchanged16case diagnostic; historical full timed failure remains unresolved"
+}

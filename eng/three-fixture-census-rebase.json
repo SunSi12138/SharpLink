@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "scope": "parser-handshake-fixture-catalog-rebase",
+  "scope": "pure-negotiation-fixture-catalog-rebase",
   "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
-  "candidateCatalogSHA256": "4b4f7cd616a746b153aee47a2fdd9f2685fdeee18a17ee0693743610642209a0",
-  "parentCommit": "d6c4d41bca201b2bd82e2e917cfd93d701976b5a",
-  "parentTree": "d3a64a8353239d4038f2f833385b7d2881b61d3c",
+  "candidateCatalogSHA256": "3d05292b01e9ec133f10fad420593895e122469eb82528d6190ac2e9a8dcde12",
+  "parentCommit": "aecea7afdfdd426a1bbbd5cf840bed945ef62e7b",
+  "parentTree": "a45ca76e278f9b7809db59e32e401d14856f980c",
   "frozenProductTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
   "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
   "frozenTestTree": "690953054b445203d5b74614f954c8b7dc8d41ba",
-  "candidateTestTree": "226e6404e69879868bc2f98037624ec357529f49",
+  "candidateTestTree": "fb8f193f979ba936fcd3e51eff98562f27f06a50",
   "methodCount": 2463,
   "sourcePinCount": 1599,
-  "changedMethodBodyCount": 13,
-  "unchangedMethodBodyCount": 2450,
+  "changedMethodBodyCount": 23,
+  "unchangedMethodBodyCount": 2440,
   "deletedMethods": 0,
   "addedMethods": 0,
   "changedPins": {
@@ -26,7 +26,7 @@
     },
     "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs": {
       "old": "b6f8d1b1130a10ee446e63a00b525f37e81a74c1846371b86363225e4a1cf3c8",
-      "new": "d40c522f8bc8805860c9a29288109221545c69c0d598ef5ce6c206efe13e6f57"
+      "new": "8e44d5a254ef72c6a8f9275430c5a22b2d99d03aacc9d9ad049ad267234dd1b9"
     },
     "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs": {
       "old": "d2f827e0f45adae15e78c9db4d9c468de1d247c34eb60ed5e01296b59b584e73",
@@ -128,7 +128,7 @@
       "newLines": [
         67,
         68,
-        98
+        103
       ],
       "oldOffsets": [
         2997,
@@ -136,11 +136,11 @@
       ],
       "newOffsets": [
         3237,
-        4861
+        5552
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "5c162d720e34cd5ba8c05e845b64f333a669b3ee7ef30f51da69877d8d9575b6",
-      "newSpanSHA256": "5c162d720e34cd5ba8c05e845b64f333a669b3ee7ef30f51da69877d8d9575b6"
+      "newSpanSHA256": "c93adef35ffaa1a70dc8f930cc7f44cac8e554bd3aec14d0180a07f52e767b4d"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -151,21 +151,21 @@
         157
       ],
       "newLines": [
-        100,
-        101,
-        161
+        105,
+        106,
+        172
       ],
       "oldOffsets": [
         4627,
         7894
       ],
       "newOffsets": [
-        4867,
-        8134
+        5558,
+        9093
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "b660a21d621d90c47a03e29d202b9ae7e3f77c61e9118229b5c2ee3a70569607",
-      "newSpanSHA256": "b660a21d621d90c47a03e29d202b9ae7e3f77c61e9118229b5c2ee3a70569607"
+      "newSpanSHA256": "263214be7efc378e55a5a18bf138af2d0c2f95bde2b7239d43f85cf363084c34"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -176,21 +176,21 @@
         184
       ],
       "newLines": [
-        163,
-        164,
-        188
+        174,
+        175,
+        214
       ],
       "oldOffsets": [
         7900,
         9000
       ],
       "newOffsets": [
-        8140,
-        9240
+        9099,
+        11003
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "1eac405682a7f03abf501e4cf47ee468056c36910de2676d35c115608779998a",
-      "newSpanSHA256": "1eac405682a7f03abf501e4cf47ee468056c36910de2676d35c115608779998a"
+      "newSpanSHA256": "4801ed4e259fdd86c479a9a1bcd6b43d9988add8658287042652cf55f280dc5f"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -201,21 +201,21 @@
         250
       ],
       "newLines": [
-        190,
-        191,
-        254
+        216,
+        217,
+        280
       ],
       "oldOffsets": [
         9006,
         12183
       ],
       "newOffsets": [
-        9246,
-        12423
+        11009,
+        14204
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "5d0fd945750b480a7529edd95c039d7f292fc651a6b59a240661a7f7fe65670b",
-      "newSpanSHA256": "5d0fd945750b480a7529edd95c039d7f292fc651a6b59a240661a7f7fe65670b"
+      "newSpanSHA256": "637f07e0c982b494e16d6ad5152309c97f0e16a248ecfac174a414e7993ddaac"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -226,21 +226,21 @@
         294
       ],
       "newLines": [
-        256,
-        257,
-        298
+        282,
+        283,
+        329
       ],
       "oldOffsets": [
         12189,
         14620
       ],
       "newOffsets": [
-        12429,
-        14860
+        14210,
+        17080
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "96e8ab372734c314bab5351456dcbaaab52f8ea0bd1681021f96d166ae4e5035",
-      "newSpanSHA256": "96e8ab372734c314bab5351456dcbaaab52f8ea0bd1681021f96d166ae4e5035"
+      "newSpanSHA256": "ce155d9a597680eee8a70f961239a2b7542558c14bd3bd56311c7ce2ea39ccaa"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -251,21 +251,21 @@
         346
       ],
       "newLines": [
-        300,
-        301,
-        350
+        331,
+        332,
+        381
       ],
       "oldOffsets": [
         14626,
         17234
       ],
       "newOffsets": [
-        14866,
-        17474
+        17086,
+        19725
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "7feb52bf12e1a859bf22f504704fbadd5dd401bf0c7875a31e3324a1eb4afce9",
-      "newSpanSHA256": "7feb52bf12e1a859bf22f504704fbadd5dd401bf0c7875a31e3324a1eb4afce9"
+      "newSpanSHA256": "6cb863451b01109c4b2cca1d089682f78ff915f2ec75179fee4e2705284ecdca"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -276,21 +276,21 @@
         400
       ],
       "newLines": [
-        352,
-        353,
-        404
+        383,
+        384,
+        439
       ],
       "oldOffsets": [
         17240,
         19376
       ],
       "newOffsets": [
-        17480,
-        19616
+        19731,
+        22361
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "afe7fc72459c79d99e1a779deb6f7d6d9fa115a974e9b00452a6efcdeb0b36a7",
-      "newSpanSHA256": "afe7fc72459c79d99e1a779deb6f7d6d9fa115a974e9b00452a6efcdeb0b36a7"
+      "newSpanSHA256": "078cac1595c3de3fc33d7865e31ece8f297d1c8e1abb0a05eb64ed21d72a9193"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -301,21 +301,21 @@
         443
       ],
       "newLines": [
-        406,
-        407,
-        447
+        441,
+        442,
+        489
       ],
       "oldOffsets": [
         19382,
         21200
       ],
       "newOffsets": [
-        19622,
-        21440
+        22367,
+        24786
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "cf782b1f2631f37b887edf3e14e0684d234d913607815f75264ce7d3b78d420a",
-      "newSpanSHA256": "cf782b1f2631f37b887edf3e14e0684d234d913607815f75264ce7d3b78d420a"
+      "newSpanSHA256": "0368019c001464f705685f143f02600d444ba9b059fc70c223f4070d3ab1ee82"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -326,21 +326,21 @@
         492
       ],
       "newLines": [
-        449,
-        450,
-        496
+        491,
+        492,
+        547
       ],
       "oldOffsets": [
         21206,
         23994
       ],
       "newOffsets": [
-        21446,
-        24234
+        24792,
+        28034
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "59c23876f708dba90f52e6b5fd6c6f5dd1afe07f9c363a8f46e927eaf19cbd51",
-      "newSpanSHA256": "59c23876f708dba90f52e6b5fd6c6f5dd1afe07f9c363a8f46e927eaf19cbd51"
+      "newSpanSHA256": "850d21c83d8a97456d228a177ce968b24a2ce73c2c346b2382bbdc61d050f159"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
@@ -351,21 +351,21 @@
         536
       ],
       "newLines": [
-        498,
-        499,
-        540
+        549,
+        550,
+        594
       ],
       "oldOffsets": [
         24000,
         26291
       ],
       "newOffsets": [
-        24240,
-        26531
+        28040,
+        30622
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "c5ceb4138f5773481b40fb785cf9c503a9d42603e904ca5bbf73c592a419eab5",
-      "newSpanSHA256": "c5ceb4138f5773481b40fb785cf9c503a9d42603e904ca5bbf73c592a419eab5"
+      "newSpanSHA256": "55af76f2b02bc6c5b67861304e4966df9b7144867a9e8eba1ff1f4ce34ee823a"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
@@ -1495,7 +1495,100 @@
       "InvalidLengthTypeFlagsAndRequestIdShouldBeRejected": 6,
       "ParserViolationsShouldCarryFixedLowCardinalityClassification": 2
     },
-    "otherParserHandshakeNonMethodBytesUnchanged": true
+    "nonMethodBytesReconstructExactlyAfterAllowedHelperChanges": true
+  },
+  "negotiatorDelta": {
+    "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+    "parentSHA256": "d40c522f8bc8805860c9a29288109221545c69c0d598ef5ce6c206efe13e6f57",
+    "candidateSHA256": "8e44d5a254ef72c6a8f9275430c5a22b2d99d03aacc9d9ad049ad267234dd1b9",
+    "parentTestTree": "226e6404e69879868bc2f98037624ec357529f49",
+    "changedBodiesAgainstParent": [
+      {
+        "method": "PolicyConstructionShouldRejectEveryIllegalLocalState",
+        "oldSpanSHA256": "5c162d720e34cd5ba8c05e845b64f333a669b3ee7ef30f51da69877d8d9575b6",
+        "newSpanSHA256": "c93adef35ffaa1a70dc8f930cc7f44cac8e554bd3aec14d0180a07f52e767b4d"
+      },
+      {
+        "method": "CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+        "oldSpanSHA256": "b660a21d621d90c47a03e29d202b9ae7e3f77c61e9118229b5c2ee3a70569607",
+        "newSpanSHA256": "263214be7efc378e55a5a18bf138af2d0c2f95bde2b7239d43f85cf363084c34"
+      },
+      {
+        "method": "UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+        "oldSpanSHA256": "1eac405682a7f03abf501e4cf47ee468056c36910de2676d35c115608779998a",
+        "newSpanSHA256": "4801ed4e259fdd86c479a9a1bcd6b43d9988add8658287042652cf55f280dc5f"
+      },
+      {
+        "method": "ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+        "oldSpanSHA256": "5d0fd945750b480a7529edd95c039d7f292fc651a6b59a240661a7f7fe65670b",
+        "newSpanSHA256": "637f07e0c982b494e16d6ad5152309c97f0e16a248ecfac174a414e7993ddaac"
+      },
+      {
+        "method": "ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+        "oldSpanSHA256": "96e8ab372734c314bab5351456dcbaaab52f8ea0bd1681021f96d166ae4e5035",
+        "newSpanSHA256": "ce155d9a597680eee8a70f961239a2b7542558c14bd3bd56311c7ce2ea39ccaa"
+      },
+      {
+        "method": "CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+        "oldSpanSHA256": "7feb52bf12e1a859bf22f504704fbadd5dd401bf0c7875a31e3324a1eb4afce9",
+        "newSpanSHA256": "6cb863451b01109c4b2cca1d089682f78ff915f2ec75179fee4e2705284ecdca"
+      },
+      {
+        "method": "MalformedOfferMatrixShouldReturnProtocolViolation",
+        "oldSpanSHA256": "afe7fc72459c79d99e1a779deb6f7d6d9fa115a974e9b00452a6efcdeb0b36a7",
+        "newSpanSHA256": "078cac1595c3de3fc33d7865e31ece8f297d1c8e1abb0a05eb64ed21d72a9193"
+      },
+      {
+        "method": "MalformedResponseMatrixShouldReturnStructuredFailure",
+        "oldSpanSHA256": "cf782b1f2631f37b887edf3e14e0684d234d913607815f75264ce7d3b78d420a",
+        "newSpanSHA256": "0368019c001464f705685f143f02600d444ba9b059fc70c223f4070d3ab1ee82"
+      },
+      {
+        "method": "ServerResultShouldValidateToEquivalentClientSnapshot",
+        "oldSpanSHA256": "59c23876f708dba90f52e6b5fd6c6f5dd1afe07f9c363a8f46e927eaf19cbd51",
+        "newSpanSHA256": "850d21c83d8a97456d228a177ce968b24a2ce73c2c346b2382bbdc61d050f159"
+      },
+      {
+        "method": "RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+        "oldSpanSHA256": "c5ceb4138f5773481b40fb785cf9c503a9d42603e904ca5bbf73c592a419eab5",
+        "newSpanSHA256": "55af76f2b02bc6c5b67861304e4966df9b7144867a9e8eba1ff1f4ce34ee823a"
+      }
+    ],
+    "preservedPriorBodies": [
+      "ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs",
+      "ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized"
+    ],
+    "allOtherParentTestBytesUnchanged": true,
+    "helperBlock": {
+      "oldSHA256": "7aae0354318ceaefd55fcc553821a1c9a9d35ea8db6fa61eac422cf7bc80d481",
+      "newSHA256": "a60ed6ecd641befc0081dac9a85f71d50b6cfb9e3a4b60eaa6a220eeaf57888c",
+      "oldLines": [
+        542,
+        570
+      ],
+      "newLines": [
+        596,
+        684
+      ],
+      "changedBodiesUnchangedSignatures": [
+        "CreateOffer",
+        "CreatePolicy"
+      ],
+      "newDeclarations": [
+        "MandatoryCapabilities",
+        "TestAuthority",
+        "AssertMandatoryCapabilityCannotBeOmitted",
+        "CreateExactPolicy"
+      ],
+      "unchangedRemainder": [
+        "using directives",
+        "Bindings",
+        "CaptureSharpLinkException",
+        "CaptureArgumentException",
+        "TestCompressionProvider",
+        "Ensure"
+      ]
+    }
   },
   "historicalFullOrdinaryRun": {
     "runId": 41940224644,
@@ -1549,6 +1642,31 @@
     "fullSuiteQualified": false,
     "evidenceSHA256": "f2f09025a1cc611049c32ec83ad6be2ef2cd8a6351efb9191588a02d761424e1"
   },
+  "historicalTwentyThreeCaseRun": {
+    "runId": 41959478271,
+    "head": "8dba79eacbb18744cc6ccc01ad107bb460d574a4",
+    "passed": 23,
+    "qualified": true,
+    "fullSuiteQualified": false
+  },
+  "historicalCurrentFullRun": {
+    "runId": 41962521900,
+    "head": "72d728bf226ef3d5c9a5ca4d547f798810147880",
+    "passed": 2607,
+    "errors": 272,
+    "qualified": false,
+    "evidenceSHA256": "8b5c5a42210d118055655b75e456cf65f114b9e88fb63debbd8b122c55997e56"
+  },
+  "historicalSixteenCaseDiagnostic": {
+    "runId": 41966659630,
+    "head": "aecea7afdfdd426a1bbbd5cf840bed945ef62e7b",
+    "passed": 7,
+    "errors": 9,
+    "infrastructureQualified": true,
+    "qualified": false,
+    "evidenceSHA256": "57700796654908f5d3abb3064c04c746384253bad0668f5b4e9dab387373a55a"
+  },
+  "historicalTimedFailureResolution": "unresolved-no-timed-source-change",
   "candidateExecution": "not run",
   "fullSuiteQualified": false
 }
