@@ -1,0 +1,263 @@
+{
+  "runId": 41962521900,
+  "jobId": 127031953682,
+  "head": "72d728bf226ef3d5c9a5ca4d547f798810147880",
+  "completedAt": "2026-11-05T03:51:27.6944635Z",
+  "conclusion": "failure",
+  "checkpointSHA256": "8b5c5a42210d118055655b75e456cf65f114b9e88fb63debbd8b122c55997e56",
+  "identity": {
+    "binarySHA256": "572f319720752ab77e712508cf0bbcec4543b5c1ac93624022824402b7d0793f",
+    "configuration": "Release",
+    "head": "72d728bf226ef3d5c9a5ca4d547f798810147880",
+    "installedRuntimes": [
+      {
+        "framework": "Microsoft.AspNetCore.App",
+        "version": "10.0.14"
+      },
+      {
+        "framework": "Microsoft.NETCore.App",
+        "version": "10.0.14"
+      }
+    ],
+    "mtp": "2.5.1",
+    "os": "ubuntu-24.04",
+    "packageManifestSHA256": "745f712eebf63e953e402df76448156b7742ebea975b8819ce529c7c2bc73ef6",
+    "providerProofSHA256": "bd79bb0a31d39a529346436b4fea1ba9049327bd3941c92699d896d5ee399d66",
+    "runtimeRequest": "Microsoft.NETCore.App/10.0.0",
+    "sdk": "10.0.114",
+    "sdkManifestSHA256": "e87e1bcfd393600dc2a243cc669c9dce008960f5590fd7f51186f0067405237a",
+    "sourceManifestSHA256": "559b547cc08397de0b0dd2ad72fc8bf68e9490eea27e56d0f8e417cdda9572a9",
+    "tree": "1304ef18ed559d5ffbc25a285a7fc9dc1613c703",
+    "tunit": "1.73.19"
+  },
+  "ordinary": 2879,
+  "passed": 2607,
+  "errors": 272,
+  "qualified": false,
+  "ownerClosed": true,
+  "executionClosureObserved": true,
+  "bodyExitCode": 2,
+  "methodStatusCounts": [
+    {
+      "className": "SharpLinkClientTimeBudgetTests",
+      "count": 1,
+      "methodName": "ExplicitMethodTimeoutShouldOverrideClientDefaultTimeBudget",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "SharpLinkClientTimeBudgetTests",
+      "count": 1,
+      "methodName": "InheritedTimeBudgetShouldCapSelectedMethodPolicyWithoutRestartingIt",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "SharpLinkClientTimeBudgetTests",
+      "count": 1,
+      "methodName": "TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientTimeBudgetTests",
+      "count": 1,
+      "methodName": "TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "MalformedOfferMatrixShouldReturnProtocolViolation",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "MalformedResponseMatrixShouldReturnStructuredFailure",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "PolicyConstructionShouldRejectEveryIllegalLocalState",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ServerResultShouldValidateToEquivalentClientSnapshot",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    }
+  ],
+  "methodExceptionCategoryCounts": [
+    {
+      "category": "aggregate",
+      "className": "SharpLinkClientTimeBudgetTests",
+      "count": 1,
+      "methodName": "TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "MalformedOfferMatrixShouldReturnProtocolViolation",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "MalformedResponseMatrixShouldReturnStructuredFailure",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "protocol-violation",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "protocol-violation",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ServerResultShouldValidateToEquivalentClientSnapshot",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    }
+  ],
+  "argumentIdentity": "not-present-in-historical-method-aggregation"
+}
