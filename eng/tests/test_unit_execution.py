@@ -176,9 +176,35 @@ class Controls(unittest.TestCase):
             def late(directory,name,value):
                 real(directory,name,value)
                 if name=='preparation.json':clock[0]=3.0
-            with patch.object(census,'execute',side_effect=fake_execute),patch.object(r.census,'write_json',side_effect=late),patch.object(runner.time,'monotonic',side_effect=lambda:clock[0]):
+            sdk=Path(tmp)/'sdk';sdk.mkdir();dotnet=sdk/'dotnet';dotnet.write_bytes(b'not executable')
+            with patch.object(census.shutil,'which',return_value=str(dotnet)),patch.object(census,'execute',side_effect=fake_execute),patch.object(r.census,'write_json',side_effect=late),patch.object(runner.time,'monotonic',side_effect=lambda:clock[0]):
                 self.reject(lambda:runner.prepare(lane,census,r))
             self.assertEqual(lane.stop,2.0);self.assertTrue((lane.evidence/'preparation.json').exists())
+    def test_exact_sdk_metadata_directory_is_prepared_and_sealed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=census.Lane(Path(tmp),r.census,owner);sdk=Path(tmp)/'sdk';sdk.mkdir();(sdk/'sdk-file').write_bytes(b'unchanged')
+            directory=runner.prepare_sdk_metadata(lane,sdk)
+            self.assertEqual(directory,sdk/'metadata');self.assertEqual(list(directory.iterdir()),[])
+            self.assertEqual(lane.trees[directory],r.census.snapshot(directory));lane.check()
+            self.assertEqual((sdk/'sdk-file').read_bytes(),b'unchanged')
+            (directory/'unexpected').write_text('must reject')
+            self.reject(lane.check)
+    def test_existing_sdk_metadata_never_blessed(self):
+        for kind in ('empty','populated','file','symlink','dangling-symlink'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
+                lane=census.Lane(Path(tmp),r.census,owner);sdk=Path(tmp)/'sdk';sdk.mkdir();metadata=sdk/'metadata'
+                if kind in ('empty','populated'):
+                    metadata.mkdir()
+                    if kind=='populated':(metadata/'marker').write_text('must not bless')
+                elif kind=='file':metadata.write_text('must not replace')
+                else:metadata.symlink_to(sdk if kind=='symlink' else sdk/'absent',target_is_directory=True)
+                self.reject(lambda:runner.prepare_sdk_metadata(lane,sdk));self.assertNotIn(metadata,lane.trees)
+    def test_sdk_metadata_parent_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=census.Lane(Path(tmp),r.census,owner);actual=Path(tmp)/'actual';actual.mkdir();link=Path(tmp)/'sdk';link.symlink_to(actual,target_is_directory=True)
+            self.reject(lambda:runner.prepare_sdk_metadata(lane,link));self.assertFalse((actual/'metadata').exists())
+    def test_prepared_sdk_metadata_digest_matches_actual_failure(self):
+        self.assertEqual(r.census.digest(['metadata']),'6e7016a4b9238039ebab5b4acfc24c0d7f2c9025ab5a928cb3e1bc586b65a640')
     def test_unknown_body_owner_cannot_seal_or_parse(self):
         with tempfile.TemporaryDirectory() as tmp:
             lane=census.Lane(Path(tmp),r.census,owner);lane.source=Path(tmp)/'src'

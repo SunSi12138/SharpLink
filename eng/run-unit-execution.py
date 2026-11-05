@@ -52,9 +52,28 @@ def bootstrap_persist(work,errors):
     return False
 
 
+def prepare_sdk_metadata(lane,sdkroot):
+    # Fresh pinned SDKs create this empty directory during Build. Prepare only
+    # that exact absent directory, then seal it independently before any SDK
+    # command. Neither workload markers nor arbitrary preexisting content pass.
+    r=lane.r;sdkroot=Path(sdkroot)
+    parent_identity=r.legacy.directory_identity_strict(sdkroot)
+    metadata=sdkroot/'metadata'
+    r.require(not os.path.lexists(metadata),'UE_SDK_METADATA')
+    metadata.mkdir(mode=0o755)
+    r.legacy.verify_directory(sdkroot,parent_identity)
+    identity=r.legacy.directory_identity_strict(metadata)
+    r.legacy.verify_directory(metadata,identity,empty=True)
+    lane.trees[metadata]=r.snapshot(metadata);lane.seal_domains[metadata]=('sdk',None)
+    return metadata
+
+
 def prepare(lane,census,results):
     r=lane.r
     r.require(r.sha(ROOT/'eng/unit-census.json')==results.CATALOG_SHA256,'UE_CATALOG')
+    dotnet=Path(census.shutil.which('dotnet',path=lane.env['PATH']) or '').resolve()
+    r.require(dotnet.is_file(),'UC_SDK_MISSING')
+    prepare_sdk_metadata(lane,dotnet.parent)
     census.execute(lane)
     lane.check()
     first=r.read_json(lane.evidence/'ledger1'/'ledger.json')
