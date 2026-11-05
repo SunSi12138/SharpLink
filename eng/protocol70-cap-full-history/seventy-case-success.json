@@ -1,0 +1,2403 @@
+{
+  "schemaVersion": 1,
+  "runId": 41991798281,
+  "jobId": 127125515372,
+  "head": "8903e45945ad6ccea525de329c624d6dd0b6f14a",
+  "tree": "237c680bf4c0b6f75ff85466ff4832c7826a52a6",
+  "conclusion": "success",
+  "completedSummaryAt": "2026-11-05T08:36:41.3417615Z",
+  "runURL": "https://github.com/SunSi12138/SharpLink/actions/runs/41991798281",
+  "jobURL": "https://github.com/SunSi12138/SharpLink/actions/runs/41991798281/job/127125515372",
+  "summary": {
+    "aggregateSiblingCausesObserved": false,
+    "allSelectedPassed": true,
+    "bodyVersusDisposalInference": "known-frames-only-no-causal-inference",
+    "candidateCatalogSHA256": "f2164dcc06d4ca0d5aeb91a5e19cbf3d67e25321d9346948d7ccaf10d19f632c",
+    "candidateParentHead": "9784e1b08dbd8d6eebc60072bf1fa99ece1f4682",
+    "candidateValidationComplete": true,
+    "candidateValidationQualified": true,
+    "casePhaseBudgetSeconds": 3600,
+    "cases": [
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "af5fb9c2c3c50664994675b7b2391bdc2fd3c9b3def59a8185f23e72cc3b4cd5",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 1,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "57ce14ff518f9a1517ec9e9094f8a8f1265fd1a11f02018e5a1c89c63e57129d",
+        "junitFileSHA256": "88f176089f1ba5e663215dd1976a62423856c4a7980cb2415ff5fc229bcc5a16",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.BindRequestHasCanonicalLengthsByteOrderAndReceiptLayout",
+        "nativeCanonicalSHA256": "4f4f2170a59a1bfc06c47fdd699374aaec6b4b51c1d27f8088cc2f1f6026f5e9",
+        "nativeFileSHA256": "d1dd96adcd429e423f0e1c0bcc591967693f79fe17deb98bd284efa8cf94607f",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "92d17922ed64ba4244d3216e5c7d1a9d457e03a26538e421d6d9b87794e0c3b2",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a2639e0971e026e8902ddb49edac65d91c76d4da63d898ce17115877435fabbd",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 2,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "568a5fe2a2e66c75d1ba479e7df8619fdc4b040600c3e9513894699642f2472e",
+        "junitFileSHA256": "b7d4dcd47cd415fbee572fd5b694a4e1e28da6db864176f27247a98b05a30159",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.BindRequestRejectsNoncanonicalRequirementReceiptReservedAndIdentity",
+        "nativeCanonicalSHA256": "f666ac17efe521891bb3beb6dbb245479af78309ef9f8f0c985773b05f411f81",
+        "nativeFileSHA256": "7dcdd579e86361cb878b54a6a1e0fc80c0c7f61662b0ad51f25b7dbd31232e2c",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "4038ea9cf39c0166622bfa8405b65f64d7433dca3508b032bcc9a76d51005924",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "5592cf965d4777568f8967a6cddbde60b05e9f2efccec139c3a3679f3467766a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 3,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "7c7a6db7a7adfdb0c73d8304ed5572d7070348cd07688ec7be4c85718738dd39",
+        "junitFileSHA256": "a90495f1bd1543ba6303543251dc8e6e807f00299b517643e5c4be8d6d052413",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.BindResultSuccessHasExactIdentityOffsetsAndSegmentedRoundTrip",
+        "nativeCanonicalSHA256": "747e40ab6b2d314f5a1de5c3414001e746175478945a9e103bc5cab301e1c696",
+        "nativeFileSHA256": "a6a14ea688659ea03d15b41393c8ccf31d4e98060db65dd149061124b2100799",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "a4135e14ad3d004bf4c08109fcc091036df393ba7c7eda936ff8dd83068f5401",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "14f94eb8337cfef975a31159df0ceda1b810a2c66709c0174f20dbcf7cff00b4",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 4,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "8da5c12ce20161f92ba57562376a3e81fa4f4d90d18d67f2f2aeb803963a192a",
+        "junitFileSHA256": "2ead146a02f368a03311b6ab13e1919eb6e1a00010e670740a3c8d42bd421769",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.EveryControlReaderRejectsTruncatedAndTrailingBytes",
+        "nativeCanonicalSHA256": "1bc019ab44be744bd78f5821e9f00b5ee5f172a1b5007142f6cd3f7db12fc135",
+        "nativeFileSHA256": "cc09f8eecdb4f53d41b1a03e1e7f6c5d91eede2dd2109f38a0e5daab94d922f6",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "042cb7dc3a2b7a983e38c0baa3445ce75f10e0726211b5e7c7e0d52b5f162587",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "1ee626fa3b0ab21abdae610e55c7c016372c570e97daa251e85ddd7db82aa5aa",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 5,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "0e583d8d6510f54958e3862b199793b7155c39a2b29a7fcd66ee44f9d4a5de1b",
+        "junitFileSHA256": "f1b55692f4e9448d70eccca5e621eb8d401cdf46301e1635ccc863cb373f9986",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.FailureStatusesRequireEveryIdentityByteZero",
+        "nativeCanonicalSHA256": "b91a58fa6320631cbc2ac190a4f8db2992a4db8c664c7bd0ac8cea2c9f50f94c",
+        "nativeFileSHA256": "7e9c73449af373d0a56c66c177baf747556709bccde1eb0b61c04637fea4f772",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "c69af6fb56eac31444e0a7a3ca40f545249842dfaaae9e84b254235ac49d69ce",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "36c85c661928b6dd223ccbb17791d27cc7931c6809cceecee8ee2b6f67c94c37",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 6,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "953d07092aa4ae4b52cd06a102bd1ab316c919933862fc980c61e377193fb6f8",
+        "junitFileSHA256": "11e9e95bd4fc747095c5e6e098ed4a82da80f934449bce6fd2e907765b1c06ea",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.InvalidLocalValuesAreRejectedBeforeWriterAdvances",
+        "nativeCanonicalSHA256": "4f5e585874335533e9430172aa732a5af7f49c835996330e4adb3e96ca2310b7",
+        "nativeFileSHA256": "7e8c8385b689a9582c3353daf47755738a7766a2878793928a9835ca3647a93f",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "7c36f4cc5275acdef674e338a8184089671546a3a333be639b7c0edbcb6b124d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "9d090203b9d6b74ae435dbbfe9f19fbe89ff1f018a1ac826ddac8f41d1e5b87f",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 7,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "94010a84c585952af5cf3a6e34810d471d7e0a28526a6ced8f9ece84be559d6e",
+        "junitFileSHA256": "05aa368c5baec3a23354221f870df57aa9e5f24c5c577ad4dfa37a0b6415c850",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.SuccessValidationPreservesReceiptRequirementAndSessionAuthority",
+        "nativeCanonicalSHA256": "90e8229612638fd673f5149bfc769cebf7a6e63ca40c6b7a12a2548ef67c25fe",
+        "nativeFileSHA256": "3afb65d01e46e020af845dc88345bac32d25e0379dcb82ab0404d33a46fad98d",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "85a0a2480a4db0a88fcc8386913d0d846e4e3f9334dd51ffbc35bfdfe77a83c9",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "171b69aeaefd6913e2b048b2eda83adf4135da8dc7d73726abfd6c68769d48fb",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 8,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "55e561d5274e082a901287aa9c540235f0a99811fa1687733a848d148e5edf9e",
+        "junitFileSHA256": "0bbbdce06d7634bdb183f0c71ce97aba32cefa017ff78f9e663fcb0e786a6dc5",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingControlCodecTests.TokenLimitsInvalidateReleaseAndCancelAreStrict",
+        "nativeCanonicalSHA256": "9732c7757af2ef62b62922ec2276c9a8e76299e152d061771cb1529bfff6ecf2",
+        "nativeFileSHA256": "e93c76ed9e1cfc81a5d75a81c31354be55ca4f66b69cecc9b520f6ac4e0f4b44",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "25a72ee4c9beeda50b90bedb4557c281f4035b05146369eec98a75c0c2ebf3d3",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingControlCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "3fa36dd99c8e6d3573dbce33e377b1247bee1ef2fb07bbc525c86db1cf8c8574",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 9,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "ae62a826e73b598219b902ce490ccbff52487dae43311a8710ca43c7653a2e00",
+        "junitFileSHA256": "48b5e4bacfff71dbef34216eefe8d0cfbe3c30771c73051c341afcbe97bc86bd",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingLimitsCodecTests.FixedLengthsReservedFieldsAndEmptyAuthorityAreRejected",
+        "nativeCanonicalSHA256": "2a740048dd5bbd7bd074937fdf97006b6479214b0abd0ac23ac8c6506a7fc182",
+        "nativeFileSHA256": "5fa34c146bcdeff316ef8fd34feace7e42fcacaf7e807bd19a42817b03d7546f",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "9162929d8d8006616e987169a3b143839adcb9c811761b098b829ffdfd8a3d6e",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingLimitsCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "6823e5f701d759c5e6f2e1719253a559f84b37e6b96af287beec0a4530363983",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 10,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "d0e35a824f39a6f65f157674fd9e733e595c791fde239da3e4195168985d7305",
+        "junitFileSHA256": "e0d90f3adc8e564aeedba78a6d0887100856e22b217f37f58826724b7c456245",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingLimitsCodecTests.LimitsAndAuthorityHavePinnedLittleEndianBytes",
+        "nativeCanonicalSHA256": "25a3c22a855b424d0970aa9ec9152717ab427cdf25cea4c37cdb3e75538b4c93",
+        "nativeFileSHA256": "1d35106f8b0232e04bef345f419ce1685c5a888689f408cce495ea251ac97279",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "d292a6df6d4b8d42d661adc40a8ef8a2c0754131b3b0b0803f161e31175a95be",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingLimitsCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "3477ca727bac9cfc76728cf128d3cc4c09c8d8f329e77a304686bc0596101533",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 11,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "00d255b47021e88e94c38b9c936e06ce0278b080db8b6755c5deb6e8515bf745",
+        "junitFileSHA256": "6c3a061aa15352aea27e14849f91541397f50da8a8da3f04f2d97aeec0811d03",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingLimitsCodecTests.LimitsRejectEveryZeroAndOverCeilingWithoutClamping",
+        "nativeCanonicalSHA256": "b2d9104cfe57cff25255267d29749dc7cb7d0b73b9298c3c6b26f9ef33105f3c",
+        "nativeFileSHA256": "db46cb8fc8d5b0cfa1333c509786fafb3f95934c1f0d8dce0859de9e7cab1bb1",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "922832ceec3e5ecba8813588560aca1667f092874b5030a1593490b3fde08325",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingLimitsCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "9a6bd7f77430cb8ff1f1ace878b0e15862cbbcb8e088df7985b8f76897af42d4",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 12,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "2aa246fee3a7829f12feeb6d7159d3ad67edf0e832da6347ab15176209a4104f",
+        "junitFileSHA256": "7c2b9e8c6b9f7cff5a7336b95ab81a2507611238d4760145b6b1a543156d00f5",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3BindingLimitsCodecTests.NegotiationIsElementwiseMinimumAndNeverAcceptsLargerResponse",
+        "nativeCanonicalSHA256": "31b18c53dd31f0320591af029c7a2a985a2af8036a996208eda5814f85510b5a",
+        "nativeFileSHA256": "f701e50a8ac34b27e61e6ada89ec05b13959a73bd1aa5de66b616590f096ca55",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "b081e883ab78272f770ed8740dce71194d3196843e0f5c617b6723f9f8595c54",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3BindingLimitsCodecTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "6f210bbe6fa4a649484be3a7f20b8818814c14b61629ed76b10a64d5ef78963a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 13,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "f0ef94f3c8980b6870dc555fd1ad86ff15a0444ae17f136f0e18938502385be9",
+        "junitFileSHA256": "7f69d85b7ceb1015d3e41d4cb55ee40babadc27fc01c4b9073f1c612b9090810",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.CancellationHasExactlyOneKnownReasonByte",
+        "nativeCanonicalSHA256": "8d7c250d0485140950deee3e385feea0966bde005371b8506d379c9399e857e7",
+        "nativeFileSHA256": "c3141ccf0cf0a0398f2f14274cda17f0d3a84fed8f1ad6b12a3dbe499fdd3b53",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "ca87716ce7e14825cdfc3fa4cf86e9423e45fb6777f967d7b8e8890a26a7972c",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "03fe0f0cfa9a1a725cfc62c4123318eb3a282a1b1b059edddea3889e1b497622",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 14,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "4c40a0c5f7ae6cb854d78106128b2b3c9dd3a5a6f739e5410ab7bc4455bfe9b1",
+        "junitFileSHA256": "3746c069b852c66a6be4f39d2bcaf46e766758e42cbd0267ff61e83b0e829a21",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.CompressionWalkersUseTypeDependentFixedPrefixBeforeBudgetAndMetadata",
+        "nativeCanonicalSHA256": "1aa256b3ff41258f981d41764e1a967787d272cf0beb1f9847be42084b24ee8e",
+        "nativeFileSHA256": "97e3cb90307c34007e69edb6f25e0a814be57ea19c6dd20a1e0862ac0ebbbcf6",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "9c7af7bfe0065cf0c4aba56613ef19f6e124942b75f2a899b32c14faf53d7803",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "fb09e135a0141285fc4ceae552d5ca8a0c6bc04f908a369af78c7edf003057fc",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 15,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "c89286122de1425e0b23f840102c9bf42cacccf2c9aa3f2987c57e268f46134f",
+        "junitFileSHA256": "74114c1fd4c84ab33c0e38c4d436fe8fb0f94045d104511ecc82c1bf3f60797a",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.EveryByteSegmentedFrameHasSameStructuralOutcomeAndPartialFramesDoNotConsume",
+        "nativeCanonicalSHA256": "4078869d8ade054ceeb839d09d1ef7ddbe12102ca2bee69f05e43bec8f9ac7f0",
+        "nativeFileSHA256": "bad34b63cf672acfc315a32038d09d0b92097f21deba165c8f3545f4acd2534f",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "acb80a073fcaaa18e2a361744d4faf9235adf1bf91ade55e2dac19a19b136d6f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "b597e759670266f5b9a2cdd9811613424369e69d2e4003dee10e457ef8b5b871",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 16,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b0c3cace03cab9dddf4812c37c8648231ce984d7bf3bc31995055ca9f4a5ab25",
+        "junitFileSHA256": "b927da54b39aa84e998df378133b8385dc77ff4fe098d738bdbf673e02648157",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.ExplicitOneWayStreamPrefixAndAcceptanceShapeAreMandatory",
+        "nativeCanonicalSHA256": "79ace825685f48cf9726373d8c58a264cea88bfc79b48d47b6f9c700867d9255",
+        "nativeFileSHA256": "41fd70d215d98f40906476ced0b753f8e6154a7826402356721a576eebc9e90d",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "f16a6d24786e623a55433c551d23d6c287297937ac5b96499cae8273973126a9",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "2313637838a94a1a6c0db9c5f77712b068b6b30959a5a2708c9775b0eeaafc85",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 17,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "95275ca1a25bf62ef3ab0066fc2cba9b05a953a0610f9535cc201cca5121168b",
+        "junitFileSHA256": "1551c0e1b9d66ed75b237a87819a92039df15224b6b66f39d8b2c10b43e1dcb2",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.HandshakeRequestPinsNewOffsetsAndStrictRevisionCapabilitiesAndLengths",
+        "nativeCanonicalSHA256": "fa5512e123edf7200c674a2e17567d152cb3d6b1c4908cc8423767eef30f367a",
+        "nativeFileSHA256": "e01ab521e8be80141112dd7a7e9b9b6898d9eba599b9a46f6a094cb6d1045f0f",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8c896685f3926346c9b2251d275149c87b50df8cf07f82ab38a75bc34320525d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "486824b4fce4e7a5c2d67011a1d04c979a28eae7c13181ce2506cedb8edf6885",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 18,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "eaa37b4883dd6d6e2ee91a65478ca35e3e541a538ed31ea55f6d10adbda12d4c",
+        "junitFileSHA256": "96e5903d3dad1659c87a9adb712299362a40002a824e40ec993add687f8b4dd3",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.OnlyNewMagicAndPositive63CorrelationAreAccepted",
+        "nativeCanonicalSHA256": "2bec34ced6178c77e2e940463dabb9a874b0c1b8bf8400bc482104ea1745abb2",
+        "nativeFileSHA256": "04bff8e8a3ef9c81e54eeb6a426ae4382286dbc406a0eb7606342a40b5576418",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fd73b6a1c15043cd8d28a4e91f09364ce2518901472793dbaecebd8b85116c7c",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "0d8bfd1203999f5c424a0009a0423279866f1a566bc08547fdacbe097334f5de",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 19,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "ffb470d0cb906c054a57d65a88bdda2fd2a0079cec98c4309797691da4fe0c29",
+        "junitFileSHA256": "c097935a57574daaf88dbf1062248336defaca25f3c2bf77f262263d8f27a401",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.OtherControlGenerationDomainsRejectHighBitBeforeComparison",
+        "nativeCanonicalSHA256": "0effa361495615c3d9d07d45f6fb66672e71d9e1789f8f068a1c18482cd9d7e9",
+        "nativeFileSHA256": "9d03ee355f7770d50205cd6303f1aeea5771d0707341e8ec8d9810b0059ff81c",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "b3858d721127c42cb5427cabf49987c70d98b8b5ef8fe7a4009d55da76d607e3",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "2b770b15b332be94e128c57bb697026846fc3bc75fee81c28ca9d683a96c2327",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 20,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "4336ea2e3eb4d6efafb593266ba50837900bf54a9fc24e0fb46bb1e25c03f678",
+        "junitFileSHA256": "79cab07dbe9bb1b4607f3ed085361cba7b8a335227ed529f903a8d84734fd80e",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.PhaseAndDirectionRulesPermitBoundedDrainRefusalButNoTerminalTraffic",
+        "nativeCanonicalSHA256": "187e38f1c5ec6327d4ac27aba20b9ce941302e9a442b4a3e4c929181cc15cf07",
+        "nativeFileSHA256": "74463cc168430006f041d27e512956704392922ab3eb351da327c7307d8c9aa1",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "a841ec5d166b7aae607607987544fafc119da48717d5fa8b7339ec06d2f47c16",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "698530fc1cf922bf00ca228ee814d76c64d6f440aa56c2d503c8b95ec49ed8a3",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 21,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "7757ce13ec49614dab844d6abda3360929ffa7cd3d1d9cdc1fe7766c5da9f11b",
+        "junitFileSHA256": "343bdd07c89da86324e79a4a5c40533d6d39defd57b46b18fde1d02b8f293b9b",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.StructuralRequestParseRejectsNegativeBudgetNoncanonicalMetadataAndInflatedBody",
+        "nativeCanonicalSHA256": "020f6b04196a246ba7a110f027270a8d6617059b1070c8f77340b38207c7a604",
+        "nativeFileSHA256": "d39be9701b82696579866dd7ef4c8acfabf89ceecf43fc14ee3d8a5dbbbe3f19",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "429b57d39fc77fe7bc0360bfb3fb3144fd655fb1447c53a490a3c947c0610bfb",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "79b877b3f8f58d9fb43183b4884f24bb81a02d30f13aa7f5fae75131fd97f6a2",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 22,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b7dcd4e808c5550fb5d4eba082220eb26d92e77af7d97c9cd74161e8b82b7e20",
+        "junitFileSHA256": "4b9c09529cf7c99bda8e82eaaf7175724ae178d0b2b12b39ec687b5baa3c60f0",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.SuccessHandshakeCarriesExactAuthorityAndNoDowngrade",
+        "nativeCanonicalSHA256": "6e7638a3a531ce27977e95b92d22894dd0d970267cbbcbefbc7741850d306321",
+        "nativeFileSHA256": "b005ae617a1844a582d713ad13a181fcc717c9ed21b754366e5dd18978acc04c",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "5dc339fde64e4b233d48626534c3bf5ada274042df9b29f91e6cb47a3bb042e6",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "24d9cc9eeb4225c4bd5aa1007fdc32d3654168975448dcdd6bc532be95697aef",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 23,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b4b127476707b9041bbe84325cedada5ea2a9bff24fe31461a7685b048ed5d96",
+        "junitFileSHA256": "76ed759ba50c152fd7491914c2c5bb628b35f680e7b4fbcb70a9bd6d708e6401",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2ContractManifestTests.ContractManifestShouldRejectInvalidIdentityEntries",
+        "nativeCanonicalSHA256": "f2aac9b1fceb4d630f3fb0f1cdd07d19bda33bb5e9b619485d5f64ac6e4c8ff1",
+        "nativeFileSHA256": "f8d129457ac0eedf10945cef7716ab999ab8f5aa43c7b4421849ed91bad992f5",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8d23e273351d222f7b0fbb2d261cd42fbb310010af5fb64d000bdd5d9054ae35",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2ContractManifestTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "c71cb65d7501ed100286df2425829d0d8f6aee7f5ea17304403af5803d825dd8",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 24,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "56415137d2c343a67b43b7e2271c86e7b64975f3ed3de397505ed4113b6b753c",
+        "junitFileSHA256": "50c612b442655782918faabae787e76c91d273bc325f7aa89a8c2430162518d9",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2ContractManifestTests.ContractManifestShouldRoundTripInDeterministicContractOrder",
+        "nativeCanonicalSHA256": "7bd612b390e6f155fae0f602826f3fcfe2c67f99af45257393524aced28edf69",
+        "nativeFileSHA256": "c1175ccdf64cf15c04cda408d204ab5dd108e14afbfbf93ac0acd34aebc013f9",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dd0fe75de7757f673a28d1928a3557438c6dbee898acbb7e7464ff6c95224edc",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2ContractManifestTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "cb578e02a1103101e31c6304b6885877501fe3ecad068b5a8bc7aaf3812ac7a2",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 25,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "455fae0bfebe59c3d752a72decea42c25e4c10f89f46df45183b86a31e6cff54",
+        "junitFileSHA256": "5203a54f9b980e50d37069f4137bb1ebbffe3a88e1594e1f8e1abbe185ea7ff3",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2ErrorCompatibilityTests.StructuredErrorShapeShouldRejectPublishedMinorThreePeers",
+        "nativeCanonicalSHA256": "1789fa953933d8e5ba8ac9186cf0d02844b2586c4171d414347f9bfc01c64b9b",
+        "nativeFileSHA256": "97aac807734f0be0c23559381953d76385c9c3c039f9ab505af4b0b83f426322",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "1e83ec04c59362baf6f6ac8988b9fef92a38472bca37a9e11e255b505314e281",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2ErrorCompatibilityTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "cce27d24c7e08cdec933970e72d533d0614f2197b041abbaa646b5ad41ff4503",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 26,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "44ba61f89e8538c70caee26cb0904dba4862c3fb871730770716035b663484d7",
+        "junitFileSHA256": "3ee14d781b0085151ce4fc5d3fcec87914b1830741cf18b7be6e9d8734d9851f",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+        "nativeCanonicalSHA256": "6e3615ad32c7dc81a5aa2f0b5ea408adc4c2abacec8104cfa003c4b1845089f2",
+        "nativeFileSHA256": "721006f446764fb3156dd26acf18ae1e6dd5b407bc8d79fd5966a9cf08818b70",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8ba1ad7253fd3efc681865e102968394578e32b73b9d01a16f8553f6165e42cc",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a71cf2fe6f0ddfb1492f5ddb778372bdd75431ab738d3ccc4166cdd518e3b151",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 27,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "9195cd051eb870cc653ddb300f440d9d9ba3d87ff4ffe9b87c6615a7e9842aae",
+        "junitFileSHA256": "13bb4cfdb68ffd88257ad3a11239a74ac4d4ff97f2f6d2832931a410eac28f51",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs",
+        "nativeCanonicalSHA256": "25a540f0175fd6ba5814e1284d3ce20df717957134fc14be36cd9f64c8b754db",
+        "nativeFileSHA256": "74cfd5677f37c7f92d234dcbe1598869babec3164e9cca5c01106aec9fbabde3",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "f1fa4afbe650090b51651db03f0057eb45c08c13716410720d3623e4338e7f18",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a8c1de798d4010ea727986b27f5712b38c8a4c4064fb3efe0e957116b90e1f92",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 28,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "095e79729c492d8af89665e1622502cac893b3d41b7472e264a9ed2dc3c37624",
+        "junitFileSHA256": "18ab2cd2006c5a48494a3946d9d427df57f4000de037482cf77624d853e5ebbe",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+        "nativeCanonicalSHA256": "d264fcf0d430f22995e3bb7ea23422643c47f9cc9230df5fd728beda4e796523",
+        "nativeFileSHA256": "85314dc773f49f4315d30d265d5753ed91c553f074624c3bf922bf29b5a8455e",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "c2a0b0f3e3b3f9d4fef951b9c102e5e5c2f8129bc88ec360816cd817360202f9",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "c2c25f78c2c6772f3d7601f91fc634e68cec6c98a9fd3bc77ff134d7af14a3a6",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 29,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "0d696b283361625e186c9b90724cb2cd7e84d067713323f86a82aec31ad2f909",
+        "junitFileSHA256": "7f56b34d550ed49938f22f55a58ff240b14eaa7af2af953df368f92ac0b67617",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+        "nativeCanonicalSHA256": "e169630fdeccf80efbc9310ce40e526fa4de1f561db1058c555d49c1c44d036e",
+        "nativeFileSHA256": "9f66d23f4b8a5ae1d165ca4d3828403f2cf57ef6050a730d9dfa69c1494fa6b7",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "35482dd3c2b4ba9b6ebc65eaa63af7623be367f2b2343f2284cd71212240fbea",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "aafd4e0ad3793d2911129cef5ee68a954bc07b1506612fab41a21395fce5f71a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 30,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "be07e3b61dcec95b7634f2f92a6301a15895737421d72680c61dd2153e8ae364",
+        "junitFileSHA256": "e1d0a95f3f0a93682ced1e8664b67d18939ab52c15d3a94ad030b83e90ee0b4e",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized",
+        "nativeCanonicalSHA256": "0657fe328474a476fc9649c3b2685a83d11cdb4423a0db36a525fa3887d261e7",
+        "nativeFileSHA256": "c6897bca72a5e7a76e8da6fac0924bca6cbeb1c78aa9e1a6638f5d7292293282",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dc0731d71dab9fe54574edd509bd61b3aed648a9e79b5a27bb7c5f2a94b47324",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "d7211d0ec08a9ef4c87d9549bb0071497e5307908ea3505671849bf80502f38a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 31,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b713a6134753bf5e94d2b56870548c273a76f5c96814776367f7ea40ca4fcb30",
+        "junitFileSHA256": "9584efc2230101b9c66ceec45be74675b069fd680fe7d72ed4d4209923bf54ec",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.MalformedOfferMatrixShouldReturnProtocolViolation",
+        "nativeCanonicalSHA256": "815523a9d32a97487232c794540455f7bb0b1ec69bc921ce87d8151fd7cf5343",
+        "nativeFileSHA256": "69f6114d9c5d0e6fdd9a3dc1c04b2d0cdc2f6e836bab08f481adfa2d0f1a1816",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "cafc1fdfdbfa4ee12183080ee02ef4617010519863f7805f235efb1168196389",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "228da59891121d08212418df670f073e78af2bacbc5cdb613987e2b5f43a44e8",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 32,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "d851b9fbb20457ba16838b95064e686d3662ae94a6251d9175647601609c29aa",
+        "junitFileSHA256": "9e877ebda7831e909ed5288bb55dd209ce0e66a59bbda9607002fc739ad98420",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.MalformedResponseMatrixShouldReturnStructuredFailure",
+        "nativeCanonicalSHA256": "0fbdf21b045b93bcfc41b4b82743023175d4fb00d3b265fd086dc0663aa7bac7",
+        "nativeFileSHA256": "208aebf0391c4cb2e31a9c575b38b122f5c5f8a984287b12773ff7199494cd76",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "7f18cdb99c894be763aee86598df7b545562e922d1cc6acd24eaa336368b3dae",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "acd10aeb7b02efe25437d7fbc248bef027672939591401fd7530a5779a0af33c",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 33,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "6cf59f3f8d23daa9db218e5c92b4f88ac25f6ae543e3ca17f9181916a5b4979f",
+        "junitFileSHA256": "87fb48fd6daff773afd632fc2ff96a6ff484855727e591f99cc039d16fc8f4a3",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.PolicyConstructionShouldRejectEveryIllegalLocalState",
+        "nativeCanonicalSHA256": "ad2ef90a56df6be194aed2a3cca5d79614e331fd70315abca852a3d11df61c24",
+        "nativeFileSHA256": "3273dae9b79feb53712517257046c49334a45470ceeb4a655f9e58613eb71441",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "0799ea368b58ce96464bab4f0cd18a3be6e3ea78f8b1dbe619704a95ad89cbc9",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "f65fb3238f0eba80c64e200f284d7ad5085e5fcb8fdaca333546de74a86fa6ac",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 34,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "2848d5dfd04675bff5f87ae1b3a839f6498f512743edce8955b7d18503de33b6",
+        "junitFileSHA256": "f148e4b6b8e5e2c824ac933fa3e8832acfb3408e488d901a72f435fcc6ce4880",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+        "nativeCanonicalSHA256": "05666f65eb5b546c431e6db8b905bce31e736711bde450875076a7946b4ce9cb",
+        "nativeFileSHA256": "e93e271f2085841553f4149aeb83718fa0d1456df080ea951317fa7d3ed89792",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "a79965f5cef48c175025b871de543229580f85de443f2ae7ebe6b4237a530c0d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "7e129dd280561169f330c0d8ab9fa36d7a07f0ef6051f29c5bb113d1ca47f862",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 35,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "1023f6c641a9a0424946b5fb0a319b0cba025c091fb14260cb0995a95080ab82",
+        "junitFileSHA256": "641e899b39365694971b270f5dd95034be7a650040350b292cc29b1314ce21f8",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+        "nativeCanonicalSHA256": "30c6ae265b12eafd00c81ae7cb7dea89482bb660cdc4a77bf2f1124444a7a1c6",
+        "nativeFileSHA256": "87f5516c1a556bcf0c468df0efcc52a3c245be883aa73687bcc1c447251898ec",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "07403bd5f75daa4542857affced1d15374562e6df1f559afcab0843a763e69d6",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "830a3ef4f21c4957b52ba2f341d035dedcbdbff34ad048658f40037719cd47ba",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 36,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "383ac70e3fc6080c88bef4c557461242a5bddefe1911d5ede26cb0469f17f044",
+        "junitFileSHA256": "5d878fa2a9d96516b55439715787ff6b35c12892b3b3a5b78dcc6eed762935fe",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ServerResultShouldValidateToEquivalentClientSnapshot",
+        "nativeCanonicalSHA256": "8ee13d99e616026910a7eb4ac8c9614ce5cac5d8159b4f4bda2a6a4acd1316ac",
+        "nativeFileSHA256": "fa3ecba187d9d06ca4b44ac998cd9d3d04956ed6c0053639589cc28670230f09",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "5206d8a3de0d1a9423e3161042862298de6ad3bf788e262caf16e6a5f786db17",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a8ac89ce6bb41060402fa06d73cc004748a49e6d516141e73aa5643ead7e739d",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 37,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "56acfd658e5397522f93f376a08f4f03f17eb48fc9495611a8802b58a8e0eb4b",
+        "junitFileSHA256": "ecb8a8f0902d9144a6653194b718b18d7005e0cf0c9c79628c72f29fbf3f6db7",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+        "nativeCanonicalSHA256": "071b2b5b2edf34734a763e01987bb65400e8c478b15ef63405f77821b145e88e",
+        "nativeFileSHA256": "c83e970baf474cb760299d340807cad5116a9002b23fa1e32e81db4018dc202e",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "4ba763c1d48a8271ed03deadabe0d1cc5bafeff7461c6bd30b5bcad0955c26b5",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "d84ecfe7ad42038a27cb06299327342bacb1ef92136c3e0687e98bb5f10d07a1",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 38,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "052521458e4ced4ef91de9fbcba3bbb4a7c355f2dee681d445fd9199c05220e6",
+        "junitFileSHA256": "7cfacb0e93e73c3a4a85dec421aa24bd2d2ff3774f352ae2490f95827828c540",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.BinaryErrorShouldPreserveDetailCodeWhenMessageIsFullyTruncated",
+        "nativeCanonicalSHA256": "6eafbe0317fc8fc9b9a56ffc56ab97e36d6cfc7cc0b95e844352c4d2c3d7bbf9",
+        "nativeFileSHA256": "addaddd53318fd7fdffa67f6bdd30acef84d184f5a038ea514c4e5a0e4ef1f67",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "c3d46ef979ad630fb1479158e02cf86b9f3574f02f5bb78521bce1bbba963c8f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "5d3ee9865c6a0a4b46262650eb706d03730dcf7a0b32449b939afdc4067cf5a4",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 39,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "419066bc3e565f698e2e2f898d018c5555901862b7f97685c4a73f5092f7af77",
+        "junitFileSHA256": "d2070840157fd664967e1338f4456fa2706a355d944a050d0b68a9c5e442e8dd",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.BinaryErrorShouldPreserveUnknownDetailCode",
+        "nativeCanonicalSHA256": "b302fcdf42339dc9b5c24e721114642dab3a6172665ef6d10a052c47b98e4e11",
+        "nativeFileSHA256": "a28195ccf2157a91a867325ff945f4eec3a0ce2bf1c438bfd6beb52d620b7c1a",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "73850c5f0255acd068d256b1fd1757b9d98d6c7b50c4c282b1ec3b931745e0ae",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "4d9cf7499102a888cef697c675551f1cf398bcce2e195c644f3a6d3956d5028d",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 40,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "3165766e547b660784c3acc53ae2c4991e5e8f5e618f5cf653ffcb468ff98705",
+        "junitFileSHA256": "cb5b4c531d92cfd19847a7c5f37d5827a18a3b48f6a30fb4aad52c359c11d309",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.BinaryErrorShouldRejectInvalidUtf8",
+        "nativeCanonicalSHA256": "f9aab2c418a936811b9c0c87e9a3a82eafbfe80fbe0e965edf5e18891841f844",
+        "nativeFileSHA256": "4d7fef023bf284dffb16a986f053b39436879da1a10cfe2243a063fef8b96abd",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "e414c44e08cb1d70d3364a39394ea83614f90de28fff86ecefd92186059f9894",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "1b7ee8ab5fe3963955973770cb6adffd09beb200eb2d4ad07d3bbdb0e65899fd",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 41,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "1087b9ab710a81bf7cfc061764968502e621921e5a3e38c5b0effaa23e2ad008",
+        "junitFileSHA256": "62e8ffdd3aee173caebb10bd55c6618946a5001b7a28f840a426bf928c268c94",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.BinaryErrorShouldRejectReservedUnknownCodeInBothDirections",
+        "nativeCanonicalSHA256": "7cbc1535cb48e17980d2ebd9e501c68468c59e7e90c649187114f120ba622c61",
+        "nativeFileSHA256": "8468ef706ef0c287963d1dea113031a3bb0f89dcfd0de7489e5a2c2470da7233",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "ef9ec9f173f80e1fa6993bade1ff66aa400e74d1898908dca7f852cd0b9909f3",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "b48eb9105aea41f13e07b567a65efd022b63c7f843b9e23428ead9dc8a1016ba",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 42,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "1a9f95d560b2d3b17e5785aa4320777ea45c67e503ca02f3099aa186ec95615f",
+        "junitFileSHA256": "b4d4c60692b96153513a13e2a9bac74dfda6b41d5930ca7a03eeca9acc3426cb",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.BinaryErrorShouldRoundTripAndTruncateOnUtf8Boundary",
+        "nativeCanonicalSHA256": "1c4c6a83269113084b386bc62ae5d3c7066f66c265c6a1cbafe93e759b0bf724",
+        "nativeFileSHA256": "2350b3fa3fbe19c04812b8d7d0f928bf60a5208198b4592a1f0eadbc49d019a8",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "14ace2877be1817c6a7f3a458f06b920a3430b64c9113f32463e3a36ec240ab2",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "87073fa35180927597e5d65aab0b704c8115e1ab8e05ea29de491643e4b9e685",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 43,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "701966e63611d1c3e0b06f0ce5d14e0d36d1aa83034548c9d6bf2fe3b3da74b4",
+        "junitFileSHA256": "6ffb81dee6fab7fe7b1ab6e293d35365f7f81e95dc4181b2a4bc26a49155dba9",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.BinaryErrorWriterShouldRejectUndefinedErrorCodes",
+        "nativeCanonicalSHA256": "19caff14657c93ebadbaf2021900f1a92d57be459fe96883e052df4adfaa45c7",
+        "nativeFileSHA256": "bcf927bb782700c387e62782995395b6c5ad95a34600f2acae7bbfea6fd09360",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "909bc4e1d208f5fb28ef43356269b74ee726f966302c8e2a5505fc04cae63673",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "e025061a447ad39f3bac7136fdbe7ae033fd92a6e182ab01cc2dd74713c80a96",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 44,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "983c2f5f60b375826166a4a4aafb4b9f7cad4bbfd3c901a08caf6de023020f80",
+        "junitFileSHA256": "04abe604a9ed42affdcbf948425e465cdb55a0930a87f72fdb5dbd9bcc21125c",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.CancelReasonShouldRoundTripAndEnforceNegotiatedShape",
+        "nativeCanonicalSHA256": "471c8f631144c1830b79eb9ce90a99be753d105d3ad1ae9b16e0b8ca96f38bad",
+        "nativeFileSHA256": "b206f1d4719f556c6b1faaf38cd773582fc54536f0d952bcc7ccc3499c556237",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8b00e7b43c1511f311fa34fec83f5bbb7660bc805d5273e2c1fb273d129a9c2b",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "8fc2b06c0d0e4df9076ac33e3f1066c527110495b5d349ef7870ade22795708b",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 45,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "be447fc1ff2785b7e411861238e7060c54ff2df86b29e97ae4c08c86a8b307cb",
+        "junitFileSHA256": "2c961a8a44eb1d48c79249f3b9db873d350645eabaa927cc83a013c0846ca2e6",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.CompleteHeaderWithPartialPayloadShouldRemainBuffered",
+        "nativeCanonicalSHA256": "d22105e44ce88c0e9a7739d7611f06603e5c42b25e71f2abbd5d50daaedeb77e",
+        "nativeFileSHA256": "56dd43fb92ce707312c130865b264162775172d38c8e30888ac295b178465068",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "ebd22c05d88979b532dcd7d5da2c6ff7a0f7bd94b9fdf5bea22a5a8fd70a6c68",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "d827c966f2fd71c7ec24992766e9e0ee542ff90c0f09310c6e3773b4e710aa89",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 46,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "564da92992ab88a53392c1a1cb2f8002b9bad7c1c94b4262931a796ad2595f85",
+        "junitFileSHA256": "eb91ed4252f8f1c1b9b298029962e901c4ce58c4d2a7a9c5a02cfa0f16d922ad",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.ControlWritersShouldClassifyInvalidLocalEnumsAsArgumentsWithoutPartialOutput",
+        "nativeCanonicalSHA256": "d60ac4424933ef87d93dfb2b6174a41cf2023fdcf3fb9f3c1de9de176129cf6c",
+        "nativeFileSHA256": "478a13e8141926974a778006209eebc9e6c7660ac174d09c24d624a674d24a19",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dafe491616e117dbdc428e26218dafb12df1e34eee1fc4cea9b5e4f65aae7e07",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "d4c21505171d7ac5a37260171418c6b2d5889d7d0ce905432394c6aaa47129a7",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 47,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "f139e702c7d02b568a42b14274b44e5b278bcae308290e806d2a1ec4c9dd07ee",
+        "junitFileSHA256": "8373b62f7d0c10c5d17cf5655900e8bee06a750dd2245a2c8b8c054881bdffa3",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.GeneratedDtoStringShouldPreserveUtf16LeAndRejectOddByteLength",
+        "nativeCanonicalSHA256": "5076f7bb663ac3de4a534659a510294f43ec7c0dc2d594eb889b43b9251c8af2",
+        "nativeFileSHA256": "656a9eb6ee6d7d134e1ceec7a3adb3de6de2e095b83e8620081f46f58b0c3dfc",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "459a42a7453e296e3a0ffa20bfe87242686396a5074a7a9dc5184f97544adac0",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "a8aaadc9159a24214fb74b516a1d0003000e5998074c2b9e21df22456e027a58",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 48,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "78f2420e7841974333871c742c925d98ddc6b88bd5178d206e9515ad04a3e91d",
+        "junitFileSHA256": "2ddb48cd043ecc4d7f2b8d4a03f0e8d2aa27040be0b7bd0454eb35e3b39270e1",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets",
+        "nativeCanonicalSHA256": "5e83a15309c24e053bd6662e537e429b690059670669936d77012e1e87b290ef",
+        "nativeFileSHA256": "90c14f5ca76c9e8647f764c2fc53d8a1cef30ee5ae368163613d9e42701bcd7b",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "560962516c8dd821976a75bd3e6620ae0f5ff8f8eafe3e3135316024dae3572b",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "d7e71a1342e4d0bb5c928066375db606e251cb9d2480dfbebb14cc346d087410",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 49,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b05f929fae7894c76feeed8a2c186543bf95c8870cad8677ba87ca0433ab1fc5",
+        "junitFileSHA256": "68fa0da85582279d83aee7456b01f8e8e2ddb25fd2ac2a775f569b7635bd7810",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HandshakeRequestAndResponseShouldRoundTrip",
+        "nativeCanonicalSHA256": "84daf84b77b0c0ede6297b3f7646280ad97629d547eca1994ffbd125ffd7408d",
+        "nativeFileSHA256": "ee17b81998e0d28a8e256f28bba160a54e5bfe986c8aa9a012e75447a331e6f4",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "36bcb49a29ad9242b676e84c15ce538b5bda9d3ff96388c0f513d758529b3075",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "6ee4cfedbdd96731ff02b2d91efe4cc18333971b18dfcec3b04d4ea8e0114b56",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 50,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "9d3df8e69495dc6d1c83c3de9d5ec8886d4823add9c37b038b8cea40693cce0b",
+        "junitFileSHA256": "44d14915f4a79b4c9ae9af9378cf4822cccfe03d17f2d38376e1fb620ec5feaa",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether",
+        "nativeCanonicalSHA256": "9720ce154e18f760420cc06ce19951eb9cb6834f92ea380bb1f30a36a0a981b7",
+        "nativeFileSHA256": "3798957aba466e0c9b43980f34bfb0463099e9d90f3bd13589afedddb6721ccc",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "517cb0b240fb8e372850f3fc709b8f4508cc270528490feef14cf80a4a5b6baa",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "c7e6688c52c2eaef65f26ceecc76afa8946a6a44ddefd62ba632210cff9b5f6d",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 51,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "6a3c63f39896995d3f0a0b311a79850cb3e3e659803684cf52b1751eabeec0c5",
+        "junitFileSHA256": "a612f1462b427997480e4c32623f866b03212412454038b844347a7e5e3a849d",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HandshakeWritersShouldClassifyInvalidLocalLimitsAsArgumentsWithoutPartialOutput",
+        "nativeCanonicalSHA256": "3159ab81fa51e521ba16ac56d7629372fe3e36a66831e6558dfaedffa4cf7741",
+        "nativeFileSHA256": "dedd1436293055153b7a8ad9f22c8ac721f18361b28e9e7e75b1e699f9639b70",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "f343bb39dbe3073ba746340219c588fe74f46a9a71621ff40ef7fc428abbc3ee",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "220de0b4388a47d5c1dfd750df15976e1b0d5747d8213d02270967957083fc3f",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 52,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "c89834b0323d8aebf5043aacc59ac8e9404eb7eca371bd574afbcfdf2dab73ee",
+        "junitFileSHA256": "0ca8aeabd43c444b2e2dc3e5f3ae69fd57eb81f6492f43f96202cc032e51e2ae",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HeaderWithEveryByteInSeparateSegmentShouldParse",
+        "nativeCanonicalSHA256": "92942b2ebd24a3f41af8a0457b912298b2bf028718aa22e7b1ba5cc654919403",
+        "nativeFileSHA256": "1f383505b8f4bbb24b811392111a2af0fad632f6d061ffaacfbb69ddff2d5d26",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "991170f27567f4f1b0e6be41e7dd41c64b11d1ef17d9cfb07f9226bc0b9414bb",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "5e49959840d0440f1143a6f79644062cbb2f499786ffd262dcad01058f01652e",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 53,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "8d79863230a6816f94c821a83799b914fc8ef1b5ae12b876e0d0d08b4de9c627",
+        "junitFileSHA256": "00874a02233c31cc60079dcfc86a474795e312aef4fafba72fd205f0da3ef072",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HealthControlFramesShouldRequireBoundedPayloadAndRequestId",
+        "nativeCanonicalSHA256": "00b554647cbb1d2d204f0a307a0392001c65341732dc79ae68ec560acf9da5c3",
+        "nativeFileSHA256": "40a29049c16e7a90e1ae77427492769a80f8fb917db832a6de6a79dcbf7577ed",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "893e7741de679401f54a83ecef39f04a366fa68a9aa827b1f9084d3ce9e4b93f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "c12737bcbd05534e3e0bbb02cf961eb5ec79b2ed2dbea7cde68afb9f23d73a48",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 54,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "38276223c7a55a8083944d9a60166b88671423eda10114a290776dc62db4b29f",
+        "junitFileSHA256": "083c43c12e4986b7e234d1fa140c13471e63ad7b59f37f7e3f9870355d8a76f1",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.InvalidLengthTypeFlagsAndRequestIdShouldBeRejected",
+        "nativeCanonicalSHA256": "cfae65ce793bbc5147cab3fc0ea915e3cf36b6b85d5dbbb01e12eee079239632",
+        "nativeFileSHA256": "f6b428d000fd44e201c3ccd334244ad885ab4dda37a54031d8304fda67a57a7d",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "6d1c9e130d649d649968044f1d70aa6990a648ad6d590fedf893513f5c47c18d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "b1a3e654813ed13291dc3b36727e6fe70adfe2de61b662d2c5368d50e47bfaad",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 55,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "c43c6a51f64d7fa98b62f1dc204e7c66d68f7ff09ab6fcc981e6a5de2f866ae9",
+        "junitFileSHA256": "6569fd629c844d9a39901e7a4255a28c26d9829d0c053c24bf8b8481b370546c",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.InvalidMagicViolationMustNotEchoAttackerControlledPayloadBytes",
+        "nativeCanonicalSHA256": "25afdb70beb47afa991fe80b9ba26b5fbe6a4ee5e21dd65ac6e0caa78fbebfc2",
+        "nativeFileSHA256": "0a81a5c2228a20b41da0201a0511ccdea68e809a5c3be4870e19f43e52feb279",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "7993672f800b2b012cdb8ec483db8bef467f0e02a4fa32fe4c9c0a5752b16091",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "95213c2b934962fa04b9eb1ada29f2d551b1cf204b4a580dd1654d24643e97f2",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 56,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "6f4dd8c4225c71ffbec7e4c1766c2f1027ebdd3e7e5ed962716ae9a8260dbbd2",
+        "junitFileSHA256": "857e5ad65cc69fe2ae9db00328898f716e4e340d39d3b0b60bb30208897b96d2",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.LengthVarintsShouldRejectOverlongEncodings",
+        "nativeCanonicalSHA256": "fd569c66310c16de55b625a1db7ae9750df6d5785b98526933ca348fcb0b382d",
+        "nativeFileSHA256": "eb57866ac33b052725fbb6ca8f7fc68cbf275eaf041be5a215b1af4ddf020b4e",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "26b3ee22beaf5e80c51cc915541a4084c3ff77be9da503ccab5ecba2508df056",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "1aa1d2509734d134afa7601a48bccc8fb6dc310c62ea4b2bae402b5c5142b11c",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 57,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "e225444c4d4c6c12a39f71fa01bb0b4f879e82a584e9411d4aac8a25a0aac616",
+        "junitFileSHA256": "c83fdb483be59cb66ff94e87fa9a93502634053d0847aa6b95824219c2525383",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.MultipleFramesFollowedByHalfFrameShouldPreserveRemainder",
+        "nativeCanonicalSHA256": "1c2139b051e7d00a9f6d58fe06fefd5cb7071ca6bb350142f0cba1d2fa5d1e74",
+        "nativeFileSHA256": "90bd19d3c11b4b5e785d42528ad527d8b669b5c78bee81c1ae176f4c637c5703",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fe2fd8e238bfa341dbf162fa132bcbe639a3ef77603dc79eb7dbe971b692d739",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "60a19b7afa2e5b5771bc5a4b31c7773bf45adb78e4dd0e5f0ffeb08d18b0d311",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 58,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b38f7420d0367b45811639ea08bf67de0843f2229559cd446b16f535de2d3c99",
+        "junitFileSHA256": "8acd06140f8bb4cc97650c2495f857c5e57d854efaf38ecadaeb57ceb9da7cb4",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.ParserViolationsShouldCarryFixedLowCardinalityClassification",
+        "nativeCanonicalSHA256": "d52dc91cca1e1f02d669fe93b9e94233da98493a96361740dfbfb730d078d523",
+        "nativeFileSHA256": "d3b704ff38dd88f4c71f4644489699df04f54720fa61fe60f70c04c394c39307",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fd1b91c151c5472d1d5c11bb37f791ca69fd1f8212a252a0db0e748ebd7db936",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "06daca36ea47f67f507dae62c343fd01da3309a5c4f2fc3d6386fb602c6b4b7e",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 59,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "21485d6f204d61ff528fe847fae05a6ac7156810b3aba32e4d2ce2ebe7ed273f",
+        "junitFileSHA256": "cc870f7fd6fd11d56ed5a329680430e13f6c3052c855508167709421b731ad90",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.RawFrameWriterAndTokenShouldRemainInternalImplementationDetails",
+        "nativeCanonicalSHA256": "4de683c4227f0feb65d537cc44532dc2597921659f91e5090f1e89666fe34c89",
+        "nativeFileSHA256": "717fa917d8d88a9cfb58ee0d6cd731516316f9fd50c29d097c4996665bd19dbf",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "13a2ce59cde859602dcc6fcac51c5dcaf0c051c1ce15a1c907524e8af8779cc0",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "e4e22d4a37f31cccd79c5b705d3f590757319b2009e212c9bf978cd59c11509b",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 60,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "dfb51ea4e546b364a500d23c20cc95085c07b641759bcbdda4456da8f5514bb5",
+        "junitFileSHA256": "50ab03f8f83447a3db0c652f341fcf55dc344fcdff0a572a49c25f9db9d0abab",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.RequestMetadataMustBeBoundedBeforeSlice",
+        "nativeCanonicalSHA256": "17d63b21671a7f86bd9b742be332e5b0fe7f8769d87a79cc29af95d0c857011d",
+        "nativeFileSHA256": "1ee1055d2e7cb49512f41dda33a26185a26150673d377734a516bb5bd30c424c",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "602ec71e30f75146a4ed85366f7287b9f7afde4935a95c8208e13a1f1d75fe01",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "c19445753b0c7972f7cb0ddbb0d6149082c2e4f3aab99dfc977e91c78cc274ae",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 61,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "c5eea71534bf5d6a6d8356692cbc1682f4b09eff49c54172f9c7710f9b4cf6cf",
+        "junitFileSHA256": "0aa965ab72bf933f8d0a4cf2b0bb05d61b8e0350b4a0cb57329a161179b2814d",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.RequestMetadataShouldRoundTripAcrossSegmentsAndRejectImpossibleCount",
+        "nativeCanonicalSHA256": "5bcde7190772313d4b85ab6fcf2c0e1a05fa01b5a87087639e09d739ea0cf3db",
+        "nativeFileSHA256": "006b4b750779201a8405539a11512d67ee0dfc3d1f5433c5cb0c3b97434e0e7d",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "a587641f78735fea661a6d6b2332a03a1a5101760e882d5fd2665d4cd462e382",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "3d1c160537a42de3addfa451d4a7a5247dff6f65a80e69948c31a30b90a9642f",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 62,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "08386cc4b030b0bde3287abd47d47762b665afce6ad70d43a007a7d6f27c6c2a",
+        "junitFileSHA256": "2ba144f455ec1869fbd8f0ab078fc21d283006be270eea42b2db6a97a7466de3",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.StreamAndWindowPayloadShapesShouldBeValidated",
+        "nativeCanonicalSHA256": "80bae91a31ec1e0be502c3d33147452097f63d6f60f536be3f50d025c71e5f89",
+        "nativeFileSHA256": "ffb97952e324f443998920693e6231d2fc4351d352999d181c8f04a8ab776d50",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "e7b1d1d6e6a8db6a6cfb5c39f1afce36b951eafb323a6f50a4927415138850c0",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "bdf2b23ba4a2084be894f14b0110d13f7c69d12cb422ef903589f0a1443d4e9a",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 63,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "c97ecddb09a4e555962d3de9815f1b9618ad53cd07a8d2fbf7a3618a65899b11",
+        "junitFileSHA256": "d5cb503505538535c3ebb6dd456a60393f1dd8947118e1006b7bc93db5d595cc",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.ViolationReasonTokensAreFixedAndLowCardinality",
+        "nativeCanonicalSHA256": "50f338335d4eac8bbea60558ac042fe4d45b33582b4ba16f04b967bcc73d741e",
+        "nativeFileSHA256": "4d1d9ffeb976c3fb928fb6378e3634fb065e264222381c4bf71d8d3b2724aa6e",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "e06982367e89b39ac320d59350c089826c3f582fa1417ebf14428161ae558241",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "9713f9f22ce11d0ee409f354ab896a01f36fad408e695fd941405d8570455921",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 64,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "983a578b9b6028459dd35ce3821fabd7a630a2f7907bf20a37f434c47c037fe1",
+        "junitFileSHA256": "4d4772c48dfca96c8b8f5310f107a02c9f6c32a25ef7ce133198baafd7568d82",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.WriterAndParserShouldRoundTripFrame",
+        "nativeCanonicalSHA256": "fedd870b63073957acadf06e90f2290c2fac95109f5c6a51b2966bd687535434",
+        "nativeFileSHA256": "825893ca68a51e6245521994fc7e3047324fe12c4089f600e8316a102debcb82",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "bb20880e8524c588c9a561017b4b8b16bb9c0ae3573c1a46c8bca3de1812e729",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "6e2a02dbb6c841a791f262d3cc73a2f14b4649618c8a5d928e818dc7dd90c603",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 65,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "bd37e767f5a098a9d8236065e47d3b74b01de782c13c5d1f7d9c8cdbf60959d2",
+        "junitFileSHA256": "337cb66bec3cfb6203cc2acab7a37860598a537a74e96fe768e6a462f502157d",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.ZeroThroughFourteenHeaderBytesShouldRemainPartial",
+        "nativeCanonicalSHA256": "e3aa232c6f7d39f8f7cb5e7aad09d376a7c7a240f40dd6abbeaade270148f4be",
+        "nativeFileSHA256": "b3cd4f5cde1b42e2bff31ee1558db3e82f514a559415a0ae426623ec7e2cd5da",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dbc5c10d2f38176783b8def30d8d87c9728351c44ba747a21cb8bedf406f0b8f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "2483841e1ed8605c66fd0fb5b9b2b7cb9656ab91c317656697df9fe2d0279b43",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 66,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "ca4d7c4c50dcd8b4ec2868b3451e957eaae023a9a960dd2b78b477a586448b06",
+        "junitFileSHA256": "3b97001944f0020e50f2f34866dc0fb680fd5f7aaafe2e4b94fdc851c1ac8ec2",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2TimeBudgetCompatibilityTests.ClientShouldRejectServerResponseBelowTimeBudgetBoundary",
+        "nativeCanonicalSHA256": "6b58ffdae220a408a3f17cf05cda43f850ac6046ca5d5e5ae888354e74c4039b",
+        "nativeFileSHA256": "16aa2b56fa89a4e52830254aa549a5535aea999e120fe672430602394fa1e9d8",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "a88611cf5c0b13b24477489d5c16e563249b7ba1dfe4add923a9e83dc6652429",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2TimeBudgetCompatibilityTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "540921d69fe317eb1f0e3d9993f52d3ded0c27be0fbce0fcab1f23cb42c796a3",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 67,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "643b4b5c29a3cc79cc8803c3a2706cf528d1a3e380ea96f68b8abcb314a0d8e3",
+        "junitFileSHA256": "8b4b4cd80892be0070bad150a37de78da64ff7a7fa2a7fd489f241412f66779a",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2TimeBudgetCompatibilityTests.PreTimeBudgetProtocolMinorShouldBeRejectedAtNegotiation",
+        "nativeCanonicalSHA256": "843ac9696c2986a01b3a8e1f71d25d53070912e0e8bcc135b361825eef3426ed",
+        "nativeFileSHA256": "e77a8cc9084b18c6b81f8b6583cf9e81f5b9f05ab544192ff32fca0d89a72957",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "9ba6811f1fc2a5585681e758f7b6d1ae30260f1222921abb3549b0f99ac8eb92",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2TimeBudgetCompatibilityTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "926e468a565ef92a0b685bfe74a13420060fc32a21a3f4cb2c2919d9f5a88bac",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 68,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "59faf027163f31857bcf83856938f6d8ed89d7a8bc20f21b286e4441f8ae776f",
+        "junitFileSHA256": "b2f20f76db0b64e0ee350e0e9d3d4f64dba3f421d09a0790af138a5035e08a81",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2WireGenerationBoundaryTests.PreviousMinorShouldBeRejectedDuringHandshake",
+        "nativeCanonicalSHA256": "88ea92693d744c7f3898ddf2235fc121e520fb89f93c130bca059d906af2215f",
+        "nativeFileSHA256": "a3c8fa5b1cee8d4377c1863d43645417732ebd2f9bc3a9eb08704ff49681a0f8",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "21794341f9c694e9f84513f83949f155f5459dcc51b98d3be1f56efd0cbd8c61",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2WireGenerationBoundaryTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "6bc386198bbe1086697e8bd3151009dd3050159b28ab427bbba18dc4ed893d5e",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 69,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "65d5d5f2c66d1608a1b0e56a7cd4678c16a48be7409b66134b93f9182e4686ff",
+        "junitFileSHA256": "420364a02235d267ae87fc4a072af18ccb97c1bbaf64389f2b6ac1fb9db3853a",
+        "method": "SharpLink.UnitTests.Protocol.ResponseCompressionPreferenceProtocolTests.HandshakeShouldRoundTripFixedPreferenceGeneration",
+        "nativeCanonicalSHA256": "c76f141c5226580f2e58e8a95e680d96c5115297f730e2f987fc84746b76565b",
+        "nativeFileSHA256": "a8e918d6fec138a050db46124f2b83a27b666966b8082e13613ddf3355f6c7bd",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fbeb1b9a0199e35ab56d397139c274754d16f0a7450141d000abebe7906fb44d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs",
+        "status": "passed"
+      },
+      {
+        "aggregateSiblingCausesObserved": false,
+        "argumentIdentity": {
+          "caseID": "eeb0ca582eccec93cda9504671c3b2dbe382c64ebcfd1c728e0b40fec8e4a4da",
+          "kind": "parameterless",
+          "limitation": "none",
+          "parameter": null,
+          "value": null
+        },
+        "bodyExitCode": 0,
+        "bodyVersusDisposal": "not-applicable",
+        "case": 70,
+        "exceptionEvidenceScope": "serialized-innerException-chain-only",
+        "exceptions": [],
+        "junitDecodedTextSHA256": "0ad2f45e9221b7bedf6cbce9f614ad7eeb150c7be33bdc19f8754cd29ffc9d6d",
+        "junitFileSHA256": "a7bd8585829cd95e94d6bd644b4b1c68105a6b91f801e61ec807fec00b8aa6ed",
+        "method": "SharpLink.UnitTests.Protocol.ResponseCompressionPreferenceProtocolTests.PreferenceControlFramesShouldBeFixedAndStrict",
+        "nativeCanonicalSHA256": "4e7fa3768eab3f68ec8534b24cd0601ddbca6bed3aea84c49231675caa8e6af8",
+        "nativeFileSHA256": "f9bff92d70b3ca25d32fc08c84ec250697817823b9fc759c7e2445b84cfedd7b",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "ff60642bba1625faec2a16c724287c65ecffaa22f84f8e435b520199c11ca19f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs",
+        "status": "passed"
+      }
+    ],
+    "commandCap": 103,
+    "commandReserveSecondsPerRemaining": 16,
+    "errorOccurrences": 0,
+    "evidenceDurable": true,
+    "exceptionEvidenceScope": "serialized-innerException-chain-only",
+    "executionModel": "sequential-one-owned-process-per-selected-UID",
+    "exit": 0,
+    "expectedExplicitMetadataCount": 5,
+    "expectedOrdinaryMetadataCount": 2879,
+    "fullSuiteQualified": false,
+    "historicalArgumentMappingAvailable": false,
+    "historicalCommandCapFailure": {
+      "codes": [
+        "PD_OWNER",
+        "UC_COMMAND_CAP"
+      ],
+      "complete": false,
+      "completedCases": 31,
+      "evidenceSHA256": "2854e98a54900ea77fc7f4c889d4cfdf79029c97a710cfbc95a28cbc9e40a0cb",
+      "head": "9784e1b08dbd8d6eebc60072bf1fa99ece1f4682",
+      "infrastructureQualified": false,
+      "jobId": 127113338641,
+      "observedNonpassingCaseCount": 0,
+      "passed": 31,
+      "qualified": false,
+      "runId": 41988031636,
+      "successfulStageCount": 64
+    },
+    "historicalFullRun": {
+      "errors": 265,
+      "evidenceSHA256": "073a199d62f9add8222789e3f4fec936377e64e2897cd5145497f046d0c3c8d6",
+      "passed": 2614,
+      "qualified": false,
+      "runId": 41970862705
+    },
+    "historicalLifetimeFailuresResolution": "unresolved-despite-isolated-pass",
+    "historicalProtocolNamespace": {
+      "cases": 70,
+      "errors": 4,
+      "fullRunId": 41970862705,
+      "passed": 66
+    },
+    "historicalSixteenCaseDiagnostic": {
+      "complete": true,
+      "errors": 9,
+      "evidenceSHA256": "57700796654908f5d3abb3064c04c746384253bad0668f5b4e9dab387373a55a",
+      "head": "aecea7afdfdd426a1bbbd5cf840bed945ef62e7b",
+      "infrastructureQualified": true,
+      "jobId": 127045117909,
+      "passed": 7,
+      "qualified": false,
+      "runId": 41966659630
+    },
+    "historicalTimedFailureResolution": "unresolved-no-timed-source-change",
+    "historicalTwentyOneCaseDiagnostic": {
+      "complete": true,
+      "errors": 4,
+      "evidenceSHA256": "e6916265942d76dd66761a46d979014603c6f51035ec085687bb7b3af43fb5d4",
+      "head": "0de69b451c744182f6962d253a1749899fdc29af",
+      "infrastructureQualified": true,
+      "passed": 17,
+      "qualified": false,
+      "runId": 41976164524
+    },
+    "identity": {
+      "binarySHA256": "8d67b9bb014087dc7295cefbec35e3874b7292e4b73ecf84fab73dc353e298c1",
+      "head": "8903e45945ad6ccea525de329c624d6dd0b6f14a",
+      "packageManifestSHA256": "7b98f41b0613638bc9157c71ef70231cce2d20e04c99d0c18a2e5df3f4eb9500",
+      "providerProofSHA256": "bd79bb0a31d39a529346436b4fea1ba9049327bd3941c92699d896d5ee399d66",
+      "sdkManifestSHA256": "a75961eeaac50be88d13486c34ac5b9848245f43c3c4191f2059efe25a111ad2",
+      "sourceManifestSHA256": "c46ed455c1c9288a70fee7d82c3b14e5ca4b3e394b876f125ec3d8246c2fc23f",
+      "tree": "237c680bf4c0b6f75ff85466ff4832c7826a52a6"
+    },
+    "infrastructureQualified": true,
+    "maximumParallelTestsOption": 1,
+    "observedNonpassingCaseCount": 0,
+    "originalFullRun": {
+      "errors": 290,
+      "passed": 2589,
+      "qualified": false,
+      "runId": 41940224644
+    },
+    "overallBudgetSeconds": 7200,
+    "plannedCommandCount": 103,
+    "preparationBudgetSeconds": 3600,
+    "preparationQualifiedAtHandoff": true,
+    "previousFullRun": {
+      "errors": 272,
+      "evidenceSHA256": "8b5c5a42210d118055655b75e456cf65f114b9e88fb63debbd8b122c55997e56",
+      "passed": 2607,
+      "qualified": false,
+      "runId": 41962521900
+    },
+    "protocolSliceComplete": true,
+    "protocolSliceQualified": true,
+    "rejections": {
+      "codes": [],
+      "unclassifiedExceptionNodes": 0
+    },
+    "requiredRuntime": "10.0.14",
+    "requiredSdk": "10.0.114",
+    "requiredSelectedCaseCount": 70,
+    "schemaVersion": 1,
+    "scope": "seventy-ordinary-protocol-fixture-cap-repair-validation",
+    "sourceTrees": {
+      "src": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
+      "test": "47527763f1de7aa592f94120a346d843456d6cf1"
+    }
+  },
+  "successfulStageRows": [
+    {
+      "stage": "head",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "clean",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "tracked",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "clone",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "checkout",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "clone-head",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "diagnostic-src-tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "diagnostic-test-tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "python-controls",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "sdk-version",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "sdk-info",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "sdk-runtimes",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "restore",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata0",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata3",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata4",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata5",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata6",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata7",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata8",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata9",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata10",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata11",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata12",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "metadata13",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "expanded-imports",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "build",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "discovery1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "discovery2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-python-controls",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-3",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-4",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-5",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-6",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-7",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-8",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-9",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-10",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-11",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-12",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-13",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-14",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-15",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-16",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-17",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-18",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-19",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-20",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-21",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-22",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-23",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-24",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-25",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-26",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-27",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-28",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-29",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-30",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-31",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-32",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-33",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-34",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-35",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-36",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-37",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-38",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-39",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-40",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-41",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-42",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-43",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-44",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-45",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-46",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-47",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-48",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-49",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-50",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-51",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-52",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-53",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-54",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-55",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-56",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-57",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-58",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-59",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-60",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-61",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-62",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-63",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-64",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-65",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-66",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-67",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-68",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-69",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "stage": "protocol70-case-70",
+      "exit": 0,
+      "owned": "joined"
+    }
+  ],
+  "rawReportsRetainedInRepository": false,
+  "historicalLifetimeFailuresUnresolved": true,
+  "artifacts": {
+    "artifacts": []
+  }
+}
