@@ -1,0 +1,211 @@
+{
+  "runId": 41970862705,
+  "jobId": 127058531168,
+  "head": "1f5315ca23753258c002ebd6bed294f0226af603",
+  "tree": "4217a22cf7fc0d804d0e3ad50e2bf54c33c04ba4",
+  "conclusion": "failure",
+  "checkpointSHA256": "073a199d62f9add8222789e3f4fec936377e64e2897cd5145497f046d0c3c8d6",
+  "ordinary": 2879,
+  "passed": 2614,
+  "errors": 265,
+  "qualified": false,
+  "ownerClosed": true,
+  "executionClosureObserved": true,
+  "bodyExitCode": 2,
+  "argumentIdentity": "not-present-in-historical-method-aggregation",
+  "methodStatusCounts": [
+    {
+      "className": "ContractScopedRouteFailureControls",
+      "count": 1,
+      "methodName": "PendingBuildFailureDoesNotImposeAllBoundOnFreshPrepare",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ContractScopedRouteFailureControls",
+      "count": 1,
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractScopedRouteFailureControls",
+      "count": 5,
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "status": "passed"
+    },
+    {
+      "className": "InterceptedResponseLifetimeRecoveryTests",
+      "count": 2,
+      "methodName": "DeadlineReturnsButSameResponseLeaseProtectsHeldManagerDecode",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/InterceptedResponseLifetimeRecoveryTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "InterceptedResponseLifetimeRecoveryTests",
+      "count": 1,
+      "methodName": "LateSuccessfulInterceptorResultIsDisposedBeforeModuleRetires",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/InterceptedResponseLifetimeRecoveryTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "InterceptedResponseLifetimeRecoveryTests",
+      "count": 1,
+      "methodName": "SuccessfulNonforwardingReplacementStillJoinsOriginalCoreWithoutDeadline",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/InterceptedResponseLifetimeRecoveryTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "CancelReasonShouldRoundTripAndEnforceNegotiatedShape",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "ControlWritersShouldClassifyInvalidLocalEnumsAsArgumentsWithoutPartialOutput",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeRequestAndResponseShouldRoundTrip",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ResponseCompressionPreferenceProtocolTests",
+      "count": 1,
+      "methodName": "HandshakeShouldRoundTripFixedPreferenceGeneration",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ResponseCompressionPreferenceProtocolTests",
+      "count": 1,
+      "methodName": "PreferenceControlFramesShouldBeFixedAndStrict",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "SharpLinkTimerCleanupOwnershipTests",
+      "count": 1,
+      "methodName": "CallbackRearmFailureMustNotifyCloseAndJoinCallback",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SharpLinkTimerCleanupOwnershipTests.cs",
+      "status": "passed"
+    },
+    {
+      "className": "SharpLinkTimerCleanupOwnershipTests",
+      "count": 1,
+      "methodName": "OverlappingCallbackFailureMustSurviveExpirySignalAndJoinEveryCallback",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SharpLinkTimerCleanupOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkTimerCleanupOwnershipTests",
+      "count": 1,
+      "methodName": "SourceSuccessMustAlsoJoinHeldTimerCallback",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SharpLinkTimerCleanupOwnershipTests.cs",
+      "status": "passed"
+    }
+  ],
+  "methodExceptionCategoryCounts": [
+    {
+      "category": "aggregate",
+      "className": "ContractScopedRouteFailureControls",
+      "count": 1,
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "status": "error"
+    },
+    {
+      "category": "aggregate",
+      "className": "InterceptedResponseLifetimeRecoveryTests",
+      "count": 2,
+      "methodName": "DeadlineReturnsButSameResponseLeaseProtectsHeldManagerDecode",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/InterceptedResponseLifetimeRecoveryTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "protocol-violation",
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "CancelReasonShouldRoundTripAndEnforceNegotiatedShape",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "category": "argument",
+      "className": "ResponseCompressionPreferenceProtocolTests",
+      "count": 1,
+      "methodName": "HandshakeShouldRoundTripFixedPreferenceGeneration",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs",
+      "status": "error"
+    },
+    {
+      "category": "unknown",
+      "className": "SharpLinkTimerCleanupOwnershipTests",
+      "count": 1,
+      "methodName": "OverlappingCallbackFailureMustSurviveExpirySignalAndJoinEveryCallback",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SharpLinkTimerCleanupOwnershipTests.cs",
+      "status": "error"
+    }
+  ]
+}

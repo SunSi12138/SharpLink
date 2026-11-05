@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "repository": "thomhurst/TUnit",
+  "commit": "ff2dc5186b05eddc8f6aea03a18784df3aa6e737",
+  "packageVersion": "1.73.19",
+  "interpretation": "Map only a complete unique source-literal display-name set: Boolean False/True or the six exact stage strings. String literals contain no dots and no quoting. Any mismatch keeps the entire group opaque; historical full arguments are unavailable.",
+  "files": [
+    {
+      "path": "src/TUnit.Engine/Helpers/DisplayNameBuilder.cs",
+      "url": "https://github.com/thomhurst/TUnit/blob/ff2dc5186b05eddc8f6aea03a18784df3aa6e737/src/TUnit.Engine/Helpers/DisplayNameBuilder.cs",
+      "fullFileSHA256": "d7fad2a7a0aea0bc69796b011b3fce2af783254728d6e7410e15b94b4ba1571c",
+      "gitBlob": "d5e60c66961739830767e49182140d346f77d1e9",
+      "excerpts": [
+        {
+          "firstLine": 10,
+          "lastLine": 24,
+          "text": "    public static string BuildDisplayName(\n        TestMetadata metadata,\n        object?[] arguments,\n        TestDataCombination? dataCombination = null)\n    {\n        // First check if we have a custom display name from data combination\n        if (dataCombination?.DisplayName != null)\n        {\n            return dataCombination.DisplayName;\n        }\n\n        // Check for DisplayNameAttribute in metadata\n        // Note: DisplayNameAttribute is processed through discovery event receivers\n        // so we just return the default display name here\n        return BuildDefaultDisplayName(metadata, arguments);"
+        },
+        {
+          "firstLine": 30,
+          "lastLine": 62,
+          "text": "    public static string BuildDefaultDisplayName(TestMetadata metadata, object?[] arguments)\n    {\n        var testName = metadata.TestName;\n        \n        if (arguments.Length == 0)\n        {\n            return testName;\n        }\n\n        var argumentsText = FormatArguments(arguments);\n        return $\"{testName}({argumentsText})\";\n    }\n\n    /// <summary>\n    /// Formats test arguments for display using consistent formatting\n    /// </summary>\n    public static string FormatArguments(object?[] arguments)\n    {\n        if (arguments.Length == 0)\n        {\n            return string.Empty;\n        }\n\n        var sb = StringBuilderPool.Get();\n        try\n        {\n            for (var i = 0; i < arguments.Length; i++)\n            {\n                if (i > 0)\n                {\n                    sb.Append(\", \");\n                }\n                sb.Append(ArgumentFormatter.Format(arguments[i], []));"
+        }
+      ]
+    },
+    {
+      "path": "src/TUnit.Core/Helpers/ArgumentFormatter.cs",
+      "url": "https://github.com/thomhurst/TUnit/blob/ff2dc5186b05eddc8f6aea03a18784df3aa6e737/src/TUnit.Core/Helpers/ArgumentFormatter.cs",
+      "fullFileSHA256": "35ea0d9c8b29ca83cd3d2210ab8acd9dd74763ba253cd2550d1e6bccb8c17039",
+      "gitBlob": "4826a5b76b6bfd77da3e12535e84030d3bc0bb60",
+      "excerpts": [
+        {
+          "firstLine": 118,
+          "lastLine": 139,
+          "text": "        string toString;\n        try\n        {\n            toString = o.ToString()!;\n        }\n        catch\n        {\n            // If ToString() throws, fall back to type name\n            return type.Name;\n        }\n\n        if (o is Enum)\n        {\n            return toString;\n        }\n\n        if (type.IsPrimitive)\n        {\n            return toString;\n        }\n\n        if (o is string str)"
+        },
+        {
+          "firstLine": 139,
+          "lastLine": 143,
+          "text": "        if (o is string str)\n        {\n            // Replace dots with middle dot (\u00b7) to prevent VS Test Explorer from interpreting them as namespace separators\n            return str.Replace(\".\", \"\u00b7\");\n        }"
+        }
+      ]
+    },
+    {
+      "path": "src/TUnit.Core.SourceGenerator/Generators/TestMetadataGenerator.cs",
+      "url": "https://github.com/thomhurst/TUnit/blob/ff2dc5186b05eddc8f6aea03a18784df3aa6e737/src/TUnit.Core.SourceGenerator/Generators/TestMetadataGenerator.cs",
+      "fullFileSHA256": "538343024e090803269908af9e7bb6d77591f673d4ea4f0fe5007e535235d530",
+      "gitBlob": "57fad6205c7d81d4899bb7c11ee02399d472b4e9",
+      "excerpts": [
+        {
+          "firstLine": 1739,
+          "lastLine": 1750,
+          "text": "        // Named arguments (Skip, DisplayName, Categories, SkipIfEmpty, ...)\n        var namedArguments = attr.NamedArguments;\n        if (namedArguments.Length > 0)\n        {\n            writer.AppendLine();\n            writer.AppendLine(\"{\");\n            writer.Indent();\n\n            for (var i = 0; i < namedArguments.Length; i++)\n            {\n                var namedArgument = namedArguments[i];\n                writer.Append($\"{namedArgument.Key} = {TypedConstantParser.GetRawTypedConstantValue(namedArgument.Value)}\");"
+        },
+        {
+          "firstLine": 3187,
+          "lastLine": 3201,
+          "text": "    private static string PreGenerateTestEntryDataFields(TestMethodMetadata testMethod)\n    {\n        var writer = new CodeWriter(includeHeader: false);\n\n        var methodName = testMethod.MethodSymbol.Name;\n        var namespaceName = testMethod.TypeSymbol.ContainingNamespace?.ToDisplayString() ?? \"\";\n        var simpleClassName = testMethod.TypeSymbol.GetNestedClassName();\n        var fullyQualifiedName = string.IsNullOrEmpty(namespaceName)\n            ? $\"{simpleClassName}.{methodName}\"\n            : $\"{namespaceName}.{simpleClassName}.{methodName}\";\n\n        writer.AppendLine($\"methodName: \\\"{EscapeString(methodName)}\\\",\");\n        writer.AppendLine($\"fullyQualifiedName: \\\"{EscapeString(fullyQualifiedName)}\\\",\");\n        WriteSourceLocationArguments(writer, testMethod);\n        WriteFilterDataArguments(writer, testMethod);"
+        },
+        {
+          "firstLine": 4273,
+          "lastLine": 4290,
+          "text": "    private static TestSourceLocation GetTestMethodSourceLocation(\n        MethodDeclarationSyntax methodSyntax,\n        AttributeData testAttribute)\n    {\n        var attrFilePath = testAttribute.ConstructorArguments.ElementAtOrDefault(0).Value.ToInvariantString();\n        var attrLineNumber = (int?)testAttribute.ConstructorArguments.ElementAtOrDefault(1).Value ?? 0;\n\n        var methodLocation = methodSyntax.GetLocation();\n        if (methodLocation.IsInSource)\n        {\n            return CreateSourceLocation(\n                methodLocation.GetLineSpan(),\n                !string.IsNullOrEmpty(attrFilePath) ? attrFilePath! : methodLocation.SourceTree?.FilePath ?? methodSyntax.SyntaxTree.FilePath ?? \"\");\n        }\n\n        return CreateFallbackSourceLocation(\n            !string.IsNullOrEmpty(attrFilePath) ? attrFilePath! : methodSyntax.SyntaxTree.FilePath ?? \"\",\n            attrLineNumber);"
+        },
+        {
+          "firstLine": 4333,
+          "lastLine": 4342,
+          "text": "    private static TestSourceLocation CreateSourceLocation(FileLinePositionSpan lineSpan, string filePath)\n    {\n        // Roslyn reports zero-based line/character positions; TUnit stores user-facing source\n        // coordinates as one-based values alongside the existing LineNumber convention.\n        return new TestSourceLocation(\n            filePath,\n            lineSpan.StartLinePosition.Line + 1,\n            lineSpan.StartLinePosition.Character + 1,\n            lineSpan.EndLinePosition.Line + 1,\n            lineSpan.EndLinePosition.Character + 1);"
+        }
+      ]
+    }
+  ]
+}
