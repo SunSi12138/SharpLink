@@ -1,0 +1,74 @@
+name: Full ordinary runtime handshake fixture validation
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/runtime-handshake-full-validation-20261105']
+    paths:
+      - '.github/workflows/runtime-handshake-full-validation.yml'
+      - 'eng/run-runtime-handshake-full-validation.py'
+      - 'eng/unit-execution-results.py'
+      - 'eng/tests/test_runtime_handshake_full_validation.py'
+      - 'eng/run-unit-census.py'
+      - 'eng/unit-census-results.py'
+      - 'eng/unit-census.json'
+      - 'eng/rebase-three-fixture-census.py'
+      - 'eng/tests/test_three_fixture_census.py'
+      - 'eng/three-fixture-census-rebase.json'
+      - 'eng/rebase-runtime-handshake-census.py'
+      - 'eng/runtime-handshake-census-rebase.json'
+      - 'eng/tests/test_runtime_handshake_census.py'
+      - 'eng/runtime-handshake-full-history/**'
+      - 'eng/fixture-migration-baseline/**'
+      - 'eng/full-regression-history/**'
+      - 'eng/pure-negotiation-history/**'
+      - 'eng/protocol70-cap-full-history/**'
+      - 'eng/stop-handshake-full-history/**'
+      - 'eng/stop-junit-results.py'
+      - 'eng/tests/test_stop_junit_results.py'
+      - 'eng/runtime-handshake-full-results.py'
+      - 'eng/tests/test_runtime_handshake_full_results.py'
+      - 'eng/protocol70-history/**'
+      - 'eng/lifetime-full-results.py'
+      - 'eng/tests/test_lifetime_full_results.py'
+      - 'eng/protocol-lifetime-history/argument-display-name-proof.json'
+      - 'eng/timed-stream-full-results.py'
+      - 'eng/tests/test_timed_stream_full_results.py'
+      - 'eng/stream-negotiation-history/boolean-display-name-proof.json'
+      - 'eng/package-smoke-process.py'
+      - 'eng/route59-results.py'
+      - 'eng/retirement-results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.*'
+      - 'global.json'
+concurrency:
+  group: runtime-handshake-full-ordinary-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-execution:
+    runs-on: ubuntu-24.04
+    # Original preparation3600, body phase3000, overall6600; outer is not ownership evidence.
+    timeout-minutes: 135
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Setup patched pinned SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/runtime-handshake-full-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Verify exact parent, unchanged product and migrated test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "4c26ac7bd90995a684a1daa7d94078a27538df47"
+          test "$(git rev-parse HEAD^^{tree})" = "bf52f2d1ba5147b1fd06ad0c7e4bcb734b6e80e3"
+          test "$(git rev-parse HEAD:src)" = "c3a94c896418a5d5ec62646461f17c67dc89bc96"
+          test "$(git rev-parse HEAD:test)" = "395db8d7cecea0158892f7ab6725c2a43031e572"
+      - name: One build, double full census, and all2879 ordinary cases once
+        run: python3 eng/run-runtime-handshake-full-validation.py --configuration Release

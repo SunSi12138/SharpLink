@@ -29,15 +29,18 @@ public class NegotiatedSessionOptionsTests
             RpcSessionTestFixture.ClientOptions(context),
             completeHandshake: false);
         var binding = context.Compression.ProviderBindings[0];
+        var authority = new Protocol3BindingAuthority(
+            Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
         var proposed = new NegotiatedSessionOptions(
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.Metadata |
             ProtocolV2Capabilities.Compression |
-            ProtocolV2Capabilities.FlowControl,
+            ProtocolV2Negotiator.MandatoryCapabilities,
             4096,
             2048,
             4096,
-            binding);
+            binding,
+            authority);
 
         var completed = session.TryCompleteHandshake(proposed);
         var published = session.NegotiatedOptions;
@@ -74,8 +77,22 @@ public class NegotiatedSessionOptionsTests
                 output.Writer,
                 RpcSessionTestFixture.ClientOptions(),
                 completeHandshake: false);
-            var first = CreateOptions(ProtocolV2Capabilities.Metadata, 4096);
-            var second = CreateOptions(ProtocolV2Capabilities.HealthCheck, 8192);
+            var authority = new Protocol3BindingAuthority(
+                Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
+            var first = new NegotiatedSessionOptions(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.Metadata | ProtocolV2Negotiator.MandatoryCapabilities,
+                4096,
+                RpcSessionTestFixture.RuntimeContext.FlowControl.StreamReceiveWindowBytes,
+                RpcSessionTestFixture.RuntimeContext.FlowControl.ConnectionReceiveWindowBytes,
+                authority: authority);
+            var second = new NegotiatedSessionOptions(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.HealthCheck | ProtocolV2Negotiator.MandatoryCapabilities,
+                8192,
+                RpcSessionTestFixture.RuntimeContext.FlowControl.StreamReceiveWindowBytes,
+                RpcSessionTestFixture.RuntimeContext.FlowControl.ConnectionReceiveWindowBytes,
+                authority: authority);
             using var start = new ManualResetEventSlim();
 
             var firstCompletion = Task.Run(() =>
@@ -118,23 +135,53 @@ public class NegotiatedSessionOptionsTests
         var invalid = new[]
         {
             new NegotiatedSessionOptions(checked((ushort)(ProtocolV2Constants.MinorVersion + 1)),
-                ProtocolV2Capabilities.None, 4096, 2048, 4096),
+                ProtocolV2Negotiator.MandatoryCapabilities, 4096, 2048, 4096,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                (ProtocolV2Capabilities)(1UL << 63), 4096, 2048, 4096),
+                ProtocolV2Negotiator.MandatoryCapabilities | (ProtocolV2Capabilities)(1UL << 63), 4096, 2048, 4096,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.None, SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1, 2048, 4096),
+                ProtocolV2Negotiator.MandatoryCapabilities, SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1, 2048, 4096,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.None, 8193, 2048, 4096),
+                ProtocolV2Negotiator.MandatoryCapabilities, 8193, 2048, 4096,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.FlowControl, 4096, 0, 4096),
+                ProtocolV2Negotiator.MandatoryCapabilities, 4096, 0, 4096,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.FlowControl, 4096, 4096, 2048),
+                ProtocolV2Negotiator.MandatoryCapabilities, 4096, 4096, 2048,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.FlowControl, 4096, 4097, 8192),
+                ProtocolV2Negotiator.MandatoryCapabilities, 4096, 4097, 8192,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.FlowControl, 4096, 4096, 8193),
+                ProtocolV2Negotiator.MandatoryCapabilities, 4096, 4096, 8193,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default)),
             new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.Compression, 4096, 2048, 4096)
+                ProtocolV2Negotiator.MandatoryCapabilities | ProtocolV2Capabilities.Compression, 4096, 2048, 4096,
+                authority: new Protocol3BindingAuthority(
+                    Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default))
+        };
+        var expectedMessages = new[]
+        {
+            "Protocol3 requires revision 1 without downgrade.",
+            "Negotiated capabilities contain unknown bits.",
+            "Negotiated frame limit 1023 is outside the local protocol limits.",
+            "Negotiated frame limit 8193 is outside the local protocol limits.",
+            "Negotiated receive windows must be positive.",
+            "The negotiated connection window cannot be smaller than the stream window.",
+            "Negotiated receive windows exceed the local flow-control limits.",
+            "Negotiated receive windows exceed the local flow-control limits.",
+            "Negotiated compression capability and provider binding must be published together."
         };
 
         for (var index = 0; index < invalid.Length; index++)
@@ -156,6 +203,8 @@ public class NegotiatedSessionOptionsTests
                 $"invalid case {index}: malformed negotiation must terminate the session");
             Ensure(session.NegotiatedOptions is null && !session.IsConnected,
                 $"invalid case {index}: failed negotiation must never publish Ready options");
+            Ensure(string.Equals(failure.Message, expectedMessages[index], StringComparison.Ordinal),
+                $"invalid case {index}: negotiation must reject the intended invalid field");
         }
     }
 
@@ -193,7 +242,15 @@ public class NegotiatedSessionOptionsTests
                 output.Writer,
                 RpcSessionTestFixture.ClientOptions(),
                 completeHandshake: false);
-            var options = CreateOptions(ProtocolV2Capabilities.Metadata, 4096);
+            var authority = new Protocol3BindingAuthority(
+                Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
+            var options = new NegotiatedSessionOptions(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.Metadata | ProtocolV2Negotiator.MandatoryCapabilities,
+                4096,
+                RpcSessionTestFixture.RuntimeContext.FlowControl.StreamReceiveWindowBytes,
+                RpcSessionTestFixture.RuntimeContext.FlowControl.ConnectionReceiveWindowBytes,
+                authority: authority);
             using var start = new ManualResetEventSlim();
 
             var completion = Task.Run(() =>

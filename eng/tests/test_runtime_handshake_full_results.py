@@ -208,7 +208,7 @@ class Controls(unittest.TestCase):
             else:test['exception']['innerExceptions']=[]
             with self.assertRaises(r.Rejected):h.selected_test_shape(r,test)
     def test_exact_source_tags_include_mandatory_authority_and_revision(self):
-        self.assertEqual(len(h.EXCEPTION_TAGS),549)
+        self.assertEqual(len(h.EXCEPTION_TAGS),558)
         wanted={'mandatory-capabilities-missing','authority-or-binding-limits-invalid','revision-mismatch'}
         self.assertTrue(wanted<={x[3] for x in h.EXCEPTION_TAGS})
         for indexes,typ,msg,tag,path,line in h.EXCEPTION_TAGS:
@@ -228,6 +228,21 @@ class Controls(unittest.TestCase):
         tag=next(x for x in h.EXCEPTION_TAGS if x[3]=='mandatory-capabilities-missing')
         out=h.projected_exception(r,0,{'type':tag[1]+CANARY,'message':tag[2]})[0]
         self.assertEqual(out['assertionTag'],'unknown');self.assertEqual(out['category'],'unknown')
+    def test_rebound_frames_remove_old_lambdas_and_unused_shared_helper(self):
+        path,ns,cls,*_=h.CASES[1]
+        for i,line in ((1,84),(1,89),(2,202),(2,207),(3,151)):
+            method=h.CASES[i][3]
+            frame=f'   at {ns}.{cls}.<>c__DisplayClass1_0.<{method}>b__0() in /_/{path}:line {line}'
+            self.assertEqual(h.source_frames(r,i,frame),([],1,0))
+        frame=f'   at {ns}.{cls}.CreateOptions(ProtocolV2Capabilities capabilities, Int32 maxFramePayloadBytes) in /_/{path}:line 500'
+        for i in (1,2):self.assertEqual(h.source_frames(r,i,frame),([],1,0))
+        for value in (-1,9,100):
+            msg=f'invalid case {value}: negotiation must reject the intended invalid field'
+            self.assertEqual(h.projected_exception(r,3,{'type':'System.Exception','message':msg})[0]['assertionTag'],'unknown')
+        for value in range(9):
+            msg=f'invalid case {value}: negotiation must reject the intended invalid field'
+            self.assertEqual(h.projected_exception(r,3,{'type':'System.Exception','message':msg})[0]['assertionTag'],'invalid-guard-mismatch')
+
     def test_fixed_frames_and_rethrow_line_are_source_bound(self):
         for indexes,path,typ,member,signature,first,last in h.EXTRA_FRAMES:
             self.assertIn(path,h.SOURCE_PINS);good=f'   at {typ}.{member}({signature}) in /_/{path}:line {last}'
@@ -236,7 +251,7 @@ class Controls(unittest.TestCase):
         line='   at SharpLink.Runtime.RpcSession.TryCompleteHandshake(NegotiatedSessionOptions options) in /_/src/SharpLink.Runtime/RpcSession.Negotiation.cs:line 28'
         self.assertEqual(h.source_frames(r,0,line)[0][0]['line'],28)
     def test_lambda_frames_bounded_and_never_publish_generated_names(self):
-        for i,line,label in ((1,84,'first-completion-lambda'),(1,89,'second-completion-lambda'),(2,202,'completion-lambda'),(2,207,'termination-lambda'),(3,151,'invalid-completion-lambda')):
+        for i,line,label in ((1,101,'first-completion-lambda'),(1,106,'second-completion-lambda'),(2,259,'completion-lambda'),(2,264,'termination-lambda'),(3,198,'invalid-completion-lambda')):
             path,ns,cls,method,_,_=h.CASES[i]
             good=f'   at {ns}.{cls}.<>c__DisplayClass1_0.<{method}>b__0() in /_/{path}:line {line}'
             bad=[good+CANARY,CANARY+good,good.replace('1_0','1000_0'),good.replace('b__0','b__1000'),good.replace('/_/','/private/'),good.replace(':line '+str(line),':line 450'),good.replace('b__0()','b__0(private)')]

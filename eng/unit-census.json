@@ -1331,7 +1331,7 @@
     "test/SharpLink.UnitTests/Runtime/ManifestSourceIsolationTests.cs": "86adb2d251705679af69d6aec054313f624667da2eacef1ced8b58d08ee69d25",
     "test/SharpLink.UnitTests/Runtime/ManualTimeProvider.cs": "9ceab2d8803c754d4a8d44ad420ff66c5176f78049ccf09cc11dd57b85f8bc2b",
     "test/SharpLink.UnitTests/Runtime/NamedPipeTransportOptionsTests.cs": "9e5dd0db4cef8f97554540697a54855884efb78077aa7670aff6f655bb5dddac",
-    "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs": "16d8a6ddf73b868c011ed391c4f29d519621e770679c03913219ac037a4bc554",
+    "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs": "ba2c03dc21940eb01ace60bd0391e415e43cd5b28461709dc85a93ecedb2bbea",
     "test/SharpLink.UnitTests/Runtime/OriginalResponseLeaseCleanupTests.cs": "435271d272fe0248754f828b2e82eb1f9e3a8979691618c94ad7a0e42981fbbe",
     "test/SharpLink.UnitTests/Runtime/OwnedResponseTailSupervisorTests.cs": "ff31db3d32417da3f4a635c7df96f86d59c59ce28fdc01e54bdda47c28056c8a",
     "test/SharpLink.UnitTests/Runtime/PeerTerminalCleanupFailureTests.cs": "b5121c17a30fbcc2be6d89776dd1f69821fbf266d3b26769985ed304f4047f9a",
@@ -44033,7 +44033,7 @@
       "return": "System.Threading.Tasks.Task",
       "attributeLine": 11,
       "signatureLine": 12,
-      "endLine": 62,
+      "endLine": 65,
       "configurations": [
         "Release",
         "Debug"
@@ -44051,8 +44051,8 @@
         "arguments": [],
         "conditionalGuards": [],
         "startOffset": 207,
-        "endOffset": 2867,
-        "spanSHA256": "d97458c186eafaf4d740d53bc1ba0801be64cc91e650598d53ff2c5873fe037d",
+        "endOffset": 3030,
+        "spanSHA256": "b90804ca02df298c46a0863934ac07b928e7a277530153533c168d3cebf8d144",
         "unknown": []
       }
     },
@@ -44064,9 +44064,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 64,
-      "signatureLine": 65,
-      "endLine": 105,
+      "attributeLine": 67,
+      "signatureLine": 68,
+      "endLine": 122,
       "configurations": [
         "Release",
         "Debug"
@@ -44074,7 +44074,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 64,
+        "testAttributeLine": 67,
         "signature": "public async Task ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot()",
         "parameterSyntax": [],
         "attributes": [
@@ -44083,9 +44083,9 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 2873,
-        "endOffset": 4880,
-        "spanSHA256": "1b214f74e734860f5afe188e2db784e17957d92c32529976b590bb919dc43805",
+        "startOffset": 3036,
+        "endOffset": 5917,
+        "spanSHA256": "be71fa8f475a4d60aed41e1e0ed3be67fb4a1606684c474ceefafd180e821035",
         "unknown": []
       }
     },
@@ -44097,9 +44097,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 107,
-      "signatureLine": 108,
-      "endLine": 160,
+      "attributeLine": 124,
+      "signatureLine": 125,
+      "endLine": 209,
       "configurations": [
         "Release",
         "Debug"
@@ -44107,7 +44107,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 107,
+        "testAttributeLine": 124,
         "signature": "public async Task InvalidHandshakeOptionsShouldFaultWithoutPublishingReady()",
         "parameterSyntax": [],
         "attributes": [
@@ -44116,9 +44116,9 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 4886,
-        "endOffset": 7869,
-        "spanSHA256": "1dea96e1ffd53bb1fb309f05b01dbfbf86e0a4ec118eaef82ebc0ee86e36ea5f",
+        "startOffset": 5923,
+        "endOffset": 11308,
+        "spanSHA256": "62cda585c30065721326ce158658735adc9b45b67d46b614763e3b582a924abb",
         "unknown": []
       }
     },
@@ -44130,9 +44130,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 162,
-      "signatureLine": 163,
-      "endLine": 181,
+      "attributeLine": 211,
+      "signatureLine": 212,
+      "endLine": 230,
       "configurations": [
         "Release",
         "Debug"
@@ -44140,7 +44140,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 162,
+        "testAttributeLine": 211,
         "signature": "public async Task HandshakeCompletionAfterTerminalShouldBeRejected()",
         "parameterSyntax": [],
         "attributes": [
@@ -44149,8 +44149,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 7875,
-        "endOffset": 8792,
+        "startOffset": 11314,
+        "endOffset": 12231,
         "spanSHA256": "bde518a3b52f39802b5054982b62220574399a23931a75b6c47011a8dfdcb47f",
         "unknown": []
       }
@@ -44163,9 +44163,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 183,
-      "signatureLine": 184,
-      "endLine": 219,
+      "attributeLine": 232,
+      "signatureLine": 233,
+      "endLine": 276,
       "configurations": [
         "Release",
         "Debug"
@@ -44173,7 +44173,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 183,
+        "testAttributeLine": 232,
         "signature": "public async Task HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState()",
         "parameterSyntax": [],
         "attributes": [
@@ -44182,9 +44182,9 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 8798,
-        "endOffset": 10358,
-        "spanSHA256": "7fabd45959f7d68108de1e211a0bc5a922049829b2e675a99bdcf242b1767b1f",
+        "startOffset": 12237,
+        "endOffset": 14304,
+        "spanSHA256": "f8c96aac1957cc0c0bfd0cdd1fcc13dbc13d9cecd8cf9d1c1e978d8b8b73f336",
         "unknown": []
       }
     },
@@ -44196,9 +44196,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 221,
-      "signatureLine": 222,
-      "endLine": 279,
+      "attributeLine": 278,
+      "signatureLine": 279,
+      "endLine": 336,
       "configurations": [
         "Release",
         "Debug"
@@ -44206,7 +44206,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 221,
+        "testAttributeLine": 278,
         "signature": "public async Task ForeignCompressionBindingShouldFaultWithoutPublishingReady()",
         "parameterSyntax": [],
         "attributes": [
@@ -44215,8 +44215,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 10364,
-        "endOffset": 13452,
+        "startOffset": 14310,
+        "endOffset": 17398,
         "spanSHA256": "401a435c8d5dce5e7bada97c51626398ccc05dc3fccf4a1722fe441bd637608c",
         "unknown": []
       }
@@ -44229,9 +44229,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Void",
-      "attributeLine": 281,
-      "signatureLine": 282,
-      "endLine": 326,
+      "attributeLine": 338,
+      "signatureLine": 339,
+      "endLine": 383,
       "configurations": [
         "Release",
         "Debug"
@@ -44239,7 +44239,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 281,
+        "testAttributeLine": 338,
         "signature": "public void ProtocolPhaseFrameMatrixShouldMatchLifecycleRules()",
         "parameterSyntax": [],
         "attributes": [
@@ -44248,8 +44248,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 13458,
-        "endOffset": 15672,
+        "startOffset": 17404,
+        "endOffset": 19618,
         "spanSHA256": "bbc5b955fc1f531d6aa89f9f9abaa0174dcbf9645587a1772d8f207003655e7e",
         "unknown": []
       }
@@ -44262,9 +44262,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 328,
-      "signatureLine": 329,
-      "endLine": 360,
+      "attributeLine": 385,
+      "signatureLine": 386,
+      "endLine": 417,
       "configurations": [
         "Release",
         "Debug"
@@ -44272,7 +44272,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 328,
+        "testAttributeLine": 385,
         "signature": "public async Task DrainingShouldRejectNewRequestsAndPreserveExistingCallFrames()",
         "parameterSyntax": [],
         "attributes": [
@@ -44281,8 +44281,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 15678,
-        "endOffset": 17668,
+        "startOffset": 19624,
+        "endOffset": 21614,
         "spanSHA256": "3025e4522c31b8825d49a28d4d0e5273b81f7a3e59d73675819f5ce9d251d692",
         "unknown": []
       }
@@ -44295,9 +44295,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 362,
-      "signatureLine": 363,
-      "endLine": 401,
+      "attributeLine": 419,
+      "signatureLine": 420,
+      "endLine": 458,
       "configurations": [
         "Release",
         "Debug"
@@ -44305,7 +44305,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 362,
+        "testAttributeLine": 419,
         "signature": "public async Task StoppingShouldPublishReceiveTerminationAndStopAnExistingSendPump()",
         "parameterSyntax": [],
         "attributes": [
@@ -44314,8 +44314,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 17674,
-        "endOffset": 19832,
+        "startOffset": 21620,
+        "endOffset": 23778,
         "spanSHA256": "2f31b86ba73c91a0313cb0999794888a80c52aab012319a85a6577ee376ae307",
         "unknown": []
       }
@@ -44328,9 +44328,9 @@
       "arity": 0,
       "parameters": [],
       "return": "System.Threading.Tasks.Task",
-      "attributeLine": 403,
-      "signatureLine": 404,
-      "endLine": 439,
+      "attributeLine": 460,
+      "signatureLine": 461,
+      "endLine": 496,
       "configurations": [
         "Release",
         "Debug"
@@ -44338,7 +44338,7 @@
       "initialEligibility": "ordinary",
       "expectedCases": 1,
       "sourceProvenance": {
-        "testAttributeLine": 403,
+        "testAttributeLine": 460,
         "signature": "public async Task SendPumpShouldEnforceProtocolPhaseBeforeQueueing()",
         "parameterSyntax": [],
         "attributes": [
@@ -44347,8 +44347,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 19838,
-        "endOffset": 21821,
+        "startOffset": 23784,
+        "endOffset": 25767,
         "spanSHA256": "84ba5a64a23e6b3773d66565909aba027af341a963cfa0183a12df61e36d5cd4",
         "unknown": []
       }
@@ -92623,6 +92623,25 @@
     "changedMethodBodies": 27,
     "methodCount": 2463,
     "sourcePinCount": 1599,
+    "qualification": "Derived source catalog only; not a test execution result."
+  },
+  "runtimeHandshakeDerivation": {
+    "kind": "runtime-handshake-four-body-source-rebase",
+    "parentCommit": "4c26ac7bd90995a684a1daa7d94078a27538df47",
+    "parentTree": "bf52f2d1ba5147b1fd06ad0c7e4bcb734b6e80e3",
+    "parentCatalogSHA256": "f2164dcc06d4ca0d5aeb91a5e19cbf3d67e25321d9346948d7ccaf10d19f632c",
+    "parentTestTree": "47527763f1de7aa592f94120a346d843456d6cf1",
+    "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
+    "candidateTestTree": "395db8d7cecea0158892f7ab6725c2a43031e572",
+    "changedSourcePaths": [
+      "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs"
+    ],
+    "changedMethodBodies": 4,
+    "methodCount": 2463,
+    "sourcePinCount": 1599,
+    "expectedOrdinaryCases": 2879,
+    "expectedExplicitCases": 5,
+    "candidateSourcePinsSHA256": "4ce3494cd436fe8e01de73a12b7c0f386f23b8cc8cb065a77e483f49777542b9",
     "qualification": "Derived source catalog only; not a test execution result."
   }
 }

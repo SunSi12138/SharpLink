@@ -1,0 +1,285 @@
+{
+  "schemaVersion": 1,
+  "scope": "runtime-handshake-four-body-catalog-rebase",
+  "kind": "runtime-handshake-four-body-source-rebase",
+  "parentCommit": "4c26ac7bd90995a684a1daa7d94078a27538df47",
+  "parentTree": "bf52f2d1ba5147b1fd06ad0c7e4bcb734b6e80e3",
+  "parentCatalogSHA256": "f2164dcc06d4ca0d5aeb91a5e19cbf3d67e25321d9346948d7ccaf10d19f632c",
+  "parentTestTree": "47527763f1de7aa592f94120a346d843456d6cf1",
+  "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
+  "candidateTestTree": "395db8d7cecea0158892f7ab6725c2a43031e572",
+  "changedSourcePaths": [
+    "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs"
+  ],
+  "changedMethodBodies": 4,
+  "methodCount": 2463,
+  "sourcePinCount": 1599,
+  "expectedOrdinaryCases": 2879,
+  "expectedExplicitCases": 5,
+  "candidateSourcePinsSHA256": "4ce3494cd436fe8e01de73a12b7c0f386f23b8cc8cb065a77e483f49777542b9",
+  "qualification": "Derived source catalog only; not a test execution result.",
+  "candidateCatalogSHA256": "b2c428106c0ea0ca9fb88f0dd2f111b207b26b556e34fa8ec9e8b585897d3bfd",
+  "deletedMethods": 0,
+  "addedMethods": 0,
+  "unchangedMethodBodies": 2459,
+  "methodRecordsInEditedFile": [
+    {
+      "method": "HandshakeCompletionShouldPublishOneCompleteImmutableSnapshot",
+      "bodyChanged": true,
+      "oldLines": [
+        11,
+        12,
+        62
+      ],
+      "newLines": [
+        11,
+        12,
+        65
+      ],
+      "oldOffsets": [
+        207,
+        2867
+      ],
+      "newOffsets": [
+        207,
+        3030
+      ],
+      "oldSpanSHA256": "d97458c186eafaf4d740d53bc1ba0801be64cc91e650598d53ff2c5873fe037d",
+      "newSpanSHA256": "b90804ca02df298c46a0863934ac07b928e7a277530153533c168d3cebf8d144"
+    },
+    {
+      "method": "ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot",
+      "bodyChanged": true,
+      "oldLines": [
+        64,
+        65,
+        105
+      ],
+      "newLines": [
+        67,
+        68,
+        122
+      ],
+      "oldOffsets": [
+        2873,
+        4880
+      ],
+      "newOffsets": [
+        3036,
+        5917
+      ],
+      "oldSpanSHA256": "1b214f74e734860f5afe188e2db784e17957d92c32529976b590bb919dc43805",
+      "newSpanSHA256": "be71fa8f475a4d60aed41e1e0ed3be67fb4a1606684c474ceefafd180e821035"
+    },
+    {
+      "method": "InvalidHandshakeOptionsShouldFaultWithoutPublishingReady",
+      "bodyChanged": true,
+      "oldLines": [
+        107,
+        108,
+        160
+      ],
+      "newLines": [
+        124,
+        125,
+        209
+      ],
+      "oldOffsets": [
+        4886,
+        7869
+      ],
+      "newOffsets": [
+        5923,
+        11308
+      ],
+      "oldSpanSHA256": "1dea96e1ffd53bb1fb309f05b01dbfbf86e0a4ec118eaef82ebc0ee86e36ea5f",
+      "newSpanSHA256": "62cda585c30065721326ce158658735adc9b45b67d46b614763e3b582a924abb"
+    },
+    {
+      "method": "HandshakeCompletionAfterTerminalShouldBeRejected",
+      "bodyChanged": false,
+      "oldLines": [
+        162,
+        163,
+        181
+      ],
+      "newLines": [
+        211,
+        212,
+        230
+      ],
+      "oldOffsets": [
+        7875,
+        8792
+      ],
+      "newOffsets": [
+        11314,
+        12231
+      ],
+      "oldSpanSHA256": "bde518a3b52f39802b5054982b62220574399a23931a75b6c47011a8dfdcb47f",
+      "newSpanSHA256": "bde518a3b52f39802b5054982b62220574399a23931a75b6c47011a8dfdcb47f"
+    },
+    {
+      "method": "HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState",
+      "bodyChanged": true,
+      "oldLines": [
+        183,
+        184,
+        219
+      ],
+      "newLines": [
+        232,
+        233,
+        276
+      ],
+      "oldOffsets": [
+        8798,
+        10358
+      ],
+      "newOffsets": [
+        12237,
+        14304
+      ],
+      "oldSpanSHA256": "7fabd45959f7d68108de1e211a0bc5a922049829b2e675a99bdcf242b1767b1f",
+      "newSpanSHA256": "f8c96aac1957cc0c0bfd0cdd1fcc13dbc13d9cecd8cf9d1c1e978d8b8b73f336"
+    },
+    {
+      "method": "ForeignCompressionBindingShouldFaultWithoutPublishingReady",
+      "bodyChanged": false,
+      "oldLines": [
+        221,
+        222,
+        279
+      ],
+      "newLines": [
+        278,
+        279,
+        336
+      ],
+      "oldOffsets": [
+        10364,
+        13452
+      ],
+      "newOffsets": [
+        14310,
+        17398
+      ],
+      "oldSpanSHA256": "401a435c8d5dce5e7bada97c51626398ccc05dc3fccf4a1722fe441bd637608c",
+      "newSpanSHA256": "401a435c8d5dce5e7bada97c51626398ccc05dc3fccf4a1722fe441bd637608c"
+    },
+    {
+      "method": "ProtocolPhaseFrameMatrixShouldMatchLifecycleRules",
+      "bodyChanged": false,
+      "oldLines": [
+        281,
+        282,
+        326
+      ],
+      "newLines": [
+        338,
+        339,
+        383
+      ],
+      "oldOffsets": [
+        13458,
+        15672
+      ],
+      "newOffsets": [
+        17404,
+        19618
+      ],
+      "oldSpanSHA256": "bbc5b955fc1f531d6aa89f9f9abaa0174dcbf9645587a1772d8f207003655e7e",
+      "newSpanSHA256": "bbc5b955fc1f531d6aa89f9f9abaa0174dcbf9645587a1772d8f207003655e7e"
+    },
+    {
+      "method": "DrainingShouldRejectNewRequestsAndPreserveExistingCallFrames",
+      "bodyChanged": false,
+      "oldLines": [
+        328,
+        329,
+        360
+      ],
+      "newLines": [
+        385,
+        386,
+        417
+      ],
+      "oldOffsets": [
+        15678,
+        17668
+      ],
+      "newOffsets": [
+        19624,
+        21614
+      ],
+      "oldSpanSHA256": "3025e4522c31b8825d49a28d4d0e5273b81f7a3e59d73675819f5ce9d251d692",
+      "newSpanSHA256": "3025e4522c31b8825d49a28d4d0e5273b81f7a3e59d73675819f5ce9d251d692"
+    },
+    {
+      "method": "StoppingShouldPublishReceiveTerminationAndStopAnExistingSendPump",
+      "bodyChanged": false,
+      "oldLines": [
+        362,
+        363,
+        401
+      ],
+      "newLines": [
+        419,
+        420,
+        458
+      ],
+      "oldOffsets": [
+        17674,
+        19832
+      ],
+      "newOffsets": [
+        21620,
+        23778
+      ],
+      "oldSpanSHA256": "2f31b86ba73c91a0313cb0999794888a80c52aab012319a85a6577ee376ae307",
+      "newSpanSHA256": "2f31b86ba73c91a0313cb0999794888a80c52aab012319a85a6577ee376ae307"
+    },
+    {
+      "method": "SendPumpShouldEnforceProtocolPhaseBeforeQueueing",
+      "bodyChanged": false,
+      "oldLines": [
+        403,
+        404,
+        439
+      ],
+      "newLines": [
+        460,
+        461,
+        496
+      ],
+      "oldOffsets": [
+        19838,
+        21821
+      ],
+      "newOffsets": [
+        23784,
+        25767
+      ],
+      "oldSpanSHA256": "84ba5a64a23e6b3773d66565909aba027af341a963cfa0183a12df61e36d5cd4",
+      "newSpanSHA256": "84ba5a64a23e6b3773d66565909aba027af341a963cfa0183a12df61e36d5cd4"
+    }
+  ],
+  "allOtherParentTestBytesUnchanged": true,
+  "nonMethodBytesUnchanged": true,
+  "productBytesUnchanged": true,
+  "parentFileSHA256": "16d8a6ddf73b868c011ed391c4f29d519621e770679c03913219ac037a4bc554",
+  "candidateFileSHA256": "ba2c03dc21940eb01ace60bd0391e415e43cd5b28461709dc85a93ecedb2bbea",
+  "bodyManifestSHA256": "417aacd985d781a6b7b177dd666ddb71003f39e81683f50cbc92e4fc5111b764",
+  "historicalDerivationPreservedExactly": true,
+  "historicalDiagnostic": {
+    "runId": 42004659522,
+    "passed": 2618,
+    "errors": 261,
+    "runtimeHandshakePassed": 1,
+    "runtimeHandshakeFailed": 3,
+    "qualified": false,
+    "evidenceSHA256": "157d3674e3be1b8876cbf9dd615adf8f2b0bab98a795beae48ebacf87f6fe62e"
+  },
+  "candidateExecution": "not run",
+  "fullSuiteQualified": false
+}

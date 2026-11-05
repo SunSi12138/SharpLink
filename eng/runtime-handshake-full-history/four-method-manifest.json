@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "baseHead": "4c26ac7bd90995a684a1daa7d94078a27538df47",
+  "path": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+  "oldFileSHA256": "16d8a6ddf73b868c011ed391c4f29d519621e770679c03913219ac037a4bc554",
+  "newFileSHA256": "ba2c03dc21940eb01ace60bd0391e415e43cd5b28461709dc85a93ecedb2bbea",
+  "oldFileBytes": 23836,
+  "newFileBytes": 27782,
+  "offsetConvention": "UTF-8 byte offsets, start inclusive and end exclusive; braces included; lines one-based inclusive",
+  "methods": [
+    {
+      "method": "HandshakeCompletionShouldPublishOneCompleteImmutableSnapshot",
+      "identity": "SharpLink.UnitTests.Runtime.NegotiatedSessionOptionsTests.HandshakeCompletionShouldPublishOneCompleteImmutableSnapshot",
+      "parameters": [],
+      "discoveredCases": 1,
+      "old": {
+        "bodyFile": "bodies/old/HandshakeCompletionShouldPublishOneCompleteImmutableSnapshot.cs.txt",
+        "sha256": "4f07e027d6f317137866f5cf11ebf2aa35d67dccf6048de2371391271dddd0f1",
+        "bytes": 2564,
+        "byteStart": 303,
+        "byteEndExclusive": 2867,
+        "startLine": 13,
+        "endLine": 62,
+        "signatureLine": 12
+      },
+      "new": {
+        "bodyFile": "bodies/new/HandshakeCompletionShouldPublishOneCompleteImmutableSnapshot.cs.txt",
+        "sha256": "da3b831692b2bafcbbd7428a3b8c43522f5b2ff6419d5d6cdce414b0a26c044a",
+        "bytes": 2727,
+        "byteStart": 303,
+        "byteEndExclusive": 3030,
+        "startLine": 13,
+        "endLine": 65,
+        "signatureLine": 12
+      }
+    },
+    {
+      "method": "ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot",
+      "identity": "SharpLink.UnitTests.Runtime.NegotiatedSessionOptionsTests.ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot",
+      "parameters": [],
+      "discoveredCases": 1,
+      "old": {
+        "bodyFile": "bodies/old/ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot.cs.txt",
+        "sha256": "1ec7efe807c65fbcb01040c573dba5fbf43629d11ba0a102832813d6d4212a81",
+        "bytes": 1909,
+        "byteStart": 2971,
+        "byteEndExclusive": 4880,
+        "startLine": 66,
+        "endLine": 105,
+        "signatureLine": 65
+      },
+      "new": {
+        "bodyFile": "bodies/new/ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot.cs.txt",
+        "sha256": "017b7745faa6147ba9f7f8551ed4b3b3ecaf07151cdee4ef51df9fec6391816f",
+        "bytes": 2783,
+        "byteStart": 3134,
+        "byteEndExclusive": 5917,
+        "startLine": 69,
+        "endLine": 122,
+        "signatureLine": 68
+      }
+    },
+    {
+      "method": "HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState",
+      "identity": "SharpLink.UnitTests.Runtime.NegotiatedSessionOptionsTests.HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState",
+      "parameters": [],
+      "discoveredCases": 1,
+      "old": {
+        "bodyFile": "bodies/old/HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState.cs.txt",
+        "sha256": "af540ae5f000b48bceb3f73433952abf18abb4bd7043949c0d0c8b4acd044229",
+        "bytes": 1460,
+        "byteStart": 8898,
+        "byteEndExclusive": 10358,
+        "startLine": 185,
+        "endLine": 219,
+        "signatureLine": 184
+      },
+      "new": {
+        "bodyFile": "bodies/new/HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState.cs.txt",
+        "sha256": "0476842e7bc9f517a48751ba99b3edb7106135bbc1c28038a42a5d8d23bcd19f",
+        "bytes": 1967,
+        "byteStart": 12337,
+        "byteEndExclusive": 14304,
+        "startLine": 234,
+        "endLine": 276,
+        "signatureLine": 233
+      }
+    },
+    {
+      "method": "InvalidHandshakeOptionsShouldFaultWithoutPublishingReady",
+      "identity": "SharpLink.UnitTests.Runtime.NegotiatedSessionOptionsTests.InvalidHandshakeOptionsShouldFaultWithoutPublishingReady",
+      "parameters": [],
+      "discoveredCases": 1,
+      "old": {
+        "bodyFile": "bodies/old/InvalidHandshakeOptionsShouldFaultWithoutPublishingReady.cs.txt",
+        "sha256": "7a0d67be256f29a00be263ec44c5dea81ff47d07268c3bbea098c84cb900a777",
+        "bytes": 2891,
+        "byteStart": 4978,
+        "byteEndExclusive": 7869,
+        "startLine": 109,
+        "endLine": 160,
+        "signatureLine": 108
+      },
+      "new": {
+        "bodyFile": "bodies/new/InvalidHandshakeOptionsShouldFaultWithoutPublishingReady.cs.txt",
+        "sha256": "3fb241dd74e99c15557e36812823e97530364898dc2989f988dfb26615f0b75e",
+        "bytes": 5293,
+        "byteStart": 6015,
+        "byteEndExclusive": 11308,
+        "startLine": 126,
+        "endLine": 209,
+        "signatureLine": 125
+      }
+    }
+  ]
+}
