@@ -1,0 +1,775 @@
+{
+  "runId": 41959478271,
+  "jobId": 127022142585,
+  "head": "8dba79eacbb18744cc6ccc01ad107bb460d574a4",
+  "completedAt": "2026-11-05T03:17:38.6938026Z",
+  "conclusion": "success",
+  "summary": {
+    "allSelectedPassed": true,
+    "candidateCatalogSHA256": "4b4f7cd616a746b153aee47a2fdd9f2685fdeee18a17ee0693743610642209a0",
+    "candidateParentHead": "d6c4d41bca201b2bd82e2e917cfd93d701976b5a",
+    "candidateValidationComplete": true,
+    "candidateValidationQualified": true,
+    "cases": [
+      {
+        "bodyExitCode": 0,
+        "case": 1,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "65839e95c5be3fa7dbfd3c6d8390974eb34d43ed2f6feadeb02d7e849aa28e27",
+        "junitFileSHA256": "b98d12111b9231086b0a77a8e1517a53bccfbf12c79d289e91a3db8c0de57725",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.WriterAndParserShouldRoundTripFrame",
+        "nativeCanonicalSHA256": "7bacd9d47bf7df88fe81256def0ac77232a1138d8f4277516e0faee059401978",
+        "nativeFileSHA256": "aca9edbe2ec538808406ad0c7723bd01c81660d7cc7f38a7c89aa4930bc4355f",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "bb20880e8524c588c9a561017b4b8b16bb9c0ae3573c1a46c8bca3de1812e729",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 2,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "54480914eb94ebc4a5aaeed5a677e2e307bf0cebd915d0bc5600c0d366b4fa5a",
+        "junitFileSHA256": "f76fa082489878407f5c3450287242874d24c4f10bebc6f4d532a8edc37cac40",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HeaderWithEveryByteInSeparateSegmentShouldParse",
+        "nativeCanonicalSHA256": "47ad1239260661299e0158b809cfb945ffd39860b2db0f1a756e5bf98f06c85c",
+        "nativeFileSHA256": "00cdfcc978d6949e21ebfe6eb4dbda5647d2fc2c695b7a5d1027c0109931d7a3",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "991170f27567f4f1b0e6be41e7dd41c64b11d1ef17d9cfb07f9226bc0b9414bb",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 3,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "391d95dc04afab5913019a2b61343f78ae670d51863108d61445b379269468c3",
+        "junitFileSHA256": "08d4aa98f1a06be6c9bf54f89e8893caeedfc14379e9a7ad9127061af69f2758",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.RawFrameWriterAndTokenShouldRemainInternalImplementationDetails",
+        "nativeCanonicalSHA256": "446e66eeeaefa1f32e81944eca559bc82c8a7922104e1878667e998892f7eafb",
+        "nativeFileSHA256": "6311c2b746a843d600bd866626d35aaff5687466afc1503e8c8d8e11cd492c2e",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "13a2ce59cde859602dcc6fcac51c5dcaf0c051c1ce15a1c907524e8af8779cc0",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 4,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "665c7b7f41475c820d9e3ce169b8d36b25bd72c39ded19682361ab5af563f919",
+        "junitFileSHA256": "cf27f174cc4ffa7dd45eccdc71fb107f2dbc22b1187edfd5fc40e5710f3aa610",
+        "method": "SharpLink.UnitTests.Runtime.SendPumpProgressIsolationTests.ProgressFlagDoesNotGrowOwnedFrame",
+        "nativeCanonicalSHA256": "db27ca1a0512111c40f7ede4c378987866f6c3a5b7407883aed41af76174d790",
+        "nativeFileSHA256": "9f368e6194b89c411a4a5536e902f3c347876e9e53493c6d6aa97948e3104ca0",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8281c8b5cd7d76bb50b37e16bd873a88e5d0e3799b58edae9bedf32d3b517f39",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 5,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "92cc5dc35860d9cb5c3cab24897b447915b8f890bf4fa914073d1ce87c27eaa5",
+        "junitFileSHA256": "002e6356624a3decc458284804f7b15685a40f2f2e9f8da52b5b94cf9102bfd8",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.OnlyNewMagicAndPositive63CorrelationAreAccepted",
+        "nativeCanonicalSHA256": "bc0fa92de693da046b01363af8b67133283de24ac32edd7eb36c70b7b7282946",
+        "nativeFileSHA256": "aaa19584eb0047d82776c5143b26e7d28012166c74b6112285ef0f29b4882910",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fd73b6a1c15043cd8d28a4e91f09364ce2518901472793dbaecebd8b85116c7c",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 6,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "fc075266a21fe1842f4c763ed762108c57ae4ffb67f59be7f2e0310530fdd056",
+        "junitFileSHA256": "ecc172b457fca37dfb06455fec32c0a071454ebfbac4aefd21d0455b8f20dcfe",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.CancellationHasExactlyOneKnownReasonByte",
+        "nativeCanonicalSHA256": "7d22c9033f2058383b3a92a0305e953a6312c35c84c0e3f1c19dcc09135c95f4",
+        "nativeFileSHA256": "1482c1768829065f4efedec576c4290aa119ccf86f9a002a704edc151c6602ec",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "ca87716ce7e14825cdfc3fa4cf86e9423e45fb6777f967d7b8e8890a26a7972c",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 7,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "4a0e318b2a7ac68c21a82fff7be4520954c2b280825efdd781591565cd01aea1",
+        "junitFileSHA256": "f04fd7530dba0fd7dd413bc7eb2f9b648b824d7adbb48c1e8f1c4a49c8a70425",
+        "method": "SharpLink.UnitTests.Runtime.SendPumpProgressIsolationTests.StreamCompleteNeverOvertakesQueuedStreamData",
+        "nativeCanonicalSHA256": "c2c9e25245f7ccec18d4b98cab6ecd428b4048e9fe78dbbc2e79fcfb2a64951f",
+        "nativeFileSHA256": "7d61499f5d9e01c8bef85398747df21a86094c094d2b3046a852c79c1e9a8717",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "15bebe9a91d94cd9b636180e8416f02305581083992f84d58aefb353cfe63622",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 8,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "6f9225c8c59e2a7fbb7c17337c6e1812425ff2d7d7b7af339268af19eadc940c",
+        "junitFileSHA256": "f4764c25218e40929b30fb492c6f96746be6d722a647b65470231cfa9a8c3d98",
+        "method": "SharpLink.UnitTests.Runtime.FlushOperationStressTests.SessionStopShouldCompleteEveryForceFlushWaiter",
+        "nativeCanonicalSHA256": "f8f1d5614b5795e4e3afb230541623a8cfe6dc2add17097537b5bea2fc4abeb2",
+        "nativeFileSHA256": "b48c2210bcf966295b0d9d8aace2524b6a4c40692ef743d0d87f1477366facb6",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "cf4e08e163f4cb22806cb69ff5005a6909fbdd4c1e8163e49a0c041e6aaf11c2",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/FlushOperationStressTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 9,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "fe9f2a57cd7f3df7b3c7059b7b5100791f2124352b64d633297119e05f2a7c6b",
+        "junitFileSHA256": "2c5b5e3a7d37dc98f0198d7ed34d34ceda23b0bbe4fe4f7d2d451cd1d274258f",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.ZeroThroughFourteenHeaderBytesShouldRemainPartial",
+        "nativeCanonicalSHA256": "e789c55d07c6f30d79d720a8498b1ce24a8c067a4e619a68bd5d59dcf3c6d6b0",
+        "nativeFileSHA256": "832744a94de7c58f39dd92e4ec7ccf77145c09d9167c5fdc9eaff3cfc92372a0",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dbc5c10d2f38176783b8def30d8d87c9728351c44ba747a21cb8bedf406f0b8f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 10,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "00a905f9c0ec7491c8943dc6da167f852cefcbf1128f22f9aa1ee18a6b025a3f",
+        "junitFileSHA256": "2e136c66d345c5e621d10ef484e32a2ce4af9dde90fb7a7e742fd892fcdb09b0",
+        "method": "SharpLink.UnitTests.Runtime.Stack13FrameClearTests.FrameInitializationShouldTouchOnlyItsOwnFifteenBytes",
+        "nativeCanonicalSHA256": "4635220d19a6137f338623fde3c1585200df978a3d5d429e9ede0c7bac34b90a",
+        "nativeFileSHA256": "a356e8ba9a66b2e0458f950364a8d30b78800101dadf3b3a19ab512a91f18d4e",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "e34f199c6ea99f3055788ead3fc2bf9cdb0ec90bf09e9898016e512f78255da7",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 11,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "96bb47abc50d7b7bdef8ffbb5663fda2988ada590825c259a87cac392db11ba7",
+        "junitFileSHA256": "8b174598683ee308c7031fae9262beb1fb7049f246013507dcdc8e22019b3ddd",
+        "method": "SharpLink.UnitTests.Runtime.Stack13FrameClearTests.FrameInitializationShouldTouchOnlyItsOwnFifteenBytes",
+        "nativeCanonicalSHA256": "bfa5b5b9cbba36021e87016279c31aa71de6d25ae917a7e50596f3c6cb7703fb",
+        "nativeFileSHA256": "c41df8726d37d72baf600021c9f5b0706a3ac8f257b3d7c6ee4c5a97448e55c5",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "291c078ae904dcc4b63216f54439b79aaaf745e1b7f7dcecf97b74df34ea644b",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 12,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "a85dccd99d2543e9900328d03628714efb3a493f68aaf6e4ebf4ace01ccdf206",
+        "junitFileSHA256": "0388b5dc0a7008dfef0f9e4749a669709b750142f76776f95e7a3c07dbc8a268",
+        "method": "SharpLink.UnitTests.Runtime.Stack13FrameClearTests.FrameInitializationShouldTouchOnlyItsOwnFifteenBytes",
+        "nativeCanonicalSHA256": "6b7b301ceb43d249dd50df40766d913024550a746ee4512bab529bd6fdd46ebf",
+        "nativeFileSHA256": "48bb637ee7fa5683bdf79580a2e2fcd1e2c8cc85c3fdbe06b48e5d26d72911f1",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "6cad0381279674b1c8aeb3cd10428cb909d2cd53358e3ee6558ad4263cef1838",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 13,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "f9e5b86c37d59a18e5d0408c1c0d4bf74a0c3374b6d9274154a093a8f67c581c",
+        "junitFileSHA256": "b3beae7ac06d9dff106c67de29e41bb5ea57fb8267773067456511f260ca2f52",
+        "method": "SharpLink.UnitTests.Runtime.Stack13FrameClearTests.ExactWriterLimitAndDisposedLeaseMustRemainEnforced",
+        "nativeCanonicalSHA256": "86ae699a554af8830e488b704f578b294d4cbdaa81523d9e733029ce130f80f7",
+        "nativeFileSHA256": "59efc257685c12a48e6dfa7a5fcf88e8b1bf3bb374300292143c98acf8032ba2",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "67075795ba4977c1f72aa8d4a8867a7b5642e5e735be90ae15f6795bcd8bbb41",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 14,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "6acd719148739f1e7ecaaee1e9cde53630b3bcac0b137bbd79dca6c4abe33a47",
+        "junitFileSHA256": "7439b46efa10d643b07dafde6cf7fbdcce2f4658500044781c44e96526adbffc",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.MultipleFramesFollowedByHalfFrameShouldPreserveRemainder",
+        "nativeCanonicalSHA256": "5e3728fed0ba1552a8f250bb51cf28626ccc2df50a7d7c7550fc0af11ef18388",
+        "nativeFileSHA256": "f703eb271d0139a4b84c60e6a03bc573b2da82564ba90a0a27bd278b8d613d50",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fe2fd8e238bfa341dbf162fa132bcbe639a3ef77603dc79eb7dbe971b692d739",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 15,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "42a7bce9a82b8579af5b443b357f459977616021864195a2ef7e088a665c332f",
+        "junitFileSHA256": "3f5cc1d096d8c2c4944bcd818b80a4b1fd58d11d84d52799292f4e26b4077171",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.InvalidLengthTypeFlagsAndRequestIdShouldBeRejected",
+        "nativeCanonicalSHA256": "58c7f5bf8d798d76db16a3128963ca91b3805fb356ffca9204510aadf9d4ff16",
+        "nativeFileSHA256": "3d275c98ebbf6a38ada7fe0084b57e9ea2fd73b4a433eed98a3b44ec18173e69",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "6d1c9e130d649d649968044f1d70aa6990a648ad6d590fedf893513f5c47c18d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 16,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "4e40a0d7021740738d3afc650f0b69cd6baf098a50dd0eac19bf21c46c32285d",
+        "junitFileSHA256": "5f2f0164b328345823a5454bfaee756c196b70db948750709659af9f76efadcf",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HealthControlFramesShouldRequireBoundedPayloadAndRequestId",
+        "nativeCanonicalSHA256": "247f1393082bf93460d8f047595816bf63cc1627cb8c0f1e5c607f4ec7b4453b",
+        "nativeFileSHA256": "8226850e7422c714ee68051b53ef68b7646704f22e0d5638eb247be5669fe6a8",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "893e7741de679401f54a83ecef39f04a366fa68a9aa827b1f9084d3ce9e4b93f",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 17,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "80d153288f46cb0567b9904e6b2b0b7b0b545ad00692fb5142e6654232832e8f",
+        "junitFileSHA256": "0ad3c395a46fdb30f95aa8d5557b91bb53c7bd3e28cd98b38d95fc2775eb837a",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.HandshakeRequestAndResponseShouldRoundTrip",
+        "nativeCanonicalSHA256": "70beb8d3bb3ba4096091cf30797426096d41eaff90b58cbf0c85481fce32feb5",
+        "nativeFileSHA256": "054b20491ddb8bcf204f100c380583237a81e1e8f350b7a98932273213124e2b",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "36bcb49a29ad9242b676e84c15ce538b5bda9d3ff96388c0f513d758529b3075",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 18,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "b75ff67270cc7c11ff3015f5cd17e642fb7b4cefb9d62af3151be0b8bd4b8c5b",
+        "junitFileSHA256": "ae1d3166fb9311214ccb2448abc3297ceaa60afd2d3b4152c0bed55a85c64f69",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs",
+        "nativeCanonicalSHA256": "e603f63b4c020ab3d1cdfcd26f7454f3065d4a767752f3be288bb8300353e6cf",
+        "nativeFileSHA256": "97283efa1c0fff8cd6065adf41fb70167551235dc8242ec42b68471259781653",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "f1fa4afbe650090b51651db03f0057eb45c08c13716410720d3623e4338e7f18",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 19,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "f8a6f3a4fcc4051672ad3448d559100ef6ef85a1e64d59b39ead76a91b1903de",
+        "junitFileSHA256": "13f885c06a1a79748b893e583cc4b201d790dd89245331ba9314df5a28238c80",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2NegotiatorTests.ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized",
+        "nativeCanonicalSHA256": "257f219814b129833f488c8a201c9466b867754d9c673e68b3add6a93b638a9b",
+        "nativeFileSHA256": "76ecbc70d298aa7b19cd2b205131597d20569d763aaec8464563e79a8a87c1ee",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "dc0731d71dab9fe54574edd509bd61b3aed648a9e79b5a27bb7c5f2a94b47324",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 20,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "fdce98c6c6e437a32a7fad6a80ecd69e57d410cc57f990d8fb598d0beae4ed06",
+        "junitFileSHA256": "a63318096a5d79af08785a09c0e70447e2e3ed0757bad529c9620e21c5b8435e",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2ErrorCompatibilityTests.StructuredErrorShapeShouldRejectPublishedMinorThreePeers",
+        "nativeCanonicalSHA256": "24c8586d67c386d232309572e0a95792dc4b70760caf89fe5540e056511a48cb",
+        "nativeFileSHA256": "1eb51fa1965adf6a64f3cf0197c16e5b94f3a20efbb4852438823d80cf6a163b",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "1e83ec04c59362baf6f6ac8988b9fef92a38472bca37a9e11e255b505314e281",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2ErrorCompatibilityTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 21,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "2143879ca870d34a6e50bf7d59918582735d20634b2eb6ce010d9b70af96ce7f",
+        "junitFileSHA256": "b717dbef7fe82e1a8dc0d874353a4cf426f4abffeb586670742b670789a16c53",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.HandshakeRequestPinsNewOffsetsAndStrictRevisionCapabilitiesAndLengths",
+        "nativeCanonicalSHA256": "6e027b03e7285d135af91f536507760014971ce358b219e0e61a238b592368e0",
+        "nativeFileSHA256": "983548de18b698c192968c2f8af54996285286548623c8ccea6c4e2ee12ee4ee",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "8c896685f3926346c9b2251d275149c87b50df8cf07f82ab38a75bc34320525d",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 22,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "ee7aaf6e37f94e3b376bcf0f1a0935cc1882b51526d394b33abad3346fa228b1",
+        "junitFileSHA256": "cd1986cc3d34402202a61ba451526ff0c23f9fb9017ead6d4025a599ccdbe710",
+        "method": "SharpLink.UnitTests.Protocol.Protocol3FrameAndHandshakeTests.SuccessHandshakeCarriesExactAuthorityAndNoDowngrade",
+        "nativeCanonicalSHA256": "505125bf4192dc8521c33de665471f1de3c410f1bf64369f23ab6b3be0620a58",
+        "nativeFileSHA256": "6fa43431335803c9231d6bd0e5196aff6a058ee445d5e928774f1b5d01f604aa",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "5dc339fde64e4b233d48626534c3bf5ada274042df9b29f91e6cb47a3bb042e6",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs",
+        "status": "passed"
+      },
+      {
+        "bodyExitCode": 0,
+        "case": 23,
+        "exceptions": [],
+        "junitDecodedTextSHA256": "dc7383e1cb630edb17a297257e99a840a9be385d84a11f168f089dd1afaf62ae",
+        "junitFileSHA256": "1e4f64c9c6a8fd1e9df126b2f3db003bf560e8a299784bfad6ee2f28911ee377",
+        "method": "SharpLink.UnitTests.Protocol.ProtocolV2Tests.ParserViolationsShouldCarryFixedLowCardinalityClassification",
+        "nativeCanonicalSHA256": "a23f58cd558b135a984b956fe7fad975ba1d93d48e718e22e9759ff7e7885277",
+        "nativeFileSHA256": "deee1845b3a13acdcc5f629a2d097dd263e6c8b9b5be6652e8d52f391dd89d1d",
+        "ownerClosed": true,
+        "resultUIDSetSHA256": "fd1b91c151c5472d1d5c11bb37f791ca69fd1f8212a252a0db0e748ebd7db936",
+        "selectedPassed": true,
+        "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+        "status": "passed"
+      }
+    ],
+    "errorOccurrences": 0,
+    "evidenceDurable": true,
+    "exit": 0,
+    "expectedExplicitMetadataCount": 5,
+    "expectedOrdinaryMetadataCount": 2879,
+    "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
+    "fullSuiteQualified": false,
+    "historicalDiagnosticRunId": 41947099090,
+    "historicalFirstMigrationRun": {
+      "case4": {
+        "comparatorBytes": 56,
+        "measuredBytes": 64,
+        "shapeGuardsPassed": true
+      },
+      "complete": true,
+      "head": "4209233576c2100e0d5dc625308f49b76d500169",
+      "nonpassing": 1,
+      "passed": 5,
+      "qualified": false,
+      "runId": 41950562552
+    },
+    "historicalFullRunId": 41940224644,
+    "historicalOrdinaryFailureCount": 290,
+    "historicalPackingRun": {
+      "complete": true,
+      "fullSuiteQualified": false,
+      "head": "3f2f1d03da65844fba6f367811545f195ccf5206",
+      "nonpassing": 0,
+      "passed": 8,
+      "qualified": true,
+      "runId": 41952557024
+    },
+    "historicalParserHandshakeDiagnostic": {
+      "complete": true,
+      "errorOccurrences": 21,
+      "evidenceSHA256": "f2f09025a1cc611049c32ec83ad6be2ef2cd8a6351efb9191588a02d761424e1",
+      "fullSuiteQualified": false,
+      "head": "d6c4d41bca201b2bd82e2e917cfd93d701976b5a",
+      "jobId": 127015025107,
+      "nonpassing": 7,
+      "passed": 4,
+      "qualified": false,
+      "runId": 41957258310
+    },
+    "historicalThirteenCaseRun": {
+      "complete": true,
+      "fullSuiteQualified": false,
+      "head": "5e021af675f9252a7bb2ac4023d78bf8bec0aa92",
+      "nonpassing": 0,
+      "passed": 13,
+      "qualified": true,
+      "runId": 41954983558
+    },
+    "identity": {
+      "binarySHA256": "8b2010c2b336ef06c31a63900449c574e5280348c5417fdf3071d9404e32be47",
+      "head": "8dba79eacbb18744cc6ccc01ad107bb460d574a4",
+      "packageManifestSHA256": "8be1380eb609fd1220c7d1866786c16391895904191adac585ccfdaceaf61e68",
+      "providerProofSHA256": "bd79bb0a31d39a529346436b4fea1ba9049327bd3941c92699d896d5ee399d66",
+      "sdkManifestSHA256": "637085c1c06a45583edc2334e92e1959bc33e2b49ddc043088893556f2b74d65",
+      "sourceManifestSHA256": "8f9801495121965b481ea4c5730c977e0653a2b0f572991ddcb4913a1fb6fa45",
+      "tree": "2a6dcb2aab1d741b5e7520aef49e93e19c7ee2d6"
+    },
+    "preparationQualifiedAtHandoff": true,
+    "rejections": {
+      "codes": [],
+      "unclassifiedExceptionNodes": 0
+    },
+    "requiredRuntime": "10.0.14",
+    "requiredSdk": "10.0.114",
+    "requiredSelectedCaseCount": 23,
+    "schemaVersion": 1,
+    "scope": "twenty-three-ordinary-parser-handshake-fixture-validation",
+    "sourceTrees": {
+      "src": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
+      "test": "226e6404e69879868bc2f98037624ec357529f49"
+    }
+  },
+  "stages": [
+    {
+      "timestamp": "2026-11-05T03:06:40.8182940Z",
+      "stage": "head",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:40.8420582Z",
+      "stage": "tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:40.9778152Z",
+      "stage": "clean",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:41.0048307Z",
+      "stage": "tracked",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:42.0022327Z",
+      "stage": "clone",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:42.6431593Z",
+      "stage": "checkout",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:43.1210072Z",
+      "stage": "clone-head",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:43.6039341Z",
+      "stage": "diagnostic-src-tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:44.0934557Z",
+      "stage": "diagnostic-test-tree",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:49.1254001Z",
+      "stage": "python-controls",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:06:55.4901026Z",
+      "stage": "sdk-version",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:00.1680882Z",
+      "stage": "sdk-info",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:04.6632579Z",
+      "stage": "sdk-runtimes",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:17.9744251Z",
+      "stage": "restore",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:29.3282676Z",
+      "stage": "metadata0",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:35.5358635Z",
+      "stage": "metadata1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:41.7245103Z",
+      "stage": "metadata2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:47.9139588Z",
+      "stage": "metadata3",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:07:54.1078303Z",
+      "stage": "metadata4",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:00.3678745Z",
+      "stage": "metadata5",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:06.5681748Z",
+      "stage": "metadata6",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:12.8210719Z",
+      "stage": "metadata7",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:19.0470251Z",
+      "stage": "metadata8",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:25.2632587Z",
+      "stage": "metadata9",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:31.4950332Z",
+      "stage": "metadata10",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:37.7520569Z",
+      "stage": "metadata11",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:44.0790181Z",
+      "stage": "metadata12",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:50.3877862Z",
+      "stage": "metadata13",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:08:56.7884854Z",
+      "stage": "expanded-imports",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:10:03.3918556Z",
+      "stage": "build",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:10:11.1003616Z",
+      "stage": "discovery1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:10:27.9875466Z",
+      "stage": "discovery2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:11:04.9639792Z",
+      "stage": "parser-handshake-validation-python-controls",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:11:15.2564999Z",
+      "stage": "parser-handshake-validation-case-1",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:11:32.1316611Z",
+      "stage": "parser-handshake-validation-case-2",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:11:48.9172626Z",
+      "stage": "parser-handshake-validation-case-3",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:12:05.8273380Z",
+      "stage": "parser-handshake-validation-case-4",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:12:22.5360824Z",
+      "stage": "parser-handshake-validation-case-5",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:12:39.2806009Z",
+      "stage": "parser-handshake-validation-case-6",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:12:56.0589504Z",
+      "stage": "parser-handshake-validation-case-7",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:13:12.9269131Z",
+      "stage": "parser-handshake-validation-case-8",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:13:29.7852399Z",
+      "stage": "parser-handshake-validation-case-9",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:13:46.6934324Z",
+      "stage": "parser-handshake-validation-case-10",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:14:03.5541819Z",
+      "stage": "parser-handshake-validation-case-11",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:14:20.4537773Z",
+      "stage": "parser-handshake-validation-case-12",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:14:37.2152044Z",
+      "stage": "parser-handshake-validation-case-13",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:14:54.0542449Z",
+      "stage": "parser-handshake-validation-case-14",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:15:11.0799987Z",
+      "stage": "parser-handshake-validation-case-15",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:15:28.0674961Z",
+      "stage": "parser-handshake-validation-case-16",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:15:45.0790911Z",
+      "stage": "parser-handshake-validation-case-17",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:16:01.8805178Z",
+      "stage": "parser-handshake-validation-case-18",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:16:18.6252213Z",
+      "stage": "parser-handshake-validation-case-19",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:16:35.3535680Z",
+      "stage": "parser-handshake-validation-case-20",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:16:52.1345719Z",
+      "stage": "parser-handshake-validation-case-21",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:17:08.9689453Z",
+      "stage": "parser-handshake-validation-case-22",
+      "exit": 0,
+      "owned": "joined"
+    },
+    {
+      "timestamp": "2026-11-05T03:17:25.7674619Z",
+      "stage": "parser-handshake-validation-case-23",
+      "exit": 0,
+      "owned": "joined"
+    }
+  ]
+}

@@ -1,0 +1,2077 @@
+{
+  "runId": 41940224644,
+  "jobId": 126958823032,
+  "head": "dcc3edbb2bb4057343b9a32a31f7bed39e47c4ad",
+  "tree": "0a2c89de1753e43d02b9fa660486f72e0368b6c0",
+  "identity": {
+    "binarySHA256": "97688b6113f89091fbf0fc332fc3042e7cd1ffbaf654d7f7aed3478e553e78fa",
+    "configuration": "Release",
+    "head": "dcc3edbb2bb4057343b9a32a31f7bed39e47c4ad",
+    "installedRuntimes": [
+      {
+        "framework": "Microsoft.AspNetCore.App",
+        "version": "10.0.14"
+      },
+      {
+        "framework": "Microsoft.NETCore.App",
+        "version": "10.0.14"
+      }
+    ],
+    "mtp": "2.5.1",
+    "os": "ubuntu-24.04",
+    "packageManifestSHA256": "757c40a8953cc66e9fabb98cbb90e0a2e0b9fbe77fb52b184e2e31baa4dfbf8a",
+    "providerProofSHA256": "bd79bb0a31d39a529346436b4fea1ba9049327bd3941c92699d896d5ee399d66",
+    "runtimeRequest": "Microsoft.NETCore.App/10.0.0",
+    "sdk": "10.0.114",
+    "sdkManifestSHA256": "d184a784dba1db0ac53914ba939fd71d2d603e5adb86e2d215ad654324fabc86",
+    "sourceManifestSHA256": "5e77c1efa371834a965099c457a394cb5f2989b1c19408582d94dd387b28cb32",
+    "tree": "0a2c89de1753e43d02b9fa660486f72e0368b6c0",
+    "tunit": "1.73.19"
+  },
+  "counts": {
+    "cancelled": 0,
+    "failed": 290,
+    "flaky": 0,
+    "passed": 2589,
+    "skipped": 0,
+    "timedOut": 0,
+    "total": 2879
+  },
+  "ownerClosed": true,
+  "missingCount": 0,
+  "retriesObserved": false,
+  "executionClosureObserved": true,
+  "preparationQualifiedAtHandoff": true,
+  "executionQualified": false,
+  "failures": [
+    {
+      "className": "BuildPlanBuilderTests",
+      "count": 1,
+      "methodName": "ManifestInputShouldBeSnapshottedBeforeMaterialize",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "source": "test/SharpLink.UnitTests/Builder/BuildPlanBuilderSnapshotAndConcurrencyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BuildPlanBuilderTests",
+      "count": 1,
+      "methodName": "ForeignContractOwnershipShouldFailDuringClientCompileBeforeMaterializingResources",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "source": "test/SharpLink.UnitTests/Builder/BuildPlanBuilderTopologyAndCompileTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BuildPlanBuilderTests",
+      "count": 1,
+      "methodName": "MalformedApi4ManifestShouldFailDuringClientCompileBeforeMaterializingResources",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "source": "test/SharpLink.UnitTests/Builder/BuildPlanBuilderTopologyAndCompileTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BuilderOwnershipRollbackTests",
+      "count": 1,
+      "methodName": "ServerFinalConstructionFailureMustNotDisposeCallerOwnedService",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "source": "test/SharpLink.UnitTests/Builder/BuilderOwnershipRollbackRegistrationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BuilderOwnershipRollbackTests",
+      "count": 1,
+      "methodName": "ServerRegistrationBuildFailureShouldRollbackPriorMaterializationsInReverse",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "source": "test/SharpLink.UnitTests/Builder/BuilderOwnershipRollbackRegistrationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BuildPlanBuilderTests",
+      "count": 1,
+      "methodName": "CoordinatorStopSignalsBeforeMetadataJoinButKeepsPhysicalOwnerAndCancellationFailure",
+      "namespace": "SharpLink.UnitTests.Builder",
+      "source": "test/SharpLink.UnitTests/Builder/ClientColdMetadataStopOrderingTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientConnectionConsumerAbandonmentTests",
+      "count": 1,
+      "methodName": "ThrowingCancellationCompletionShouldEvictFatalConnectionBeforeReadinessWait",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientConnectionConsumerAbandonmentTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientDependencyCleanupOwnershipTests",
+      "count": 2,
+      "methodName": "DeclaredDependencyPinProtectsFactoryRollbackAndFinalCommitRejectsDrainingOwner",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientDependencyCleanupOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientDependencyCleanupOwnershipTests",
+      "count": 1,
+      "methodName": "HeldAdapterKeepsDependencyVisibleAndRepeatedUnregisterJoins",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientDependencyCleanupOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientDependencyCleanupOwnershipTests",
+      "count": 1,
+      "methodName": "TimedOutAndCanceledWaitersDoNotLetStopOvertakeDependentCleanup",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientDependencyCleanupOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientHeadEmissionDispositionTests",
+      "count": 1,
+      "methodName": "SelectedDeadlineKeepsLateActualOutputCancellationCausePhysical",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientHeadEmissionDispositionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientHeadEmissionDispositionTests",
+      "count": 1,
+      "methodName": "SelectedDeadlineKeepsLateActualOutputIOExceptionPhysical",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientHeadEmissionDispositionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientPhysicalOutcomeReceiptTests",
+      "count": 1,
+      "methodName": "NormalProducerDoesNotWaitForResponseAndLateObserverBatchStaysCallerOwned",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientPhysicalOutcomeReceiptTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamProducerDeadlineTests",
+      "count": 1,
+      "methodName": "ExpiredCallShouldNotReenterProducerBeforeDeadlineTimerRuns",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamProducerDeadlineTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamPublicationGroupTests",
+      "count": 1,
+      "methodName": "DuplicateStreamRegistrationDoesNotRunSecondUserBodyOrLoseFailure",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamPublicationGroupTests",
+      "count": 1,
+      "methodName": "IgnoredFaultedSlotCancelsCooperativeSiblingWithoutWaitingForWriterWhenAll",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamPublicationGroupTests",
+      "count": 1,
+      "methodName": "IgnoredProducerTaskRetainsReservationThroughMoveNextAndDispose",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamPublicationGroupTests",
+      "count": 1,
+      "methodName": "WriterFailureCancelsCooperativeProducerBeforePhysicalJoinEvenWhenObserverThrows",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamPublicationGroupTests",
+      "count": 1,
+      "methodName": "WriterThrowAndIgnoredSlotFailureAreBothPreserved",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSupervisionAnchorTests",
+      "count": 1,
+      "methodName": "NormalProducerReleasesCapacityWhileAnchorWaitsForRealLogicalReceipt",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamSupervisionAnchorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSupervisionAnchorTests",
+      "count": 1,
+      "methodName": "ResponseDrainExtendsExistingAnchorAfterSupervisorSealAndKeepsRawCleanupError",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientStreamSupervisionAnchorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientType22AcceptanceTests",
+      "count": 1,
+      "methodName": "ExactHeadIsAcceptedBeforeHeldDeferredWakeAndWakeFailureCannotRefundIt",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientType22AcceptanceTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientType22AcceptanceTests",
+      "count": 1,
+      "methodName": "OmittedStreamCleansPeerBeforeHeldMoveNextAndOrderedDisposeButKeepsOriginalOwners",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientType22AcceptanceTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientType22AcceptanceTests",
+      "count": 1,
+      "methodName": "WriterWithNoSinkCallsFailsAndCleansEveryDeclaredRoute",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientType22AcceptanceTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientType22AcceptanceTests",
+      "count": 1,
+      "methodName": "PermanentlyThrowingAckClockStillDeliversTerminalAndJoinsPhysicalOwners",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientType22ClockReentryTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientType22AcceptanceTests",
+      "count": 1,
+      "methodName": "PermanentlyThrowingStartClockStillDeliversTerminalAndJoinsPhysicalOwners",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ClientType22ClockReentryTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractFactoryIdentityTests",
+      "count": 1,
+      "methodName": "CapturedMultiClusterFactoryMustFailAndRollbackWhenItsSlotIsReplacedBeforeReturn",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractFactoryIdentityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractFactoryIdentityTests",
+      "count": 1,
+      "methodName": "ColdFactoriesShouldShareExactSiteWithoutConnectingOrChangingLocalIdentity",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractFactoryIdentityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractFactoryIdentityTests",
+      "count": 1,
+      "methodName": "InvalidFactoryInputsAndPrepareBudgetShouldPrecedeTerminalState",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractFactoryIdentityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractFactoryIdentityTests",
+      "count": 1,
+      "methodName": "MetadataMustRemainPerHandleWhileReceiptAndScopeRemainInTheSiteKey",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractFactoryIdentityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractFactoryIdentityTests",
+      "count": 1,
+      "methodName": "RejectedPublicationShouldReleaseOnlyNewDemandAndPreserveSharedDemand",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractFactoryIdentityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractScopedRouteFailureControls",
+      "count": 1,
+      "methodName": "PendingBuildFailureDoesNotImposeAllBoundOnFreshPrepare",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractScopedRouteFailureControls",
+      "count": 1,
+      "methodName": "SitePrebuildFailuresAreAtomic",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRouteFailureControls.cs",
+      "status": "error"
+    },
+    {
+      "className": "ContractScopedRoutePhysicalFailureControls",
+      "count": 1,
+      "methodName": "RouteCancellationAndDisposeFaultSurviveSealedShutdown",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ContractScopedRoutePhysicalFailureControls.cs",
+      "status": "error"
+    },
+    {
+      "className": "EndpointSelectionRuntimeInteractionTests",
+      "count": 1,
+      "methodName": "AdmissionReselectionShouldKeepOneCapturedPolicyGeneration",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/EndpointSelectionRuntimeInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "EndpointSelectionRuntimeInteractionTests",
+      "count": 1,
+      "methodName": "RetryNextPhysicalAttemptShouldCaptureLatestSelectionPolicy",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/EndpointSelectionRuntimeInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "PendingRequestTerminalAbandonmentTests",
+      "count": 2,
+      "methodName": "ProducingLiveFullMustBeCallerOwnedWithoutReplayThroughStopOrDispose",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/PendingRequestTerminalAbandonmentTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ResponseCompressionPreferenceCohortTests",
+      "count": 1,
+      "methodName": "FailedSessionShouldNotPreventLaterCohortSessionFromReconciling",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/ResponseCompressionPreferenceCohortTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcCodecRouteMultiClusterTests",
+      "count": 1,
+      "methodName": "DependencyManifestViewShouldHideContractPolicy",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/RpcCodecRouteMultiClusterTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientCancellationTests",
+      "count": 1,
+      "methodName": "EarlyServerStreamDisposalShouldSendConsumerAbandonedReason",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientCancellationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientCancellationTests",
+      "count": 1,
+      "methodName": "InvokeCancellableNoPayloadAsyncShouldUseOperationCanceledWhenUserTokenCancels",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientCancellationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientCancellationTests",
+      "count": 1,
+      "methodName": "InvokeOneWayNoPayloadShouldNotCreateTimeoutCancel",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientCancellationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientCancellationTests",
+      "count": 1,
+      "methodName": "InvokeWithDefaultTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientCancellationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientCancellationTests",
+      "count": 1,
+      "methodName": "ReceiveCancelPacketShouldNotBreakPendingRequest",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientCancellationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientContractDependencyTests",
+      "count": 1,
+      "methodName": "ClientUnregisterShouldProtectContractDependencies",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientContractDependencyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientContractDependencyTests",
+      "count": 1,
+      "methodName": "DynamicDependencyValidationShouldIncludeContractDependencies",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientContractDependencyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientLifecycleHeartbeatTests",
+      "count": 1,
+      "methodName": "AvailableControlFrameQueueShouldKeepSynchronousFastPath",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleHeartbeatTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientLifecycleReadinessDrainTests",
+      "count": 1,
+      "methodName": "ConcurrentClientConnectionDisposersShouldAwaitPhysicalCleanup",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleReadinessDrainTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientLifecycleReadinessDrainTests",
+      "count": 1,
+      "methodName": "SecondHandshakeResponseShouldTerminateThePublishedSession",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleReadinessDrainTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientLifecycleReconnectTests",
+      "count": 1,
+      "methodName": "FailedExpansionShouldHandZeroReadyPoolToReconnectWorker",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleReconnectTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "ClientStopShouldCancelCustomRetryBackoffPromptly",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "EndpointAdmissionShouldRejectOneCandidateAndReportTheSelectedAttemptOnce",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "HugeBuiltInJitteredRetryDelayShouldRemainCancellable",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "IdempotentUnaryShouldRetryRemoteUnavailableAndExposeResponseObservation",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "LogicalInvocationShouldRemainActiveBetweenRetryAttempts",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "NonIdempotentUnaryAndResourceExhaustedShouldNotRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "RetryDelayBeyondDeadlineShouldNotOverflow",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "RetryShouldExcludeTriedEndpointsThenResetAfterAllCandidates",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "RetryShouldHonorAdmissionRetryAfterBeforeTheNextAttempt",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "RetryShouldHonorDeadlineAndCancellationDuringDelay",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "RetryShouldNotDelayUntriedEndpointsAfterAnAdmittedAttemptFails",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryBehaviorTests",
+      "count": 1,
+      "methodName": "RetryShouldRunInterceptorOnceAndRejectInvalidCustomPolicyDelay",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryBehaviorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryDeadlineTests",
+      "count": 1,
+      "methodName": "RetryDelayEndingAtTheSharedDeadlineShouldWaitForTerminalArbitration",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryDeadlineTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRetryOutcomeReuseTests",
+      "count": 1,
+      "methodName": "ReusedOutcomeShouldResetPerAttemptRetryContext",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRetryOutcomeReuseTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeCircuitBreakerTests",
+      "count": 1,
+      "methodName": "DisableThenEnableMustStartWithFreshClosedState",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeCircuitBreakerTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeConfigurationResultTests",
+      "count": 1,
+      "methodName": "RequestTimeoutTryPathShouldPreserveLogicalCallCaptureBoundary",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeConfigurationResultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeEndpointAdmissionTests",
+      "count": 1,
+      "methodName": "DisableMustBypassFutureAttemptsWithoutDroppingAnExistingLease",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeEndpointAdmissionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeEndpointAdmissionTests",
+      "count": 1,
+      "methodName": "ReplacedPolicyMustNotReceiveAnOlderAttemptsReport",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeEndpointAdmissionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeEndpointAdmissionTests",
+      "count": 1,
+      "methodName": "RetryMustObserveThePolicyPublishedBeforeItsNextAttempt",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeEndpointAdmissionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeRequestTimeoutTests",
+      "count": 1,
+      "methodName": "RuntimeUpdateShouldOnlyAffectFutureLogicalCalls",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeRequestTimeoutTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeRetryPolicyTests",
+      "count": 1,
+      "methodName": "AdvanceBeforeRetryTimerRegistrationShouldLeaveTheRetryPending",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeRetryPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeRetryPolicyTests",
+      "count": 1,
+      "methodName": "BuiltInUpdateShouldOnlyAffectFutureLogicalCalls",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeRetryPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeRetryPolicyTests",
+      "count": 1,
+      "methodName": "InterceptorSuspensionShouldRetainCapturedRetryGeneration",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeRetryPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeRetryPolicyTests",
+      "count": 1,
+      "methodName": "RuntimeCustomPolicyFailureShouldKeepExistingFailureMappingAndCleanup",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeRetryPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientRuntimeRetryPolicyTests",
+      "count": 1,
+      "methodName": "UpdateBetweenAttemptsShouldNotMutateCurrentCustomLoop",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientRuntimeRetryPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshInteractionTests",
+      "count": 3,
+      "methodName": "DisconnectedCleanupShouldReleaseTopologyGateAndRemainSupervised",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshInteractionTests",
+      "count": 1,
+      "methodName": "OneWayReservedBeforeFatalPublicationShouldFailWithoutSendingRequest",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshInteractionTests",
+      "count": 3,
+      "methodName": "OrdinaryRegistrationShouldProceedWhileTopologyGateIsHeld",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshInteractionTests",
+      "count": 3,
+      "methodName": "PoolShrinkShouldKeepRefreshReplacementSelectableWhileSourceDrains",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshInteractionTests",
+      "count": 6,
+      "methodName": "RefreshReceivedAfterReplacementHandshakeShouldPreserveAdvancedDebt",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshInteractionTests",
+      "count": 3,
+      "methodName": "StopShouldFailConnectionsOutsideTopologyGate",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshInteractionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshPreCutFailureTests",
+      "count": 1,
+      "methodName": "DynamicReplacementFailureAfterCommitReservationShouldKeepSourceSelectableAndRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshPreCutFailureTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshPreCutFailureTests",
+      "count": 1,
+      "methodName": "DynamicReplacementFailureBeforeCutShouldKeepSourceSelectableAndRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshPreCutFailureTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshPreCutFailureTests",
+      "count": 1,
+      "methodName": "FixedReplacementFailureAfterCommitReservationShouldKeepSourceSelectableAndRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshPreCutFailureTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshPreCutFailureTests",
+      "count": 1,
+      "methodName": "FixedReplacementFailureBeforeCutShouldKeepSourceSelectableAndRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshPreCutFailureTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshPreCutFailureTests",
+      "count": 1,
+      "methodName": "StaticReplacementFailureAfterCommitReservationShouldKeepSourceSelectableAndRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshPreCutFailureTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshPreCutFailureTests",
+      "count": 1,
+      "methodName": "StaticReplacementFailureBeforeCutShouldKeepSourceSelectableAndRetry",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshPreCutFailureTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshRedirectBoundednessTests",
+      "count": 4,
+      "methodName": "DynamicRefreshShouldWaitForPlannedSourceBudgetThenResume",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshRedirectBoundednessTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshRedirectBoundednessTests",
+      "count": 2,
+      "methodName": "FixedRefreshShouldWaitForPlannedSourceBudgetThenResume",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshRedirectBoundednessTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshRedirectBoundednessTests",
+      "count": 1,
+      "methodName": "RepeatedDynamicRefreshShouldKeepRedirectBoundedAndReachLatestReady",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshRedirectBoundednessTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshRedirectBoundednessTests",
+      "count": 1,
+      "methodName": "RepeatedFixedRefreshShouldKeepRedirectBoundedAndReachLatestReady",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshRedirectBoundednessTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshRedirectBoundednessTests",
+      "count": 1,
+      "methodName": "RepeatedStaticRefreshShouldKeepRedirectBoundedAndReachLatestReady",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshRedirectBoundednessTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshRedirectBoundednessTests",
+      "count": 4,
+      "methodName": "StaticRefreshShouldWaitForPlannedSourceBudgetThenResume",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshRedirectBoundednessTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshTests",
+      "count": 1,
+      "methodName": "DynamicRefreshShouldPreserveCurrentEndpointGenerationAffinity",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshTests",
+      "count": 1,
+      "methodName": "FixedRefreshShouldReplaceBeforeRetireAndDrainInflightCall",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSessionRefreshTests",
+      "count": 1,
+      "methodName": "StaticRefreshShouldPreserveSourceEndpointAffinityAndReadyCapacity",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSessionRefreshTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSupportSnapshotAcceptanceTests",
+      "count": 1,
+      "methodName": "PendingNearCapacityShouldUseExistingOwnerCountsAndNeverExportMetadata",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSupportSnapshotAcceptanceTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientSupportSnapshotReviewTests",
+      "count": 1,
+      "methodName": "DynamicReplacementShouldKeepRetiringConnectionInTopologyAndResources",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientSupportSnapshotReviewTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientTimeoutTests",
+      "count": 1,
+      "methodName": "InvokeCancellableNoPayloadAsyncTimeoutAndUserCancelShouldSendSingleCancel",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeoutTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkClientTimeoutTests",
+      "count": 1,
+      "methodName": "InvokeWithTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkClientTimeoutTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkContractCallSiteOwnershipTests",
+      "count": 1,
+      "methodName": "InvocationStateMachinesAreOwnedByTheSiteNotAnOuterAsyncBridge",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkContractCallSiteOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkMultiClusterAddRaceTests",
+      "count": 1,
+      "methodName": "ParentStopAfterCandidateStartShouldRollbackBeforePublication",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterAddRaceTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkMultiClusterDiscoveryTests",
+      "count": 1,
+      "methodName": "RuntimeChildCompileShouldCaptureEachExplicitDiscoverySourceOnce",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterDiscoveryTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkMultiClusterDynamicAssemblyTests",
+      "count": 1,
+      "methodName": "ConcurrentDynamicUnregisterShouldShareOneCoordinatorOperation",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterDynamicAssemblyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkMultiClusterDynamicAssemblyTests",
+      "count": 1,
+      "methodName": "DynamicRegistrationShouldReturnStructuredFailureAfterStop",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterDynamicAssemblyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkMultiClusterLifecycleTests",
+      "count": 1,
+      "methodName": "FaultedRetiredCleanupShouldBeReportedByCoordinatorStop",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkMultiClusterMutationResultTests",
+      "count": 1,
+      "methodName": "StoppedReplaceAndRemoveShouldReturnLifecycleClosed",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/SharpLinkMultiClusterMutationResultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "StaticFactoryColdOwnershipRecoveryTests",
+      "count": 1,
+      "methodName": "FactoryAndDemandRollbackErrorsBothSurviveAndAdmissionIsReleased",
+      "namespace": "SharpLink.UnitTests.Client",
+      "source": "test/SharpLink.UnitTests/Client/StaticFactoryColdOwnershipRecoveryTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2ErrorCompatibilityTests",
+      "count": 1,
+      "methodName": "StructuredErrorShapeShouldRejectPublishedMinorThreePeers",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2ErrorCompatibilityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "CapabilityMatrixShouldProduceSymmetricServerAndClientResults",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "CompressionMatrixShouldHonorOptionalRequiredAndServerPreference",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ImplementedCapabilitiesShouldRemainExplicitAndProtocolRecognized",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "MalformedOfferMatrixShouldReturnProtocolViolation",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "MalformedResponseMatrixShouldReturnStructuredFailure",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "RepeatedInputsShouldProduceEquivalentResultsAndErrors",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "ServerResultShouldValidateToEquivalentClientSnapshot",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2NegotiatorTests",
+      "count": 1,
+      "methodName": "UnsupportedRequiredCapabilityShouldReturnUnimplemented",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "CancelReasonShouldRoundTripAndEnforceNegotiatedShape",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeRequestAndResponseShouldRoundTrip",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HeaderWithEveryByteInSeparateSegmentShouldParse",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "HealthControlFramesShouldRequireBoundedPayloadAndRequestId",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "InvalidLengthTypeFlagsAndRequestIdShouldBeRejected",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "MultipleFramesFollowedByHalfFrameShouldPreserveRemainder",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "WriterAndParserShouldRoundTripFrame",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2Tests",
+      "count": 1,
+      "methodName": "ZeroThroughFourteenHeaderBytesShouldRemainPartial",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ResponseCompressionPreferenceProtocolTests",
+      "count": 1,
+      "methodName": "HandshakeShouldRoundTripFixedPreferenceGeneration",
+      "namespace": "SharpLink.UnitTests.Protocol",
+      "source": "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BackpressuredSendOwnershipTests",
+      "count": 1,
+      "methodName": "CancellationRetainsOwnerThroughBlockedAndThrowingWriterReturn",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/BackpressuredSendOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "BackpressuredSendOwnershipTests",
+      "count": 1,
+      "methodName": "TerminalDrainClosesQueueBeforeAReservedProducerPublishes",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/BackpressuredSendOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "CancellationAfterSerializationMustReleaseAndNotPublish",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "CancellationBeforeCreditMustReleaseWithoutRentingWriter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "CancellationBeforeCreditMustRemainPrimaryWhenReleaseFails",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "NormalSnapshotMustReleaseOnceAndPublish",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "NullSnapshotMustNotReleaseAndMustPublish",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "ReleaseFailureMustReleaseOnceAndReturnUnpublishedWriter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "SerializerCancellationMustRemainPrimaryWhenReleaseAlsoFails",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "SerializerFailureMustReleaseSnapshotAndReturnWriter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "SerializerFailureMustRemainPrimaryWhenReleaseAlsoFails",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ClientStreamSnapshotOwnershipTests",
+      "count": 1,
+      "methodName": "SerializerFailureWithNullSnapshotMustReturnWriterWithoutRelease",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ClientStreamSnapshotOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "CompressionFrameTests",
+      "count": 1,
+      "methodName": "ZeroByteRepresentationShouldRoundTripThroughWireEnvelope",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/CompressionFrameTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "FlushOperationStressTests",
+      "count": 1,
+      "methodName": "CancellationRacingFlushCompletionShouldNeverHangOrCorruptPool",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/FlushOperationStressTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "FlushOperationStressTests",
+      "count": 1,
+      "methodName": "CancellationWithStalledTransportShouldStillReleaseEveryWaiterAtStop",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/FlushOperationStressTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "FlushOperationStressTests",
+      "count": 1,
+      "methodName": "TransportFaultShouldCompleteEveryForceFlushWaiter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/FlushOperationStressTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "GeneratedManifestCompatibilityTests",
+      "count": 1,
+      "methodName": "RuntimeContextShouldRejectVersionBeforePreparingGeneratedCodecs",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/GeneratedManifestCompatibilityTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "GeneratedManifestLocatorTests",
+      "count": 1,
+      "methodName": "UnsupportedLocatorVersionShouldRejectBeforeManifestConstruction",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/GeneratedManifestLocatorTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "GeneratedServerPreCreditTests",
+      "count": 1,
+      "methodName": "SharedInvocationCancellationShouldReleaseGeneratedPreCreditOwnerAndWaiter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/GeneratedServerPreCreditTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "GeneratedServerPublicationDeadlineTests",
+      "count": 1,
+      "methodName": "DeadlineCancellationCallbackFailureShouldNotReplaceDeadlineTerminal",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/GeneratedServerPublicationDeadlineTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "GeneratedServerPublicationDeadlineTests",
+      "count": 1,
+      "methodName": "SizedChunkShouldBeRejectedWhenSerializationCrossesDeadline",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/GeneratedServerPublicationDeadlineTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "ConcurrentHandshakeCompletionShouldHaveOneWinnerAndOneSnapshot",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "DrainingShouldRejectNewRequestsAndPreserveExistingCallFrames",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "HandshakeCompletionAndTerminalRaceShouldNeverPublishPartialState",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "HandshakeCompletionShouldPublishOneCompleteImmutableSnapshot",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "ProtocolPhaseFrameMatrixShouldMatchLifecycleRules",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "SendPumpShouldEnforceProtocolPhaseBeforeQueueing",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "NegotiatedSessionOptionsTests",
+      "count": 1,
+      "methodName": "StoppingShouldPublishReceiveTerminationAndStopAnExistingSendPump",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/NegotiatedSessionOptionsTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ProtocolV2SessionRefreshCodecTests",
+      "count": 1,
+      "methodName": "SessionRefreshFrameShouldRejectRpcRequestIds",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/ProtocolV2SessionRefreshCodecTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "PendingRequestTableTests",
+      "count": 1,
+      "methodName": "TerminalRaceShouldNotifyItsOwnerExactlyOnce",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.DeadlinesAndTerminalRaces.cs",
+      "status": "error"
+    },
+    {
+      "className": "PendingRequestTableTests",
+      "count": 1,
+      "methodName": "CancellationShouldNotCompleteOwnerBeforeRegistrationIsPublished",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "PendingRequestTableTests",
+      "count": 1,
+      "methodName": "RequestIdWrapShouldSkipZeroAndKeepFullIdentity",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RequestManagerTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcPublicationRetirementTests",
+      "count": 1,
+      "methodName": "CleanupFailureStillDrainsLaterOwnersAndFaultsPhysicalFence",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcPublicationRetirementTests",
+      "count": 1,
+      "methodName": "PhysicalFenceDoesNotForceAnExplicitBatchWindow",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcPublicationRetirementTests",
+      "count": 1,
+      "methodName": "RejectedHeadPublishesDispositionBeforeIndependentObserverAndWaiter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcPublicationRetirementTests",
+      "count": 1,
+      "methodName": "ReleaseDoesNotRejectAnAlreadyAdmittedGroupsLaterChunks",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcPublicationRetirementTests",
+      "count": 1,
+      "methodName": "SameTokenInDifferentSessionsHasIndependentConsumerAuthority",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcPublicationRetirementTests",
+      "count": 1,
+      "methodName": "ThrowingObserverCannotSkipIndependentWaiterAndLaterFrameCleanup",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "HealthySessionShouldPreserveInboundProtocolViolation",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.InboundValidationAndCleanup.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "HealthySessionShouldPreserveOutboundProtocolViolation",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.InboundValidationAndCleanup.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "DisposeShouldJoinPumpCreationBeforeDisposingSessionCancellation",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.PumpPublication.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "ConcurrentReadAndWriteFaultsShouldConvergeToOneTerminalState",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "ConcurrentSendAndDisposeShouldCompletePumpAndReturnCleanly",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 3,
+      "methodName": "ExistingPumpShouldRejectValidatedPacketAfterTerminalWins",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "FaultPausedAfterPublishingTerminalShouldSurviveConcurrentRepeatedDispose",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 1,
+      "methodName": "FirstFaultShouldBePublishedOnceAndReusedByLaterSends",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionLifecycleTests",
+      "count": 3,
+      "methodName": "PumpCreationObservingTerminalShouldReturnValidatedPacket",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionLifecycleTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionRefreshAccountingTests",
+      "count": 1,
+      "methodName": "InternallyConsumedRefreshFramesShouldRecordBytesAndActivityExactlyOnce",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionRefreshAccountingTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionRuntimeFlushPolicyTests",
+      "count": 1,
+      "methodName": "LatencyDecreaseShouldRecomputeFromOriginalBatchStart",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionRuntimeFlushPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionRuntimeFlushPolicyTests",
+      "count": 1,
+      "methodName": "LatencyIncreaseShouldIgnoreOldTimerBoundary",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionRuntimeFlushPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionRuntimeFlushPolicyTests",
+      "count": 1,
+      "methodName": "ThresholdDecreaseShouldWakeArmedExistingSessionAndFutureSessionShouldShareGeneration",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionRuntimeFlushPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionRuntimeFlushPolicyTests",
+      "count": 1,
+      "methodName": "ThresholdIncreaseShouldNotFlushAtOldBoundary",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionRuntimeFlushPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RpcSessionRuntimeFlushPolicyTests",
+      "count": 2,
+      "methodName": "TimedBatchShouldIgnoreDelayedDataWakeAfterQueueWasDrained",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RpcSessionRuntimeFlushPolicyTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RuntimeArchitecturePhase00Tests",
+      "count": 1,
+      "methodName": "FiveWayPendingTerminalRaceShouldChooseOneWinnerAndBalanceEveryCounter",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RuntimeArchitecturePhase00Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RuntimeArchitecturePhase00Tests",
+      "count": 1,
+      "methodName": "PendingTerminalMatrixShouldReleaseThePhysicalOwnerExactlyOnce",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RuntimeArchitecturePhase00Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "RuntimeArchitecturePhase00Tests",
+      "count": 1,
+      "methodName": "PendingTerminalRacesShouldLeaveExactlyOnePhysicalOwner",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/RuntimeArchitecturePhase00Tests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpIdleShutdownTests",
+      "count": 1,
+      "methodName": "IdlePumpExitsWhenSessionFaultsFromRemoteDisconnect",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpIdleShutdownTests",
+      "count": 1,
+      "methodName": "IdlePumpExitsWhenSessionIsDisposed",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpIdleShutdownTests",
+      "count": 1,
+      "methodName": "IdlePumpExitsWhenSessionIsStopping",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpIdleShutdownTests",
+      "count": 1,
+      "methodName": "PumpBlockedInFlushExitsWhenSessionIsDisposed",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpIdleShutdownTests",
+      "count": 1,
+      "methodName": "PumpBlockedInFlushExitsWhenTransportOutputFaults",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpIdleShutdownTests",
+      "count": 1,
+      "methodName": "PumpParkedInTimedBatchDeadlineExitsWhenSessionIsDisposed",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "CancelNeverOvertakesItsQueuedRequest",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "HundredThousandMixedFramesKeepByteAccountingBalanced",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "NormalFramesKeepFifoOrderUnderProgressStorm",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "OversizedNormalFrameNeverOccupiesTheProgressReserve",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressBurstDoesNotStarveNormalFrames",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressFlagDoesNotGrowOwnedFrame",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressFrameInterruptsTimedBatchDeadline",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressFrameOvertakesEarlierQueuedBulkFrames",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressHeadroomAdmitsProgressFramesWhenBulkIsFull",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressHeadroomIsBoundedByTheQueueHardLimit",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "ProgressInterleaveServesProgressWhileNormalQueueNeverEmpties",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "StopDrainsBothClassesAndCompletesCapacityWaiters",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpProgressIsolationTests",
+      "count": 1,
+      "methodName": "TransportFaultDrainsBothClassesAndReturnsOwners",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "CancelledAdmissionShouldReturnUnacceptedOwner",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "ForceFlushMarkerShouldStillUsePumpAndReturnAfterFlush",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "FullByteQueueShouldFailFastWithoutClosingHealthySession",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "HugeFlushLatencyShouldNotOverflowIntoImmediateFlush",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "ProfileDefaultThroughputFlushesSmallFrameWithoutDeadlineTimer",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "TimedBatchDeadlineWaitShouldExitWhenSessionIsDisposed",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "TimedBatchShouldDeliverFrameSentAfterDeadlineFlushThroughWakeupSignal",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 2,
+      "methodName": "TimedBatchShouldExtendBatchForFrameArrivingBeforeDeadline",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "TimedBatchShouldFlushAtExactProviderLatencyAndReturnItsOwner",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "TimedBatchShouldIgnoreStaleTimerCallbackFromPreviousArm",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "TimedBatchShouldRearmAcrossMaximumTimerDelayChunks",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTests",
+      "count": 1,
+      "methodName": "WaitingAdmissionShouldResumeAfterFlushedBytesAreReleased",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpTimedWaitStopTests",
+      "count": 1,
+      "methodName": "StopLatchedBeforeTimedWaitMustNotBeConsumedAsObservedData",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpUnobservedTaskTests",
+      "count": 1,
+      "methodName": "CancelledFlushWaiterShouldObserveLatePumpFault",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpUnobservedTaskTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SendPumpUnobservedTaskTests",
+      "count": 1,
+      "methodName": "FaultedTimedBatchTeardownShouldLeaveNoUnobservedTasks",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SendPumpUnobservedTaskTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkRuntimeContextTests",
+      "count": 1,
+      "methodName": "CandidatePublicationShouldRejectRemovingReferencedCodecDependency",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextReferencedCodecTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkRuntimeContextTests",
+      "count": 1,
+      "methodName": "ExplicitCatalogFreeContextShouldNotSnapshotGeneratedAssemblyCatalog",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/SharpLinkRuntimeContextTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "Stack13FrameClearTests",
+      "count": 1,
+      "methodName": "ExactWriterLimitAndDisposedLeaseMustRemainEnforced",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "Stack13FrameClearTests",
+      "count": 3,
+      "methodName": "FrameInitializationShouldTouchOnlyItsOwnFifteenBytes",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "StreamManagerLazyRoutingTests",
+      "count": 1,
+      "methodName": "FirstRegisterRacingCompleteAllShouldNotLeaveAnOrphanedStream",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/StreamManagerLazyRoutingTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 1,
+      "methodName": "AnonymousPipeMustKeepNormalFlushButNotReplayOutputFault",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 2,
+      "methodName": "NonOutputFaultWhileWriteIsHeldMustNeverClaimQuiescence",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 1,
+      "methodName": "OutputFailureMustNotReplacePriorStoppingWinner",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 1,
+      "methodName": "OutputFaultCapabilityMustReceiveOriginalTerminalOnlyAfterWriteReturns",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 3,
+      "methodName": "OutputFaultMustNotReplayBufferedFrame",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 1,
+      "methodName": "QuiescentPumpFaultMustPreserveNativeDisposalFailureIdentity",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 1,
+      "methodName": "QuiescentPumpFaultMustReturnInFlightQueuedAndCapacityWaitingOwnersOnce",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "TransportOutputFaultTests",
+      "count": 1,
+      "methodName": "QuiescentPumpFaultMustTolerateReentrantShutdownAndDisposal",
+      "namespace": "SharpLink.UnitTests.Runtime",
+      "source": "test/SharpLink.UnitTests/Runtime/TransportOutputFaultTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerInvocationTests",
+      "count": 1,
+      "methodName": "CompressedTerminalStreamShouldValidateOriginalLengthBeforeDiscard",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/CompressedTerminalStreamRequestLoopTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ConnectionAdmissionTests",
+      "count": 1,
+      "methodName": "AuthenticatorRejectReleasesBothSlots",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/ConnectionAdmissionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ConnectionAdmissionTests",
+      "count": 1,
+      "methodName": "ReadyConnectionReleasesTheHandshakeSlotButKeepsTheConnectionSlot",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/ConnectionAdmissionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "DecodedRequestMetadataReuseTests",
+      "count": 1,
+      "methodName": "DecodedEnvelopeShouldMatchOriginalParserAcrossBoundaries",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/DecodedRequestMetadataReuseTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "DecodedRequestMetadataReuseTests",
+      "count": 1,
+      "methodName": "ReuseShouldStillRequireNegotiatedMetadata",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/DecodedRequestMetadataReuseTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "DecodedRequestNoMetadataRegressionTests",
+      "count": 2,
+      "methodName": "NoMetadataFallbackShouldMatchParserAcrossLayouts",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/DecodedRequestNoMetadataRegressionTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "DependencyRetirementOwnershipTests",
+      "count": 1,
+      "methodName": "DeclaredDependencyPinProtectsFactoryAndRollbackButCannotPublishAfterDraining",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/DependencyRetirementOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "DependencyRetirementOwnershipTests",
+      "count": 1,
+      "methodName": "EarlyDeferredCleanupFailureSurvivesLaterLogicalStopFinalization",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/DependencyRetirementOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ServerAuthenticationHandshakeWiringTests",
+      "count": 1,
+      "methodName": "HandshakeShouldForwardConnectionIdentityPayloadAndEndpointsToAuthenticator",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/ServerAuthenticationHandshakeWiringTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ServerBackpressuredRejectionOwnershipTests",
+      "count": 4,
+      "methodName": "EarlyRejectionOutlivesAllExistingPermitsButNotItsIntrinsicSend",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/ServerBackpressuredRejectionOwnershipTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ServiceRegistrationTests",
+      "count": 1,
+      "methodName": "DynamicModuleShutdownShouldPreserveEveryModuleFailure",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/ServiceRegistrationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "ServiceRegistrationTests",
+      "count": 1,
+      "methodName": "DynamicServiceDispatchShouldLookupMethodDescriptorOnlyOnce",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/ServiceRegistrationTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerInvocationTests",
+      "count": 1,
+      "methodName": "FailedInvocationShouldPreserveLeaseCleanupFailure",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerDispatchResponseTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerInvocationTests",
+      "count": 1,
+      "methodName": "FullErrorResponseQueueShouldWaitForCapacityWithoutClosingConnection",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerDispatchResponseTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerInvocationTests",
+      "count": 1,
+      "methodName": "FullPayloadResponseQueueShouldWaitForCapacityWithoutClosingConnection",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerDispatchResponseTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerRequestPayloadLifetimeTests",
+      "count": 1,
+      "methodName": "PendingAsyncUnaryDoesNotRetainRawRequestBacking",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerRequestPayloadLifetimeTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerRequestScopeAmbientTests",
+      "count": 1,
+      "methodName": "PendingRequestsDoNotLeakRequestScopeIntoCallerOrEachOther",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerRequestScopeAmbientTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerSecurityLoggingTests",
+      "count": 1,
+      "methodName": "AuthenticationProviderExceptionIsLoggedAsTypeAndFailureIdWithoutSecrets",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerSecurityLoggingTests.cs",
+      "status": "error"
+    },
+    {
+      "className": "SharpLinkServerSecurityLoggingTests",
+      "count": 1,
+      "methodName": "NestedAuthenticationProviderExceptionNeverLeaksOuterOrInnerMessages",
+      "namespace": "SharpLink.UnitTests.Server",
+      "source": "test/SharpLink.UnitTests/Server/SharpLinkServerSecurityLoggingTests.cs",
+      "status": "error"
+    }
+  ],
+  "reportDigests": {
+    "native": "d46ec0309e14d4401e1fa4ce8edfa0c92dc662dbb990a639738e22122a1668a1",
+    "resultRows": "4fdd8a0e4c0319a98b4bb761523de9ef55a0dcebdcf07ef177ecd257c836d56d",
+    "resultUIDSet": "af1441132776382715f325ee3f7f1168461bed076a66e2feac70712ac29503d2"
+  }
+}
