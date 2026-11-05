@@ -35,16 +35,16 @@ CANARY = 'PRIVATE_CANARY_8fe5fca2'
 def fixture(index=0, status='error', exception=None):
     path, ns, cls, method, start, end = d.CASES[index]
     uid = 'private-uid-' + str(index)
-    row = {'uid': uid, 'displayName': CANARY, 'type': {'namespace': ns, 'typeName': ns + '.' + cls, 'methodName': method},
+    row = {'uid': uid, 'displayName': CANARY, 'type': {'namespace': ns, 'typeName': cls, 'methodName': method},
            'location': {'file': '/_/' + path, 'lineStart': start, 'lineEnd': end}}
-    test = {'id': uid, 'displayName': CANARY, 'methodName': method, 'className': ns + '.' + cls,
+    test = {'id': uid, 'displayName': CANARY, 'methodName': method, 'className': cls,
             'filePath': '/_/' + path, 'lineNumber': start, 'endLineNumber': end, 'status': status, 'durationMs': 1.0}
     if status != 'passed':
         test['exception'] = exception or {'type': 'Unknown.' + CANARY, 'message': CANARY, 'stackTrace': '/private/' + CANARY}
     native = {'schemaVersion': 1, 'publicationGeneration': 'a' * 32, 'assemblyName': 'SharpLink.UnitTests',
               'machineName': CANARY, 'timestamp': CANARY, 'tunitVersion': '1.73.19.0', 'operatingSystem': CANARY,
               'runtimeVersion': '.NET 10.0.14', 'totalDurationMs': 1.0,
-              'groups': [{'namespace': ns, 'className': ns + '.' + cls, 'tests': [test]}]}
+              'groups': [{'namespace': ns, 'className': cls, 'tests': [test]}]}
     refresh(native)
     return (uid, row), native, test
 
@@ -96,17 +96,46 @@ class Controls(unittest.TestCase):
         chosen = d.selected(r, ordinary)
         self.assertEqual(len(chosen), 4)
         for i, (uid, row) in enumerate(chosen): self.assertEqual(row['type']['methodName'], d.CASES[i][3])
-        for mode in ('missing', 'duplicate', 'wrong-method', 'wrong-path', 'wrong-start', 'wrong-end', 'unsafe-uid'):
+        for mode in ('missing', 'duplicate', 'wrong-method', 'qualified-alias', 'wrong-namespace', 'wrong-path', 'wrong-start', 'wrong-end', 'unsafe-uid'):
             changed = copy.deepcopy(ordinary)
             uid = chosen[0][0]
             if mode == 'missing': del changed[uid]
             elif mode == 'duplicate': changed['duplicate'] = copy.deepcopy(changed[uid])
             elif mode == 'wrong-method': changed[uid]['type']['methodName'] += 'Extra'
+            elif mode == 'qualified-alias': changed[uid]['type']['typeName'] = changed[uid]['type']['namespace'] + '.' + changed[uid]['type']['typeName']
+            elif mode == 'wrong-namespace': changed[uid]['type']['namespace'] += '.Other'
             elif mode == 'wrong-path': changed[uid]['location']['file'] = '/private/' + CANARY
             elif mode == 'wrong-start': changed[uid]['location']['lineStart'] = True
             elif mode == 'wrong-end': changed[uid]['location']['lineEnd'] += 1
             else: changed['--injected'] = changed.pop(uid); changed['--injected']['uid'] = '--injected'
             with self.subTest(mode=mode): self.reject(lambda: d.selected(r, changed))
+
+    def test_original_full_run_summary_names_bind_exactly_to_selection(self):
+        # Verbatim selected method/status rows from run41940224644/job126958823032,
+        # dcc3edbb. Failure rows are in EXECUTION-RESULT.json; the control pass
+        # is independently retained in the original parsed summary. These are identity
+        # evidence, NOT fabricated discovered UIDs or a replacement result.
+        observed = [
+            {'className': 'ProtocolV2Tests', 'count': 1, 'methodName': 'HeaderWithEveryByteInSeparateSegmentShouldParse', 'namespace': 'SharpLink.UnitTests.Protocol', 'source': 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs', 'status': 'error'},
+            {'className': 'ProtocolV2Tests', 'count': 1, 'methodName': 'RawFrameWriterAndTokenShouldRemainInternalImplementationDetails', 'namespace': 'SharpLink.UnitTests.Protocol', 'source': 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs', 'status': 'passed'},
+            {'className': 'ProtocolV2Tests', 'count': 1, 'methodName': 'WriterAndParserShouldRoundTripFrame', 'namespace': 'SharpLink.UnitTests.Protocol', 'source': 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs', 'status': 'error'},
+            {'className': 'SendPumpProgressIsolationTests', 'count': 1, 'methodName': 'ProgressFlagDoesNotGrowOwnedFrame', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs', 'status': 'error'},
+        ]
+        ordinary = dict(fixture(i)[0] for i in range(4))
+        for evidence in observed:
+            match = [row for row in ordinary.values() if row['type']['methodName'] == evidence['methodName']]
+            self.assertEqual(len(match), 1)
+            row = match[0]
+            self.assertEqual(row['type']['typeName'], evidence['className'])
+            self.assertEqual(row['type']['namespace'], evidence['namespace'])
+            self.assertEqual(row['location']['file'], '/_/' + evidence['source'])
+        self.assertEqual(len(d.selected(r, ordinary)), 4)
+        for index in range(4):
+            selection, native, test = fixture(index, 'passed')
+            self.assertEqual(selection[1]['type']['typeName'], d.CASES[index][2])
+            self.assertEqual(native['groups'][0]['className'], d.CASES[index][2])
+            self.assertEqual(test['className'], d.CASES[index][2])
+            self.assertTrue(d.classify(e, native, junit(native), index, selection)['selectedPassed'])
 
     def test_supported_attribute_or_signature_start_not_fuzzy(self):
         ordinary = dict(fixture(i)[0] for i in range(4))

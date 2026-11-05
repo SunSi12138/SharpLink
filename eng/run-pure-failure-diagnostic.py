@@ -107,7 +107,7 @@ def selected(r, ordinary):
     for source, namespace, cls, method, start, end in CASES:
         matches = [(uid, row) for uid, row in ordinary.items()
                    if row['type']['namespace'] == namespace and
-                   row['type']['typeName'] == namespace + '.' + cls and
+                   row['type']['typeName'] == cls and
                    row['type']['methodName'] == method]
         r.require(len(matches) == 1, 'PD_SELECTION')
         uid, row = matches[0]
