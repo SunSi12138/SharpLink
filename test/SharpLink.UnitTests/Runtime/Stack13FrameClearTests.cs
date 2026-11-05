@@ -15,7 +15,7 @@ public sealed class Stack13FrameClearTests
         using var writer = new PooledByteBufferWriter(capacity);
         writer.GetSpan(capacity).Fill(0xA5);
         writer.Advance(5);
-        var token = ProtocolV2FrameWriter.BeginFrame(writer, ProtocolV2FrameType.Response, 0, ulong.MaxValue);
+        var token = ProtocolV2FrameWriter.BeginFrame(writer, ProtocolV2FrameType.Response, 0, (ulong)long.MaxValue);
         Check(writer.WrittenCount == 20, "header committed length");
         Check(writer.WrittenSpan[..5].IndexOfAnyExcept((byte)0xA5) < 0, "prior bytes unchanged");
         Check(writer.GetSpan().IndexOfAnyExcept((byte)0xA5) < 0, "uncommitted tail must not be cleared");
@@ -24,7 +24,7 @@ public sealed class Stack13FrameClearTests
         Check(header[0] == ProtocolV2Constants.Magic, "magic");
         Check(BinaryPrimitives.ReadInt32LittleEndian(header[1..]) == 0, "empty length");
         Check(header[5] == (byte)ProtocolV2FrameType.Response && header[6] == 0, "type and flags");
-        Check(BinaryPrimitives.ReadUInt64LittleEndian(header[7..]) == ulong.MaxValue, "id");
+        Check(BinaryPrimitives.ReadUInt64LittleEndian(header[7..]) == (ulong)long.MaxValue, "id");
     }
 
     [Test]
@@ -32,7 +32,7 @@ public sealed class Stack13FrameClearTests
     {
         using var pool = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
         var writer = pool.Rent(15);
-        ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Cancel, 0, 9);
+        ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Response, 0, 9);
         Check(writer.WrittenCount == 15, "exact-size header");
         try { writer.GetSpan(1); throw new Exception("writer limit bypassed"); }
         catch (SharpLinkException exception) { Check(exception.Code == SharpLinkErrorCode.ResourceExhausted, "lease limit"); }

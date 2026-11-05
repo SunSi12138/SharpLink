@@ -38,7 +38,7 @@ public class ProtocolV2Tests
     public void ZeroThroughFourteenHeaderBytesShouldRemainPartial()
     {
         var writer = new PooledByteBufferWriter();
-        ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1);
+        ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, 1);
         for (var length = 0; length < ProtocolV2Constants.HeaderBytes; length++)
         {
             var sequence = new ReadOnlySequence<byte>(writer.WrittenMemory[..length]);

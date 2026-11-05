@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "scope": "ownedframe-packing-candidate-catalog-rebase",
+  "scope": "five-additional-case-fixture-catalog-rebase",
   "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
-  "candidateCatalogSHA256": "85d5b8219d794978df1f51006b9ffa90fb45472d9d7303bab835570e75ab0af8",
-  "parentCommit": "4209233576c2100e0d5dc625308f49b76d500169",
-  "parentTree": "013f411efceeba53310ebe0ade5cf525d4b68008",
+  "candidateCatalogSHA256": "36749a0d854f5445c500523bba58a36827c83bd97ab65fe4d1a9dbdb567a9e20",
+  "parentCommit": "3f2f1d03da65844fba6f367811545f195ccf5206",
+  "parentTree": "340358eb00cfd0af94003896cb3d82c3567020bb",
   "frozenProductTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
   "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
   "frozenTestTree": "690953054b445203d5b74614f954c8b7dc8d41ba",
-  "candidateTestTree": "cc47cf7f9cfc57ab604a89cc58f23d956363339e",
+  "candidateTestTree": "6052d7b2a52946f8d9048e76287167768f13c673",
   "methodCount": 2463,
   "sourcePinCount": 1599,
-  "changedMethodBodyCount": 3,
-  "unchangedMethodBodyCount": 2460,
+  "changedMethodBodyCount": 6,
+  "unchangedMethodBodyCount": 2457,
   "deletedMethods": 0,
   "addedMethods": 0,
   "changedPins": {
@@ -22,11 +22,15 @@
     },
     "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs": {
       "old": "d2f827e0f45adae15e78c9db4d9c468de1d247c34eb60ed5e01296b59b584e73",
-      "new": "736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384"
+      "new": "a2aa71ed8ee7c5f7184c9f5ad9667973f7057cd73d5c139c81f6e92939f22d4e"
     },
     "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs": {
       "old": "67ffae89508dc0aba7f25f968bec4eb6fa91f997c9acc32784e9defc96a536a9",
       "new": "70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c"
+    },
+    "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs": {
+      "old": "3b4d5efdf3aba44ee1abc34199b517df615c768ec9721d5bc6ddc3c1b7076a3e",
+      "new": "94ac76dbf52335d3b7703d9fac0aef118716cf8eb16061ce4a203138e9955f0d"
     }
   },
   "affectedMethods": [
@@ -99,11 +103,11 @@
       ],
       "newOffsets": [
         1535,
-        2094
+        2096
       ],
-      "bodyChanged": false,
+      "bodyChanged": true,
       "oldSpanSHA256": "6742b5b9f17b40039cfa55e65b0b8ac241d86d486d699ed38a0fbdc6a54771c2",
-      "newSpanSHA256": "6742b5b9f17b40039cfa55e65b0b8ac241d86d486d699ed38a0fbdc6a54771c2"
+      "newSpanSHA256": "2addcb6a6e4205a38b8162a0fdacc44744b8e65add252f70b75dae7793b73610"
     },
     {
       "source": "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
@@ -123,8 +127,8 @@
         2576
       ],
       "newOffsets": [
-        2100,
-        3329
+        2102,
+        3331
       ],
       "bodyChanged": true,
       "oldSpanSHA256": "f2a1a35950952064c965cc9e2a78f4b8e76b6e4fe201fa0e67877eb5b8aff282",
@@ -148,8 +152,8 @@
         3775
       ],
       "newOffsets": [
-        3335,
-        4528
+        3337,
+        4530
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "8de9a0285e9c0fc15fa48adde5997e56f6da0d13038f2ca76b5741625c031449",
@@ -173,8 +177,8 @@
         5588
       ],
       "newOffsets": [
-        4534,
-        6341
+        4536,
+        6343
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "2ce380791b688e5644ff52800e1acaa55e463f151070b617b1f9a14fb548a1df",
@@ -198,8 +202,8 @@
         6589
       ],
       "newOffsets": [
-        6347,
-        7342
+        6349,
+        7344
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "efa07efa9bf28f14115805da6b33a6a0f1daa8b14502b31ebcd79f0db41eba32",
@@ -223,8 +227,8 @@
         7202
       ],
       "newOffsets": [
-        7348,
-        7955
+        7350,
+        7957
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "548511b5d001e563247bb84acbb180c802c9794c70d334d2adbef1fdb45f82ca",
@@ -248,8 +252,8 @@
         7807
       ],
       "newOffsets": [
-        7961,
-        8560
+        7963,
+        8562
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "2930513bf97534f024023ceac7e8dc47d0f44e60337ba3701a555ea6bc1496a7",
@@ -273,8 +277,8 @@
         10219
       ],
       "newOffsets": [
-        8566,
-        10972
+        8568,
+        10974
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "f0bdb65b41b6aeea983e76320fc8cab52ac711e6d5b82f60e8d628a4b9f76710",
@@ -298,8 +302,8 @@
         13605
       ],
       "newOffsets": [
-        10978,
-        14358
+        10980,
+        14360
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "086ef85dbdeb4c035dc515d8118734200d1dc96f16d8ceeff2c69002f17e507b",
@@ -323,8 +327,8 @@
         16189
       ],
       "newOffsets": [
-        14364,
-        16942
+        14366,
+        16944
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "a4eb96f472588c08b6c30086e023a1652ca5cc6afa41d33b5fe43d223c77a3b8",
@@ -348,8 +352,8 @@
         16877
       ],
       "newOffsets": [
-        16948,
-        17630
+        16950,
+        17632
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "76173991b8c07273ca9b1899ad7f1175adaf45f82a54ce4f26597090e4b527ad",
@@ -373,8 +377,8 @@
         18185
       ],
       "newOffsets": [
-        17636,
-        18938
+        17638,
+        18940
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "be4547f7b4fc80a46ea5ac703b59ed9a76a5ddb0e4cd9a459be326934af24179",
@@ -398,8 +402,8 @@
         21203
       ],
       "newOffsets": [
-        18944,
-        21956
+        18946,
+        21958
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "0701801340938dda0fc18d50b948fc013dc8e50a875fa557ca00b1728daa197c",
@@ -423,8 +427,8 @@
         22218
       ],
       "newOffsets": [
-        21962,
-        22971
+        21964,
+        22973
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "1ebb6de8a721fd6d58f9307bc0a65c5c9bfc8d83d2395e8e64a9d3b4ca92b285",
@@ -448,8 +452,8 @@
         23753
       ],
       "newOffsets": [
-        22977,
-        24506
+        22979,
+        24508
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "1ccd2ee3d0c2b2cdfd1bec335dccd0cc1ba65f222ea94e084b18378cf2239892",
@@ -473,8 +477,8 @@
         25033
       ],
       "newOffsets": [
-        24512,
-        25786
+        24514,
+        25788
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "91cd29566f64bd18cb191e2092028bd50547252c865a25010f7d8dbe062bf131",
@@ -498,8 +502,8 @@
         25665
       ],
       "newOffsets": [
-        25792,
-        26418
+        25794,
+        26420
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "1685e440379d12344634128f4f7e58ee1b43177b18ace38979b989af52ff316a",
@@ -523,8 +527,8 @@
         26650
       ],
       "newOffsets": [
-        26424,
-        27403
+        26426,
+        27405
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "1f393a6874e3bf8f124becd8a18427143704b4ee77b6ff81445788b529cb50f8",
@@ -548,8 +552,8 @@
         27306
       ],
       "newOffsets": [
-        27409,
-        28059
+        27411,
+        28061
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "0b9cd9a3453906cdb552254543ba9aad1dc9bd6bbfc6a29fa36509cbec007ef6",
@@ -573,8 +577,8 @@
         28868
       ],
       "newOffsets": [
-        28065,
-        29621
+        28067,
+        29623
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "5c3cc4f6077ba067b40b6dfe81fcf527cc6f2c9bd7862582ae9edeab18fa04ab",
@@ -598,8 +602,8 @@
         29446
       ],
       "newOffsets": [
-        29627,
-        30199
+        29629,
+        30201
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "30a96ea726ac554ab07545fc96c98983232bd6c72aab6d50b2725bfa52d82298",
@@ -623,8 +627,8 @@
         30456
       ],
       "newOffsets": [
-        30205,
-        31209
+        30207,
+        31211
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "a9a200278c57f85f700866763140365a158ffc2f01de13075808a157aac18e44",
@@ -648,8 +652,8 @@
         31589
       ],
       "newOffsets": [
-        31215,
-        32342
+        31217,
+        32344
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "ca8607845c3e457a1cdc1e617ff7bc7ad766a051c0ac81a6b62bdf00fadc8275",
@@ -673,8 +677,8 @@
         33358
       ],
       "newOffsets": [
-        32348,
-        34111
+        32350,
+        34113
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "1e571e21821bd2ac86343bf3992346005255fa0f4c15c7b20e9479968b6b7069",
@@ -698,8 +702,8 @@
         35242
       ],
       "newOffsets": [
-        34117,
-        35995
+        34119,
+        35997
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "452e216d35812ee9b9f4a69afd3ca0fdb7aaf37ee5b376cf48b1145ac34c1c20",
@@ -723,8 +727,8 @@
         36347
       ],
       "newOffsets": [
-        36001,
-        37100
+        36003,
+        37102
       ],
       "bodyChanged": false,
       "oldSpanSHA256": "72771daca77e15cf818d63590389e1d3cfa7ed6589890547850d839f204e0d70",
@@ -1079,6 +1083,56 @@
       "bodyChanged": true,
       "oldSpanSHA256": "bbd1fd7a829eb62e65f86be82ca31a9ac68f0308dafb92894a9b1bcac236b607",
       "newSpanSHA256": "ee3ec7a96cf7ca0f759bcd8e6bdf5e8d246a6118dca1fec1f469ceffbe4b860d"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+      "method": "FrameInitializationShouldTouchOnlyItsOwnFifteenBytes",
+      "oldLines": [
+        9,
+        13,
+        28
+      ],
+      "newLines": [
+        9,
+        13,
+        28
+      ],
+      "oldOffsets": [
+        159,
+        1293
+      ],
+      "newOffsets": [
+        159,
+        1305
+      ],
+      "bodyChanged": true,
+      "oldSpanSHA256": "27bdd861f4ad08095dda0a0be3eedb612829061bad47f79eab648a45512976ca",
+      "newSpanSHA256": "bb052104344a149a76361d6230f7e8552792f67c03ffc8411098141a66de819a"
+    },
+    {
+      "source": "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs",
+      "method": "ExactWriterLimitAndDisposedLeaseMustRemainEnforced",
+      "oldLines": [
+        30,
+        31,
+        42
+      ],
+      "newLines": [
+        30,
+        31,
+        42
+      ],
+      "oldOffsets": [
+        1299,
+        2030
+      ],
+      "newOffsets": [
+        1311,
+        2044
+      ],
+      "bodyChanged": true,
+      "oldSpanSHA256": "ffecc7716a6357efe78bb9446acdd668c27e219ae4da2243e6129ea5709857bc",
+      "newSpanSHA256": "4cbc9f44668860807df5b508b3b3b4d8ae95797172d8581464ba38625b92440e"
     }
   ],
   "historicalFullOrdinaryRun": {
@@ -1102,6 +1156,15 @@
       "comparatorBytes": 56,
       "shapeGuardsPassed": true
     }
+  },
+  "historicalPackingRun": {
+    "runId": 41952557024,
+    "head": "3f2f1d03da65844fba6f367811545f195ccf5206",
+    "complete": true,
+    "passed": 8,
+    "nonpassing": 0,
+    "qualified": true,
+    "fullSuiteQualified": false
   },
   "candidateExecution": "not run",
   "fullSuiteQualified": false

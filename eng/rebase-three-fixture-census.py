@@ -2,8 +2,8 @@
 """Reproduce the candidate census from a preserved frozen catalog, without .NET.
 
 Offsets in the original catalog are Unicode text offsets; span hashes are UTF-8.
-Only three known test bodies may differ. Every other method slice is required to
-remain byte-identical, including every shifted method in the two edited files.
+Only six known test bodies may differ. Every other method slice is required to
+remain byte-identical, including every shifted method in the three edited test files.
 """
 import copy
 import hashlib
@@ -16,19 +16,24 @@ BASELINE = 'eng/fixture-migration-baseline'
 FROZEN_SHA256 = '2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66'
 BASE_PRODUCT_TREE = 'bfc211191d91b5a77c6a8f0085a0c00a459c5583'
 BASE_TEST_TREE = '690953054b445203d5b74614f954c8b7dc8d41ba'
-PARENT_COMMIT = '4209233576c2100e0d5dc625308f49b76d500169'
-PARENT_TREE = '013f411efceeba53310ebe0ade5cf525d4b68008'
+PARENT_COMMIT = '3f2f1d03da65844fba6f367811545f195ccf5206'
+PARENT_TREE = '340358eb00cfd0af94003896cb3d82c3567020bb'
 PROTOCOL = 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
 PROGRESS = 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
+STACK = 'test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs'
 OWNED_FRAME = 'src/SharpLink.Runtime/OwnedFrame.cs'
 CANDIDATE_PINS = {
+    STACK: '94ac76dbf52335d3b7703d9fac0aef118716cf8eb16061ce4a203138e9955f0d',
     OWNED_FRAME: 'c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195',
-    PROTOCOL: '736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384',
+    PROTOCOL: 'a2aa71ed8ee7c5f7184c9f5ad9667973f7057cd73d5c139c81f6e92939f22d4e',
     PROGRESS: '70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c',
 }
 CHANGED_METHODS = {(PROTOCOL, 'WriterAndParserShouldRoundTripFrame'),
     (PROTOCOL, 'HeaderWithEveryByteInSeparateSegmentShouldParse'),
-    (PROGRESS, 'ProgressFlagDoesNotGrowOwnedFrame')}
+    (PROGRESS, 'ProgressFlagDoesNotGrowOwnedFrame'),
+    (PROTOCOL, 'ZeroThroughFourteenHeaderBytesShouldRemainPartial'),
+    (STACK, 'FrameInitializationShouldTouchOnlyItsOwnFifteenBytes'),
+    (STACK, 'ExactWriterLimitAndDisposedLeaseMustRemainEnforced')}
 
 
 def require(value, code):
@@ -85,7 +90,8 @@ def relocate(old, new, method):
     else:
         # These exact pinned methods have no nested block at four-space indent.
         # The signature, attribute prefix, and closing-boundary shape are fixed.
-        marker = '[Test]\n    ' + p['signature'] + '\n    {'
+        require(before.count(p['signature']) == 1, 'REBIND_ORIGINAL_SIGNATURE')
+        marker = before[:before.index(p['signature'])] + p['signature'] + '\n    {'
         require(before.startswith(marker) and new.count(marker) == 1, 'REBIND_CHANGED_SIGNATURE')
         start = new.index(marker)
         closing = new.index('\n    }\n', start + len(marker))
@@ -142,30 +148,32 @@ def generate(root):
             if body_changed: altered.append((path, method['methodName']))
         else:
             text_span((root / path).read_text(), method)
-    require(set(altered) == CHANGED_METHODS and len(altered) == 3, 'REBIND_THREE_BODIES')
+    require(set(altered) == CHANGED_METHODS and len(altered) == 6, 'REBIND_SIX_BODIES')
     historical = {key: result.pop(key) for key in ('sourceCheckpoint', 'sourceTree', 'sourceDirectorySHA256')}
     product_tree = tree_id(root / 'src'); test_tree = tree_id(root / 'test')
     result['sourceDerivation'] = {
-        'kind': 'ownedframe-packing-source-rebase', 'frozenCatalogSHA256': FROZEN_SHA256,
+        'kind': 'five-additional-case-fixture-source-rebase', 'frozenCatalogSHA256': FROZEN_SHA256,
         'historicalCatalogProvenance': historical, 'parentCommit': PARENT_COMMIT, 'parentTree': PARENT_TREE,
         'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': product_tree, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
         'candidateSourcePinsSHA256': sha(canonical(result['sourcePins'])),
-        'changedSourcePaths': sorted(CANDIDATE_PINS), 'changedMethodBodies': 3,
+        'changedSourcePaths': sorted(CANDIDATE_PINS), 'changedMethodBodies': 6,
         'methodCount': 2463, 'sourcePinCount': 1599,
         'qualification': 'Derived source catalog only; not a test execution result.'}
-    report = {'schemaVersion': 1, 'scope': 'ownedframe-packing-candidate-catalog-rebase',
+    report = {'schemaVersion': 1, 'scope': 'five-additional-case-fixture-catalog-rebase',
         'frozenCatalogSHA256': FROZEN_SHA256, 'candidateCatalogSHA256': sha(render(result)),
         'parentCommit': PARENT_COMMIT, 'parentTree': PARENT_TREE,
         'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': product_tree, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
-        'methodCount': 2463, 'sourcePinCount': 1599, 'changedMethodBodyCount': 3,
-        'unchangedMethodBodyCount': 2460, 'deletedMethods': 0, 'addedMethods': 0,
+        'methodCount': 2463, 'sourcePinCount': 1599, 'changedMethodBodyCount': 6,
+        'unchangedMethodBodyCount': 2457, 'deletedMethods': 0, 'addedMethods': 0,
         'changedPins': {path: {'old': frozen['sourcePins'][path], 'new': result['sourcePins'][path]} for path in sorted(CANDIDATE_PINS)},
         'affectedMethods': affected,
         'historicalFullOrdinaryRun': {'runId': 41940224644, 'ordinary': 2879, 'passed': 2589, 'errors': 290,
             'failingFiles': 92, 'failingMethodStatusRows': 253, 'qualified': False},
-        'historicalFirstMigrationRun': {'runId': 41950562552, 'head': PARENT_COMMIT,
+        'historicalFirstMigrationRun': {'runId': 41950562552, 'head': '4209233576c2100e0d5dc625308f49b76d500169',
             'complete': True, 'passed': 5, 'nonpassing': 1, 'qualified': False,
             'case4': {'measuredBytes': 64, 'comparatorBytes': 56, 'shapeGuardsPassed': True}},
+        'historicalPackingRun': {'runId': 41952557024, 'head': '3f2f1d03da65844fba6f367811545f195ccf5206',
+            'complete': True, 'passed': 8, 'nonpassing': 0, 'qualified': True, 'fullSuiteQualified': False},
         'candidateExecution': 'not run', 'fullSuiteQualified': False}
     return result, report
 
@@ -179,7 +187,7 @@ def main():
         else: require((ROOT / path).read_bytes() == data, 'REBIND_REPRODUCIBILITY')
     print(json.dumps({'candidateCatalogSHA256': sha(outputs['eng/unit-census.json']),
         'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': report['candidateProductTree'], 'testTree': report['candidateTestTree'],
-        'methods': 2463, 'pins': 1599, 'changedBodies': 3, 'fullSuiteQualified': False}, sort_keys=True))
+        'methods': 2463, 'pins': 1599, 'changedBodies': 6, 'fullSuiteQualified': False}, sort_keys=True))
 
 
 if __name__ == '__main__': main()

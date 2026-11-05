@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Eight ordinary candidate UIDs, once each; raw reports remain private.
+"""Thirteen ordinary candidate UIDs, once each; raw reports remain private.
 
 Extends, never replaces, the reviewed single-build/double-discovery custody
 lane. This candidate validation cannot qualify the historical failed full suite, D2, or performance.
@@ -20,38 +20,41 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE = {'lane': None, 'errors': [], 'work': None}
 SOURCE_TREES = {'src': 'c3a94c896418a5d5ec62646461f17c67dc89bc96',
-                'test': 'cc47cf7f9cfc57ab604a89cc58f23d956363339e'}
+                'test': '6052d7b2a52946f8d9048e76287167768f13c673'}
 HELPERS = {
     'eng/run-unit-census.py': 'a445781ba97a6c6a963faa9ba4d7e0bb890a96df6395e482ddb3948f8d12e4bf',
     'eng/unit-census-results.py': 'cbf6ce2096576dfe027b8e196144e9cba57860ad99be48c1f89d7ba73a71414e',
     'eng/run-unit-execution.py': 'ede7580fa1a9e37fba16322ef0158a9db8905bc6983c217c8bdad6eb5b784acf',
-    'eng/unit-execution-results.py': 'd50245861fa6e8aba7f70fbbf6a5e8a01bdb82b573b542176c5c3d7ea0c87b66',
+    'eng/unit-execution-results.py': '8239004ceaecf6b34ea37b9c8b6d2959c7eee52bd42997714012f8b4a47bd97a',
     'eng/package-smoke-process.py': 'ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3',
     'eng/route59-results.py': 'eb95aaf6a6799b0c216ee3687d71e5e1aeb5651867d515e3a4db16561bfcda8b',
     'eng/retirement-results.py': '6774c8bdd8bd8b3f618c01aee34e429d8a3b8218cdb169e752cd81ab6a9e79eb',
     'eng/tests/test_unit_census.py': 'd12fbbc8e3634fac209aac866eab101d2938d4531ea27e04b9732fb1f7922da5',
     'eng/tests/test_unit_execution.py': 'c9fbae133b363f6ee0150036adfaba80528a3371ba73a5d6140423399672fa19',
-    'eng/unit-census.json': '85d5b8219d794978df1f51006b9ffa90fb45472d9d7303bab835570e75ab0af8',
-    'eng/rebase-three-fixture-census.py': 'fef0b829394eebcdf7abf7f01b847b002bf49a376a99a8036178e38049792452',
-    'eng/tests/test_three_fixture_census.py': 'aa6f7fbc17f2e5012e73ea53925eb3edad8e8781666f840d72df3a20b05efaba',
-    'eng/tests/test_pure_failure_diagnostic.py': '69621652abe2c8bfa07e6473ade2e7c626effbc5e3ecb706e576a5df03bdfcc2',
-    'eng/three-fixture-census-rebase.json': '1991588ae608fe5ecf4a5b3ce4453d13f267b450a380a1109c848913a0fd3d7c',
+    'eng/unit-census.json': '36749a0d854f5445c500523bba58a36827c83bd97ab65fe4d1a9dbdb567a9e20',
+    'eng/rebase-three-fixture-census.py': 'c6d2f5ff33fda5b37d868616f147ad0274fede304ad60892751f8752a3b315c7',
+    'eng/tests/test_three_fixture_census.py': 'b382a203d6ac21f907adf79bc774550211b15d3fc8041a1c03bb3686f7ae7357',
+    'eng/tests/test_pure_failure_diagnostic.py': '8e1fc528ee0e31fa61e440dd0402e4fb0a1b0f75e5c3b51dd7236f1f674e5af7',
+    'eng/three-fixture-census-rebase.json': '2c1d5a694fa66e02843e497986c629dd6437804d075672d0f005f6c145874e1e',
     'eng/fixture-migration-baseline/unit-census.json': '2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66',
     'eng/fixture-migration-baseline/test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs.txt': 'd2f827e0f45adae15e78c9db4d9c468de1d247c34eb60ed5e01296b59b584e73',
     'eng/fixture-migration-baseline/test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs.txt': '67ffae89508dc0aba7f25f968bec4eb6fa91f997c9acc32784e9defc96a536a9',
     'eng/fixture-migration-baseline/src/SharpLink.Runtime/OwnedFrame.cs.txt': '71948e8baa3494c086d368454460f0422bc635095f91234ea859a3b5eb4bf3d5',
+    'eng/fixture-migration-baseline/test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs.txt': '3b4d5efdf3aba44ee1abc34199b517df615c768ec9721d5bc6ddc3c1b7076a3e',
 }
 PROTOCOL = 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
 PROGRESS = 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
+STACK = 'test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs'
 OWNED_FRAME = 'src/SharpLink.Runtime/OwnedFrame.cs'
 FLUSH = 'test/SharpLink.UnitTests/Runtime/FlushOperationStressTests.cs'
 GRAMMAR = 'test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs'
 FRAME = 'src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs'
 PAYLOAD = 'src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs'
 SOURCE_PINS = {
+    STACK: '94ac76dbf52335d3b7703d9fac0aef118716cf8eb16061ce4a203138e9955f0d',
     OWNED_FRAME: 'c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195',
     FLUSH: '98349cbf0ea4545a597e633002cc44557ae1272730d5558487a52f28c05f23b1',
-    PROTOCOL: '736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384',
+    PROTOCOL: 'a2aa71ed8ee7c5f7184c9f5ad9667973f7057cd73d5c139c81f6e92939f22d4e',
     PROGRESS: '70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c',
     GRAMMAR: '8804cf11f26fdd938c5ff786c154bf46fca05d6cca5af4e8a65d34d9e19f6fe5',
     FRAME: '737e171bed77f428e4e5d7a0128b8344ae0886cf70300775c9f7df823f588d0e',
@@ -68,7 +71,19 @@ CASES = (
     (GRAMMAR, 'SharpLink.UnitTests.Protocol', 'Protocol3FrameAndHandshakeTests', 'CancellationHasExactlyOneKnownReasonByte', 27, 33),
     (PROGRESS, 'SharpLink.UnitTests.Runtime', 'SendPumpProgressIsolationTests', 'StreamCompleteNeverOvertakesQueuedStreamData', 109, 139),
     (FLUSH, 'SharpLink.UnitTests.Runtime', 'FlushOperationStressTests', 'SessionStopShouldCompleteEveryForceFlushWaiter', 169, 204),
+    (PROTOCOL, 'SharpLink.UnitTests.Protocol', 'ProtocolV2Tests', 'ZeroThroughFourteenHeaderBytesShouldRemainPartial', 38, 47),
+    (STACK, 'SharpLink.UnitTests.Runtime', 'Stack13FrameClearTests', 'FrameInitializationShouldTouchOnlyItsOwnFifteenBytes', 13, 28),
+    (STACK, 'SharpLink.UnitTests.Runtime', 'Stack13FrameClearTests', 'FrameInitializationShouldTouchOnlyItsOwnFifteenBytes', 13, 28),
+    (STACK, 'SharpLink.UnitTests.Runtime', 'Stack13FrameClearTests', 'FrameInitializationShouldTouchOnlyItsOwnFifteenBytes', 13, 28),
+    (STACK, 'SharpLink.UnitTests.Runtime', 'Stack13FrameClearTests', 'ExactWriterLimitAndDisposedLeaseMustRemainEnforced', 31, 42),
 )
+# Pinned TUnit generator ff2dc5186b05eddc8f6aea03a18784df3aa6e737:
+# TestMetadataGenerator.cs 4273-4290 and 4333-4342 use the attributed
+# MethodDeclarationSyntax location, converted from zero-based to one-based.
+# The three Arguments rows share exact source start 9 and end 28; UIDs stay
+# opaque. Sorting only schedules the three distinct discovered identities.
+PARAMETERIZED_CASE_INDICES = frozenset((9, 10, 11))
+PARAMETERIZED_ATTRIBUTE_LINE = 9
 # Candidate-only literal vocabulary. Each exact source line is verified by controls.
 ASSERTION_LITERALS = {
     0: (('frame parsed', 'frame-parsed', PROTOCOL, 22),
@@ -93,6 +108,18 @@ ASSERTION_LITERALS = {
         ('clearing the original holder must reset both of its flags', 'cleared-original-flags-zero', PROGRESS, 722),
         ('copies must preserve the frame owner, payload, length and flush completion after clearing the original', 'copies-preserve-frame-data', PROGRESS, 732)),
 }
+STACK_INITIALIZATION_ASSERTIONS = (
+    ('header committed length', 'header-committed-length', STACK, 19),
+    ('prior bytes unchanged', 'prior-bytes-unchanged', STACK, 20),
+    ('uncommitted tail must not be cleared', 'uncommitted-tail-not-cleared', STACK, 21),
+    ('magic', 'header-magic', STACK, 24),
+    ('empty length', 'empty-payload-length', STACK, 25),
+    ('type and flags', 'response-type-and-flags', STACK, 26),
+    ('id', 'maximum-positive-correlation-id', STACK, 27),
+)
+ASSERTION_LITERALS.update({index: STACK_INITIALIZATION_ASSERTIONS for index in PARAMETERIZED_CASE_INDICES})
+ASSERTION_LITERALS[12] = (('exact-size header', 'exact-size-header', STACK, 36),
+                         ('lease limit', 'lease-limit', STACK, 38))
 EXCEPTION_CATEGORIES = {
     'System.Exception': 'exception',
     'SharpLink.Runtime.SharpLinkProtocolViolationException': 'protocol-violation',
@@ -137,7 +164,7 @@ def verify_isolated_sdk(lane, census):
     root = dotnet.parent
     temporary = os.environ.get('RUNNER_TEMP')
     r.require(type(temporary) is str and Path(temporary).is_absolute() and
-              root == Path(temporary) / 'ownedframe-packing-dotnet' and dotnet.name == 'dotnet' and dotnet.is_file(), 'PD_SDK')
+              root == Path(temporary) / 'five-case-fixtures-dotnet' and dotnet.name == 'dotnet' and dotnet.is_file(), 'PD_SDK')
     r.legacy.directory_identity_strict(root)
     for name in ('DOTNET_ROOT', 'DOTNET_ROOT_X64'):
         if name in lane.env: r.require(Path(lane.env[name]) == root, 'PD_SDK')
@@ -145,23 +172,31 @@ def verify_isolated_sdk(lane, census):
 
 
 def selected(r, ordinary):
-    output = []
-    for source, namespace, cls, method, start, end in CASES:
-        matches = [(uid, row) for uid, row in ordinary.items()
-                   if row['type']['namespace'] == namespace and
-                   row['type']['typeName'] == cls and
-                   row['type']['methodName'] == method]
-        r.require(len(matches) == 1, 'PD_SELECTION')
-        uid, row = matches[0]
-        r.require(row['uid'] == uid and type(uid) is str and uid and
-                  not uid.startswith(('-', '@')) and len(uid) <= 4096 and
-                  not any(ord(c) < 32 for c in uid), 'PD_SELECTION')
+    output = []; groups = {}; consumed = {}
+    for index, case in enumerate(CASES):
+        source, namespace, cls, method, start, end = case
+        if case not in groups:
+            matches = [(uid, row) for uid, row in ordinary.items()
+                       if row['type']['namespace'] == namespace and
+                       row['type']['typeName'] == cls and
+                       row['type']['methodName'] == method]
+            r.require(len(matches) == CASES.count(case), 'PD_SELECTION')
+            for uid, row in matches:
+                r.require(row['uid'] == uid and type(uid) is str and uid and
+                          not uid.startswith(('-', '@')) and len(uid) <= 4096 and
+                          not any(ord(c) < 32 for c in uid), 'PD_SELECTION')
+            groups[case] = sorted(matches, key=lambda pair: pair[0]); consumed[case] = 0
+        uid, row = groups[case][consumed[case]]; consumed[case] += 1
         loc = row['location']
+        valid_start = (loc.get('lineStart') == PARAMETERIZED_ATTRIBUTE_LINE
+                       if index in PARAMETERIZED_CASE_INDICES
+                       else type(loc.get('lineStart')) is int and start - 1 <= loc['lineStart'] <= start)
         r.require(set(loc) == {'file', 'lineStart', 'lineEnd'} and loc['file'] == '/_/' + source and
-                  type(loc['lineStart']) is int and start - 1 <= loc['lineStart'] <= start and
+                  type(loc['lineStart']) is int and valid_start and
                   type(loc['lineEnd']) is int and loc['lineEnd'] == end, 'PD_SELECTION')
         output.append((uid, row))
-    r.require(len({uid for uid, _ in output}) == 8, 'PD_SELECTION')
+    r.require(len({uid for uid, _ in output}) == 13 and
+              all(consumed[case] == len(rows) for case, rows in groups.items()), 'PD_SELECTION')
     return output
 
 
@@ -280,7 +315,7 @@ def projected_exception(r, index, exception):
         category = EXCEPTION_CATEGORIES.get(current['type'], 'unknown')
         row = {'depth': depth, 'category': category, 'assertionTag': 'unknown', 'sourceFrames': []}
         known = {message: (tag, path, line) for message, tag, path, line in ASSERTION_LITERALS.get(index, ())}
-        if category == 'exception' and current['message'] in known:
+        if category == ('invalid-operation' if source == STACK else 'exception') and current['message'] in known:
             tag, path, line = known[current['message']]
             row.update(assertionTag=tag, exactMessageSource={'source': path, 'line': line})
         protocol_messages = {
@@ -303,10 +338,13 @@ def projected_exception(r, index, exception):
         frame_map = {}
         full = namespace + '.' + cls
         for line in range(start, end + 1):
-            frame_map[f'   at {full}.{method}() in /_/{source}:line {line}'] = (method, line)
+            parameters = 'Int32 capacity' if index in PARAMETERIZED_CASE_INDICES else ''
+            frame_map[f'   at {full}.{method}({parameters}) in /_/{source}:line {line}'] = (method, line)
         ensure_line = {PROTOCOL: 877, PROGRESS: 897}.get(source)
         if ensure_line is not None:
             frame_map[f'   at {full}.Ensure(Boolean condition, String message) in /_/{source}:line {ensure_line}'] = ('Ensure', ensure_line)
+        if source == STACK:
+            frame_map[f'   at {full}.Check(Boolean condition, String message) in /_/{source}:line 71'] = ('Check', 71)
         lines = current.get('stackTrace', '').splitlines()
         r.require(len(lines) <= 4096, 'PD_LIMIT')
         for raw in lines:
@@ -377,7 +415,7 @@ def run_cases(lane, execution, selections, overall_stop):
     lane.stop = min(overall_stop, now + 1500)
     # The original checkout remains an independently sealed, unbuilt input.
     # Rebase controls must use it, not the clone containing generated bin/obj.
-    lane.run('packing-python-controls', [sys.executable, '-B', ROOT / 'eng/tests/test_pure_failure_diagnostic.py'], ROOT, 30)
+    lane.run('five-case-python-controls', [sys.executable, '-B', ROOT / 'eng/tests/test_pure_failure_diagnostic.py'], ROOT, 30)
     r.require(lane.sequence == 33, 'PD_COMMANDS')
     dotnet = next(path for path in lane.inputs if path.name == 'dotnet' and path.parent in lane.trees)
     dll = lane.source / 'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'
@@ -385,7 +423,7 @@ def run_cases(lane, execution, selections, overall_stop):
     for index, selection in enumerate(selections):
         lane.check(); verify_source(r, lane.source)
         r.require(r.sha(dll) == lane.identity['binarySHA256'], 'UC_INPUT_CHANGED')
-        uid, _ = selection; label = 'packing-case-' + str(index + 1)
+        uid, _ = selection; label = 'five-case-' + str(index + 1)
         report = lane.work / (label + '-results'); report.mkdir(mode=0o700)
         report_identity = r.legacy.directory_identity_strict(report); r.legacy.verify_directory(report, report_identity, empty=True)
         argv = case_argv(execution, dotnet, dll, uid, report)
@@ -411,7 +449,7 @@ def run_cases(lane, execution, selections, overall_stop):
         lane.case_facts.append(result)
         lane.check()
         if not result['selectedPassed']: lane.record(r.Rejected('PD_CASE_FAILED'))
-    r.require(lane.sequence == 41 and len(lane.case_facts) == 8, 'PD_COMMANDS')
+    r.require(lane.sequence == 46 and len(lane.case_facts) == 13, 'PD_COMMANDS')
     lane.candidate_complete = True
 
 
@@ -444,25 +482,27 @@ def finish(lane, census, execution):
     r = lane.r
     try: lane.check()
     except BaseException as error: lane.record(error)
-    complete = lane.candidate_complete and len(lane.case_facts) == 8
+    complete = lane.candidate_complete and len(lane.case_facts) == 13
     qualified = bool(complete and not lane.errors and lane.durable and time.monotonic() < lane.stop)
     try:
-        summary = {'schemaVersion': 1, 'scope': 'eight-ordinary-ownedframe-packing-candidate-validation',
+        summary = {'schemaVersion': 1, 'scope': 'thirteen-ordinary-five-additional-fixture-case-validation',
             'identity': public_identity(r, lane.identity),
             'candidateCatalogSHA256': HELPERS['eng/unit-census.json'],
             'frozenCatalogSHA256': HELPERS['eng/fixture-migration-baseline/unit-census.json'],
             'sourceTrees': dict(SOURCE_TREES), 'requiredSdk': '10.0.114', 'requiredRuntime': '10.0.14',
             'preparationQualifiedAtHandoff': lane.preparation_complete,
             'candidateValidationComplete': complete, 'candidateValidationQualified': qualified,
-            'fullSuiteQualified': False, 'historicalOrdinaryFailureCount': 290, 'requiredSelectedCaseCount': 8,
+            'fullSuiteQualified': False, 'historicalOrdinaryFailureCount': 290, 'requiredSelectedCaseCount': 13,
             'expectedOrdinaryMetadataCount': 2879, 'expectedExplicitMetadataCount': 5,
             'historicalFullRunId': 41940224644, 'historicalDiagnosticRunId': 41947099090,
             'historicalFirstMigrationRun': {'runId': 41950562552, 'head': '4209233576c2100e0d5dc625308f49b76d500169',
                 'complete': True, 'passed': 5, 'nonpassing': 1, 'qualified': False,
                 'case4': {'measuredBytes': 64, 'comparatorBytes': 56, 'shapeGuardsPassed': True}},
+            'historicalPackingRun': {'runId': 41952557024, 'head': '3f2f1d03da65844fba6f367811545f195ccf5206',
+                'complete': True, 'passed': 8, 'nonpassing': 0, 'qualified': True, 'fullSuiteQualified': False},
             'errorOccurrences': len(lane.errors), 'rejections': rejections(lane, execution),
             'evidenceDurable': lane.durable, 'cases': lane.case_facts, 'exit': 0 if qualified else 1}
-        r.write_json(lane.evidence, 'ownedframe-packing-validation-summary.json', summary); lane.extend_evidence(['ownedframe-packing-validation-summary.json'])
+        r.write_json(lane.evidence, 'five-case-fixture-validation-summary.json', summary); lane.extend_evidence(['five-case-fixture-validation-summary.json'])
         lane.check(); rendered = json.dumps(summary, sort_keys=True, allow_nan=False)
         r.require(time.monotonic() < lane.stop, 'PD_BUDGET')
         print(rendered, flush=True)
@@ -483,7 +523,7 @@ def main():
     ACTIVE = {'lane': None, 'errors': [], 'work': None}
     try:
         started = time.monotonic()
-        work = Path(tempfile.mkdtemp(prefix='slfp-', dir='/tmp')); os.chmod(work, 0o700); ACTIVE['work'] = work
+        work = Path(tempfile.mkdtemp(prefix='slf5-', dir='/tmp')); os.chmod(work, 0o700); ACTIVE['work'] = work
         # Fixed reviewed helper hashes before importing executable helper content.
         for name, expected in HELPERS.items():
             path = ROOT / name
@@ -512,7 +552,7 @@ def main():
             ACTIVE['errors'].append(error)
             if census is not None and ACTIVE['work'] is not None: census.persist(ACTIVE['work'], ACTIVE['errors'], 999)
             elif execution_runner is not None: execution_runner.bootstrap_persist(ACTIVE['work'], ACTIVE['errors'])
-        try: os.write(2, b'PACKING_VALIDATION_BOOTSTRAP_FAILED\n')
+        try: os.write(2, b'FIVE_CASE_VALIDATION_BOOTSTRAP_FAILED\n')
         except BaseException as secondary: ACTIVE['errors'].append(secondary)
         return 1
 
@@ -521,7 +561,7 @@ def guarded_main():
     try: return main()
     except BaseException as error:
         ACTIVE['errors'].append(error)
-        try: os.write(2, b'PACKING_VALIDATION_OUTERMOST_FAILED\n')
+        try: os.write(2, b'FIVE_CASE_VALIDATION_OUTERMOST_FAILED\n')
         except BaseException as secondary: ACTIVE['errors'].append(secondary)
         return 1
 

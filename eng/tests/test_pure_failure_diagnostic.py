@@ -35,6 +35,7 @@ CANARY = 'PRIVATE_CANARY_8fe5fca2'
 
 def fixture(index=0, status='error', exception=None):
     path, ns, cls, method, start, end = d.CASES[index]
+    if index in d.PARAMETERIZED_CASE_INDICES: start = d.PARAMETERIZED_ATTRIBUTE_LINE
     uid = 'private-uid-' + str(index)
     row = {'uid': uid, 'displayName': CANARY, 'type': {'namespace': ns, 'typeName': cls, 'methodName': method},
            'location': {'file': '/_/' + path, 'lineStart': start, 'lineEnd': end}}
@@ -93,7 +94,7 @@ class Controls(unittest.TestCase):
         for index, rows in d.ASSERTION_LITERALS.items():
             for message, tag, path, line in rows:
                 self.assertIn('"' + message + '"', (BASE / path).read_text().splitlines()[line - 1])
-                result = self.classify(index, exception={'type': 'System.Exception', 'message': message})
+                result = self.classify(index, exception={'type': 'System.InvalidOperationException' if path == d.STACK else 'System.Exception', 'message': message})
                 self.assertEqual(result['exceptions'][0]['assertionTag'], tag)
                 self.assertEqual(result['exceptions'][0]['exactMessageSource'], {'source': path, 'line': line})
         self.assertEqual(self.classify(0, exception={'type': 'System.Exception', 'message': 'unsigned request ID'})['exceptions'][0]['assertionTag'], 'unknown')
@@ -101,22 +102,22 @@ class Controls(unittest.TestCase):
 
     def test_selected_spans_match_rebound_catalog(self):
         catalog = r.read_json(BASE / 'eng/unit-census.json')
-        for path, namespace, cls, method, start, end in d.CASES:
+        for index, (path, namespace, cls, method, start, end) in enumerate(d.CASES):
             matches = [m for m in catalog['methods'] if (m['source'], m['namespace'], m['className'], m['methodName']) == (path, namespace, cls, method)]
             self.assertEqual(len(matches), 1)
             self.assertEqual((matches[0]['signatureLine'], matches[0]['endLine']), (start, end))
             self.assertEqual(matches[0]['initialEligibility'], 'ordinary')
-            self.assertEqual(matches[0]['expectedCases'], 1)
-        self.assertEqual(len(d.CASES), 8)
+            self.assertEqual(matches[0]['expectedCases'], 3 if index in d.PARAMETERIZED_CASE_INDICES else 1)
+        self.assertEqual(len(d.CASES), 13)
         self.assertEqual(e.CATALOG_SHA256, r.sha(BASE / 'eng/unit-census.json'))
 
     def test_changed_source_rejected_before_diagnostics(self):
         with patch.object(r, 'sha', return_value='0' * 64): self.reject(lambda: d.verify_source(r, BASE))
 
-    def test_eight_exact_source_method_identities(self):
-        ordinary = dict(fixture(i)[0] for i in range(8))
+    def test_thirteen_exact_source_method_identities(self):
+        ordinary = dict(fixture(i)[0] for i in range(13))
         chosen = d.selected(r, ordinary)
-        self.assertEqual(len(chosen), 8)
+        self.assertEqual(len(chosen), 13)
         for i, (uid, row) in enumerate(chosen): self.assertEqual(row['type']['methodName'], d.CASES[i][3])
         for mode in ('missing', 'duplicate', 'wrong-method', 'qualified-alias', 'wrong-namespace', 'wrong-path', 'wrong-start', 'wrong-end', 'unsafe-uid'):
             changed = copy.deepcopy(ordinary)
@@ -146,20 +147,25 @@ class Controls(unittest.TestCase):
         observed += [
             {'className': 'Protocol3FrameAndHandshakeTests', 'count': 1, 'methodName': method, 'namespace': 'SharpLink.UnitTests.Protocol', 'source': d.GRAMMAR, 'status': 'passed'}
             for method in ('OnlyNewMagicAndPositive63CorrelationAreAccepted', 'CancellationHasExactlyOneKnownReasonByte')]
-        ordinary = dict(fixture(i)[0] for i in range(8))
+        ordinary = dict(fixture(i)[0] for i in range(13))
         observed += [
             {'className': 'SendPumpProgressIsolationTests', 'count': 1, 'methodName': 'StreamCompleteNeverOvertakesQueuedStreamData', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': d.PROGRESS, 'status': 'passed'},
             {'className': 'FlushOperationStressTests', 'count': 1, 'methodName': 'SessionStopShouldCompleteEveryForceFlushWaiter', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': d.FLUSH, 'status': 'passed'},
         ]
+        observed += [
+            {'className': 'ProtocolV2Tests', 'count': 1, 'methodName': 'ZeroThroughFourteenHeaderBytesShouldRemainPartial', 'namespace': 'SharpLink.UnitTests.Protocol', 'source': d.PROTOCOL, 'status': 'error'},
+            {'className': 'Stack13FrameClearTests', 'count': 3, 'methodName': 'FrameInitializationShouldTouchOnlyItsOwnFifteenBytes', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': d.STACK, 'status': 'error'},
+            {'className': 'Stack13FrameClearTests', 'count': 1, 'methodName': 'ExactWriterLimitAndDisposedLeaseMustRemainEnforced', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': d.STACK, 'status': 'error'},
+        ]
         for evidence in observed:
             match = [row for row in ordinary.values() if row['type']['methodName'] == evidence['methodName']]
-            self.assertEqual(len(match), 1)
+            self.assertEqual(len(match), evidence['count'])
             row = match[0]
             self.assertEqual(row['type']['typeName'], evidence['className'])
             self.assertEqual(row['type']['namespace'], evidence['namespace'])
             self.assertEqual(row['location']['file'], '/_/' + evidence['source'])
-        self.assertEqual(len(d.selected(r, ordinary)), 8)
-        for index in range(8):
+        self.assertEqual(len(d.selected(r, ordinary)), 13)
+        for index in range(13):
             selection, native, test = fixture(index, 'passed')
             self.assertEqual(selection[1]['type']['typeName'], d.CASES[index][2])
             self.assertEqual(native['groups'][0]['className'], d.CASES[index][2])
@@ -167,14 +173,55 @@ class Controls(unittest.TestCase):
             self.assertTrue(d.classify(e, native, junit(native), index, selection)['selectedPassed'])
 
     def test_supported_attribute_or_signature_start_not_fuzzy(self):
-        ordinary = dict(fixture(i)[0] for i in range(8))
-        for row in ordinary.values(): row['location']['lineStart'] -= 1
-        self.assertEqual(len(d.selected(r, ordinary)), 8)
+        ordinary = dict(fixture(i)[0] for i in range(13))
+        for index, row in enumerate(ordinary.values()):
+            if index not in d.PARAMETERIZED_CASE_INDICES: row['location']['lineStart'] -= 1
+        self.assertEqual(len(d.selected(r, ordinary)), 13)
         next(iter(ordinary.values()))['location']['lineStart'] -= 1
         self.reject(lambda: d.selected(r, ordinary))
 
+    def test_parameterized_selection_requires_exact_three_distinct_opaque_uids(self):
+        ordinary = dict(fixture(i)[0] for i in range(13))
+        expected = sorted(fixture(i)[0][0] for i in d.PARAMETERIZED_CASE_INDICES)
+        chosen = d.selected(r, dict(reversed(list(ordinary.items()))))
+        self.assertEqual([chosen[i][0] for i in sorted(d.PARAMETERIZED_CASE_INDICES)], expected)
+        self.assertEqual(len({uid for uid, _ in chosen}), 13)
+        for mode in ('missing', 'extra', 'duplicate-native-uid', 'wrong-source', 'wrong-end', 'fuzzy-name', 'wrong-type'):
+            changed = copy.deepcopy(ordinary); uid = fixture(9)[0][0]
+            if mode == 'missing': del changed[uid]
+            elif mode == 'extra': changed['extra-case'] = copy.deepcopy(changed[uid]); changed['extra-case']['uid'] = 'extra-case'
+            elif mode == 'duplicate-native-uid': changed[uid]['uid'] = fixture(10)[0][0]
+            elif mode == 'wrong-source': changed[uid]['location']['file'] = '/_/' + d.PROTOCOL
+            elif mode == 'wrong-end': changed[uid]['location']['lineEnd'] += 1
+            elif mode == 'fuzzy-name': changed[uid]['type']['methodName'] += 'Extra'
+            else: changed[uid]['type']['typeName'] = 'OtherClass'
+            with self.subTest(mode=mode): self.reject(lambda: d.selected(r, changed))
+
+    def test_parameterized_location_is_exact_pinned_attributed_method_start(self):
+        ordinary = dict(fixture(i)[0] for i in range(13))
+        self.assertEqual([d.selected(r, ordinary)[i][1]['location']['lineStart'] for i in sorted(d.PARAMETERIZED_CASE_INDICES)], [9, 9, 9])
+        for start in (8, 10, 11, 12, 13, 14, True, 9.0):
+            changed = copy.deepcopy(ordinary); changed[fixture(9)[0][0]]['location']['lineStart'] = start
+            with self.subTest(start=start): self.reject(lambda: d.selected(r, changed))
+        catalog = r.read_json(BASE / 'eng/unit-census.json')
+        method = next(m for m in catalog['methods'] if m['source'] == d.STACK and m['methodName'] == d.CASES[9][3])
+        self.assertEqual((method['attributeLine'], method['signatureLine'], method['endLine']), (9, 13, 28))
+        self.assertEqual(method['sourceProvenance']['attributes'], ['[Test]', '[Arguments(32)]', '[Arguments(1024)]', '[Arguments(65536)]'])
+
+    def test_parameterized_argument_values_are_never_inferred_from_private_labels(self):
+        ordinary = dict(fixture(i)[0] for i in range(13))
+        for index in d.PARAMETERIZED_CASE_INDICES:
+            row = ordinary[fixture(index)[0][0]]
+            row['displayName'] = CANARY + '(wrong capacity)'
+        chosen = d.selected(r, ordinary)
+        self.assertEqual(len(chosen), 13)
+        for index in d.PARAMETERIZED_CASE_INDICES:
+            result = self.classify(index, 'passed')
+            self.assertNotIn(CANARY, json.dumps(result))
+            self.assertNotIn('capacity', result)
+
     def test_pass_and_prior_control_are_bounded_diagnostic_only(self):
-        for i in range(8):
+        for i in range(13):
             result = self.classify(i, 'passed'); self.assertTrue(result['selectedPassed']); self.assertEqual(result['exceptions'], [])
             self.assertNotIn(CANARY, json.dumps(result))
 
@@ -294,15 +341,15 @@ class Controls(unittest.TestCase):
         return lane
 
     def run_mock_cases(self, lane, mode='mixed'):
-        selections = [fixture(i)[0] for i in range(8)]; labels = []; originals = []
+        selections = [fixture(i)[0] for i in range(13)]; labels = []; originals = []
         def run(label, argv, *args):
             labels.append(label); lane.sequence += 1
-            if label == 'packing-python-controls':
+            if label == 'five-case-python-controls':
                 self.assertEqual(argv, [sys.executable, '-B', d.ROOT / 'eng/tests/test_pure_failure_diagnostic.py'])
                 self.assertEqual(args, (d.ROOT, 30))
                 self.assertNotEqual(d.ROOT, lane.source)
                 return None
-            index = int(label[-1]) - 1
+            index = int(label.rsplit('-', 1)[1]) - 1
             passed = index in (2, 4, 5, 6, 7) or mode == 'all-pass'
             selection, native, test = fixture(index, 'passed' if passed else 'error')
             report = Path(argv[argv.index('--results-directory') + 1]); (report / 'session.html').write_text(CANARY)
@@ -323,13 +370,13 @@ class Controls(unittest.TestCase):
             d.run_cases(lane, e, selections, d.time.monotonic() + 5100)
         return labels, originals
 
-    def test_eight_fresh_processes_failure_preserved_without_retry(self):
+    def test_thirteen_fresh_processes_failure_preserved_without_retry(self):
         with tempfile.TemporaryDirectory() as temp:
             lane = self.make_lane(temp); labels, originals = self.run_mock_cases(lane)
-            self.assertEqual(labels, ['packing-python-controls', 'packing-case-1', 'packing-case-2', 'packing-case-3', 'packing-case-4', 'packing-case-5', 'packing-case-6', 'packing-case-7', 'packing-case-8'])
-            self.assertEqual(len(lane.case_facts), 8); self.assertTrue(lane.candidate_complete)
-            self.assertEqual([row['status'] for row in lane.case_facts], ['error', 'error', 'passed', 'error', 'passed', 'passed', 'passed', 'passed'])
-            self.assertTrue(all(error in lane.errors for error in originals)); self.assertEqual(len(lane.seals), 8)
+            self.assertEqual(labels, ['five-case-python-controls'] + ['five-case-' + str(i) for i in range(1, 14)])
+            self.assertEqual(len(lane.case_facts), 13); self.assertTrue(lane.candidate_complete)
+            self.assertEqual([row['status'] for row in lane.case_facts], ['error', 'error', 'passed', 'error', 'passed', 'passed', 'passed', 'passed', 'error', 'error', 'error', 'error', 'error'])
+            self.assertTrue(all(error in lane.errors for error in originals)); self.assertEqual(len(lane.seals), 13)
             with contextlib.redirect_stdout(io.StringIO()) as output: self.assertEqual(d.finish(lane, c, e), 1)
             summary = json.loads(output.getvalue()); self.assertFalse(summary['candidateValidationQualified']); self.assertTrue(summary['candidateValidationComplete'])
             self.assertFalse(summary['fullSuiteQualified']); self.assertNotIn(CANARY, output.getvalue())
@@ -340,7 +387,7 @@ class Controls(unittest.TestCase):
                 lane = self.make_lane(temp)
                 with patch.object(d, 'classify') as classify:
                     self.reject(lambda: self.run_mock_cases(lane, mode)); classify.assert_not_called()
-                self.assertFalse(lane.candidate_complete); self.assertEqual(len(lane.case_facts), 0); self.assertNotIn('packing-case-2', lane.commands)
+                self.assertFalse(lane.candidate_complete); self.assertEqual(len(lane.case_facts), 0); self.assertNotIn('five-case-2', lane.commands)
                 self.assertTrue(lane.errors)
 
     def test_process_exit_mismatch_and_source_mutation_cannot_qualify(self):
@@ -357,12 +404,12 @@ class Controls(unittest.TestCase):
             self.assertEqual(summary['historicalOrdinaryFailureCount'], 290)
             self.assertEqual(summary['candidateCatalogSHA256'], e.CATALOG_SHA256)
             self.assertEqual(summary['sourceTrees'], d.SOURCE_TREES)
-            self.assertEqual(summary['requiredSelectedCaseCount'], 8)
+            self.assertEqual(summary['requiredSelectedCaseCount'], 13)
 
     def test_deadline_summary_writer_and_post_emit_failure_revoke(self):
         for mode in ('deadline', 'writer', 'post-emit'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
-                lane = self.make_lane(temp); lane.candidate_complete = True; lane.case_facts = [self.classify(i, 'passed') for i in range(8)]
+                lane = self.make_lane(temp); lane.candidate_complete = True; lane.case_facts = [self.classify(i, 'passed') for i in range(13)]
                 writes = []; clock = [1.0]; lane.stop = 2.0
                 def emit(*args, **kwargs): clock[0] = 3.0
                 patches = [patch.object(d.os, 'write', side_effect=lambda fd, data: writes.append(data) or len(data))]
@@ -386,7 +433,7 @@ class Controls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             lane = self.make_lane(temp); lane.preparation_complete = False
             lane.identity.update(sdk='10.0.114', installedRuntimes=d.RUNTIMES)
-            ordinary = dict(fixture(i)[0] for i in range(8)); original = d.selected
+            ordinary = dict(fixture(i)[0] for i in range(13)); original = d.selected
             clock = [1.0]; lane.stop = 2.0
             def slow_selection(*args):
                 result = original(*args); clock[0] = 3.0; return result
@@ -400,14 +447,14 @@ class Controls(unittest.TestCase):
                 lane = self.make_lane(temp); lane.stop = 0 if expired == 'preparation' else d.time.monotonic() + 3600
                 before = lane.stop; overall = 0 if expired == 'overall' else d.time.monotonic() + 5100
                 with patch.object(lane, 'run') as run:
-                    self.reject(lambda: d.run_cases(lane, e, [fixture(i)[0] for i in range(8)], overall)); run.assert_not_called()
+                    self.reject(lambda: d.run_cases(lane, e, [fixture(i)[0] for i in range(13)], overall)); run.assert_not_called()
                 self.assertEqual(lane.stop, before); self.assertFalse(lane.candidate_complete)
 
     def test_isolated_sdk_exact_directory_environment_and_symlink_guards(self):
         for mode in ('valid', 'wrong-root', 'wrong-env', 'multilevel', 'symlink'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
                 lane = c.Lane(Path(temp), r, o)
-                sdk = Path(temp) / 'ownedframe-packing-dotnet'; sdk.mkdir(); dotnet = sdk / 'dotnet'; dotnet.write_bytes(b'never execute')
+                sdk = Path(temp) / 'five-case-fixtures-dotnet'; sdk.mkdir(); dotnet = sdk / 'dotnet'; dotnet.write_bytes(b'never execute')
                 lane.env.update(DOTNET_ROOT=str(sdk), DOTNET_MULTILEVEL_LOOKUP='0')
                 if mode == 'wrong-env': lane.env['DOTNET_ROOT_X64'] = '/other-sdk'
                 if mode == 'multilevel': lane.env['DOTNET_MULTILEVEL_LOOKUP'] = '1'
@@ -430,7 +477,7 @@ class Controls(unittest.TestCase):
         self.assertIs(d.ACTIVE['errors'][0], original)
         script = 'import tempfile,runpy; tempfile.mkdtemp=lambda *a,**k: (_ for _ in ()).throw(OSError("' + CANARY + '")); runpy.run_path(' + repr(str(ROOT / 'eng/run-pure-failure-diagnostic.py')) + ',run_name="__main__")'
         result = subprocess.run([sys.executable, '-B', '-c', script], capture_output=True, timeout=10)
-        self.assertEqual(result.returncode, 1); self.assertEqual(result.stdout, b''); self.assertEqual(result.stderr, b'PACKING_VALIDATION_BOOTSTRAP_FAILED\n')
+        self.assertEqual(result.returncode, 1); self.assertEqual(result.stdout, b''); self.assertEqual(result.stderr, b'FIVE_CASE_VALIDATION_BOOTSTRAP_FAILED\n')
 
     def test_real_python_owner_nonzero_and_timeout_preserve_private_logs(self):
         o.enable_subreaper()

@@ -39,13 +39,13 @@ class Controls(unittest.TestCase):
         self.assertEqual({k: v for k, v in self.frozen.items() if k not in top_changing},
                          {k: v for k, v in self.candidate.items() if k not in top_changing})
 
-    def test_only_three_pins_and_three_bodies_change(self):
+    def test_only_four_pins_and_six_bodies_change(self):
         self.assertEqual({k for k in self.frozen['sourcePins'] if self.frozen['sourcePins'][k] != self.candidate['sourcePins'][k]}, set(g.CANDIDATE_PINS))
         changed = {(old['source'], old['methodName']) for old, new in zip(self.frozen['methods'], self.candidate['methods'])
                    if old['sourceProvenance']['spanSHA256'] != new['sourceProvenance']['spanSHA256']}
         self.assertEqual(changed, g.CHANGED_METHODS)
-        self.assertEqual(len(g.CANDIDATE_PINS), 3)
-        self.assertEqual(self.report['unchangedMethodBodyCount'], 2460)
+        self.assertEqual(len(g.CANDIDATE_PINS), 4)
+        self.assertEqual(self.report['unchangedMethodBodyCount'], 2457)
         self.assertEqual((self.report['deletedMethods'], self.report['addedMethods']), (0, 0))
 
     def test_every_current_method_span_is_bound(self):
@@ -65,15 +65,23 @@ class Controls(unittest.TestCase):
         self.assertFalse(self.report['fullSuiteQualified'])
         self.assertEqual(self.report['candidateExecution'], 'not run')
         self.assertEqual(self.report['historicalFirstMigrationRun'], {
-            'runId': 41950562552, 'head': g.PARENT_COMMIT, 'complete': True,
+            'runId': 41950562552, 'head': '4209233576c2100e0d5dc625308f49b76d500169', 'complete': True,
             'passed': 5, 'nonpassing': 1, 'qualified': False,
             'case4': {'measuredBytes': 64, 'comparatorBytes': 56, 'shapeGuardsPassed': True}})
+
+    def test_historical_packing_identity_is_fixed_and_not_candidate_execution(self):
+        self.assertEqual(self.report['historicalPackingRun'], {
+            'runId': 41952557024, 'head': '3f2f1d03da65844fba6f367811545f195ccf5206',
+            'complete': True, 'passed': 8, 'nonpassing': 0, 'qualified': True, 'fullSuiteQualified': False})
+        self.assertEqual(self.report['candidateExecution'], 'not run')
+        self.assertFalse(self.report['fullSuiteQualified'])
 
     def test_frozen_candidate_or_nonfixture_pin_mutation_rejected(self):
         original = Path.read_bytes
         targets = [ROOT / g.BASELINE / 'unit-census.json', ROOT / g.PROTOCOL,
                    ROOT / g.BASELINE / (g.PROTOCOL + '.txt'), ROOT / g.OWNED_FRAME,
-                   ROOT / g.BASELINE / (g.OWNED_FRAME + '.txt'), ROOT / 'Directory.Build.props']
+                   ROOT / g.BASELINE / (g.OWNED_FRAME + '.txt'), ROOT / g.STACK,
+                   ROOT / g.BASELINE / (g.STACK + '.txt'), ROOT / 'Directory.Build.props']
         for target in targets:
             def changed(path, target=target):
                 value = original(path)
@@ -105,6 +113,16 @@ class Controls(unittest.TestCase):
         before = g.text_span(old, method)
         for changed in (new.replace(before, before.replace('IsFalse()', 'IsTrue()', 1)), new + '\n' + before):
             with self.assertRaises(ValueError): g.relocate(old, changed, method)
+
+    def test_parameterized_attribute_prefix_is_preserved_exactly(self):
+        method = next(m for m in self.frozen['methods'] if m['source'] == g.STACK and m['expectedCases'] == 3)
+        old = (ROOT / g.BASELINE / (g.STACK + '.txt')).read_text(); new = (ROOT / g.STACK).read_text()
+        rebound, changed = g.relocate(old, new, method)
+        self.assertTrue(changed)
+        self.assertEqual(rebound['sourceProvenance']['attributes'], method['sourceProvenance']['attributes'])
+        self.assertEqual(rebound['sourceProvenance']['arguments'], method['sourceProvenance']['arguments'])
+        for altered in (new.replace('[Arguments(32)]', '[Arguments(64)]'), new.replace('    [Arguments(1024)]\n', '')):
+            with self.assertRaises(ValueError): g.relocate(old, altered, method)
 
     def test_changed_target_signature_and_original_span_corruption_rejected(self):
         method = next(m for m in self.frozen['methods'] if (m['source'], m['methodName']) in g.CHANGED_METHODS)

@@ -1281,7 +1281,7 @@
     "test/SharpLink.UnitTests/Protocol/ProtocolV2ContractManifestTests.cs": "51828eefb3cd9b0934057b754b76f89890f30409337239a0001185cf9ef84695",
     "test/SharpLink.UnitTests/Protocol/ProtocolV2ErrorCompatibilityTests.cs": "c2ab7b602ecc465b366775b8565df52b37a21b159259e188b0f7b0fdcb43f7c8",
     "test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs": "b6f8d1b1130a10ee446e63a00b525f37e81a74c1846371b86363225e4a1cf3c8",
-    "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs": "736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384",
+    "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs": "a2aa71ed8ee7c5f7184c9f5ad9667973f7057cd73d5c139c81f6e92939f22d4e",
     "test/SharpLink.UnitTests/Protocol/ProtocolV2TimeBudgetCompatibilityTests.cs": "99a56ef6da1ed68d4887624d4af70c095193ee923908556d4ea81e4e34a88f7b",
     "test/SharpLink.UnitTests/Protocol/ProtocolV2WireGenerationBoundaryTests.cs": "aca1f0807aa94f7a6bc75d435fe57ebf3bedd33cc7497c6db2b44ef0edb52ba9",
     "test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs": "f903e42a339e9e07e0dab9cf4d496de1e0266017cd800362a800666a08172970",
@@ -1426,7 +1426,7 @@
     "test/SharpLink.UnitTests/Runtime/Stack13ClockTests.cs": "3198a9c8f59cd4adfd92538f50072627186a9b8318a2fb31a772db38cd121542",
     "test/SharpLink.UnitTests/Runtime/Stack13DeadlineBoundaryTests.cs": "58cb279f6dee9447e58b083888115e6c4c59a11fd453aae28e06707c92178b62",
     "test/SharpLink.UnitTests/Runtime/Stack13ElapsedBoundaryTests.cs": "4fdc128353411c0fc5709e601057f07bc50ceff7794035be799ad5adc0d708f1",
-    "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs": "3b4d5efdf3aba44ee1abc34199b517df615c768ec9721d5bc6ddc3c1b7076a3e",
+    "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs": "94ac76dbf52335d3b7703d9fac0aef118716cf8eb16061ce4a203138e9955f0d",
     "test/SharpLink.UnitTests/Runtime/Stack13HeaderSpanTests.cs": "8ea0b1f213debefa94d1213924375a503befecd4e36251938e6dd416f1d15563",
     "test/SharpLink.UnitTests/Runtime/Stack13MapSetTests.cs": "77b45aaa5183fbb286650adb2c171ad5613852310b055af2b6cd039e1550e944",
     "test/SharpLink.UnitTests/Runtime/Stack13MetadataReadTests.cs": "af7703c36b777b4a7c7d1ac3cb5179147f00b3f9a81148cd3ccf81b76632e0db",
@@ -33051,8 +33051,8 @@
         "arguments": [],
         "conditionalGuards": [],
         "startOffset": 1535,
-        "endOffset": 2094,
-        "spanSHA256": "6742b5b9f17b40039cfa55e65b0b8ac241d86d486d699ed38a0fbdc6a54771c2",
+        "endOffset": 2096,
+        "spanSHA256": "2addcb6a6e4205a38b8162a0fdacc44744b8e65add252f70b75dae7793b73610",
         "unknown": []
       }
     },
@@ -33083,8 +33083,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 2100,
-        "endOffset": 3329,
+        "startOffset": 2102,
+        "endOffset": 3331,
         "spanSHA256": "f9fbf9943f9cffede28163030ed880f79a1f86bd6beb2ca46a1ac8456c217df9",
         "unknown": []
       }
@@ -33116,8 +33116,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 3335,
-        "endOffset": 4528,
+        "startOffset": 3337,
+        "endOffset": 4530,
         "spanSHA256": "8de9a0285e9c0fc15fa48adde5997e56f6da0d13038f2ca76b5741625c031449",
         "unknown": []
       }
@@ -33149,8 +33149,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 4534,
-        "endOffset": 6341,
+        "startOffset": 4536,
+        "endOffset": 6343,
         "spanSHA256": "2ce380791b688e5644ff52800e1acaa55e463f151070b617b1f9a14fb548a1df",
         "unknown": []
       }
@@ -33182,8 +33182,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 6347,
-        "endOffset": 7342,
+        "startOffset": 6349,
+        "endOffset": 7344,
         "spanSHA256": "efa07efa9bf28f14115805da6b33a6a0f1daa8b14502b31ebcd79f0db41eba32",
         "unknown": []
       }
@@ -33215,8 +33215,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 7348,
-        "endOffset": 7955,
+        "startOffset": 7350,
+        "endOffset": 7957,
         "spanSHA256": "548511b5d001e563247bb84acbb180c802c9794c70d334d2adbef1fdb45f82ca",
         "unknown": []
       }
@@ -33248,8 +33248,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 7961,
-        "endOffset": 8560,
+        "startOffset": 7963,
+        "endOffset": 8562,
         "spanSHA256": "2930513bf97534f024023ceac7e8dc47d0f44e60337ba3701a555ea6bc1496a7",
         "unknown": []
       }
@@ -33281,8 +33281,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 8566,
-        "endOffset": 10972,
+        "startOffset": 8568,
+        "endOffset": 10974,
         "spanSHA256": "f0bdb65b41b6aeea983e76320fc8cab52ac711e6d5b82f60e8d628a4b9f76710",
         "unknown": []
       }
@@ -33314,8 +33314,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 10978,
-        "endOffset": 14358,
+        "startOffset": 10980,
+        "endOffset": 14360,
         "spanSHA256": "086ef85dbdeb4c035dc515d8118734200d1dc96f16d8ceeff2c69002f17e507b",
         "unknown": []
       }
@@ -33347,8 +33347,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 14364,
-        "endOffset": 16942,
+        "startOffset": 14366,
+        "endOffset": 16944,
         "spanSHA256": "a4eb96f472588c08b6c30086e023a1652ca5cc6afa41d33b5fe43d223c77a3b8",
         "unknown": []
       }
@@ -33380,8 +33380,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 16948,
-        "endOffset": 17630,
+        "startOffset": 16950,
+        "endOffset": 17632,
         "spanSHA256": "76173991b8c07273ca9b1899ad7f1175adaf45f82a54ce4f26597090e4b527ad",
         "unknown": []
       }
@@ -33413,8 +33413,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 17636,
-        "endOffset": 18938,
+        "startOffset": 17638,
+        "endOffset": 18940,
         "spanSHA256": "be4547f7b4fc80a46ea5ac703b59ed9a76a5ddb0e4cd9a459be326934af24179",
         "unknown": []
       }
@@ -33446,8 +33446,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 18944,
-        "endOffset": 21956,
+        "startOffset": 18946,
+        "endOffset": 21958,
         "spanSHA256": "0701801340938dda0fc18d50b948fc013dc8e50a875fa557ca00b1728daa197c",
         "unknown": []
       }
@@ -33479,8 +33479,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 21962,
-        "endOffset": 22971,
+        "startOffset": 21964,
+        "endOffset": 22973,
         "spanSHA256": "1ebb6de8a721fd6d58f9307bc0a65c5c9bfc8d83d2395e8e64a9d3b4ca92b285",
         "unknown": []
       }
@@ -33512,8 +33512,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 22977,
-        "endOffset": 24506,
+        "startOffset": 22979,
+        "endOffset": 24508,
         "spanSHA256": "1ccd2ee3d0c2b2cdfd1bec335dccd0cc1ba65f222ea94e084b18378cf2239892",
         "unknown": []
       }
@@ -33545,8 +33545,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 24512,
-        "endOffset": 25786,
+        "startOffset": 24514,
+        "endOffset": 25788,
         "spanSHA256": "91cd29566f64bd18cb191e2092028bd50547252c865a25010f7d8dbe062bf131",
         "unknown": []
       }
@@ -33578,8 +33578,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 25792,
-        "endOffset": 26418,
+        "startOffset": 25794,
+        "endOffset": 26420,
         "spanSHA256": "1685e440379d12344634128f4f7e58ee1b43177b18ace38979b989af52ff316a",
         "unknown": []
       }
@@ -33611,8 +33611,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 26424,
-        "endOffset": 27403,
+        "startOffset": 26426,
+        "endOffset": 27405,
         "spanSHA256": "1f393a6874e3bf8f124becd8a18427143704b4ee77b6ff81445788b529cb50f8",
         "unknown": []
       }
@@ -33644,8 +33644,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 27409,
-        "endOffset": 28059,
+        "startOffset": 27411,
+        "endOffset": 28061,
         "spanSHA256": "0b9cd9a3453906cdb552254543ba9aad1dc9bd6bbfc6a29fa36509cbec007ef6",
         "unknown": []
       }
@@ -33677,8 +33677,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 28065,
-        "endOffset": 29621,
+        "startOffset": 28067,
+        "endOffset": 29623,
         "spanSHA256": "5c3cc4f6077ba067b40b6dfe81fcf527cc6f2c9bd7862582ae9edeab18fa04ab",
         "unknown": []
       }
@@ -33710,8 +33710,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 29627,
-        "endOffset": 30199,
+        "startOffset": 29629,
+        "endOffset": 30201,
         "spanSHA256": "30a96ea726ac554ab07545fc96c98983232bd6c72aab6d50b2725bfa52d82298",
         "unknown": []
       }
@@ -33743,8 +33743,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 30205,
-        "endOffset": 31209,
+        "startOffset": 30207,
+        "endOffset": 31211,
         "spanSHA256": "a9a200278c57f85f700866763140365a158ffc2f01de13075808a157aac18e44",
         "unknown": []
       }
@@ -33776,8 +33776,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 31215,
-        "endOffset": 32342,
+        "startOffset": 31217,
+        "endOffset": 32344,
         "spanSHA256": "ca8607845c3e457a1cdc1e617ff7bc7ad766a051c0ac81a6b62bdf00fadc8275",
         "unknown": []
       }
@@ -33809,8 +33809,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 32348,
-        "endOffset": 34111,
+        "startOffset": 32350,
+        "endOffset": 34113,
         "spanSHA256": "1e571e21821bd2ac86343bf3992346005255fa0f4c15c7b20e9479968b6b7069",
         "unknown": []
       }
@@ -33842,8 +33842,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 34117,
-        "endOffset": 35995,
+        "startOffset": 34119,
+        "endOffset": 35997,
         "spanSHA256": "452e216d35812ee9b9f4a69afd3ca0fdb7aaf37ee5b376cf48b1145ac34c1c20",
         "unknown": []
       }
@@ -33875,8 +33875,8 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 36001,
-        "endOffset": 37100,
+        "startOffset": 36003,
+        "endOffset": 37102,
         "spanSHA256": "72771daca77e15cf818d63590389e1d3cfa7ed6589890547850d839f204e0d70",
         "unknown": []
       }
@@ -64895,8 +64895,8 @@
         ],
         "conditionalGuards": [],
         "startOffset": 159,
-        "endOffset": 1293,
-        "spanSHA256": "27bdd861f4ad08095dda0a0be3eedb612829061bad47f79eab648a45512976ca",
+        "endOffset": 1305,
+        "spanSHA256": "bb052104344a149a76361d6230f7e8552792f67c03ffc8411098141a66de819a",
         "unknown": []
       }
     },
@@ -64927,9 +64927,9 @@
         "classAttributes": [],
         "arguments": [],
         "conditionalGuards": [],
-        "startOffset": 1299,
-        "endOffset": 2030,
-        "spanSHA256": "ffecc7716a6357efe78bb9446acdd668c27e219ae4da2243e6129ea5709857bc",
+        "startOffset": 1311,
+        "endOffset": 2044,
+        "spanSHA256": "4cbc9f44668860807df5b508b3b3b4d8ae95797172d8581464ba38625b92440e",
         "unknown": []
       }
     },
@@ -92597,26 +92597,27 @@
     "packageTargetSHA256": "00eb786984026f49c3b086450d3b2cc06368293f1c2b3518c4188dd024ad99a4"
   },
   "sourceDerivation": {
-    "kind": "ownedframe-packing-source-rebase",
+    "kind": "five-additional-case-fixture-source-rebase",
     "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
     "historicalCatalogProvenance": {
       "sourceCheckpoint": "1832c7e10698d3ec38a5b2dfa0209feb51dc6072",
       "sourceTree": "e0fb6401d5934025b722b1e5bf7b9e964cdfb8c3",
       "sourceDirectorySHA256": "c5381f6318d495a982b523a94ed3b2027c55a68b7283384ba8db4fc3fceb0e69"
     },
-    "parentCommit": "4209233576c2100e0d5dc625308f49b76d500169",
-    "parentTree": "013f411efceeba53310ebe0ade5cf525d4b68008",
+    "parentCommit": "3f2f1d03da65844fba6f367811545f195ccf5206",
+    "parentTree": "340358eb00cfd0af94003896cb3d82c3567020bb",
     "frozenProductTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
     "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
     "frozenTestTree": "690953054b445203d5b74614f954c8b7dc8d41ba",
-    "candidateTestTree": "cc47cf7f9cfc57ab604a89cc58f23d956363339e",
-    "candidateSourcePinsSHA256": "1bb1b22573f20974fecaf549cb431d4f66c816c728d9ca34f320485a4c0af245",
+    "candidateTestTree": "6052d7b2a52946f8d9048e76287167768f13c673",
+    "candidateSourcePinsSHA256": "9c604bf86d227d27f29c851111a87675a44a09368bc2c095b808bead85fc1e54",
     "changedSourcePaths": [
       "src/SharpLink.Runtime/OwnedFrame.cs",
       "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
-      "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs"
+      "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs",
+      "test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs"
     ],
-    "changedMethodBodies": 3,
+    "changedMethodBodies": 6,
     "methodCount": 2463,
     "sourcePinCount": 1599,
     "qualification": "Derived source catalog only; not a test execution result."
