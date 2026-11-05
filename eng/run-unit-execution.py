@@ -170,6 +170,10 @@ def finish(lane,census,results):
         except BaseException as diagnostic:lane.record(diagnostic)
         try:os.write(2,terminal_diagnostic(lane,census,results))
         except BaseException as diagnostic:lane.record(diagnostic)
+        # Retain the original census's allowlisted stage/seal diagnostics too.
+        # This fail-only record cannot grant qualification or disclose raw paths.
+        try:os.write(2,census.terminal_diagnostic(lane,'guard'))
+        except BaseException as diagnostic:lane.record(diagnostic)
         return 1
 
 

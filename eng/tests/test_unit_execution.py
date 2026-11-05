@@ -227,6 +227,29 @@ class Controls(unittest.TestCase):
             original=RuntimeError('original');group=ExceptionGroup('group',[original]);group.__cause__=original
             errors=[original,group,original];self.assertTrue(runner.bootstrap_persist(Path(tmp),errors))
             graph=json.loads((Path(tmp)/'bootstrap-0.json').read_text());self.assertEqual(graph['orderedRootOccurrences'],[0,1,0]);self.assertEqual(graph['nodes'][1]['members'],[0]);self.assertEqual(graph['nodes'][1]['cause'],0)
+    def test_preparation_seal_diagnostic_is_forwarded_without_private_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=census.Lane(Path(tmp),r.census,owner);lane.stage='build';lane.validation_phase='metadata-complete'
+            lane.seal_diagnostics[Path('/PRIVATE_ROOT')]={'domain':'sdk','projectIndex':None,'addedCount':1,'private':'PRIVATE_DETAIL','addedPathsSHA256':'a'*64}
+            original=r.census.Rejected('UC_SEAL');lane.record(original);writes=[]
+            with patch.object(lane,'check',side_effect=original),patch.object(runner.os,'write',side_effect=lambda fd,data:writes.append(data) or len(data)):
+                self.assertEqual(runner.finish(lane,census,r),1)
+            self.assertNotIn(b'PRIVATE',b''.join(writes));facts=json.loads(writes[-1])
+            self.assertEqual(facts['stage'],'build');self.assertFalse(facts['censusQualified']);self.assertFalse(facts['stableQualified'])
+            self.assertEqual(facts['sealDifferences'][0]['domain'],'sdk');self.assertEqual(facts['sealDifferences'][0]['addedCount'],1)
+            self.assertEqual(facts['sealDifferences'][0]['addedPathsSHA256'],'a'*64);self.assertIs(lane.errors[0],original)
+    def test_census_diagnostic_survives_execution_diagnostic_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=census.Lane(Path(tmp),r.census,owner);original=r.census.Rejected('UC_SEAL');lane.record(original);writes=[];secondary=OSError('PRIVATE_DIAGNOSTIC')
+            with patch.object(lane,'check',side_effect=original),patch.object(runner,'terminal_diagnostic',side_effect=secondary),patch.object(runner.os,'write',side_effect=lambda fd,data:writes.append(data) or len(data)):
+                self.assertEqual(runner.finish(lane,census,r),1)
+            self.assertIn(secondary,lane.errors);self.assertFalse(json.loads(writes[-1])['censusQualified']);self.assertNotIn(b'PRIVATE',b''.join(writes))
+    def test_census_diagnostic_failure_retains_original_and_secondary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane=census.Lane(Path(tmp),r.census,owner);original=r.census.Rejected('UC_SEAL');lane.record(original);secondary=OSError('PRIVATE_CENSUS')
+            with patch.object(lane,'check',side_effect=original),patch.object(census,'terminal_diagnostic',side_effect=secondary),patch.object(runner.os,'write',return_value=1):
+                self.assertEqual(runner.finish(lane,census,r),1)
+            self.assertIs(lane.errors[0],original);self.assertIs(lane.errors[-1],secondary)
     def test_bootstrap_graph_write_failure_retains_original(self):
         original=RuntimeError('original');errors=[original]
         with tempfile.TemporaryDirectory() as tmp,patch.object(runner.os,'open',side_effect=OSError('write')):
