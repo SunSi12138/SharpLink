@@ -1,0 +1,57 @@
+name: Protocol namespace fixture regression
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/protocol70-fixtures-20261105']
+    paths:
+      - '.github/workflows/protocol70-validation.yml'
+      - 'eng/run-protocol70-validation.py'
+      - 'eng/tests/test_protocol70_validation.py'
+      - 'eng/stream-negotiation-history/**'
+      - 'eng/pure-negotiation-history/**'
+      - 'eng/protocol70-history/**'
+      - 'eng/run-full-regression.py'
+      - 'eng/unit-execution-results.py'
+      - 'eng/tests/test_full_regression.py'
+      - 'eng/run-unit-census.py'
+      - 'eng/unit-census-results.py'
+      - 'eng/unit-census.json'
+      - 'eng/rebase-three-fixture-census.py'
+      - 'eng/tests/test_three_fixture_census.py'
+      - 'eng/three-fixture-census-rebase.json'
+      - 'eng/fixture-migration-baseline/**'
+      - 'eng/full-regression-history/**'
+      - 'eng/package-smoke-process.py'
+      - 'eng/route59-results.py'
+      - 'eng/retirement-results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.*'
+      - 'global.json'
+concurrency:
+  group: protocol70-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-execution:
+    runs-on: ubuntu-24.04
+    # Original preparation3600, body phase3600, overall7200; outer is not ownership evidence.
+    timeout-minutes: 145
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup patched pinned SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/protocol70-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Verify unchanged product and bound candidate tests
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD:src)" = "c3a94c896418a5d5ec62646461f17c67dc89bc96"
+          test "$(git rev-parse HEAD:test)" = "47527763f1de7aa592f94120a346d843456d6cf1"
+      - name: One build, double full census, and seventy exact protocol cases
+        run: python3 eng/run-protocol70-validation.py --configuration Release

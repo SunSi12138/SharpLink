@@ -235,51 +235,55 @@ public class ProtocolV2Tests
     [Test]
     public void HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether()
     {
-        var withoutCapability = new ProtocolV2HandshakeResponse(
+        const ProtocolV2Capabilities mandatory = ProtocolV2Negotiator.MandatoryCapabilities;
+        var authority = new Protocol3BindingAuthority(
+            new Guid("11111111-2222-3333-4444-555555555555"),
+            new Guid("66666666-7777-8888-9999-aaaaaaaaaaaa"),
+            Protocol3BindingLimits.Default);
+        var coherentResponse = new ProtocolV2HandshakeResponse(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.FlowControl,
+            mandatory | ProtocolV2Capabilities.Compression,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
-            "test.rle/v1");
-        var withoutProfile = withoutCapability with
+            "test.rle/v1",
+            Authority: authority);
+        var coherentPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(coherentPayload, coherentResponse);
+        Ensure(ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(coherentPayload.WrittenMemory), Limits) == coherentResponse,
+            "the compressed response baseline must round-trip before its capability is corrupted");
+
+        var uncompressedResponse = coherentResponse with
         {
-            NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,
+            NegotiatedCapabilities = mandatory,
             CompressionProfile = null
         };
+        var capabilityWithoutProfilePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(capabilityWithoutProfilePayload, uncompressedResponse);
+        Ensure(ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(capabilityWithoutProfilePayload.WrittenMemory), Limits) == uncompressedResponse,
+            "the uncompressed response baseline must round-trip before its capability is corrupted");
 
+        var withoutCapability = coherentResponse with { NegotiatedCapabilities = mandatory };
+        var withoutProfile = coherentResponse with { CompressionProfile = null };
         var writeProfileWithoutCapability = CaptureException(() =>
             ProtocolV2PayloadCodec.WriteHandshakeResponse(new PooledByteBufferWriter(), withoutCapability));
         var writeCapabilityWithoutProfile = CaptureException(() =>
             ProtocolV2PayloadCodec.WriteHandshakeResponse(new PooledByteBufferWriter(), withoutProfile));
 
-        var coherentPayload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeResponse(
-            coherentPayload,
-            withoutCapability with
-            {
-                NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression
-            });
         var profileWithoutCapabilityBytes = coherentPayload.WrittenMemory.ToArray();
         BinaryPrimitives.WriteUInt64LittleEndian(
             profileWithoutCapabilityBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
-            (ulong)ProtocolV2Capabilities.FlowControl);
+            (ulong)mandatory);
         var readProfileWithoutCapability = CaptureException(() =>
             ProtocolV2PayloadCodec.ReadHandshakeResponse(
                 new ReadOnlySequence<byte>(profileWithoutCapabilityBytes), Limits));
 
-        var capabilityWithoutProfilePayload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeResponse(
-            capabilityWithoutProfilePayload,
-            withoutCapability with
-            {
-                NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl,
-                CompressionProfile = null
-            });
         var capabilityWithoutProfileBytes = capabilityWithoutProfilePayload.WrittenMemory.ToArray();
         BinaryPrimitives.WriteUInt64LittleEndian(
             capabilityWithoutProfileBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
-            (ulong)(ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression));
+            (ulong)(mandatory | ProtocolV2Capabilities.Compression));
         var readCapabilityWithoutProfile = CaptureException(() =>
             ProtocolV2PayloadCodec.ReadHandshakeResponse(
                 new ReadOnlySequence<byte>(capabilityWithoutProfileBytes), Limits));
@@ -297,44 +301,63 @@ public class ProtocolV2Tests
     [Test]
     public void HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets()
     {
-        var inconsistent = new ProtocolV2HandshakeRequest(
+        const ProtocolV2Capabilities mandatory = ProtocolV2Negotiator.MandatoryCapabilities;
+        var bindingLimits = Protocol3BindingLimits.Default;
+        var coherentRequest = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.Metadata,
-            ProtocolV2Capabilities.FlowControl,
+            mandatory,
+            mandatory,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
-            ReadOnlyMemory<byte>.Empty);
+            ReadOnlyMemory<byte>.Empty,
+            BindingLimits: bindingLimits);
+        var requestPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeRequest(requestPayload, coherentRequest, Limits);
+        var decodedRequest = ProtocolV2PayloadCodec.ReadHandshakeRequest(
+            new ReadOnlySequence<byte>(requestPayload.WrittenMemory), Limits);
+        Ensure(decodedRequest.SupportedCapabilities == mandatory &&
+               decodedRequest.RequiredCapabilities == mandatory &&
+               decodedRequest.BindingLimits == bindingLimits,
+            "the request baseline must round-trip before its required-capability subset is corrupted");
+
+        var authority = new Protocol3BindingAuthority(
+            new Guid("11111111-2222-3333-4444-555555555555"),
+            new Guid("66666666-7777-8888-9999-aaaaaaaaaaaa"),
+            bindingLimits);
+        var coherentResponse = new ProtocolV2HandshakeResponse(
+            ProtocolV2Constants.MinorVersion,
+            mandatory,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024,
+            Authority: authority);
+        var responsePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, coherentResponse);
+        Ensure(ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits) == coherentResponse,
+            "the response baseline must round-trip before an unknown capability is added");
+
+        var inconsistent = coherentRequest with
+        {
+            RequiredCapabilities = mandatory | ProtocolV2Capabilities.Metadata
+        };
         var writeFailure = CaptureException(() =>
             ProtocolV2PayloadCodec.WriteHandshakeRequest(
                 new PooledByteBufferWriter(), inconsistent, Limits));
 
-        var requestPayload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeRequest(
-            requestPayload,
-            inconsistent with { RequiredCapabilities = ProtocolV2Capabilities.None },
-            Limits);
         var requestBytes = requestPayload.WrittenMemory.ToArray();
         BinaryPrimitives.WriteUInt64LittleEndian(
             requestBytes.AsSpan(sizeof(ushort) + sizeof(ulong), sizeof(ulong)),
-            (ulong)ProtocolV2Capabilities.FlowControl);
+            (ulong)(mandatory | ProtocolV2Capabilities.Metadata));
         var readRequestFailure = CaptureException(() =>
             ProtocolV2PayloadCodec.ReadHandshakeRequest(
                 new ReadOnlySequence<byte>(requestBytes), Limits));
 
-        var responsePayload = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteHandshakeResponse(
-            responsePayload,
-            new ProtocolV2HandshakeResponse(
-                ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.None,
-                4 * 1024 * 1024,
-                1024 * 1024,
-                16 * 1024 * 1024));
         var responseBytes = responsePayload.WrittenMemory.ToArray();
         BinaryPrimitives.WriteUInt64LittleEndian(
             responseBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
-            1UL << 63);
+            (ulong)mandatory | (1UL << 63));
         var readResponseFailure = CaptureException(() =>
             ProtocolV2PayloadCodec.ReadHandshakeResponse(
                 new ReadOnlySequence<byte>(responseBytes), Limits));
@@ -437,18 +460,17 @@ public class ProtocolV2Tests
         await ExpectProtocolViolation(() =>
             negotiatedSession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
 
-        var legacyInput = new Pipe();
-        var legacyOutput = new Pipe();
-        await using var legacySession = RpcSessionTestFixture.CreateSessionOverTestTransport(
-            "cancel-shape-legacy",
-            legacyInput.Reader,
-            legacyOutput.Writer,
-            RpcSessionTestFixture.ClientOptions());
-        Ensure(
-            legacySession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty) ==
-            ProtocolV2CancelReason.Unspecified,
-            "legacy empty Cancel should decode as unspecified");
-        await ExpectProtocolViolation(() => legacySession.ReadNegotiatedCancelReason(payload));
+        var unnegotiatedInput = new Pipe();
+        var unnegotiatedOutput = new Pipe();
+        await using var unnegotiatedSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "cancel-shape-unnegotiated",
+            unnegotiatedInput.Reader,
+            unnegotiatedOutput.Writer,
+            RpcSessionTestFixture.ClientOptions(),
+            completeHandshake: false);
+        await ExpectProtocolViolation(() =>
+            unnegotiatedSession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
+        await ExpectProtocolViolation(() => unnegotiatedSession.ReadNegotiatedCancelReason(payload));
         await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadCancelReason(
             new ReadOnlySequence<byte>(new byte[] { byte.MaxValue })));
     }

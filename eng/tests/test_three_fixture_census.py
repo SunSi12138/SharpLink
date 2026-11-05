@@ -39,13 +39,13 @@ class Controls(unittest.TestCase):
         self.assertEqual({k: v for k, v in self.frozen.items() if k not in top_changing},
                          {k: v for k, v in self.candidate.items() if k not in top_changing})
 
-    def test_only_six_pins_and_twenty_three_bodies_change(self):
+    def test_only_seven_pins_and_twenty_seven_bodies_change(self):
         self.assertEqual({k for k in self.frozen['sourcePins'] if self.frozen['sourcePins'][k] != self.candidate['sourcePins'][k]}, set(g.CANDIDATE_PINS))
         changed = {(old['source'], old['methodName']) for old, new in zip(self.frozen['methods'], self.candidate['methods'])
                    if old['sourceProvenance']['spanSHA256'] != new['sourceProvenance']['spanSHA256']}
         self.assertEqual(changed, g.CHANGED_METHODS)
-        self.assertEqual(len(g.CANDIDATE_PINS), 6)
-        self.assertEqual(self.report['unchangedMethodBodyCount'], 2440)
+        self.assertEqual(len(g.CANDIDATE_PINS), 7)
+        self.assertEqual(self.report['unchangedMethodBodyCount'], 2436)
         self.assertEqual((self.report['deletedMethods'], self.report['addedMethods']), (0, 0))
 
     def test_every_current_method_span_is_bound(self):
@@ -133,7 +133,7 @@ class Controls(unittest.TestCase):
         self.assertEqual(delta, self.report['changedHelper'])
         self.assertEqual(delta['oldSpanSHA256'], '73d6787ce2f764786b689254fd01a1d764b1854ebe2454d80edeb19e615cfcec')
         self.assertEqual(delta['newSpanSHA256'], '37d028dab77d986a8faa7611d3db61bab2b0e0aaaeb65c8684df71daff30f46f')
-        self.assertEqual(delta['newLines'], [815, 826])
+        self.assertEqual(delta['newLines'], [837, 848])
         for path, before, after in ((g.PROTOCOL, 'ProtocolV2CancelReason.UserCancellation]);\n        if (length', 'ProtocolV2CancelReason.DeadlineExceeded]);\n        if (length'),
                                      (g.NEGOTIATOR, 'throw new Exception(message);', 'throw new Exception("changed");'),
                                      (g.COMPATIBILITY, 'throw new Exception(message);', 'throw new Exception("changed");')):
@@ -154,8 +154,8 @@ class Controls(unittest.TestCase):
 
     def test_current_product_matches_packed_parent_and_histories_remain_distinct(self):
         self.assertEqual(self.report['candidateProductTree'], g.PARENT_PRODUCT_TREE)
-        self.assertEqual(len(self.report['affectedMethods']), 57)
-        self.assertEqual(self.report['changedMethodBodyCount'], 23)
+        self.assertEqual(len(self.report['affectedMethods']), 59)
+        self.assertEqual(self.report['changedMethodBodyCount'], 27)
         self.assertEqual(self.report['historicalThirteenCaseRun']['runId'], 41954983558)
         self.assertEqual(self.report['historicalThirteenCaseRun']['passed'], 13)
         diagnostic = self.report['historicalParserHandshakeDiagnostic']
@@ -174,9 +174,10 @@ class Controls(unittest.TestCase):
         self.assertEqual(delta['helperBlock']['changedBodiesUnchangedSignatures'],['CreateOffer','CreatePolicy'])
         self.assertEqual(delta['helperBlock']['newDeclarations'],['MandatoryCapabilities','TestAuthority','AssertMandatoryCapabilityCannotBeOmitted','CreateExactPolicy'])
         self.assertEqual(delta['helperBlock']['newLines'],[596,684])
-        self.assertTrue(delta['allOtherParentTestBytesUnchanged'])
-        parent=(ROOT/g.NEGOTIATOR_HISTORY).read_bytes()
-        self.assertEqual(g.tree_id(ROOT/'test',{g.NEGOTIATOR.removeprefix('test/'):parent}),g.PARENT_TEST_TREE)
+        self.assertTrue(delta['allOtherHistoricalParentTestBytesReconstructWithLaterProtocolPreimages'])
+        parent=(ROOT/g.NEGOTIATOR_HISTORY).read_bytes();overlays=g.protocol_parent_overlays(ROOT);overlays[g.NEGOTIATOR.removeprefix('test/')]=parent
+        self.assertEqual(g.tree_id(ROOT/'test',overlays),g.NEGOTIATOR_PARENT_TEST_TREE)
+        self.assertEqual(delta['laterProtocolPreimages'],g.PROTOCOL_PARENT_PINS)
 
     def test_unapproved_negotiator_helper_body_or_signature_is_rejected(self):
         old=(ROOT/g.BASELINE/(g.NEGOTIATOR+'.txt')).read_text();new=(ROOT/g.NEGOTIATOR).read_text()
@@ -200,6 +201,45 @@ class Controls(unittest.TestCase):
         self.assertFalse(self.report['historicalCurrentFullRun']['qualified'])
         self.assertFalse(self.report['historicalSixteenCaseDiagnostic']['qualified'])
         self.assertEqual(self.report['historicalTimedFailureResolution'],'unresolved-no-timed-source-change')
+
+    def test_exact_four_protocol_bodies_and_two_complete_parent_files_reconstruct(self):
+        delta=g.protocol_delta(ROOT,self.candidate)
+        self.assertEqual(delta,self.report['protocolDelta'])
+        self.assertEqual({(row['source'],row['method']) for row in delta['changedBodiesAgainstParent']},g.NEW_PROTOCOL_METHODS)
+        self.assertEqual(len(delta['methodRecordsInTwoFiles']),30)
+        self.assertEqual(delta['allOtherParentMethodsByteIdentical'],2459)
+        self.assertTrue(delta['nonMethodBytesUnchanged']);self.assertTrue(delta['allOtherParentTestBytesUnchanged'])
+        self.assertEqual(g.tree_id(ROOT/'test',g.protocol_parent_overlays(ROOT)),g.PARENT_TEST_TREE)
+        self.assertEqual(g.tree_id(ROOT/'src'),g.PARENT_PRODUCT_TREE)
+
+    def test_protocol_parent_catalog_preimages_and_history_are_sealed(self):
+        original=Path.read_bytes
+        for name in g.PROTOCOL_HISTORY_PINS:
+            target=ROOT/name
+            def changed(path,target=target):return original(path)+(b'\n' if path==target else b'')
+            with patch.object(Path,'read_bytes',changed):
+                with self.assertRaises(ValueError):g.generate(ROOT)
+        self.assertEqual(self.report['historicalLatestFullRun']['errors'],265)
+        self.assertEqual((self.report['historicalTwentyOneCaseDiagnostic']['passed'],self.report['historicalTwentyOneCaseDiagnostic']['errors']),(17,4))
+        self.assertFalse(self.report['historicalTwentyOneCaseDiagnostic']['qualified'])
+        self.assertEqual(self.report['parentCommit'],'0de69b451c744182f6962d253a1749899fdc29af')
+
+    def test_protocol_parent_scope_rejects_unapproved_helper_or_green_method_bytes(self):
+        original=Path.read_text;target=ROOT/g.PROTOCOL
+        for before,after in (('private static byte[] MutateHeader(', 'private static byte[] ForbiddenHelper('),
+                             ('RawFrameWriterAndTokenShouldRemainInternalImplementationDetails()', 'ForbiddenMethod()')):
+            actual=original(target);self.assertIn(before,actual)
+            def changed(path,*args,**kwargs):
+                value=original(path,*args,**kwargs)
+                return value.replace(before,after,1) if path==target else value
+            with patch.object(Path,'read_text',changed):
+                with self.assertRaises(ValueError):g.protocol_delta(ROOT,self.candidate)
+
+    def test_new_preference_preimage_is_original_and_only_two_pins_change_from_parent(self):
+        self.assertEqual(g.sha((ROOT/g.BASELINE/(g.PREFERENCE+'.txt')).read_bytes()),self.frozen['sourcePins'][g.PREFERENCE])
+        parent=json.loads((ROOT/'eng/protocol70-history/parent-unit-census.json').read_bytes())
+        self.assertEqual({path for path in parent['sourcePins'] if parent['sourcePins'][path]!=self.candidate['sourcePins'][path]},set(g.PROTOCOL_PARENT_PINS))
+        self.assertEqual(len(g.NEW_PROTOCOL_METHODS),4)
 
     def test_changed_target_signature_and_original_span_corruption_rejected(self):
         method = next(m for m in self.frozen['methods'] if (m['source'], m['methodName']) in g.CHANGED_METHODS)

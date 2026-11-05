@@ -10,17 +10,19 @@ public class ResponseCompressionPreferenceProtocolTests
     {
         var limits = new SharpLinkProtocolOptions();
         using var writer = new PooledByteBufferWriter();
+        const ProtocolV2Capabilities mandatory = ProtocolV2Negotiator.MandatoryCapabilities;
         var request = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.Compression,
-            ProtocolV2Capabilities.None,
+            mandatory | ProtocolV2Capabilities.Compression,
+            mandatory,
             SharpLinkProtocolOptions.MinMaxFramePayloadBytes,
             1024,
             4096,
             ReadOnlyMemory<byte>.Empty,
             new[] { "test-profile" },
             ResponseCompressionPreferenceGeneration: 17,
-            AllowResponseCompression: false);
+            AllowResponseCompression: false,
+            BindingLimits: Protocol3BindingLimits.Default);
 
         ProtocolV2PayloadCodec.WriteHandshakeRequest(writer, request, limits);
         var decoded = ProtocolV2PayloadCodec.ReadHandshakeRequest(

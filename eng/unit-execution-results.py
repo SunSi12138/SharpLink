@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 _spec=importlib.util.spec_from_file_location('execution_census',Path(__file__).with_name('unit-census-results.py'))
 census=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(census)
 require=census.require
-CATALOG_SHA256='3d05292b01e9ec133f10fad420593895e122469eb82528d6190ac2e9a8dcde12'
+CATALOG_SHA256='f2164dcc06d4ca0d5aeb91a5e19cbf3d67e25321d9346948d7ccaf10d19f632c'
 CODES=frozenset(('UE_CATALOG','UE_LEDGER','UE_ARGV','UE_REPORT_DIRECTORY','UE_REPORT_MEMBERS','UE_REPORT_LIMIT','UE_NATIVE','UE_UID','UE_IDENTITY','UE_STATUS','UE_SUMMARY','UE_JUNIT','UE_RESULTS','UE_PREPARATION','UE_BUDGET','UE_COMMANDS','UE_OWNER','UE_REPORT_SETTINGS','UE_SDK_METADATA'))
 SCENARIOS=frozenset(('context-before','context-after','late-backlog','raw-retained','raw-rearmed','fault-rearmed','scheduler-before','scheduler-after','post-before','post-after','bounded-reentrancy','caller-scheduled-long-chain'))
 PARENT_REPORTS=frozenset(('session.html','session.tunit-report.json','junit.xml'))

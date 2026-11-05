@@ -2,8 +2,8 @@
 """Reproduce the candidate census from a preserved frozen catalog, without .NET.
 
 Offsets in the original catalog are Unicode text offsets; span hashes are UTF-8.
-Only twenty-three known test bodies may differ. Every other method slice is required to
-remain byte-identical, including every shifted method in the five edited test files.
+Only twenty-seven known test bodies may differ. Every other method slice is required to
+remain byte-identical, including every shifted method in the six edited test files.
 """
 import copy
 import hashlib
@@ -16,22 +16,25 @@ BASELINE = 'eng/fixture-migration-baseline'
 FROZEN_SHA256 = '2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66'
 BASE_PRODUCT_TREE = 'bfc211191d91b5a77c6a8f0085a0c00a459c5583'
 BASE_TEST_TREE = '690953054b445203d5b74614f954c8b7dc8d41ba'
-PARENT_COMMIT = 'aecea7afdfdd426a1bbbd5cf840bed945ef62e7b'
-PARENT_TREE = 'a45ca76e278f9b7809db59e32e401d14856f980c'
-PARENT_TEST_TREE = '226e6404e69879868bc2f98037624ec357529f49'
+PARENT_COMMIT = '0de69b451c744182f6962d253a1749899fdc29af'
+PARENT_TREE = '49fe4b3a225289865bed31571f5d7edf6757e054'
+PARENT_TEST_TREE = 'fb8f193f979ba936fcd3e51eff98562f27f06a50'
+NEGOTIATOR_PARENT_TEST_TREE = '226e6404e69879868bc2f98037624ec357529f49'
 PARENT_PRODUCT_TREE = 'c3a94c896418a5d5ec62646461f17c67dc89bc96'
 PROTOCOL = 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
+PREFERENCE = 'test/SharpLink.UnitTests/Protocol/ResponseCompressionPreferenceProtocolTests.cs'
 NEGOTIATOR = 'test/SharpLink.UnitTests/Protocol/ProtocolV2NegotiatorTests.cs'
 COMPATIBILITY = 'test/SharpLink.UnitTests/Protocol/ProtocolV2ErrorCompatibilityTests.cs'
 PROGRESS = 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
 STACK = 'test/SharpLink.UnitTests/Runtime/Stack13FrameClearTests.cs'
 OWNED_FRAME = 'src/SharpLink.Runtime/OwnedFrame.cs'
 CANDIDATE_PINS = {
+    PREFERENCE: '7825d4bbad864fcf2063fdd97243c1cca26b311111b1282593e62ed613dae05d',
     NEGOTIATOR: '8e44d5a254ef72c6a8f9275430c5a22b2d99d03aacc9d9ad049ad267234dd1b9',
     COMPATIBILITY: '46c916c63f7d93941eaa02841e0d255e6c5d9b1761e49a23f4057cef3cb5cf1b',
     STACK: '94ac76dbf52335d3b7703d9fac0aef118716cf8eb16061ce4a203138e9955f0d',
     OWNED_FRAME: 'c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195',
-    PROTOCOL: '00745a416645a7c5e83a934e47900f75a2c656ab6b072ac9029e8aa3b8aeeb85',
+    PROTOCOL: '9f5ac65baae379a3d744eae2bdd6b703b1a5aa0309e7174ca792084bbdc36898',
     PROGRESS: '70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c',
 }
 CHANGED_METHODS = {(PROTOCOL, 'WriterAndParserShouldRoundTripFrame'),
@@ -50,6 +53,64 @@ CHANGED_METHODS = {(PROTOCOL, 'WriterAndParserShouldRoundTripFrame'),
 
 NEW_NEGOTIATOR_METHODS = frozenset(('PolicyConstructionShouldRejectEveryIllegalLocalState', 'CapabilityMatrixShouldProduceSymmetricServerAndClientResults', 'UnsupportedRequiredCapabilityShouldReturnUnimplemented', 'ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries', 'ClientValidationShouldRejectOutOfOfferVersionCapabilitiesAndLimits', 'CompressionMatrixShouldHonorOptionalRequiredAndServerPreference', 'MalformedOfferMatrixShouldReturnProtocolViolation', 'MalformedResponseMatrixShouldReturnStructuredFailure', 'ServerResultShouldValidateToEquivalentClientSnapshot', 'RepeatedInputsShouldProduceEquivalentResultsAndErrors'))
 CHANGED_METHODS |= {(NEGOTIATOR, name) for name in NEW_NEGOTIATOR_METHODS}
+NEW_PROTOCOL_METHODS = frozenset(((PROTOCOL, 'HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether'),
+    (PROTOCOL, 'HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets'),
+    (PROTOCOL, 'CancelReasonShouldRoundTripAndEnforceNegotiatedShape'),
+    (PREFERENCE, 'HandshakeShouldRoundTripFixedPreferenceGeneration')))
+CHANGED_METHODS |= NEW_PROTOCOL_METHODS
+PROTOCOL_PARENT_PINS = {PROTOCOL: '00745a416645a7c5e83a934e47900f75a2c656ab6b072ac9029e8aa3b8aeeb85',
+    PREFERENCE: 'f903e42a339e9e07e0dab9cf4d496de1e0266017cd800362a800666a08172970'}
+PROTOCOL_PARENT_FILES = {PROTOCOL: 'eng/protocol70-history/ProtocolV2Tests.cs.txt',
+    PREFERENCE: 'eng/protocol70-history/ResponseCompressionPreferenceProtocolTests.cs.txt'}
+PROTOCOL_HISTORY_PINS = {'eng/protocol70-history/ProtocolV2Tests.cs.txt': '00745a416645a7c5e83a934e47900f75a2c656ab6b072ac9029e8aa3b8aeeb85', 'eng/protocol70-history/ResponseCompressionPreferenceProtocolTests.cs.txt': 'f903e42a339e9e07e0dab9cf4d496de1e0266017cd800362a800666a08172970', 'eng/protocol70-history/full-ordinary-result.json': '073a199d62f9add8222789e3f4fec936377e64e2897cd5145497f046d0c3c8d6', 'eng/protocol70-history/parent-unit-census.json': '3d05292b01e9ec133f10fad420593895e122469eb82528d6190ac2e9a8dcde12', 'eng/protocol70-history/twenty-one-case-diagnostic-result.json': 'e6916265942d76dd66761a46d979014603c6f51035ec085687bb7b3af43fb5d4'}
+
+
+def protocol_parent_overlays(root):
+    result={}
+    for path,preimage in PROTOCOL_PARENT_FILES.items():
+        data=(root/preimage).read_bytes();require(sha(data)==PROTOCOL_PARENT_PINS[path], 'REBIND_PROTOCOL_PARENT_PIN')
+        result[path.removeprefix('test/')]=data
+    return result
+
+
+def protocol_delta(root,candidate):
+    parent_bytes=(root/'eng/protocol70-history/parent-unit-census.json').read_bytes()
+    require(sha(parent_bytes)==PROTOCOL_HISTORY_PINS['eng/protocol70-history/parent-unit-census.json'],'REBIND_PROTOCOL_PARENT_CATALOG')
+    parent=json.loads(parent_bytes)
+    require(len(parent['methods'])==len(candidate['methods'])==2463,'REBIND_PROTOCOL_PARENT_METHODS')
+    replacements=protocol_parent_overlays(root)
+    require(tree_id(root/'test',replacements)==PARENT_TEST_TREE,'REBIND_PROTOCOL_PARENT_TREE')
+    require(tree_id(root/'src')==PARENT_PRODUCT_TREE,'REBIND_PROTOCOL_PRODUCT_TREE')
+    require({path for path in parent['sourcePins'] if parent['sourcePins'][path]!=candidate['sourcePins'][path]}==set(PROTOCOL_PARENT_PINS),'REBIND_PROTOCOL_PIN_SET')
+    changes=[];edits={path:[] for path in PROTOCOL_PARENT_PINS};affected=[]
+    for old,new in zip(parent['methods'],candidate['methods']):
+        keys=('source','namespace','className','methodName','arity','parameters','return','configurations','initialEligibility','expectedCases')
+        require(all(old[k]==new[k] for k in keys),'REBIND_PROTOCOL_METHOD_IDENTITY')
+        require(old['sourceProvenance']['signature']==new['sourceProvenance']['signature'] and old['sourceProvenance']['attributes']==new['sourceProvenance']['attributes'],'REBIND_PROTOCOL_SIGNATURE')
+        path=old['source'];p=old['sourceProvenance'];q=new['sourceProvenance']
+        before=text_span(replacements[path.removeprefix('test/')].decode() if path in PROTOCOL_PARENT_PINS else (root/path).read_text(),old)
+        after=text_span((root/path).read_text(),new)
+        target=(path,old['methodName']) in NEW_PROTOCOL_METHODS
+        require((before!=after)==target,'REBIND_PROTOCOL_EXACT_FOUR_BODIES')
+        if path in PROTOCOL_PARENT_PINS:
+            affected.append({'source':path,'method':old['methodName'],'oldLines':[old['attributeLine'],old['signatureLine'],old['endLine']],
+                'newLines':[new['attributeLine'],new['signatureLine'],new['endLine']],'bodyChanged':target,
+                'oldSpanSHA256':p['spanSHA256'],'newSpanSHA256':q['spanSHA256']})
+        else:require(old==new,'REBIND_PROTOCOL_OTHER_METHOD_METADATA')
+        if target:
+            marker=before[:before.index(p['signature'])]+p['signature']+'\n    {'
+            require(after.startswith(marker),'REBIND_PROTOCOL_METHOD_PREFIX')
+            edits[path].append((q['startOffset'],q['endOffset'],before));changes.append((path,old['methodName']))
+    for path,items in edits.items():
+        restored=(root/path).read_text()
+        for start,end,before in sorted(items,reverse=True):restored=restored[:start]+before+restored[end:]
+        require(restored.encode()==replacements[path.removeprefix('test/')],'REBIND_PROTOCOL_OTHER_BYTES')
+    require(set(changes)==NEW_PROTOCOL_METHODS and len(changes)==4 and len(affected)==30,'REBIND_PROTOCOL_DELTA_COUNT')
+    return {'parentCatalogSHA256':sha(parent_bytes),'parentTestTree':PARENT_TEST_TREE,'candidateProductUnchanged':True,
+        'changedBodiesAgainstParent':[{'source':p,'method':m} for p,m in sorted(changes)],
+        'parentPreimageSHA256':dict(PROTOCOL_PARENT_PINS),'allOtherParentMethodsByteIdentical':2459,
+        'allOtherParentTestBytesUnchanged':True,'methodRecordsInTwoFiles':affected,'nonMethodBytesUnchanged':True}
+
 
 
 def require(value, code):
@@ -180,7 +241,8 @@ def negotiation_delta(root, frozen, candidate):
     parent_bytes = (root / NEGOTIATOR_HISTORY).read_bytes()
     require(sha(parent_bytes) == NEGOTIATOR_PARENT_SHA256, 'REBIND_NEGOTIATOR_PARENT')
     parent = parent_bytes.decode(); current = (root / NEGOTIATOR).read_text()
-    require(tree_id(root / 'test', {NEGOTIATOR.removeprefix('test/'): parent_bytes}) == PARENT_TEST_TREE, 'REBIND_OTHER_PARENT_TEST_CHANGE')
+    historical_overlays=protocol_parent_overlays(root);historical_overlays[NEGOTIATOR.removeprefix('test/')]=parent_bytes
+    require(tree_id(root / 'test', historical_overlays) == NEGOTIATOR_PARENT_TEST_TREE, 'REBIND_OTHER_PARENT_TEST_CHANGE')
     old_start, old_end, old_block = negotiation_helper_block(parent, False)
     new_start, new_end, new_block = negotiation_helper_block(current, True)
     restored = current; edits = [(new_start, new_end, old_block)]; changes = []; preserved = []
@@ -202,9 +264,10 @@ def negotiation_delta(root, frozen, candidate):
     for start, end, value in sorted(edits, reverse=True): restored = restored[:start] + value + restored[end:]
     require(restored == parent, 'REBIND_NEGOTIATOR_UNAPPROVED_BYTES')
     return {'source': NEGOTIATOR, 'parentSHA256': NEGOTIATOR_PARENT_SHA256,
-        'candidateSHA256': CANDIDATE_PINS[NEGOTIATOR], 'parentTestTree': PARENT_TEST_TREE,
+        'candidateSHA256': CANDIDATE_PINS[NEGOTIATOR], 'parentTestTree': NEGOTIATOR_PARENT_TEST_TREE,
         'changedBodiesAgainstParent': changes, 'preservedPriorBodies': preserved,
-        'allOtherParentTestBytesUnchanged': True,
+        'allOtherHistoricalParentTestBytesReconstructWithLaterProtocolPreimages': True,
+        'laterProtocolPreimages': dict(PROTOCOL_PARENT_PINS),
         'helperBlock': {'oldSHA256': sha(old_block.encode()), 'newSHA256': sha(new_block.encode()),
             'oldLines': [parent.count('\n', 0, old_start) + 1, parent.count('\n', 0, old_end)],
             'newLines': [current.count('\n', 0, new_start) + 1, current.count('\n', 0, new_end)],
@@ -244,7 +307,7 @@ def helper_delta(old_text, new_text, old_methods, new_methods):
 
 def generate(root):
     root = Path(root)
-    for path, expected in PURE_HISTORY_PINS.items(): require(sha((root / path).read_bytes()) == expected, 'REBIND_PURE_HISTORY')
+    for path, expected in (PURE_HISTORY_PINS | PROTOCOL_HISTORY_PINS).items(): require(sha((root / path).read_bytes()) == expected, 'REBIND_PURE_HISTORY')
     frozen_bytes = (root / BASELINE / 'unit-census.json').read_bytes()
     require(sha(frozen_bytes) == FROZEN_SHA256, 'REBIND_FROZEN_HASH')
     frozen = json.loads(frozen_bytes); result = copy.deepcopy(frozen)
@@ -284,28 +347,29 @@ def generate(root):
             if body_changed: altered.append((path, method['methodName']))
         else:
             text_span((root / path).read_text(), method)
-    require(set(altered) == CHANGED_METHODS and len(altered) == 23, 'REBIND_TWENTY_THREE_BODIES')
+    require(set(altered) == CHANGED_METHODS and len(altered) == 27, 'REBIND_TWENTY_SEVEN_BODIES')
     helper = helper_delta(old_text, new_text, frozen['methods'], result['methods'])
     negotiation = negotiation_delta(root, frozen, result)
+    protocol = protocol_delta(root,result)
     historical = {key: result.pop(key) for key in ('sourceCheckpoint', 'sourceTree', 'sourceDirectorySHA256')}
     product_tree = tree_id(root / 'src'); test_tree = tree_id(root / 'test')
     require(product_tree == PARENT_PRODUCT_TREE, 'REBIND_PARENT_PRODUCT_CHANGE')
     result['sourceDerivation'] = {
-        'kind': 'pure-negotiation-fixture-source-rebase', 'frozenCatalogSHA256': FROZEN_SHA256,
+        'kind': 'protocol70-fixture-source-rebase', 'frozenCatalogSHA256': FROZEN_SHA256,
         'historicalCatalogProvenance': historical, 'parentCommit': PARENT_COMMIT, 'parentTree': PARENT_TREE,
         'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': product_tree, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
         'candidateSourcePinsSHA256': sha(canonical(result['sourcePins'])),
-        'changedSourcePaths': sorted(CANDIDATE_PINS), 'changedMethodBodies': 23,
+        'changedSourcePaths': sorted(CANDIDATE_PINS), 'changedMethodBodies': 27,
         'methodCount': 2463, 'sourcePinCount': 1599,
         'qualification': 'Derived source catalog only; not a test execution result.'}
-    report = {'schemaVersion': 1, 'scope': 'pure-negotiation-fixture-catalog-rebase',
+    report = {'schemaVersion': 1, 'scope': 'protocol70-fixture-catalog-rebase',
         'frozenCatalogSHA256': FROZEN_SHA256, 'candidateCatalogSHA256': sha(render(result)),
         'parentCommit': PARENT_COMMIT, 'parentTree': PARENT_TREE,
         'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': product_tree, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
-        'methodCount': 2463, 'sourcePinCount': 1599, 'changedMethodBodyCount': 23,
-        'unchangedMethodBodyCount': 2440, 'deletedMethods': 0, 'addedMethods': 0,
+        'methodCount': 2463, 'sourcePinCount': 1599, 'changedMethodBodyCount': 27,
+        'unchangedMethodBodyCount': 2436, 'deletedMethods': 0, 'addedMethods': 0,
         'changedPins': {path: {'old': frozen['sourcePins'][path], 'new': result['sourcePins'][path]} for path in sorted(CANDIDATE_PINS)},
-        'affectedMethods': affected, 'changedHelper': helper, 'negotiatorDelta': negotiation,
+        'affectedMethods': affected, 'changedHelper': helper, 'negotiatorDelta': negotiation, 'protocolDelta': protocol,
         'historicalFullOrdinaryRun': {'runId': 41940224644, 'ordinary': 2879, 'passed': 2589, 'errors': 290,
             'failingFiles': 92, 'failingMethodStatusRows': 253, 'qualified': False},
         'historicalFirstMigrationRun': {'runId': 41950562552, 'head': '4209233576c2100e0d5dc625308f49b76d500169',
@@ -328,6 +392,12 @@ def generate(root):
             'passed': 7, 'errors': 9, 'infrastructureQualified': True, 'qualified': False,
             'evidenceSHA256': PURE_HISTORY_PINS['eng/pure-negotiation-history/sixteen-case-diagnostic-result.json']},
         'historicalTimedFailureResolution': 'unresolved-no-timed-source-change',
+        'historicalLatestFullRun': {'runId':41970862705,'head':'1f5315ca23753258c002ebd6bed294f0226af603',
+            'passed':2614,'errors':265,'qualified':False,'evidenceSHA256':PROTOCOL_HISTORY_PINS['eng/protocol70-history/full-ordinary-result.json']},
+        'historicalTwentyOneCaseDiagnostic': {'runId':41976164524,'head':'0de69b451c744182f6962d253a1749899fdc29af',
+            'passed':17,'errors':4,'infrastructureQualified':True,'qualified':False,
+            'evidenceSHA256':PROTOCOL_HISTORY_PINS['eng/protocol70-history/twenty-one-case-diagnostic-result.json']},
+        'historicalLifetimeFailuresResolution':'unresolved-despite-isolated-controls-passing',
         'candidateExecution': 'not run', 'fullSuiteQualified': False}
     return result, report
 
@@ -341,7 +411,7 @@ def main():
         else: require((ROOT / path).read_bytes() == data, 'REBIND_REPRODUCIBILITY')
     print(json.dumps({'candidateCatalogSHA256': sha(outputs['eng/unit-census.json']),
         'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': report['candidateProductTree'], 'testTree': report['candidateTestTree'],
-        'methods': 2463, 'pins': 1599, 'changedBodies': 23, 'fullSuiteQualified': False}, sort_keys=True))
+        'methods': 2463, 'pins': 1599, 'changedBodies': 27, 'fullSuiteQualified': False}, sort_keys=True))
 
 
 if __name__ == '__main__': main()
