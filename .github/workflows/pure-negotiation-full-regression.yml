@@ -1,0 +1,57 @@
+name: Current candidate full ordinary Release regression
+permissions:
+  contents: read
+on:
+  push:
+    branches: ['validation/pure-negotiation-full-regression-20261105']
+    paths:
+      - '.github/workflows/pure-negotiation-full-regression.yml'
+      - 'eng/run-pure-negotiation-full-regression.py'
+      - 'eng/unit-execution-results.py'
+      - 'eng/tests/test_pure_negotiation_full_regression.py'
+      - 'eng/run-unit-census.py'
+      - 'eng/unit-census-results.py'
+      - 'eng/unit-census.json'
+      - 'eng/rebase-three-fixture-census.py'
+      - 'eng/tests/test_three_fixture_census.py'
+      - 'eng/three-fixture-census-rebase.json'
+      - 'eng/fixture-migration-baseline/**'
+      - 'eng/full-regression-history/**'
+      - 'eng/pure-negotiation-history/**'
+      - 'eng/pure-negotiation-full-history/**'
+      - 'eng/timed-stream-full-results.py'
+      - 'eng/tests/test_timed_stream_full_results.py'
+      - 'eng/stream-negotiation-history/boolean-display-name-proof.json'
+      - 'eng/package-smoke-process.py'
+      - 'eng/route59-results.py'
+      - 'eng/retirement-results.py'
+      - 'src/**'
+      - 'test/**'
+      - 'Directory.*'
+      - 'global.json'
+concurrency:
+  group: pure-negotiation-full-ordinary-regression-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-execution:
+    runs-on: ubuntu-24.04
+    # Original preparation3600, body phase3000, overall6600; outer is not ownership evidence.
+    timeout-minutes: 135
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup patched pinned SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/pure-negotiation-full-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.114'
+      - name: Verify unchanged current product and test source
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD:src)" = "c3a94c896418a5d5ec62646461f17c67dc89bc96"
+          test "$(git rev-parse HEAD:test)" = "fb8f193f979ba936fcd3e51eff98562f27f06a50"
+      - name: One build, double full census, and all2879 ordinary cases
+        run: python3 eng/run-pure-negotiation-full-regression.py --configuration Release
