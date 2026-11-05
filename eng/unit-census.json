@@ -406,7 +406,7 @@
     "src/SharpLink.Runtime/IStreamLocalAbortDispatcher.cs": "af40747d25ab20b232c0a7978a9f797facfff61ba9a8b7c7f4ea403335c668ba",
     "src/SharpLink.Runtime/IStreamSinkPublicationReceipt.cs": "3b7eee2c02679185543527cca9a31069af56437f0b0df0e286a60022422c0fd9",
     "src/SharpLink.Runtime/NegotiatedSessionOptions.cs": "42e605d69ba9d4735fa09aa8da82e02d3584cbc140f01c2a518c82a753253c0e",
-    "src/SharpLink.Runtime/OwnedFrame.cs": "71948e8baa3494c086d368454460f0422bc635095f91234ea859a3b5eb4bf3d5",
+    "src/SharpLink.Runtime/OwnedFrame.cs": "c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195",
     "src/SharpLink.Runtime/Packet/PacketScope.cs": "810e0a7c6d8cd21e1b509595059193435b7ae0b1b5a1179417a65df2d5670f5b",
     "src/SharpLink.Runtime/PhysicalTaskFailureException.cs": "dbfb8036397db61943739d98834414f1b956f42351fcaeab730f8fc907053ca3",
     "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.OriginalLease.cs": "dc128b36a7318b2964f1813c57ed621475c3056c1ed5ed99451d163080e1dfa4",
@@ -1400,7 +1400,7 @@
     "test/SharpLink.UnitTests/Runtime/RuntimeTimeProviderPhase09Tests.cs": "1582e3f667b9e9d28fc85f4acda7f7a0d37ad23d2b9b30f873d14e077fc244af",
     "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs": "073c8b6015e00338ec945e36b974c50436b26e0bd18e6494108e36c4ae055cf2",
     "test/SharpLink.UnitTests/Runtime/SendPumpIdleShutdownTests.cs": "ffb972bc904152130b2b007595448504c729ac1bda8cf2080f26ba7f4242cd67",
-    "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs": "0e125fe63685ff1c8f4c4d2a1226d8de434e30290e657104ee3389292f50dffb",
+    "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs": "70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c",
     "test/SharpLink.UnitTests/Runtime/SendPumpTests.cs": "bb8c47e38e5ca825362cf3640a49f219d1d890bba1b45cefd4c822c7a8605a6f",
     "test/SharpLink.UnitTests/Runtime/SendPumpTimeBudgetPublicationTests.cs": "f7c9b3025d564d4ce1eb008eeabba0e397eb37b4c8cd55afe4941dfd0d0b6bb4",
     "test/SharpLink.UnitTests/Runtime/SendPumpTimedWaitStopTests.cs": "c38c936b2779714e83e7d9b4c3e868c4c80ec00871e2dfc176e7148bcae5fcd5",
@@ -59727,7 +59727,7 @@
       "return": "System.Void",
       "attributeLine": 655,
       "signatureLine": 656,
-      "endLine": 678,
+      "endLine": 736,
       "configurations": [
         "Release",
         "Debug"
@@ -59745,8 +59745,8 @@
         "arguments": [],
         "conditionalGuards": [],
         "startOffset": 29484,
-        "endOffset": 31031,
-        "spanSHA256": "bc42df74c3b79a5661911bd85722df4a96f806c156a7f2cead5e431426035286",
+        "endOffset": 34947,
+        "spanSHA256": "ee3ec7a96cf7ca0f759bcd8e6bdf5e8d246a6118dca1fec1f469ceffbe4b860d",
         "unknown": []
       }
     },
@@ -92597,20 +92597,22 @@
     "packageTargetSHA256": "00eb786984026f49c3b086450d3b2cc06368293f1c2b3518c4188dd024ad99a4"
   },
   "sourceDerivation": {
-    "kind": "three-fixture-source-rebase",
+    "kind": "ownedframe-packing-source-rebase",
     "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
     "historicalCatalogProvenance": {
       "sourceCheckpoint": "1832c7e10698d3ec38a5b2dfa0209feb51dc6072",
       "sourceTree": "e0fb6401d5934025b722b1e5bf7b9e964cdfb8c3",
       "sourceDirectorySHA256": "c5381f6318d495a982b523a94ed3b2027c55a68b7283384ba8db4fc3fceb0e69"
     },
-    "parentCommit": "0d6744866ca59b3b88e24c540f5c4dd3208ddcc0",
-    "parentTree": "f8242e3131a754c00a77591ef4dd2dad8f2421aa",
-    "unchangedProductTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+    "parentCommit": "4209233576c2100e0d5dc625308f49b76d500169",
+    "parentTree": "013f411efceeba53310ebe0ade5cf525d4b68008",
+    "frozenProductTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+    "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
     "frozenTestTree": "690953054b445203d5b74614f954c8b7dc8d41ba",
-    "candidateTestTree": "585fa834a57e1aaf48f007eba23d7d37c7cf0705",
-    "candidateSourcePinsSHA256": "e8e842dfb222cd83a437cb23e194489d0e1fca14f17fd2e4f8a0efda99db1797",
+    "candidateTestTree": "cc47cf7f9cfc57ab604a89cc58f23d956363339e",
+    "candidateSourcePinsSHA256": "1bb1b22573f20974fecaf549cb431d4f66c816c728d9ca34f320485a4c0af245",
     "changedSourcePaths": [
+      "src/SharpLink.Runtime/OwnedFrame.cs",
       "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs",
       "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs"
     ],

@@ -1,9 +1,9 @@
-name: Six ordinary three-fixture candidate validation
+name: Eight ordinary OwnedFrame packing candidate validation
 permissions:
   contents: read
 on:
   push:
-    branches: ['validation/three-fixture-migration-20261105']
+    branches: ['validation/ownedframe-packing-20261105']
     paths:
       - '.github/workflows/pure-failure-diagnostic.yml'
       - 'eng/run-pure-failure-diagnostic.py'
@@ -16,13 +16,14 @@ on:
       - 'eng/unit-execution-results.py'
       - 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
       - 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
+      - 'src/SharpLink.Runtime/OwnedFrame.cs'
 concurrency:
-  group: three-fixture-validation-${{ github.ref }}
+  group: ownedframe-packing-validation-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  validate-six:
+  validate-eight:
     runs-on: ubuntu-24.04
-    # Original preparation3600; six-case phase1500; overall5100 seconds.
+    # Original preparation3600; eight-case phase1500; overall5100 seconds.
     timeout-minutes: 110
     steps:
       - name: Checkout exact candidate
@@ -31,14 +32,14 @@ jobs:
           persist-credentials: false
       - name: Setup isolated pinned SDK
         env:
-          DOTNET_INSTALL_DIR: ${{ runner.temp }}/three-fixture-dotnet
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/ownedframe-packing-dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           dotnet-version: '10.0.114'
-      - name: Verify unchanged product and bound candidate tests
+      - name: Verify bound candidate product and tests
         shell: bash
         run: |
-          test "$(git rev-parse HEAD:src)" = "bfc211191d91b5a77c6a8f0085a0c00a459c5583"
-          test "$(git rev-parse HEAD:test)" = "585fa834a57e1aaf48f007eba23d7d37c7cf0705"
-      - name: One build, two metadata discoveries, six fresh exact UIDs
+          test "$(git rev-parse HEAD:src)" = "c3a94c896418a5d5ec62646461f17c67dc89bc96"
+          test "$(git rev-parse HEAD:test)" = "cc47cf7f9cfc57ab604a89cc58f23d956363339e"
+      - name: One build, two metadata discoveries, eight fresh exact UIDs
         run: python3 eng/run-pure-failure-diagnostic.py --configuration Release

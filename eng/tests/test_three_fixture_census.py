@@ -39,11 +39,12 @@ class Controls(unittest.TestCase):
         self.assertEqual({k: v for k, v in self.frozen.items() if k not in top_changing},
                          {k: v for k, v in self.candidate.items() if k not in top_changing})
 
-    def test_only_two_pins_and_three_bodies_change(self):
+    def test_only_three_pins_and_three_bodies_change(self):
         self.assertEqual({k for k in self.frozen['sourcePins'] if self.frozen['sourcePins'][k] != self.candidate['sourcePins'][k]}, set(g.CANDIDATE_PINS))
         changed = {(old['source'], old['methodName']) for old, new in zip(self.frozen['methods'], self.candidate['methods'])
                    if old['sourceProvenance']['spanSHA256'] != new['sourceProvenance']['spanSHA256']}
         self.assertEqual(changed, g.CHANGED_METHODS)
+        self.assertEqual(len(g.CANDIDATE_PINS), 3)
         self.assertEqual(self.report['unchangedMethodBodyCount'], 2460)
         self.assertEqual((self.report['deletedMethods'], self.report['addedMethods']), (0, 0))
 
@@ -63,17 +64,31 @@ class Controls(unittest.TestCase):
         self.assertFalse(self.report['historicalFullOrdinaryRun']['qualified'])
         self.assertFalse(self.report['fullSuiteQualified'])
         self.assertEqual(self.report['candidateExecution'], 'not run')
+        self.assertEqual(self.report['historicalFirstMigrationRun'], {
+            'runId': 41950562552, 'head': g.PARENT_COMMIT, 'complete': True,
+            'passed': 5, 'nonpassing': 1, 'qualified': False,
+            'case4': {'measuredBytes': 64, 'comparatorBytes': 56, 'shapeGuardsPassed': True}})
 
     def test_frozen_candidate_or_nonfixture_pin_mutation_rejected(self):
         original = Path.read_bytes
         targets = [ROOT / g.BASELINE / 'unit-census.json', ROOT / g.PROTOCOL,
-                   ROOT / g.BASELINE / (g.PROTOCOL + '.txt'), ROOT / 'Directory.Build.props']
+                   ROOT / g.BASELINE / (g.PROTOCOL + '.txt'), ROOT / g.OWNED_FRAME,
+                   ROOT / g.BASELINE / (g.OWNED_FRAME + '.txt'), ROOT / 'Directory.Build.props']
         for target in targets:
             def changed(path, target=target):
                 value = original(path)
                 return value + b'\n' if path == target else value
             with self.subTest(path=target.name), patch.object(Path, 'read_bytes', changed):
                 with self.assertRaises(ValueError): g.generate(ROOT)
+
+    def test_only_ownedframe_product_change_is_bound_by_original_preimage(self):
+        original = (ROOT / g.BASELINE / (g.OWNED_FRAME + '.txt')).read_bytes()
+        self.assertEqual(g.sha(original), self.frozen['sourcePins'][g.OWNED_FRAME])
+        self.assertEqual(g.tree_id(ROOT / 'src', {g.OWNED_FRAME.removeprefix('src/'): original}), g.BASE_PRODUCT_TREE)
+        self.assertNotEqual(g.tree_id(ROOT / 'src'), g.BASE_PRODUCT_TREE)
+        self.assertEqual(g.tree_id(ROOT / 'src'), self.report['candidateProductTree'])
+        self.assertNotIn('unchangedProductTree', self.candidate['sourceDerivation'])
+        self.assertEqual(self.candidate['sourceDerivation']['frozenProductTree'], g.BASE_PRODUCT_TREE)
 
     def test_product_and_other_test_tree_changes_rejected(self):
         original = g.tree_id

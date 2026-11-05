@@ -97,7 +97,7 @@ class Controls(unittest.TestCase):
                 self.assertEqual(result['exceptions'][0]['assertionTag'], tag)
                 self.assertEqual(result['exceptions'][0]['exactMessageSource'], {'source': path, 'line': line})
         self.assertEqual(self.classify(0, exception={'type': 'System.Exception', 'message': 'unsigned request ID'})['exceptions'][0]['assertionTag'], 'unknown')
-        self.assertIn('Ensure(Unsafe.SizeOf<OwnedFrame>()', (BASE / d.PROGRESS).read_text().splitlines()[674])
+        self.assertIn('Ensure(Unsafe.SizeOf<OwnedFrame>()', (BASE / d.PROGRESS).read_text().splitlines()[681])
 
     def test_selected_spans_match_rebound_catalog(self):
         catalog = r.read_json(BASE / 'eng/unit-census.json')
@@ -107,16 +107,16 @@ class Controls(unittest.TestCase):
             self.assertEqual((matches[0]['signatureLine'], matches[0]['endLine']), (start, end))
             self.assertEqual(matches[0]['initialEligibility'], 'ordinary')
             self.assertEqual(matches[0]['expectedCases'], 1)
-        self.assertEqual(len(d.CASES), 6)
+        self.assertEqual(len(d.CASES), 8)
         self.assertEqual(e.CATALOG_SHA256, r.sha(BASE / 'eng/unit-census.json'))
 
     def test_changed_source_rejected_before_diagnostics(self):
         with patch.object(r, 'sha', return_value='0' * 64): self.reject(lambda: d.verify_source(r, BASE))
 
-    def test_six_exact_source_method_identities(self):
-        ordinary = dict(fixture(i)[0] for i in range(6))
+    def test_eight_exact_source_method_identities(self):
+        ordinary = dict(fixture(i)[0] for i in range(8))
         chosen = d.selected(r, ordinary)
-        self.assertEqual(len(chosen), 6)
+        self.assertEqual(len(chosen), 8)
         for i, (uid, row) in enumerate(chosen): self.assertEqual(row['type']['methodName'], d.CASES[i][3])
         for mode in ('missing', 'duplicate', 'wrong-method', 'qualified-alias', 'wrong-namespace', 'wrong-path', 'wrong-start', 'wrong-end', 'unsafe-uid'):
             changed = copy.deepcopy(ordinary)
@@ -146,7 +146,11 @@ class Controls(unittest.TestCase):
         observed += [
             {'className': 'Protocol3FrameAndHandshakeTests', 'count': 1, 'methodName': method, 'namespace': 'SharpLink.UnitTests.Protocol', 'source': d.GRAMMAR, 'status': 'passed'}
             for method in ('OnlyNewMagicAndPositive63CorrelationAreAccepted', 'CancellationHasExactlyOneKnownReasonByte')]
-        ordinary = dict(fixture(i)[0] for i in range(6))
+        ordinary = dict(fixture(i)[0] for i in range(8))
+        observed += [
+            {'className': 'SendPumpProgressIsolationTests', 'count': 1, 'methodName': 'StreamCompleteNeverOvertakesQueuedStreamData', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': d.PROGRESS, 'status': 'passed'},
+            {'className': 'FlushOperationStressTests', 'count': 1, 'methodName': 'SessionStopShouldCompleteEveryForceFlushWaiter', 'namespace': 'SharpLink.UnitTests.Runtime', 'source': d.FLUSH, 'status': 'passed'},
+        ]
         for evidence in observed:
             match = [row for row in ordinary.values() if row['type']['methodName'] == evidence['methodName']]
             self.assertEqual(len(match), 1)
@@ -154,8 +158,8 @@ class Controls(unittest.TestCase):
             self.assertEqual(row['type']['typeName'], evidence['className'])
             self.assertEqual(row['type']['namespace'], evidence['namespace'])
             self.assertEqual(row['location']['file'], '/_/' + evidence['source'])
-        self.assertEqual(len(d.selected(r, ordinary)), 6)
-        for index in range(6):
+        self.assertEqual(len(d.selected(r, ordinary)), 8)
+        for index in range(8):
             selection, native, test = fixture(index, 'passed')
             self.assertEqual(selection[1]['type']['typeName'], d.CASES[index][2])
             self.assertEqual(native['groups'][0]['className'], d.CASES[index][2])
@@ -163,14 +167,14 @@ class Controls(unittest.TestCase):
             self.assertTrue(d.classify(e, native, junit(native), index, selection)['selectedPassed'])
 
     def test_supported_attribute_or_signature_start_not_fuzzy(self):
-        ordinary = dict(fixture(i)[0] for i in range(6))
+        ordinary = dict(fixture(i)[0] for i in range(8))
         for row in ordinary.values(): row['location']['lineStart'] -= 1
-        self.assertEqual(len(d.selected(r, ordinary)), 6)
+        self.assertEqual(len(d.selected(r, ordinary)), 8)
         next(iter(ordinary.values()))['location']['lineStart'] -= 1
         self.reject(lambda: d.selected(r, ordinary))
 
     def test_pass_and_prior_control_are_bounded_diagnostic_only(self):
-        for i in range(6):
+        for i in range(8):
             result = self.classify(i, 'passed'); self.assertTrue(result['selectedPassed']); self.assertEqual(result['exceptions'], [])
             self.assertNotIn(CANARY, json.dumps(result))
 
@@ -211,6 +215,8 @@ class Controls(unittest.TestCase):
         ex = {'type': 'System.Exception', 'message': 'OwnedFrame must not grow with the progress flag (measured 80 vs 48)'}
         row = self.classify(3, exception=ex)['exceptions'][0]
         self.assertEqual((row['measuredBytes'], row['comparatorBytes']), (80, 48))
+        self.assertEqual(row['exactMessageSource'], {'source': d.PROGRESS, 'line': 684})
+        self.assertIn('(measured {Unsafe.SizeOf<OwnedFrame>()}', (BASE / d.PROGRESS).read_text().splitlines()[683])
         for message in ('OwnedFrame must not grow with the progress flag (measured 9999 vs 48)',
                         'OwnedFrame must not grow with the progress flag (measured 080 vs 48)', ex['message'] + CANARY):
             row = self.classify(3, exception={**ex, 'message': message})['exceptions'][0]
@@ -288,16 +294,16 @@ class Controls(unittest.TestCase):
         return lane
 
     def run_mock_cases(self, lane, mode='mixed'):
-        selections = [fixture(i)[0] for i in range(6)]; labels = []; originals = []
+        selections = [fixture(i)[0] for i in range(8)]; labels = []; originals = []
         def run(label, argv, *args):
             labels.append(label); lane.sequence += 1
-            if label == 'fixture-python-controls':
+            if label == 'packing-python-controls':
                 self.assertEqual(argv, [sys.executable, '-B', d.ROOT / 'eng/tests/test_pure_failure_diagnostic.py'])
                 self.assertEqual(args, (d.ROOT, 30))
                 self.assertNotEqual(d.ROOT, lane.source)
                 return None
             index = int(label[-1]) - 1
-            passed = index in (2, 4, 5) or mode == 'all-pass'
+            passed = index in (2, 4, 5, 6, 7) or mode == 'all-pass'
             selection, native, test = fixture(index, 'passed' if passed else 'error')
             report = Path(argv[argv.index('--results-directory') + 1]); (report / 'session.html').write_text(CANARY)
             (report / 'session.tunit-report.json').write_text(json.dumps(native)); (report / 'junit.xml').write_text(junit(native))
@@ -317,13 +323,13 @@ class Controls(unittest.TestCase):
             d.run_cases(lane, e, selections, d.time.monotonic() + 5100)
         return labels, originals
 
-    def test_six_fresh_processes_failure_preserved_without_retry(self):
+    def test_eight_fresh_processes_failure_preserved_without_retry(self):
         with tempfile.TemporaryDirectory() as temp:
             lane = self.make_lane(temp); labels, originals = self.run_mock_cases(lane)
-            self.assertEqual(labels, ['fixture-python-controls', 'fixture-case-1', 'fixture-case-2', 'fixture-case-3', 'fixture-case-4', 'fixture-case-5', 'fixture-case-6'])
-            self.assertEqual(len(lane.case_facts), 6); self.assertTrue(lane.candidate_complete)
-            self.assertEqual([row['status'] for row in lane.case_facts], ['error', 'error', 'passed', 'error', 'passed', 'passed'])
-            self.assertTrue(all(error in lane.errors for error in originals)); self.assertEqual(len(lane.seals), 6)
+            self.assertEqual(labels, ['packing-python-controls', 'packing-case-1', 'packing-case-2', 'packing-case-3', 'packing-case-4', 'packing-case-5', 'packing-case-6', 'packing-case-7', 'packing-case-8'])
+            self.assertEqual(len(lane.case_facts), 8); self.assertTrue(lane.candidate_complete)
+            self.assertEqual([row['status'] for row in lane.case_facts], ['error', 'error', 'passed', 'error', 'passed', 'passed', 'passed', 'passed'])
+            self.assertTrue(all(error in lane.errors for error in originals)); self.assertEqual(len(lane.seals), 8)
             with contextlib.redirect_stdout(io.StringIO()) as output: self.assertEqual(d.finish(lane, c, e), 1)
             summary = json.loads(output.getvalue()); self.assertFalse(summary['candidateValidationQualified']); self.assertTrue(summary['candidateValidationComplete'])
             self.assertFalse(summary['fullSuiteQualified']); self.assertNotIn(CANARY, output.getvalue())
@@ -334,7 +340,7 @@ class Controls(unittest.TestCase):
                 lane = self.make_lane(temp)
                 with patch.object(d, 'classify') as classify:
                     self.reject(lambda: self.run_mock_cases(lane, mode)); classify.assert_not_called()
-                self.assertFalse(lane.candidate_complete); self.assertEqual(len(lane.case_facts), 0); self.assertNotIn('fixture-case-2', lane.commands)
+                self.assertFalse(lane.candidate_complete); self.assertEqual(len(lane.case_facts), 0); self.assertNotIn('packing-case-2', lane.commands)
                 self.assertTrue(lane.errors)
 
     def test_process_exit_mismatch_and_source_mutation_cannot_qualify(self):
@@ -351,12 +357,12 @@ class Controls(unittest.TestCase):
             self.assertEqual(summary['historicalOrdinaryFailureCount'], 290)
             self.assertEqual(summary['candidateCatalogSHA256'], e.CATALOG_SHA256)
             self.assertEqual(summary['sourceTrees'], d.SOURCE_TREES)
-            self.assertEqual(summary['requiredSelectedCaseCount'], 6)
+            self.assertEqual(summary['requiredSelectedCaseCount'], 8)
 
     def test_deadline_summary_writer_and_post_emit_failure_revoke(self):
         for mode in ('deadline', 'writer', 'post-emit'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
-                lane = self.make_lane(temp); lane.candidate_complete = True; lane.case_facts = [self.classify(i, 'passed') for i in range(6)]
+                lane = self.make_lane(temp); lane.candidate_complete = True; lane.case_facts = [self.classify(i, 'passed') for i in range(8)]
                 writes = []; clock = [1.0]; lane.stop = 2.0
                 def emit(*args, **kwargs): clock[0] = 3.0
                 patches = [patch.object(d.os, 'write', side_effect=lambda fd, data: writes.append(data) or len(data))]
@@ -380,7 +386,7 @@ class Controls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             lane = self.make_lane(temp); lane.preparation_complete = False
             lane.identity.update(sdk='10.0.114', installedRuntimes=d.RUNTIMES)
-            ordinary = dict(fixture(i)[0] for i in range(6)); original = d.selected
+            ordinary = dict(fixture(i)[0] for i in range(8)); original = d.selected
             clock = [1.0]; lane.stop = 2.0
             def slow_selection(*args):
                 result = original(*args); clock[0] = 3.0; return result
@@ -394,14 +400,14 @@ class Controls(unittest.TestCase):
                 lane = self.make_lane(temp); lane.stop = 0 if expired == 'preparation' else d.time.monotonic() + 3600
                 before = lane.stop; overall = 0 if expired == 'overall' else d.time.monotonic() + 5100
                 with patch.object(lane, 'run') as run:
-                    self.reject(lambda: d.run_cases(lane, e, [fixture(i)[0] for i in range(6)], overall)); run.assert_not_called()
+                    self.reject(lambda: d.run_cases(lane, e, [fixture(i)[0] for i in range(8)], overall)); run.assert_not_called()
                 self.assertEqual(lane.stop, before); self.assertFalse(lane.candidate_complete)
 
     def test_isolated_sdk_exact_directory_environment_and_symlink_guards(self):
         for mode in ('valid', 'wrong-root', 'wrong-env', 'multilevel', 'symlink'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
                 lane = c.Lane(Path(temp), r, o)
-                sdk = Path(temp) / 'three-fixture-dotnet'; sdk.mkdir(); dotnet = sdk / 'dotnet'; dotnet.write_bytes(b'never execute')
+                sdk = Path(temp) / 'ownedframe-packing-dotnet'; sdk.mkdir(); dotnet = sdk / 'dotnet'; dotnet.write_bytes(b'never execute')
                 lane.env.update(DOTNET_ROOT=str(sdk), DOTNET_MULTILEVEL_LOOKUP='0')
                 if mode == 'wrong-env': lane.env['DOTNET_ROOT_X64'] = '/other-sdk'
                 if mode == 'multilevel': lane.env['DOTNET_MULTILEVEL_LOOKUP'] = '1'
@@ -424,7 +430,7 @@ class Controls(unittest.TestCase):
         self.assertIs(d.ACTIVE['errors'][0], original)
         script = 'import tempfile,runpy; tempfile.mkdtemp=lambda *a,**k: (_ for _ in ()).throw(OSError("' + CANARY + '")); runpy.run_path(' + repr(str(ROOT / 'eng/run-pure-failure-diagnostic.py')) + ',run_name="__main__")'
         result = subprocess.run([sys.executable, '-B', '-c', script], capture_output=True, timeout=10)
-        self.assertEqual(result.returncode, 1); self.assertEqual(result.stdout, b''); self.assertEqual(result.stderr, b'FIXTURE_VALIDATION_BOOTSTRAP_FAILED\n')
+        self.assertEqual(result.returncode, 1); self.assertEqual(result.stdout, b''); self.assertEqual(result.stderr, b'PACKING_VALIDATION_BOOTSTRAP_FAILED\n')
 
     def test_real_python_owner_nonzero_and_timeout_preserve_private_logs(self):
         o.enable_subreaper()

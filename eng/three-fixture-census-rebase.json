@@ -1,13 +1,14 @@
 {
   "schemaVersion": 1,
-  "scope": "three-fixture-candidate-catalog-rebase",
+  "scope": "ownedframe-packing-candidate-catalog-rebase",
   "frozenCatalogSHA256": "2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66",
-  "candidateCatalogSHA256": "ef9b5d58a7e4d2879782a93f431da18127860f8ba66bd68955a1681772b97cb5",
-  "parentCommit": "0d6744866ca59b3b88e24c540f5c4dd3208ddcc0",
-  "parentTree": "f8242e3131a754c00a77591ef4dd2dad8f2421aa",
-  "productTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "candidateCatalogSHA256": "85d5b8219d794978df1f51006b9ffa90fb45472d9d7303bab835570e75ab0af8",
+  "parentCommit": "4209233576c2100e0d5dc625308f49b76d500169",
+  "parentTree": "013f411efceeba53310ebe0ade5cf525d4b68008",
+  "frozenProductTree": "bfc211191d91b5a77c6a8f0085a0c00a459c5583",
+  "candidateProductTree": "c3a94c896418a5d5ec62646461f17c67dc89bc96",
   "frozenTestTree": "690953054b445203d5b74614f954c8b7dc8d41ba",
-  "candidateTestTree": "585fa834a57e1aaf48f007eba23d7d37c7cf0705",
+  "candidateTestTree": "cc47cf7f9cfc57ab604a89cc58f23d956363339e",
   "methodCount": 2463,
   "sourcePinCount": 1599,
   "changedMethodBodyCount": 3,
@@ -15,13 +16,17 @@
   "deletedMethods": 0,
   "addedMethods": 0,
   "changedPins": {
+    "src/SharpLink.Runtime/OwnedFrame.cs": {
+      "old": "71948e8baa3494c086d368454460f0422bc635095f91234ea859a3b5eb4bf3d5",
+      "new": "c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195"
+    },
     "test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs": {
       "old": "d2f827e0f45adae15e78c9db4d9c468de1d247c34eb60ed5e01296b59b584e73",
       "new": "736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384"
     },
     "test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs": {
       "old": "67ffae89508dc0aba7f25f968bec4eb6fa91f997c9acc32784e9defc96a536a9",
-      "new": "0e125fe63685ff1c8f4c4d2a1226d8de434e30290e657104ee3389292f50dffb"
+      "new": "70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c"
     }
   },
   "affectedMethods": [
@@ -1061,7 +1066,7 @@
       "newLines": [
         655,
         656,
-        678
+        736
       ],
       "oldOffsets": [
         29459,
@@ -1069,11 +1074,11 @@
       ],
       "newOffsets": [
         29484,
-        31031
+        34947
       ],
       "bodyChanged": true,
       "oldSpanSHA256": "bbd1fd7a829eb62e65f86be82ca31a9ac68f0308dafb92894a9b1bcac236b607",
-      "newSpanSHA256": "bc42df74c3b79a5661911bd85722df4a96f806c156a7f2cead5e431426035286"
+      "newSpanSHA256": "ee3ec7a96cf7ca0f759bcd8e6bdf5e8d246a6118dca1fec1f469ceffbe4b860d"
     }
   ],
   "historicalFullOrdinaryRun": {
@@ -1084,6 +1089,19 @@
     "failingFiles": 92,
     "failingMethodStatusRows": 253,
     "qualified": false
+  },
+  "historicalFirstMigrationRun": {
+    "runId": 41950562552,
+    "head": "4209233576c2100e0d5dc625308f49b76d500169",
+    "complete": true,
+    "passed": 5,
+    "nonpassing": 1,
+    "qualified": false,
+    "case4": {
+      "measuredBytes": 64,
+      "comparatorBytes": 56,
+      "shapeGuardsPassed": true
+    }
   },
   "candidateExecution": "not run",
   "fullSuiteQualified": false

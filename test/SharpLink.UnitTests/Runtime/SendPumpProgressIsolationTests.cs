@@ -659,22 +659,80 @@ public class SendPumpProgressIsolationTests
         var fields = typeof(OwnedFrame).GetFields(fieldFlags)
             .OrderBy(static field => field.MetadataToken)
             .ToArray();
+        const string packedFlagsFieldName = "_flags";
+        var forceFlushFieldName = $"<{nameof(OwnedFrame.ForceFlush)}>k__BackingField";
         var progressFieldName = $"<{nameof(OwnedFrame.IsProtocolProgress)}>k__BackingField";
-        Ensure(fields.Count(field => field.Name == progressFieldName && field.FieldType == typeof(bool)) == 1,
-            "the comparison must omit exactly the protocol-progress bool field");
+        Ensure(fields.Count(static field => field.FieldType == typeof(byte)) == 1 &&
+            fields.Any(field => field.Name == packedFlagsFieldName && field.FieldType == typeof(byte) &&
+                field.Attributes == (FieldAttributes.Private | FieldAttributes.InitOnly)),
+            "both flags must share exactly one private readonly byte field");
+        Ensure(fields.All(field => field.Name != forceFlushFieldName && field.Name != progressFieldName),
+            "the packed flags must not retain either bool auto-property backing field");
         var currentShape = fields
-            .Where(field => field.Name != progressFieldName)
-            .Select(static field => (field.Name, field.FieldType, field.Attributes));
+            .Select(field => field.Name == packedFlagsFieldName
+                ? (Name: forceFlushFieldName, FieldType: typeof(bool), Attributes: field.Attributes)
+                : (field.Name, field.FieldType, field.Attributes));
         var comparisonShape = typeof(OwnedFrameWithoutProgressFlag).GetFields(fieldFlags)
             .OrderBy(static field => field.MetadataToken)
             .Select(static field => (field.Name, field.FieldType, field.Attributes));
         Ensure(currentShape.SequenceEqual(comparisonShape),
-            "the comparison must mirror every current field in declaration order except the progress flag");
+            "the comparison must mirror every current field in declaration order, substituting only the packed byte for ForceFlush");
 
-        // The progress-class flag must fit the current shape's existing padding.
+        // Both flags must fit the current shape's single ForceFlush storage byte.
         Ensure(Unsafe.SizeOf<OwnedFrame>() == Unsafe.SizeOf<OwnedFrameWithoutProgressFlag>(),
             $"OwnedFrame must not grow with the progress flag " +
             $"(measured {Unsafe.SizeOf<OwnedFrame>()} vs {Unsafe.SizeOf<OwnedFrameWithoutProgressFlag>()})");
+
+        var packedFlagsField = fields.Single(field => field.Name == packedFlagsFieldName);
+        var defaultFrame = default(OwnedFrame);
+        var defaultCopy = defaultFrame;
+        Ensure(!defaultFrame.ForceFlush && !defaultFrame.IsProtocolProgress &&
+            !defaultCopy.ForceFlush && !defaultCopy.IsProtocolProgress &&
+            (byte)packedFlagsField.GetValue(defaultFrame)! == 0,
+            "default frames and their copies must keep both flags false and the packed byte zero");
+
+        using var owner = new PooledByteBufferWriter(1);
+        owner.GetSpan(1)[0] = 0x2a;
+        owner.Advance(1);
+        var memory = owner.WrittenMemory;
+        var flushCompletions = new TaskCompletionSource<bool>?[]
+        {
+            null,
+            new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        foreach (var flushCompletion in flushCompletions)
+        {
+            foreach (var forceFlush in new[] { false, true })
+            {
+                foreach (var isProtocolProgress in new[] { false, true })
+                {
+                    var frame = new OwnedFrame(owner, forceFlush, flushCompletion, isProtocolProgress);
+                    var copy = frame;
+                    var copies = new[] { frame };
+                    var expectedFlags = (byte)((forceFlush ? 1 : 0) | (isProtocolProgress ? 2 : 0));
+                    Ensure(frame.ForceFlush == forceFlush && frame.IsProtocolProgress == isProtocolProgress &&
+                        (byte)packedFlagsField.GetValue(frame)! == expectedFlags,
+                        $"constructor flags must remain independent for {forceFlush}/{isProtocolProgress}");
+                    Ensure(ReferenceEquals(frame.Owner, owner) && frame.Memory.Equals(memory) &&
+                        frame.Length == memory.Length && ReferenceEquals(frame.FlushCompletion, flushCompletion),
+                        "packing must preserve the frame owner, payload, length and flush completion");
+
+                    frame = default;
+                    Ensure(!frame.ForceFlush && !frame.IsProtocolProgress,
+                        "clearing the original holder must reset both of its flags");
+                    Ensure(copy.ForceFlush == forceFlush && copy.IsProtocolProgress == isProtocolProgress &&
+                        (byte)packedFlagsField.GetValue(copy)! == expectedFlags &&
+                        copies[0].ForceFlush == forceFlush && copies[0].IsProtocolProgress == isProtocolProgress &&
+                        (byte)packedFlagsField.GetValue(copies[0])! == expectedFlags,
+                        $"assignment and array copies must retain independent flags for {forceFlush}/{isProtocolProgress}");
+                    Ensure(ReferenceEquals(copy.Owner, owner) && copy.Memory.Equals(memory) &&
+                        copy.Length == memory.Length && ReferenceEquals(copy.FlushCompletion, flushCompletion) &&
+                        ReferenceEquals(copies[0].Owner, owner) && copies[0].Memory.Equals(memory) &&
+                        copies[0].Length == memory.Length && ReferenceEquals(copies[0].FlushCompletion, flushCompletion),
+                        "copies must preserve the frame owner, payload, length and flush completion after clearing the original");
+                }
+            }
+        }
     }
 
     /// <summary>The current OwnedFrame field shape with only the protocol-progress flag omitted.</summary>

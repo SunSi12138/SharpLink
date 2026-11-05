@@ -12,6 +12,9 @@ internal interface IRequestEmissionFailureObserver
 /// </summary>
 internal readonly struct OwnedFrame
 {
+    private const byte ForceFlushFlag = 0x01;
+    private const byte ProtocolProgressFlag = 0x02;
+
     private readonly TaskCompletionSource<bool>? _flushCompletion;
     private readonly IRequestEmissionFailureObserver? _failureObserver;
 
@@ -27,8 +30,8 @@ internal readonly struct OwnedFrame
         Owner = owner;
         Memory = owner.WrittenMemory;
         Length = owner.WrittenCount;
-        ForceFlush = forceFlush;
-        IsProtocolProgress = isProtocolProgress;
+        _flags = (byte)((forceFlush ? ForceFlushFlag : 0) |
+            (isProtocolProgress ? ProtocolProgressFlag : 0));
 
         _flushCompletion = flushCompletion;
         _failureObserver = failureObserver;
@@ -47,7 +50,9 @@ internal readonly struct OwnedFrame
 
     public int Length { get; }
 
-    public bool ForceFlush { get; }
+    private readonly byte _flags;
+
+    public bool ForceFlush => (_flags & ForceFlushFlag) != 0;
 
     /// <summary>
     /// True when the frame carries protocol progress (ping/pong, window
@@ -55,7 +60,7 @@ internal readonly struct OwnedFrame
     /// drains progress frames against a small reserved byte headroom and a
     /// bounded priority burst so stream saturation cannot starve them.
     /// </summary>
-    public bool IsProtocolProgress { get; }
+    public bool IsProtocolProgress => (_flags & ProtocolProgressFlag) != 0;
 
     public TaskCompletionSource<bool>? FlushCompletion
         => _flushCompletion;

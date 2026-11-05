@@ -14,15 +14,17 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = 'eng/fixture-migration-baseline'
 FROZEN_SHA256 = '2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66'
-PRODUCT_TREE = 'bfc211191d91b5a77c6a8f0085a0c00a459c5583'
+BASE_PRODUCT_TREE = 'bfc211191d91b5a77c6a8f0085a0c00a459c5583'
 BASE_TEST_TREE = '690953054b445203d5b74614f954c8b7dc8d41ba'
-PARENT_COMMIT = '0d6744866ca59b3b88e24c540f5c4dd3208ddcc0'
-PARENT_TREE = 'f8242e3131a754c00a77591ef4dd2dad8f2421aa'
+PARENT_COMMIT = '4209233576c2100e0d5dc625308f49b76d500169'
+PARENT_TREE = '013f411efceeba53310ebe0ade5cf525d4b68008'
 PROTOCOL = 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
 PROGRESS = 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
+OWNED_FRAME = 'src/SharpLink.Runtime/OwnedFrame.cs'
 CANDIDATE_PINS = {
+    OWNED_FRAME: 'c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195',
     PROTOCOL: '736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384',
-    PROGRESS: '0e125fe63685ff1c8f4c4d2a1226d8de434e30290e657104ee3389292f50dffb',
+    PROGRESS: '70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c',
 }
 CHANGED_METHODS = {(PROTOCOL, 'WriterAndParserShouldRoundTripFrame'),
     (PROTOCOL, 'HeaderWithEveryByteInSeparateSegmentShouldParse'),
@@ -106,8 +108,7 @@ def generate(root):
     require(sha(frozen_bytes) == FROZEN_SHA256, 'REBIND_FROZEN_HASH')
     frozen = json.loads(frozen_bytes); result = copy.deepcopy(frozen)
     require(len(frozen['methods']) == 2463 and len(frozen['sourcePins']) == 1599, 'REBIND_COUNTS')
-    require(tree_id(root / 'src') == PRODUCT_TREE, 'REBIND_PRODUCT_TREE')
-    old_text = {}; new_text = {}; overlay = {}
+    old_text = {}; new_text = {}; overlays = {'src': {}, 'test': {}}
     for path, expected in CANDIDATE_PINS.items():
         old_bytes = (root / BASELINE / (path + '.txt')).read_bytes()
         new_bytes = (root / path).read_bytes()
@@ -116,8 +117,11 @@ def generate(root):
         old_text[path] = old_bytes.decode(); new_text[path] = new_bytes.decode()
         require('\r' not in old_text[path] + new_text[path], 'REBIND_NEWLINES')
         result['sourcePins'][path] = expected
-        overlay[path.removeprefix('test/')] = old_bytes
-    require(tree_id(root / 'test', overlay) == BASE_TEST_TREE, 'REBIND_OTHER_TEST_CHANGE')
+        domain, relative = path.split('/', 1)
+        require(domain in overlays, 'REBIND_SOURCE_DOMAIN')
+        overlays[domain][relative] = old_bytes
+    require(tree_id(root / 'src', overlays['src']) == BASE_PRODUCT_TREE, 'REBIND_OTHER_PRODUCT_CHANGE')
+    require(tree_id(root / 'test', overlays['test']) == BASE_TEST_TREE, 'REBIND_OTHER_TEST_CHANGE')
     for path, expected in result['sourcePins'].items():
         require(sha((root / path).read_bytes()) == expected, 'REBIND_ALL_SOURCE_PINS')
     affected = []; altered = []
@@ -140,25 +144,28 @@ def generate(root):
             text_span((root / path).read_text(), method)
     require(set(altered) == CHANGED_METHODS and len(altered) == 3, 'REBIND_THREE_BODIES')
     historical = {key: result.pop(key) for key in ('sourceCheckpoint', 'sourceTree', 'sourceDirectorySHA256')}
-    test_tree = tree_id(root / 'test')
+    product_tree = tree_id(root / 'src'); test_tree = tree_id(root / 'test')
     result['sourceDerivation'] = {
-        'kind': 'three-fixture-source-rebase', 'frozenCatalogSHA256': FROZEN_SHA256,
+        'kind': 'ownedframe-packing-source-rebase', 'frozenCatalogSHA256': FROZEN_SHA256,
         'historicalCatalogProvenance': historical, 'parentCommit': PARENT_COMMIT, 'parentTree': PARENT_TREE,
-        'unchangedProductTree': PRODUCT_TREE, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
+        'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': product_tree, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
         'candidateSourcePinsSHA256': sha(canonical(result['sourcePins'])),
         'changedSourcePaths': sorted(CANDIDATE_PINS), 'changedMethodBodies': 3,
         'methodCount': 2463, 'sourcePinCount': 1599,
         'qualification': 'Derived source catalog only; not a test execution result.'}
-    report = {'schemaVersion': 1, 'scope': 'three-fixture-candidate-catalog-rebase',
+    report = {'schemaVersion': 1, 'scope': 'ownedframe-packing-candidate-catalog-rebase',
         'frozenCatalogSHA256': FROZEN_SHA256, 'candidateCatalogSHA256': sha(render(result)),
         'parentCommit': PARENT_COMMIT, 'parentTree': PARENT_TREE,
-        'productTree': PRODUCT_TREE, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
+        'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': product_tree, 'frozenTestTree': BASE_TEST_TREE, 'candidateTestTree': test_tree,
         'methodCount': 2463, 'sourcePinCount': 1599, 'changedMethodBodyCount': 3,
         'unchangedMethodBodyCount': 2460, 'deletedMethods': 0, 'addedMethods': 0,
         'changedPins': {path: {'old': frozen['sourcePins'][path], 'new': result['sourcePins'][path]} for path in sorted(CANDIDATE_PINS)},
         'affectedMethods': affected,
         'historicalFullOrdinaryRun': {'runId': 41940224644, 'ordinary': 2879, 'passed': 2589, 'errors': 290,
             'failingFiles': 92, 'failingMethodStatusRows': 253, 'qualified': False},
+        'historicalFirstMigrationRun': {'runId': 41950562552, 'head': PARENT_COMMIT,
+            'complete': True, 'passed': 5, 'nonpassing': 1, 'qualified': False,
+            'case4': {'measuredBytes': 64, 'comparatorBytes': 56, 'shapeGuardsPassed': True}},
         'candidateExecution': 'not run', 'fullSuiteQualified': False}
     return result, report
 
@@ -171,7 +178,7 @@ def main():
         if sys.argv[1] == '--write': (ROOT / path).write_bytes(data)
         else: require((ROOT / path).read_bytes() == data, 'REBIND_REPRODUCIBILITY')
     print(json.dumps({'candidateCatalogSHA256': sha(outputs['eng/unit-census.json']),
-        'productTree': PRODUCT_TREE, 'testTree': report['candidateTestTree'],
+        'frozenProductTree': BASE_PRODUCT_TREE, 'candidateProductTree': report['candidateProductTree'], 'testTree': report['candidateTestTree'],
         'methods': 2463, 'pins': 1599, 'changedBodies': 3, 'fullSuiteQualified': False}, sort_keys=True))
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Six ordinary candidate UIDs, once each; raw reports remain private.
+"""Eight ordinary candidate UIDs, once each; raw reports remain private.
 
 Extends, never replaces, the reviewed single-build/double-discovery custody
 lane. This candidate validation cannot qualify the historical failed full suite, D2, or performance.
@@ -19,35 +19,40 @@ import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE = {'lane': None, 'errors': [], 'work': None}
-SOURCE_TREES = {'src': 'bfc211191d91b5a77c6a8f0085a0c00a459c5583',
-                'test': '585fa834a57e1aaf48f007eba23d7d37c7cf0705'}
+SOURCE_TREES = {'src': 'c3a94c896418a5d5ec62646461f17c67dc89bc96',
+                'test': 'cc47cf7f9cfc57ab604a89cc58f23d956363339e'}
 HELPERS = {
     'eng/run-unit-census.py': 'a445781ba97a6c6a963faa9ba4d7e0bb890a96df6395e482ddb3948f8d12e4bf',
     'eng/unit-census-results.py': 'cbf6ce2096576dfe027b8e196144e9cba57860ad99be48c1f89d7ba73a71414e',
     'eng/run-unit-execution.py': 'ede7580fa1a9e37fba16322ef0158a9db8905bc6983c217c8bdad6eb5b784acf',
-    'eng/unit-execution-results.py': '5fa888b3cc6dbc8d23b1282f4ce75440b65d4732927f08a8cfb3fa140b3d4dce',
+    'eng/unit-execution-results.py': 'd50245861fa6e8aba7f70fbbf6a5e8a01bdb82b573b542176c5c3d7ea0c87b66',
     'eng/package-smoke-process.py': 'ba9f6ae43784ac752acdbfee1af60f33361ba76398a558948da721994449dda3',
     'eng/route59-results.py': 'eb95aaf6a6799b0c216ee3687d71e5e1aeb5651867d515e3a4db16561bfcda8b',
     'eng/retirement-results.py': '6774c8bdd8bd8b3f618c01aee34e429d8a3b8218cdb169e752cd81ab6a9e79eb',
     'eng/tests/test_unit_census.py': 'd12fbbc8e3634fac209aac866eab101d2938d4531ea27e04b9732fb1f7922da5',
     'eng/tests/test_unit_execution.py': 'c9fbae133b363f6ee0150036adfaba80528a3371ba73a5d6140423399672fa19',
-    'eng/unit-census.json': 'ef9b5d58a7e4d2879782a93f431da18127860f8ba66bd68955a1681772b97cb5',
-    'eng/rebase-three-fixture-census.py': 'e02e8d3d885d7be2735622679f1a0e9c5325b6aa13581ff7d929704e0055dbae',
-    'eng/tests/test_three_fixture_census.py': '8a460a122010446f4136aa4fc61eefd59f4b8dd8d899f32cfe7b0def21a6ad4c',
-    'eng/tests/test_pure_failure_diagnostic.py': 'e094542281f2c05d64ea0ed204f93accb6ef25ba210990550240c6c380ec8ec9',
-    'eng/three-fixture-census-rebase.json': '38973de6106365868610b4509560ea5dab6a321dedfa2d084c24d1ac8bc11400',
+    'eng/unit-census.json': '85d5b8219d794978df1f51006b9ffa90fb45472d9d7303bab835570e75ab0af8',
+    'eng/rebase-three-fixture-census.py': 'fef0b829394eebcdf7abf7f01b847b002bf49a376a99a8036178e38049792452',
+    'eng/tests/test_three_fixture_census.py': 'aa6f7fbc17f2e5012e73ea53925eb3edad8e8781666f840d72df3a20b05efaba',
+    'eng/tests/test_pure_failure_diagnostic.py': '69621652abe2c8bfa07e6473ade2e7c626effbc5e3ecb706e576a5df03bdfcc2',
+    'eng/three-fixture-census-rebase.json': '1991588ae608fe5ecf4a5b3ce4453d13f267b450a380a1109c848913a0fd3d7c',
     'eng/fixture-migration-baseline/unit-census.json': '2c34614a0bc918c48b860e795f3f331d0243065f05f0c9530e6aa0d430faeb66',
     'eng/fixture-migration-baseline/test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs.txt': 'd2f827e0f45adae15e78c9db4d9c468de1d247c34eb60ed5e01296b59b584e73',
     'eng/fixture-migration-baseline/test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs.txt': '67ffae89508dc0aba7f25f968bec4eb6fa91f997c9acc32784e9defc96a536a9',
+    'eng/fixture-migration-baseline/src/SharpLink.Runtime/OwnedFrame.cs.txt': '71948e8baa3494c086d368454460f0422bc635095f91234ea859a3b5eb4bf3d5',
 }
 PROTOCOL = 'test/SharpLink.UnitTests/Protocol/ProtocolV2Tests.cs'
 PROGRESS = 'test/SharpLink.UnitTests/Runtime/SendPumpProgressIsolationTests.cs'
+OWNED_FRAME = 'src/SharpLink.Runtime/OwnedFrame.cs'
+FLUSH = 'test/SharpLink.UnitTests/Runtime/FlushOperationStressTests.cs'
 GRAMMAR = 'test/SharpLink.UnitTests/Protocol/Protocol3FrameAndHandshakeTests.cs'
 FRAME = 'src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs'
 PAYLOAD = 'src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs'
 SOURCE_PINS = {
+    OWNED_FRAME: 'c3a6ed62dd0d0738b838c76354b2b730c2808c2db37e5c88c821cb95142d3195',
+    FLUSH: '98349cbf0ea4545a597e633002cc44557ae1272730d5558487a52f28c05f23b1',
     PROTOCOL: '736cce73a637487608d83a7db64c678473be51c8e79c978fdec05ddf3b77e384',
-    PROGRESS: '0e125fe63685ff1c8f4c4d2a1226d8de434e30290e657104ee3389292f50dffb',
+    PROGRESS: '70e7f967dbd40b85d41b7df22131fe48fdb39a5e59789a5b5034561e2c1a8a7c',
     GRAMMAR: '8804cf11f26fdd938c5ff786c154bf46fca05d6cca5af4e8a65d34d9e19f6fe5',
     FRAME: '737e171bed77f428e4e5d7a0128b8344ae0886cf70300775c9f7df823f588d0e',
     PAYLOAD: 'c3a94f11332f1026f10c72fe20b34666704ef0996e2c7dbdd9073ce43e94c732',
@@ -58,9 +63,11 @@ CASES = (
     (PROTOCOL, 'SharpLink.UnitTests.Protocol', 'ProtocolV2Tests', 'WriterAndParserShouldRoundTripFrame', 13, 28),
     (PROTOCOL, 'SharpLink.UnitTests.Protocol', 'ProtocolV2Tests', 'HeaderWithEveryByteInSeparateSegmentShouldParse', 50, 68),
     (PROTOCOL, 'SharpLink.UnitTests.Protocol', 'ProtocolV2Tests', 'RawFrameWriterAndTokenShouldRemainInternalImplementationDetails', 31, 35),
-    (PROGRESS, 'SharpLink.UnitTests.Runtime', 'SendPumpProgressIsolationTests', 'ProgressFlagDoesNotGrowOwnedFrame', 656, 678),
+    (PROGRESS, 'SharpLink.UnitTests.Runtime', 'SendPumpProgressIsolationTests', 'ProgressFlagDoesNotGrowOwnedFrame', 656, 736),
     (GRAMMAR, 'SharpLink.UnitTests.Protocol', 'Protocol3FrameAndHandshakeTests', 'OnlyNewMagicAndPositive63CorrelationAreAccepted', 13, 24),
     (GRAMMAR, 'SharpLink.UnitTests.Protocol', 'Protocol3FrameAndHandshakeTests', 'CancellationHasExactlyOneKnownReasonByte', 27, 33),
+    (PROGRESS, 'SharpLink.UnitTests.Runtime', 'SendPumpProgressIsolationTests', 'StreamCompleteNeverOvertakesQueuedStreamData', 109, 139),
+    (FLUSH, 'SharpLink.UnitTests.Runtime', 'FlushOperationStressTests', 'SessionStopShouldCompleteEveryForceFlushWaiter', 169, 204),
 )
 # Candidate-only literal vocabulary. Each exact source line is verified by controls.
 ASSERTION_LITERALS = {
@@ -78,8 +85,13 @@ ASSERTION_LITERALS = {
         ('segmented cancellation reason length', 'segmented-reason-length', PROTOCOL, 64),
         ('segmented cancellation reason', 'segmented-reason', PROTOCOL, 66),
         ('segmented frame consumed', 'segmented-frame-consumed', PROTOCOL, 67)),
-    3: (('the comparison must omit exactly the protocol-progress bool field', 'comparison-omits-only-progress-bool', PROGRESS, 664),
-        ('the comparison must mirror every current field in declaration order except the progress flag', 'comparison-mirrors-current-field-order', PROGRESS, 672)),
+    3: (('both flags must share exactly one private readonly byte field', 'exactly-one-private-readonly-packed-byte', PROGRESS, 668),
+        ('the packed flags must not retain either bool auto-property backing field', 'no-separate-bool-backing-fields', PROGRESS, 670),
+        ('the comparison must mirror every current field in declaration order, substituting only the packed byte for ForceFlush', 'exact-packed-byte-shape-substitution', PROGRESS, 679),
+        ('default frames and their copies must keep both flags false and the packed byte zero', 'default-flags-and-copy-zero', PROGRESS, 692),
+        ('packing must preserve the frame owner, payload, length and flush completion', 'packing-preserves-frame-data', PROGRESS, 718),
+        ('clearing the original holder must reset both of its flags', 'cleared-original-flags-zero', PROGRESS, 722),
+        ('copies must preserve the frame owner, payload, length and flush completion after clearing the original', 'copies-preserve-frame-data', PROGRESS, 732)),
 }
 EXCEPTION_CATEGORIES = {
     'System.Exception': 'exception',
@@ -125,7 +137,7 @@ def verify_isolated_sdk(lane, census):
     root = dotnet.parent
     temporary = os.environ.get('RUNNER_TEMP')
     r.require(type(temporary) is str and Path(temporary).is_absolute() and
-              root == Path(temporary) / 'three-fixture-dotnet' and dotnet.name == 'dotnet' and dotnet.is_file(), 'PD_SDK')
+              root == Path(temporary) / 'ownedframe-packing-dotnet' and dotnet.name == 'dotnet' and dotnet.is_file(), 'PD_SDK')
     r.legacy.directory_identity_strict(root)
     for name in ('DOTNET_ROOT', 'DOTNET_ROOT_X64'):
         if name in lane.env: r.require(Path(lane.env[name]) == root, 'PD_SDK')
@@ -149,7 +161,7 @@ def selected(r, ordinary):
                   type(loc['lineStart']) is int and start - 1 <= loc['lineStart'] <= start and
                   type(loc['lineEnd']) is int and loc['lineEnd'] == end, 'PD_SELECTION')
         output.append((uid, row))
-    r.require(len({uid for uid, _ in output}) == 6, 'PD_SELECTION')
+    r.require(len({uid for uid, _ in output}) == 8, 'PD_SELECTION')
     return output
 
 
@@ -285,14 +297,14 @@ def projected_exception(r, index, exception):
             match = re.fullmatch(r'OwnedFrame must not grow with the progress flag \(measured ([1-9][0-9]{0,3}) vs ([1-9][0-9]{0,3})\)', current['message'])
             if match and all(1 <= int(value) <= 4096 for value in match.groups()):
                 row.update(assertionTag='owned-frame-size-comparison', measuredBytes=int(match[1]), comparatorBytes=int(match[2]),
-                           exactMessageSource={'source': PROGRESS, 'line': 675})
+                           exactMessageSource={'source': PROGRESS, 'line': 684})
         # Exact test-method frames only. No arbitrary signature, path or line is
         # returned. Unsupported frames are counted, never stringified.
         frame_map = {}
         full = namespace + '.' + cls
         for line in range(start, end + 1):
             frame_map[f'   at {full}.{method}() in /_/{source}:line {line}'] = (method, line)
-        ensure_line = {PROTOCOL: 877, PROGRESS: 839}.get(source)
+        ensure_line = {PROTOCOL: 877, PROGRESS: 897}.get(source)
         if ensure_line is not None:
             frame_map[f'   at {full}.Ensure(Boolean condition, String message) in /_/{source}:line {ensure_line}'] = ('Ensure', ensure_line)
         lines = current.get('stackTrace', '').splitlines()
@@ -365,7 +377,7 @@ def run_cases(lane, execution, selections, overall_stop):
     lane.stop = min(overall_stop, now + 1500)
     # The original checkout remains an independently sealed, unbuilt input.
     # Rebase controls must use it, not the clone containing generated bin/obj.
-    lane.run('fixture-python-controls', [sys.executable, '-B', ROOT / 'eng/tests/test_pure_failure_diagnostic.py'], ROOT, 30)
+    lane.run('packing-python-controls', [sys.executable, '-B', ROOT / 'eng/tests/test_pure_failure_diagnostic.py'], ROOT, 30)
     r.require(lane.sequence == 33, 'PD_COMMANDS')
     dotnet = next(path for path in lane.inputs if path.name == 'dotnet' and path.parent in lane.trees)
     dll = lane.source / 'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'
@@ -373,7 +385,7 @@ def run_cases(lane, execution, selections, overall_stop):
     for index, selection in enumerate(selections):
         lane.check(); verify_source(r, lane.source)
         r.require(r.sha(dll) == lane.identity['binarySHA256'], 'UC_INPUT_CHANGED')
-        uid, _ = selection; label = 'fixture-case-' + str(index + 1)
+        uid, _ = selection; label = 'packing-case-' + str(index + 1)
         report = lane.work / (label + '-results'); report.mkdir(mode=0o700)
         report_identity = r.legacy.directory_identity_strict(report); r.legacy.verify_directory(report, report_identity, empty=True)
         argv = case_argv(execution, dotnet, dll, uid, report)
@@ -399,7 +411,7 @@ def run_cases(lane, execution, selections, overall_stop):
         lane.case_facts.append(result)
         lane.check()
         if not result['selectedPassed']: lane.record(r.Rejected('PD_CASE_FAILED'))
-    r.require(lane.sequence == 39 and len(lane.case_facts) == 6, 'PD_COMMANDS')
+    r.require(lane.sequence == 41 and len(lane.case_facts) == 8, 'PD_COMMANDS')
     lane.candidate_complete = True
 
 
@@ -432,22 +444,25 @@ def finish(lane, census, execution):
     r = lane.r
     try: lane.check()
     except BaseException as error: lane.record(error)
-    complete = lane.candidate_complete and len(lane.case_facts) == 6
+    complete = lane.candidate_complete and len(lane.case_facts) == 8
     qualified = bool(complete and not lane.errors and lane.durable and time.monotonic() < lane.stop)
     try:
-        summary = {'schemaVersion': 1, 'scope': 'six-ordinary-three-fixture-candidate-validation',
+        summary = {'schemaVersion': 1, 'scope': 'eight-ordinary-ownedframe-packing-candidate-validation',
             'identity': public_identity(r, lane.identity),
             'candidateCatalogSHA256': HELPERS['eng/unit-census.json'],
             'frozenCatalogSHA256': HELPERS['eng/fixture-migration-baseline/unit-census.json'],
             'sourceTrees': dict(SOURCE_TREES), 'requiredSdk': '10.0.114', 'requiredRuntime': '10.0.14',
             'preparationQualifiedAtHandoff': lane.preparation_complete,
             'candidateValidationComplete': complete, 'candidateValidationQualified': qualified,
-            'fullSuiteQualified': False, 'historicalOrdinaryFailureCount': 290, 'requiredSelectedCaseCount': 6,
+            'fullSuiteQualified': False, 'historicalOrdinaryFailureCount': 290, 'requiredSelectedCaseCount': 8,
             'expectedOrdinaryMetadataCount': 2879, 'expectedExplicitMetadataCount': 5,
             'historicalFullRunId': 41940224644, 'historicalDiagnosticRunId': 41947099090,
+            'historicalFirstMigrationRun': {'runId': 41950562552, 'head': '4209233576c2100e0d5dc625308f49b76d500169',
+                'complete': True, 'passed': 5, 'nonpassing': 1, 'qualified': False,
+                'case4': {'measuredBytes': 64, 'comparatorBytes': 56, 'shapeGuardsPassed': True}},
             'errorOccurrences': len(lane.errors), 'rejections': rejections(lane, execution),
             'evidenceDurable': lane.durable, 'cases': lane.case_facts, 'exit': 0 if qualified else 1}
-        r.write_json(lane.evidence, 'three-fixture-validation-summary.json', summary); lane.extend_evidence(['three-fixture-validation-summary.json'])
+        r.write_json(lane.evidence, 'ownedframe-packing-validation-summary.json', summary); lane.extend_evidence(['ownedframe-packing-validation-summary.json'])
         lane.check(); rendered = json.dumps(summary, sort_keys=True, allow_nan=False)
         r.require(time.monotonic() < lane.stop, 'PD_BUDGET')
         print(rendered, flush=True)
@@ -468,7 +483,7 @@ def main():
     ACTIVE = {'lane': None, 'errors': [], 'work': None}
     try:
         started = time.monotonic()
-        work = Path(tempfile.mkdtemp(prefix='slfv-', dir='/tmp')); os.chmod(work, 0o700); ACTIVE['work'] = work
+        work = Path(tempfile.mkdtemp(prefix='slfp-', dir='/tmp')); os.chmod(work, 0o700); ACTIVE['work'] = work
         # Fixed reviewed helper hashes before importing executable helper content.
         for name, expected in HELPERS.items():
             path = ROOT / name
@@ -497,7 +512,7 @@ def main():
             ACTIVE['errors'].append(error)
             if census is not None and ACTIVE['work'] is not None: census.persist(ACTIVE['work'], ACTIVE['errors'], 999)
             elif execution_runner is not None: execution_runner.bootstrap_persist(ACTIVE['work'], ACTIVE['errors'])
-        try: os.write(2, b'FIXTURE_VALIDATION_BOOTSTRAP_FAILED\n')
+        try: os.write(2, b'PACKING_VALIDATION_BOOTSTRAP_FAILED\n')
         except BaseException as secondary: ACTIVE['errors'].append(secondary)
         return 1
 
@@ -506,7 +521,7 @@ def guarded_main():
     try: return main()
     except BaseException as error:
         ACTIVE['errors'].append(error)
-        try: os.write(2, b'FIXTURE_VALIDATION_OUTERMOST_FAILED\n')
+        try: os.write(2, b'PACKING_VALIDATION_OUTERMOST_FAILED\n')
         except BaseException as secondary: ACTIVE['errors'].append(secondary)
         return 1
 
