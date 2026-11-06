@@ -1,0 +1,41 @@
+name: Validate PR 971 TUnit coverage
+
+on:
+  push:
+    branches:
+      - validation/pr971-tunit-stream-tests-20261106
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stream-load-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout exact dependency PR source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: bf6b0abc2adf5a28c7e9bcfceb19a50f171978f8
+          persist-credentials: false
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Verify source identity
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = bf6b0abc2adf5a28c7e9bcfceb19a50f171978f8
+          git show --no-patch --format=fuller HEAD
+      - name: Restore solution with current package audit
+        run: dotnet restore Sharplink.slnx --force --no-cache
+      - name: Build stream load tests
+        run: dotnet build test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj --no-restore -c Release -v minimal
+      - name: Run omitted stream load tests
+        run: dotnet test --project test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj -c Release --no-build
