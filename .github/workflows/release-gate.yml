@@ -8,6 +8,8 @@ on:
     branches:
       - main
   push:
+    branches:
+      - validation/stream-load-tests-gates-20261106
     tags:
       - 'v*'
   workflow_dispatch:
