@@ -4,6 +4,9 @@ permissions:
   contents: read
 
 on:
+  push:
+    branches:
+      - validation/stream-load-tests-gates-20261106
   pull_request:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
