@@ -19,6 +19,7 @@ The Fast job intentionally contains only the high-signal bounded checks assigned
 7. Unit tests.
 8. Generator tests.
 9. Load-test component unit tests.
+10. Stream-load component unit tests.
 
 Debug build, integration tests, NativeAOT smoke, packaging checks, package smoke, demo/load smoke, chaos validation, and codec compatibility remain in their existing workflows until #376 moves them deliberately.
 
@@ -36,6 +37,7 @@ dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
 dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+dotnet test --project test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj -c Release --no-build
 ```
 
 ## Duration contract and comparison
