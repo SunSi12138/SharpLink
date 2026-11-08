@@ -104,4 +104,6 @@ verify_rejected \
   "$ROOT/test/fixtures/generated-abi-mixing/old-generator-new-abstractions/OldGeneratorNewAbstractions.csproj" \
   SharpLink.OldGeneratorNewAbstractions
 
+python3 "$ROOT/eng/verify-packaged-method-facts.py"
+
 echo "Generated ABI package-mixing gate passed: both unsupported graphs were rejected without output assemblies."
