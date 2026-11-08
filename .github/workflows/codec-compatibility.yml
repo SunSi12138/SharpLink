@@ -139,7 +139,7 @@ jobs:
           EOF
 
       - name: Setup .NET 11 RC1
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 11.0.100-rc.1.26425.128
 
@@ -365,7 +365,7 @@ jobs:
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('global.json','utf8')); p.sdk.version=process.argv[1]; p.sdk.rollForward='disable'; fs.writeFileSync('global.json', JSON.stringify(p,null,2)+'\\n');" "$sdk_version"
 
       - name: Setup matching .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -437,7 +437,7 @@ jobs:
           EOF
 
       - name: Setup .NET 11 RC1
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 11.0.100-rc.1.26425.128
 
@@ -564,7 +564,7 @@ jobs:
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('global.json','utf8')); p.sdk.version=process.argv[1]; p.sdk.rollForward='disable'; fs.writeFileSync('global.json', JSON.stringify(p,null,2)+'\\n');" "$sdk_version"
 
       - name: Setup matching .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
