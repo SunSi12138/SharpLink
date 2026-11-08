@@ -227,6 +227,19 @@ jobs:
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
 
+      - name: Upload generated ABI compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-abi-compatibility
+          path: |
+            artifacts/generated-abi-mixing/*.log
+            artifacts/packaged-method-facts/*.log
+            artifacts/packaged-method-facts/*.sarif
+            artifacts/packaged-method-facts/result.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Verify Protocol v2 Current-package Process Interoperability
         run: ./eng/verify-protocol-v2-cross-version.sh
 

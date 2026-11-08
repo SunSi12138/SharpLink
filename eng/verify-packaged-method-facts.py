@@ -7,6 +7,7 @@ loader test or evidence about older API5 generated assemblies.
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -45,8 +46,9 @@ def run(arguments, log):
 
 
 def main():
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    (RESULTS / "result.json").unlink(missing_ok=True)
+    if RESULTS.exists():
+        shutil.rmtree(RESULTS)
+    RESULTS.mkdir(parents=True)
     if not PACKAGE.is_file():
         raise SystemExit(f"Pack {PACKAGE.name} into artifacts/nuget first.")
     # Fresh projects AND cache: a same-version cached package must not stand in
@@ -84,6 +86,10 @@ def main():
             code = run(["dotnet", "build", *common, "--no-restore", "-c", "Release", "-m:1",
                         "-p:UseSharedCompilation=false", "-nodeReuse:false", f"-p:ErrorLog={sarif}"],
                        RESULTS / f"{name}.build.log")
+            # Preserve compiler evidence before validating the oracle: failures
+            # must survive TemporaryDirectory cleanup too.
+            if sarif.is_file():
+                (RESULTS / f"{name}.sarif").write_text(sarif.read_text())
             assembly = directory / "bin/Release/net10.0/ExternalMethodFactsConsumer.dll"
             if name == "positive":
                 if code or not assembly.is_file():
@@ -97,7 +103,6 @@ def main():
                 if len(errors) != 1 or errors[0]["ruleId"] != "CS0535" or \
                         "IRpcStub.ResolveMethodFacts(long)" not in str(errors[0]["message"]):
                     raise SystemExit(f"Unexpected compiler diagnostics: {errors}")
-                (RESULTS / "missing-resolver.sarif").write_text(sarif.read_text())
     (RESULTS / "result.json").write_text(json.dumps({
         "package": PACKAGE.name, "sha256": hashlib.sha256(PACKAGE.read_bytes()).hexdigest(),
         "positive": "compiled", "negative": "CS0535: IRpcStub.ResolveMethodFacts(long)",
