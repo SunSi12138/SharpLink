@@ -60,6 +60,9 @@ jobs:
       - name: Load Test Tests
         run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
 
+      - name: Stream Load Test Tests
+        run: dotnet test --project test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj -c Release --no-build
+
       - name: Record Fast validation steps elapsed
         if: always()
         shell: bash
