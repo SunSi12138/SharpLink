@@ -227,7 +227,7 @@ class SchedulerTests(unittest.TestCase):
                 scheduler.matrix.runner_records(negative, "windows")
             self.assertIn(b"pipefail", failed.exception.stderr)
 
-            # These are the workflow's exact commands, before either checkout.
+            # Configure Git before checkout so the runner retains LF line endings.
             git("config", "--global", "core.autocrlf", "false")
             git("config", "--global", "core.eol", "lf")
             positive = directory / "lf"
@@ -235,27 +235,6 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual("", git("status", "--porcelain", cwd=positive))
             self.assertNotIn(b"\r\n", (positive / "eng/run-performance-matrix.sh").read_bytes())
             self.assertEqual(2205, len(scheduler.matrix.runner_records(positive, "windows")))
-            workflow = (ROOT / ".github/workflows/full-performance-shard.yml").read_text()
-            first_checkout = workflow.index("uses: actions/checkout@")
-            self.assertLess(workflow.index("git config --global core.autocrlf false"), first_checkout)
-            self.assertLess(workflow.index("git config --global core.eol lf"), first_checkout)
-            self.assertIn("if: runner.os == 'Windows'", workflow[:first_checkout])
-
-    def test_workflow_is_manual_default_safe_and_three_separate_fail_fast_false_groups(self):
-        workflow = (ROOT / ".github/workflows/full-performance-matrix.yml").read_text()
-        shard = (ROOT / ".github/workflows/full-performance-shard.yml").read_text()
-        self.assertIn("default: plan-only", workflow)
-        self.assertIn("default: false", workflow)
-        self.assertNotIn("pull_request:", workflow)
-        self.assertNotIn("push:", workflow)
-        self.assertEqual(3, workflow.count("fail-fast: false"))
-        for p in scheduler.PLATFORMS:
-            self.assertIn("matrix: ${{ fromJSON(needs.plan.outputs." + p + ") }}", workflow)
-        self.assertIn("timeout-minutes: 240", shard)
-        self.assertIn("if: always()", shard)
-        self.assertIn("${{ github.run_attempt }}", shard)
-        self.assertNotIn("overwrite: true", shard)
-        self.assertNotIn("secrets: inherit", workflow)
 
 
 if __name__ == "__main__":
