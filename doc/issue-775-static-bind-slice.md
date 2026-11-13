@@ -4,6 +4,10 @@ Base: dev `160d0cd9a0550de5bf00c63b6007376c02debc20`.
 Tested subject: `f21a5fc36a6fff729c167a66d18e3b0981775534`.
 Status: **nonshipping static vertical slice passed its functional matrix; no PR/merge or performance acceptance.**
 
+Follow-up: [deterministic control stage](issue-775-deterministic-controls.md) on `90562b65`
+passed 99/99 per Windows/Linux TCP/SharedMemory cell, including aggregate quotas and
+physical Bind close. The 50-case result below remains the historical first slice.
+
 ## Four real transport cells passed
 
 [GitHub run 43354605843](https://github.com/SunSi12138/SharpLink/actions/runs/43354605843)
@@ -145,9 +149,10 @@ and its validation branch are removed after evidence capture; historical runs re
 
 ## Next owner and completion boundary
 
-The next #775 work is deterministic Bind publication/backpressure/early-Ack/cancel/drain
-controls and global quota ownership on this real path, then the reviewed production
-API/combined facts ABI and grammar. Follow with registration-group retirement, receipt,
+The deterministic publication/backpressure/early-Ack/cancel/drain and aggregate quota stage
+has passed; see the follow-up report for exact evidence and retained failure. Proceed to
+bounded registration-group retirement, then receipt after its cutoff/reclaim controls pass.
+Production API/combined facts ABI and grammar remain subject to review. Follow with
 ABA/reclaim/ALC, all five families/RequestAccepted/OneWayStream, and physical decode/producer/
 disposal obligations from #931/#933/#964. Do not adopt those closed branches wholesale.
 

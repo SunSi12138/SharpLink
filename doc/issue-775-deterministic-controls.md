@@ -2,7 +2,8 @@
 
 Base: local nonshipping slice `2360a0ca5b782095f02d976ca303fc7890bb9871`, on dev
 `160d0cd9a0550de5bf00c63b6007376c02debc20`. This stage gates expansion into dynamic
-retirement/receipt. No performance experiment is scheduled.
+retirement/receipt. Tested subject: `90562b6540b7164c0067e2397cf5685df519d304`.
+No performance experiment was run.
 
 ## Acceptance frozen before the first hosted run
 
@@ -61,7 +62,44 @@ the existing socket/shared-memory factory directly, wraps it, and selects UseTra
 No production source, control inventory or budget changes. SharedMemory was not run on that
 failed subject; original artifacts/logs remain failed.
 
-Pending. Keep dynamic retirement/receipt out of this stage until the frozen matrix and
-ownership checks pass. Even a pass does not complete production API/facts ABI/grammar,
-five-family physical ownership, package/Trim/NativeAOT, ordinary regression or performance
-acceptance. #775/#805 remain open; no PR is proposed at this stage.
+The corrected subject passed [run 43371248297](https://github.com/SunSi12138/SharpLink/actions/runs/43371248297):
+
+| Host | TCP | SharedMemory | Runtime | Job |
+|---|---:|---:|---|---|
+| Windows x64 | 99/99 | 99/99 | .NET 10.0.15 | 131707273703 |
+| Linux x64 | 99/99 | 99/99 | .NET 10.0.15 | 131707273997 |
+
+Both ordinary/profile host builds had zero warnings/errors. All four retained JSON reports
+were checked against the exact frozen inventory and tested subject. No inventory, timeout
+or assertion was changed after the first hosted attempt. The first failed attempt's four
+original build/source/probe logs remain in its artifacts and job logs; it is not relabeled.
+
+**Decision: GO to a bounded dynamic lifecycle slice, group retirement first, receipt second.**
+The control plane now has exercised publication/correlation ordering, original budgets,
+physical cleanup ownership and aggregate quotas. The next decisive unknown is safe group
+retirement, not another static rerun or historical performance comparison.
+
+1. Establish one admission cutoff for the whole old registration group before publishing
+   its complete replacement. Freeze the acquire/retire/reclaim ordering and exact old
+   registration/facts/codec ownership; do not simply enable dynamic Bind on the static table.
+2. On real transport, hold pre-cut calls and reject post-cut old-token calls. Cover same/
+   changed hash, multiple services/Sessions, delayed Ack/invalidation, cancellation and
+   physical tails. Add bounded retired-entry cleanup, token generation/reuse/ABA and ALC
+   release. A cutoff, resurrection, owner-count or reclaim failure stops expansion.
+3. Only after those controls pass, connect receipt to exact server instance/registry epoch/
+   registration generation across separate control/data connections. Test stale Manifest
+   and wrong/late receipt; receipt must not bypass authorization or target scope.
+
+Dynamic registration/receipt are not implemented in this subject. Production API/complete
+facts ABI/grammar, five-family physical ownership, package/Trim/NativeAOT, ordinary regression
+and performance acceptance remain open. Existing #387 investigations remain paused. #775/
+#805 stay open; no PR is proposed. Future performance still requires a separately frozen
+GitHub-only A/A/precision/budget/stop plan before execution.
+
+## Source and evidence handoff
+
+Development source remains on local `codex/775-static-bind-slice` in
+`C:/Users/sunsi/Desktop/SharpLink-775-Slice`. Evidence and complete source bundle are under
+`C:/Users/sunsi/Desktop/SharpLink-775-evidence/controls-20261113/`; its README contains the
+restoration commands. The CI-only branch and workflow definition are removed after capture;
+historical runs remain. No production/probe inputs change after the tested subject.
