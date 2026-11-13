@@ -15,7 +15,7 @@ internal static partial class Program
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
             var tool = Path.GetFullPath("artifacts/775-tools/" + (OperatingSystem.IsWindows() ? "dotnet-dump.exe" : "dotnet-dump"));
             var start = new ProcessStartInfo(tool) { UseShellExecute = false, CreateNoWindow = true };
-            foreach (var argument in new[] { "collect", "--process-id", Environment.ProcessId.ToString(), "--type", "Heap", "--output", output })
+            foreach (var argument in new[] { "collect", "--process-id", Environment.ProcessId.ToString(), "--type", "Full", "--output", output })
                 start.ArgumentList.Add(argument);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Diagnostic helper did not start.");
             if (!process.WaitForExit(45000)) { process.Kill(entireProcessTree: true); throw new TimeoutException("Failure dump exceeded 45 seconds."); }

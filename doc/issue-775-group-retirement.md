@@ -112,6 +112,16 @@ GitHub-only dotnet-dump helper collects targeted allocator roots if the assertio
 fails; raw heap stays ephemeral outside uploaded artifacts. No local diagnostic execution
 or receipt implementation is introduced.
 
+Seventh subject57db0c72/run43385682574 passed the previous99 controls in all four cells
+and every group TCP assertion before the final ABA ALC observation on both hosts. Neither
+group SharedMemory cell ran after that failure. Windows allocator roots show only handle
+type10, which .NET10 defines as weak interior-pointer handles; these do not identify an
+external strong owner. Linux allocator-object analysis returned incomplete output. The next
+diagnostic subject therefore captures the context object, surviving fixture/async/module
+objects and managed stacks, with analyzer exit status and full mapped-image dump data.
+Only targeted text is retained; the raw heap is never uploaded. There is no product/fixture
+behavior change and no extra GC cycle. ALC remains a failed gate, not a waived oracle.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

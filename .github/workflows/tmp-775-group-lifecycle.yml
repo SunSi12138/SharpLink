@@ -73,14 +73,22 @@ jobs:
           $dump = 'artifacts/775-diagnostics/alc-failure.dmp'
           if (-not (Test-Path -LiteralPath $dump)) { exit 0 }
           $tool = if ($IsWindows) { './artifacts/775-tools/dotnet-dump.exe' } else { './artifacts/775-tools/dotnet-dump' }
-          $heap = & $tool analyze $dump -c 'dumpheap -type System.Reflection.LoaderAllocator' -c exit 2>&1
-          $heap | Set-Content artifacts/775-slice/alc-allocators.log
-          foreach ($line in $heap) {
-            if ("$line" -match '^\s*([0-9a-fA-F]{8,16})\s+([0-9a-fA-F]{8,16})\s+\d+') {
-              $address = $Matches[1]
-              & $tool analyze $dump -c "dumpobj $address" -c "gcroot $address" -c exit 2>&1 | Set-Content "artifacts/775-slice/alc-root-$address.log"
+          foreach ($type in @('System.Reflection.LoaderAllocator', 'GroupLoadContext', 'LoadedGroup', 'ExecuteReuseAndUnloadAsync', 'SharpLinkDynamicModule')) {
+            $label = $type.Replace('.', '-')
+            $heap = & $tool analyze $dump -c "dumpheap -type $type" -c exit 2>&1
+            $code = $LASTEXITCODE
+            $heap | Set-Content "artifacts/775-slice/alc-$label.log"
+            "exit=$code" | Add-Content "artifacts/775-slice/alc-$label.log"
+            foreach ($line in $heap) {
+              if ("$line" -match '^\s*([0-9a-fA-F]{8,16})\s+([0-9a-fA-F]{8,16})\s+\d+') {
+                $address = $Matches[1]
+                & $tool analyze $dump -c "dumpobj $address" -c "gcroot $address" -c exit 2>&1 | Set-Content "artifacts/775-slice/alc-root-$address.log"
+                "exit=$LASTEXITCODE" | Add-Content "artifacts/775-slice/alc-root-$address.log"
+              }
             }
           }
+          & $tool analyze $dump -c 'clrstack -all' -c exit 2>&1 | Set-Content artifacts/775-slice/alc-stacks.log
+          "exit=$LASTEXITCODE" | Add-Content artifacts/775-slice/alc-stacks.log
           exit 0
       - name: Retain original evidence even on failure
         if: always()
