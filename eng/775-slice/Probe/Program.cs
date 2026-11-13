@@ -76,10 +76,12 @@ internal static partial class Program
         });
         var clientBuilder = SharpClientBuilder.Create().UseRequestTimeout().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
         string? sharedName = null;
+        var tcpPort = 0;
         if (transport == "tcp")
         {
             serverBuilder.UseTcp(0, IPAddress.Loopback);
-            clientBuilder.UseTcp("127.0.0.1", ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port);
+            tcpPort = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            clientBuilder.UseTcp("127.0.0.1", tcpPort);
         }
         else if (transport == "sharedmemory")
         {
@@ -168,7 +170,7 @@ internal static partial class Program
         }
         finally { site.Snapshot = [target]; }
         var otherBuilder = SharpClientBuilder.Create().UseRequestTimeout().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
-        if (transport == "tcp") otherBuilder.UseTcp("127.0.0.1", ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port);
+        if (transport == "tcp") otherBuilder.UseTcp("127.0.0.1", tcpPort);
         else otherBuilder.UseSharedMemory(sharedName!);
         await using var other = (SharpLinkClient)otherBuilder.Build();
         await ExpectCode(() => { other.CreateContractChannel(local); return Task.CompletedTask; },

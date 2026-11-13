@@ -154,3 +154,18 @@ PowerShell wrapper propagated that handled status as failure. Selection now exit
 recording its decision and compares with the last successful default-regression source
 03ef5628, not an intermediate untested parent. Initial subject metadata is always saved,
 including pre-build failures. No probe/production behavior, case inventory or budget changed.
+
+Sixth subject394dd4f158dd1f457ff515ebe5f728fc4132d652 / run43353655418 reached
+real TCP: BindAck, generated/manual Unary, metadata/custom codec, OneWay receiver completion,
+unknown-method/full-token rejection and 36 checks passed before a fixture NullReference at
+second-client construction. Builder.Build transfers its transport owner, so the fixture now
+captures the endpoint before Build rather than dereferencing the emptied builder later.
+SharedMemory and remaining checks were not executed on that failed subject.
+
+The sixth subject's latest ordinary regression is Linux2212/2212 and Windows2211/2212:
+HugeBuiltInJitteredRetryDelayShouldRemainCancellable timed out at its existing two-second
+Stop wait (line201). It is recorded in #387, unclassified and unresolved; no assertion,
+timeout, quarantine or rerun is applied. Windows skipped the prototype after this failure.
+The next probe-only subject references394dd4f1 as already EXECUTED inputs, including its
+failed Windows result, not as a passed gate. Its functional-only success cannot erase that
+red regression or authorize PR/release acceptance. Raw TRX/logs are retained offline.

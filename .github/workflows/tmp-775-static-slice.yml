@@ -22,13 +22,14 @@ jobs:
         run: |
           New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
           "subject=$env:GITHUB_SHA" | Set-Content artifacts/775-slice/subject.txt
-      - name: Select regression for changed production/build inputs
+          'Default regression source394dd4f1/run43353655418: Linux2212/2212; Windows2211/2212 with unresolved HugeBuiltInJitteredRetryDelayShouldRemainCancellable Stop timeout. Reused as executed evidence, NOT a pass. See issue387.' | Set-Content artifacts/775-slice/default-evidence-status.txt
+      - name: Select new regression only when previously executed inputs change
         id: subject
         shell: pwsh
         run: |
-          git fetch --depth=1 origin 03ef562826012194531de9c26c771df885331e7e
+          git fetch --depth=1 origin 394dd4f158dd1f457ff515ebe5f728fc4132d652
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git diff --quiet 03ef562826012194531de9c26c771df885331e7e HEAD -- src Directory.Build.props Directory.Packages.props global.json
+          git diff --quiet 394dd4f158dd1f457ff515ebe5f728fc4132d652 HEAD -- src Directory.Build.props Directory.Packages.props global.json
           if ($LASTEXITCODE -eq 1) { 'run_default=true' >> $env:GITHUB_OUTPUT }
           elseif ($LASTEXITCODE -eq 0) { 'run_default=false' >> $env:GITHUB_OUTPUT }
           else { exit $LASTEXITCODE }
