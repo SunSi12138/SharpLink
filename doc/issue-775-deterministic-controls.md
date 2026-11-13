@@ -96,6 +96,11 @@ and performance acceptance remain open. Existing #387 investigations remain paus
 #805 stay open; no PR is proposed. Future performance still requires a separately frozen
 GitHub-only A/A/precision/budget/stop plan before execution.
 
+Subsequent development completed the bounded group-retirement and receipt matrices;
+see [group retirement](issue-775-group-retirement.md) and [receipt results](issue-775-receipt-slice.md).
+The static control evidence above remains its own tested subject, including the ordinary
+Windows failure; it is not retroactively relabeled as final product acceptance.
+
 ## Source and evidence handoff
 
 Development source remains on local `codex/775-static-bind-slice` in

@@ -53,7 +53,7 @@ when its site continuation was delayed. The added deterministic control exercise
 
 ## Results and remaining obligations
 
-First receipt subject1a3fdc92/run43389913243 passed prior99 + group67 on Linux, then passed
+First receipt subject1a3fdc92/run43389913243 passed prior99 + group67 in all four cells, then passed
 the stale-Manifest, constraint, per-registration generation and held-late-Ack controls.
 The delayed-site-commit ALC check failed. The hosted full dump identifies a RuntimeAssembly
 in ReceiptCommitInvalidationAsync.MoveNext's native stack slot, from its direct Replace
@@ -61,7 +61,36 @@ Assembly arguments. A synchronous non-inlined forwarding boundary now pops that 
 argument-bearing frame before the collector can run. All49 assertions, ten GC cycles,
 live owners and120s watchdog remain unchanged. The failed run remains failed.
 
-Pending hosted validation. Keep #775/#805 open. Full five-family method-facts ABI and
+Corrected subject **56abfb73c38316aba05dc0b20a8932cb29c27c6c** passed
+[run43390540250](https://github.com/SunSi12138/SharpLink/actions/runs/43390540250):
+
+| Host | TCP | SharedMemory | Job |
+|---|---|---|---|
+| Windows x64 / .NET10.0.15 | 99 +67 +49 | 99 +67 +49 | 131769097329 |
+| Linux x64 / .NET10.0.15 | 99 +67 +49 | 99 +67 +49 | 131769097751 |
+
+Every cell passed the exact frozen previous/group/receipt inventories. All12 JSON reports
+were also checked offline for subject, transport, kind, count, uniqueness and full case set.
+Default/profile and all plugin builds passed on both hosts with zero warnings/errors.
+The ordinary-source collector confirms41 changed/shared files retain the same ordinary
+tokens and unchanged build inputs; admission source controls pass5/5. The prior ordinary
+Unit result remains Linux2212/2212 and Windows2211/2212 with the unresolved #387 Stop
+failure. The functional matrix does not replace that result.
+
+**Decision: the bounded dynamic group + receipt slice is accepted.** The next work is the
+coordinated full method-facts/receiver ABI and five-family physical ownership, reviewed
+through #805 before final canonical integration. Do not start another historical tuning
+line or infer a performance result. Keep #775/#805 open. Full five-family method-facts ABI and
 streaming ownership, dynamic local generations, final canonical API/package/Trim/NativeAOT,
 ordinary Windows Stop failure and valid performance acceptance remain separate obligations.
 No paused investigation is reopened; no PR or merge has been made.
+
+## Source and retained evidence
+
+Local source: codex/775-static-bind-slice in C:/Users/sunsi/Desktop/SharpLink-775-Slice.
+Reports: this file and doc/issue-775-group-retirement.md. Complete source bundle, all22
+original ZIP artifacts and22 decoded job logs for the11 subjects, JSON inventory, workflow
+snapshot and restoration README: C:/Users/sunsi/Desktop/SharpLink-775-evidence/group-20261113/.
+The final handoff differs from the tested subject only in documentation and removal of
+the temporary workflow. CI-only branch/workflow are removed after evidence capture;
+historical runs remain, no production/probe/build input changes after validation.
