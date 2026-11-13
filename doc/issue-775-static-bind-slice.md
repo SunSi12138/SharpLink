@@ -147,3 +147,10 @@ now registered under the existing pool publication/Seal gate before execution is
 final stop pulses do not start work. The controller no longer enters that gate while holding
 its site-cache gate. This source change triggers a fresh ordinary default regression; later
 probe-only subjects reuse the latest applicable result via an explicit changed-input check.
+
+Fifth subject688c4485531293d4557875b278ca9264862a81e0 / run43353282296
+stopped in collector selection: git diff correctly returned1 for changed inputs, but the
+PowerShell wrapper propagated that handled status as failure. Selection now exits0 after
+recording its decision and compares with the last successful default-regression source
+03ef5628, not an intermediate untested parent. Initial subject metadata is always saved,
+including pre-build failures. No probe/production behavior, case inventory or budget changed.

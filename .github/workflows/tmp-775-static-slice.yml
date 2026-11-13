@@ -19,17 +19,22 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       - name: Create evidence directory independently of reused regression
         shell: pwsh
-        run: New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
+        run: |
+          New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
+          "subject=$env:GITHUB_SHA" | Set-Content artifacts/775-slice/subject.txt
       - name: Select regression for changed production/build inputs
         id: subject
         shell: pwsh
         run: |
-          git diff --quiet HEAD^ HEAD -- src Directory.Build.props Directory.Packages.props global.json
+          git fetch --depth=1 origin 03ef562826012194531de9c26c771df885331e7e
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --quiet 03ef562826012194531de9c26c771df885331e7e HEAD -- src Directory.Build.props Directory.Packages.props global.json
           if ($LASTEXITCODE -eq 1) { 'run_default=true' >> $env:GITHUB_OUTPUT }
           elseif ($LASTEXITCODE -eq 0) { 'run_default=false' >> $env:GITHUB_OUTPUT }
           else { exit $LASTEXITCODE }
+          exit 0
       - name: Ordinary default build and regression once
-        if: steps.subject.outputs.run_default == 'true' 
+        if: steps.subject.outputs.run_default == 'true'
         shell: pwsh
         run: |
           New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
