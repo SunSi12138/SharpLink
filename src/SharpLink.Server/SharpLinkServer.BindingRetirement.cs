@@ -22,13 +22,16 @@ internal sealed partial class SharpLinkServer
         AfterBindingGroupCutTestHook?.Invoke();
     }
 
-    private static void PublishBindingRetirement(BindingRetirementBatch[] batches)
+    private void PublishBindingRetirement(BindingRetirementBatch[] batches)
     {
         foreach (var batch in batches)
         {
             try { StaticBindingWire.SendInvalidation(batch.Connection.Session, batch.Tokens); }
-            catch (SharpLinkException failure) when (failure.Code is SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.ResourceExhausted)
-            { batch.Connection.Session.NotifyDisconnected(failure); }
+            catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
+            {
+                _logger.LogError(failure, "Binding invalidation publication failed; retiring its Session.");
+                batch.Connection.Session.NotifyDisconnected(failure);
+            }
         }
     }
 
@@ -66,10 +69,10 @@ internal sealed partial class SharpLinkServer
             _registryGeneration++;
         }
         // No fallible publish/scheduling operation is inside the irreversible cut.
-        PublishBindingRetirement(batches);
-        ScheduleContractManifestPublish();
         TrackFrameworkTask(completion.Task, "BoundAssemblyUnregister", TaskObservationMode.ExternallyObserved);
         _ = CompleteUnregisterOperationAsync(assembly, module, timeout, completion);
+        PublishBindingRetirement(batches);
+        ScheduleContractManifestPublish();
         return WaitForUnregisterAsync(completion.Task, cancellationToken);
     }
 

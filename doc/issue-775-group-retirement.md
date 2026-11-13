@@ -74,6 +74,15 @@ now constructs the actual generated Proxy over the deliberately stale/scoped tes
 using the existing registration's codec provider; no hand-built substitute framing is added.
 The67 lifecycle assertions and all budgets remain unchanged.
 
+Third subject118e522f/run43380821006 passed all previous99 controls on both platforms/
+transports. Same-hash TCP then proved the group cut, four post-cut rejections, zero business
+decode and retained physical ownership after caller cancellation, before waiting for missing
+invalidation until its original120s watchdog. The new control types had been added to parser/
+payload/phase handling but omitted from the request-ID-zero control header classification.
+That concrete protocol error is corrected. Drain ownership now starts before best-effort
+notifications; a publication failure is logged, faults only that Session and cannot lose the
+already-committed old module cleanup owner. No lifecycle assertion or deadline is relaxed.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

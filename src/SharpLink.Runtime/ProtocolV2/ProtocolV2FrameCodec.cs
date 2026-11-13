@@ -154,6 +154,9 @@ public static class ProtocolV2FrameParser
         ulong requestId)
     {
         var controlFrame = type is ProtocolV2FrameType.HandshakeRequest or
+#if SHARPLINK_775_STATIC_SLICE
+            StaticBindingWire.Invalidate or StaticBindingWire.Release or
+#endif
             ProtocolV2FrameType.HandshakeResponse or
             ProtocolV2FrameType.Ping or
             ProtocolV2FrameType.Pong or

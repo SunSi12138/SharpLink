@@ -354,15 +354,15 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-#if SHARPLINK_775_STATIC_SLICE
-        PublishBindingRetirement(bindingRetirement);
-        ScheduleContractManifestPublish();
-#endif
         TrackFrameworkTask(
             drainOperation!,
             "DynamicAssemblyReplacementDrain",
             TaskObservationMode.ExternallyObserved);
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
+#if SHARPLINK_775_STATIC_SLICE
+        PublishBindingRetirement(bindingRetirement);
+        ScheduleContractManifestPublish();
+#endif
         return WaitForReplacementAsync(drainOperation!, cancellationToken);
     }
 
