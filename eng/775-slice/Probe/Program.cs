@@ -34,6 +34,8 @@ internal static partial class Program
         var transport = args[0];
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await RunAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         var report = new { transport, kind = "functional-only", passed = Passed.Count, cases = Passed,
             source = Environment.GetEnvironmentVariable("GITHUB_SHA"), runtime = Environment.Version.ToString() };
         Directory.CreateDirectory("artifacts/775-slice");

@@ -15,7 +15,7 @@ internal static partial class Program
             .GetField("_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
         var services = registry.ServicesStorage;
         var registration = services[contract.ContractId];
-        var table = new StaticBindingTable();
+        var table = new StaticBindingTable(new StaticBindingBudget());
         var tokens = new HashSet<ulong>();
         StaticBindingAck first = default;
         for (var operation = 1UL; operation <= StaticBindingWire.Capacity; operation++)

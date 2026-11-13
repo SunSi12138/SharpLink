@@ -3,6 +3,7 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    internal StaticBindingBudget BindingBudget { get; } = new();
     private TaskCompletionSource _staticBindingChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _staticPrepareWaiters;
 

@@ -3,11 +3,18 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private ValueTask BindStaticContractAsync(ServerConnectionState connection, ulong operation,
+    internal StaticBindingBudget BindingBudget { get; } = new();
+    private async ValueTask BindStaticContractAsync(ServerConnectionState connection, ulong operation,
         ReadOnlySequence<byte> payload)
     {
         var request = StaticBindingWire.ReadRequest(payload);
         connection.StaticBindings.ObserveOperation(operation);
+        using var control = BindingBudget.TryReserveOperation();
+        if (control is null)
+        {
+            StaticBindingWire.SendCapacityAck(connection.Session, operation, request.ContractId);
+            return;
+        }
         StaticBindingAck ack;
         // Shares the existing registration publication boundary. Static registrations cannot
         // be runtime replaced/unregistered; dynamic registrations are explicitly rejected.
@@ -34,7 +41,7 @@ internal sealed partial class SharpLinkServer
         }
         // The entry is visible before success can be sent. Bind does not activate a service,
         // decode business bytes, reserve request capacity, or freeze authorization decisions.
-        return StaticBindingWire.SendAckAsync(connection.Session, operation, ack, connection.ConnectionToken);
+        await StaticBindingWire.SendAckAsync(connection.Session, operation, ack, connection.ConnectionToken).ConfigureAwait(false);
     }
 
     private static StaticBindingFailure ResolveStaticRequest(ServerConnectionState connection,

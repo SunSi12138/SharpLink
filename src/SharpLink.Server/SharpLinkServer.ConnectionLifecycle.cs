@@ -57,6 +57,9 @@ internal sealed partial class SharpLinkServer
                 callCancellations,
                 cancellationToken,
                 _runtimeContext.TimeProvider,
+#if SHARPLINK_775_STATIC_SLICE
+                BindingBudget,
+#endif
                 _maxConcurrentCallsPerConnection);
             connectionState.MarkSessionLoopStarted();
             connection = null;

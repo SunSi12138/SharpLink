@@ -25,7 +25,7 @@ internal sealed record StaticBindingMethod
 
 // Stage 1 deliberately never recycles a slot before the physical Session is destroyed.
 // Layout: incarnation=1 in high 32 bits, one-based slot in low 32 bits. No wrap/reuse.
-internal sealed class StaticBindingTable
+internal sealed class StaticBindingTable(StaticBindingBudget ownerBudget)
 {
     private readonly Lock _gate = new();
     private readonly Entry?[] _slots = new Entry?[StaticBindingWire.Capacity];
@@ -64,10 +64,12 @@ internal sealed class StaticBindingTable
                 if (!methods.TryAdd(method.MethodId, new StaticBindingMethod(descriptor, method.SupportsCancellation)))
                     return Failure(StaticBindingFailure.UnsupportedShape, contractId);
             }
+            var lease = ownerBudget.TryReserveBinding();
+            if (lease is null) return Failure(StaticBindingFailure.Capacity, contractId);
             var token = (1UL << 32) | (uint)(_count + 1);
             var ack = new StaticBindingAck(StaticBindingFailure.None, contractId, token,
                 registration.StaticBindingRegistrationId, generation);
-            var entry = new Entry(ack, registration, methods.ToFrozenDictionary());
+            var entry = new Entry(ack, registration, methods.ToFrozenDictionary(), lease);
             Volatile.Write(ref _slots[_count], entry);
             _count++;
             return ack;
@@ -100,7 +102,8 @@ internal sealed class StaticBindingTable
         lock (_gate)
         {
             _closed = true;
-            for (var index = 0; index < _slots.Length; index++) Volatile.Write(ref _slots[index], null);
+            for (var index = 0; index < _slots.Length; index++)
+                Interlocked.Exchange(ref _slots[index], null)?.Lease.Dispose();
             _count = 0;
         }
     }
@@ -109,6 +112,6 @@ internal sealed class StaticBindingTable
         => new(failure, contractId, 0, 0, 0);
 
     private sealed record Entry(StaticBindingAck Ack, ServiceRegistration Registration,
-        FrozenDictionary<long, StaticBindingMethod> Methods);
+        FrozenDictionary<long, StaticBindingMethod> Methods, StaticBindingBudget.Lease Lease);
 }
 #endif

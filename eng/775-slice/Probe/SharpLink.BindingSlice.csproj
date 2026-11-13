@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../../test/SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="ManualTimeProvider.cs" />
     <ProjectReference Include="../../../src/SharpLink.Client/SharpLink.Client.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Server/SharpLink.Server.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj"

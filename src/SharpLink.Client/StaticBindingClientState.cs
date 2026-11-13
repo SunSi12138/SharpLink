@@ -2,35 +2,52 @@
 namespace SharpLink.Client;
 
 // One owner per physical Session. Cancellation by a waiter never cancels a shared Bind.
-internal sealed class StaticBindingClientState(RpcSession session)
+internal sealed class StaticBindingClientState(RpcSession session, StaticBindingBudget ownerBudget)
 {
     private readonly Lock _gate = new();
-    private readonly Dictionary<(long, RpcHash128), StaticBindingAck> _completed = [];
+    private readonly Dictionary<(long, RpcHash128), (StaticBindingAck Ack, StaticBindingBudget.Lease Lease)> _completed = [];
     private readonly Dictionary<(long, RpcHash128), Operation> _inflight = [];
     private readonly Dictionary<ulong, Operation> _operations = [];
+    private readonly CancellationTokenSource _closing = new();
+    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _closed;
     private ulong _nextOperation;
     private long _sent;
     private Task _lastPublication = Task.CompletedTask;
     internal long Sent => Interlocked.Read(ref _sent);
     internal int PendingCount { get { lock (_gate) return _operations.Count; } }
+    internal int CompletedCount { get { lock (_gate) return _completed.Count; } }
+    // Pause actual publication, never replace wire/ack work. Per-state and profile-only.
+    internal Func<ulong, StaticBindingPublicationPhase, CancellationToken, ValueTask>? PublicationTestHook;
+    internal Action<ulong>? AckObservedTestHook;
 
     internal Task<StaticBindingAck> BindAsync(long contract, RpcHash128 hash)
     {
         Operation operation;
         lock (_gate)
         {
-            if (!session.CanAcceptCalls)
+            if (_closed || !session.CanAcceptCalls)
                 return Task.FromException<StaticBindingAck>(StaticBindingWire.Error(StaticBindingFailure.Unavailable));
             var key = (contract, hash);
             if (_completed.TryGetValue(key, out var completed))
-                return Task.FromResult(completed);
+                return Task.FromResult(completed.Ack);
             if (_inflight.TryGetValue(key, out operation!))
                 return operation.Completion.Task;
             if (_completed.Count + _inflight.Count >= StaticBindingWire.Capacity || _nextOperation == ulong.MaxValue)
                 return Task.FromException<StaticBindingAck>(StaticBindingWire.Error(StaticBindingFailure.Capacity));
+            var bindingLease = ownerBudget.TryReserveBinding();
+            if (bindingLease is null)
+                return Task.FromException<StaticBindingAck>(StaticBindingWire.Error(StaticBindingFailure.Capacity));
+            var operationLease = ownerBudget.TryReserveOperation();
+            if (operationLease is null)
+            {
+                bindingLease.Dispose();
+                return Task.FromException<StaticBindingAck>(StaticBindingWire.Error(StaticBindingFailure.Capacity));
+            }
             var clock = session.RuntimeContext.TimeProvider;
             operation = new Operation(++_nextOperation, contract, hash, _lastPublication,
-                RpcDeadline.Create(StaticBindingWire.OperationTimeout, clock.GetTimestamp(), clock.TimestampFrequency));
+                RpcDeadline.Create(StaticBindingWire.OperationTimeout, clock.GetTimestamp(), clock.TimestampFrequency),
+                bindingLease, operationLease);
             _lastPublication = operation.Published.Task;
             _inflight.Add(key, operation);
             _operations.Add(operation.Id, operation);
@@ -49,49 +66,80 @@ internal sealed class StaticBindingClientState(RpcSession session)
             var remaining = operation.Deadline.GetRemaining(clock);
             if (remaining <= TimeSpan.Zero) throw new TimeoutException("Bind publication deadline expired.");
             using var timeout = new CancellationTokenSource(remaining, clock);
-            using var budget = CancellationTokenSource.CreateLinkedTokenSource(session.LifetimeToken, timeout.Token);
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(session.LifetimeToken, timeout.Token, _closing.Token);
             try
             {
                 await operation.PreviousPublication.WaitAsync(budget.Token).ConfigureAwait(false);
+                if (PublicationTestHook is { } before)
+                    await before(operation.Id, StaticBindingPublicationPhase.BeforeSend, budget.Token).ConfigureAwait(false);
                 await StaticBindingWire.SendBindAsync(session, operation.Id, operation.Contract, operation.Hash,
                     budget.Token).ConfigureAwait(false);
                 Interlocked.Increment(ref _sent);
+                if (PublicationTestHook is { } after)
+                    await after(operation.Id, StaticBindingPublicationPhase.Enqueued, budget.Token).ConfigureAwait(false);
             }
             finally { operation.Published.TrySetResult(); }
             ack = await operation.Ack.Task.WaitAsync(
                 budget.Token).ConfigureAwait(false);
+            budget.Token.ThrowIfCancellationRequested();
             if (ack.Failure != StaticBindingFailure.None)
                 throw StaticBindingWire.Error(ack.Failure);
             lock (_gate)
             {
-                if (!session.CanAcceptCalls)
+                if (_closed || !session.CanAcceptCalls)
                     throw StaticBindingWire.Error(StaticBindingFailure.Unavailable);
-                _completed.Add((operation.Contract, operation.Hash), ack);
+                if (operation.Deadline.IsExpired(clock))
+                    throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Bind operation deadline expired.");
+                _completed.Add((operation.Contract, operation.Hash), (ack, operation.BindingLease));
+                operation.BindingCommitted = true;
             }
         }
+        catch (OperationCanceledException) when (Volatile.Read(ref _closed) || !session.IsConnected)
+        { failure = StaticBindingWire.Error(StaticBindingFailure.Unavailable); }
+        catch (OperationCanceledException)
+        { failure = new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Bind operation deadline expired."); }
         catch (Exception exception) { failure = exception; }
         finally
         {
             operation.Published.TrySetResult();
             lock (_gate)
             {
+                if (!operation.BindingCommitted) operation.BindingLease.Dispose();
+                operation.OperationLease.Dispose();
+                if (failure is null) operation.Completion.TrySetResult(ack);
+                else operation.Completion.TrySetException(failure);
+                operation.Finished.TrySetResult();
                 _operations.Remove(operation.Id);
                 _inflight.Remove((operation.Contract, operation.Hash));
-                if (!session.IsConnected) _completed.Clear();
             }
         }
-        if (failure is null) operation.Completion.TrySetResult(ack);
-        else operation.Completion.TrySetException(failure);
     }
 
-    internal void Close()
+    internal Task CloseAsync()
     {
+        Task[] finished;
         lock (_gate)
         {
+            if (_closed) return _drained.Task;
+            _closed = true;
+            foreach (var completed in _completed.Values) completed.Lease.Dispose();
             _completed.Clear();
-            foreach (var operation in _operations.Values)
-                operation.Ack.TrySetException(StaticBindingWire.Error(StaticBindingFailure.Unavailable));
+            finished = _operations.Values.Select(operation => operation.Finished.Task).ToArray();
         }
+        _ = FinishCloseAsync(finished);
+        return _drained.Task;
+    }
+
+    private async Task FinishCloseAsync(Task[] finished)
+    {
+        try
+        {
+            await _closing.CancelAsync().ConfigureAwait(false);
+            await Task.WhenAll(finished).ConfigureAwait(false);
+            _closing.Dispose();
+            _drained.TrySetResult();
+        }
+        catch (Exception exception) { _drained.TrySetException(exception); }
     }
 
     internal void Receive(ulong id, StaticBindingAck ack)
@@ -101,21 +149,29 @@ internal sealed class StaticBindingClientState(RpcSession session)
             if (!_operations.TryGetValue(id, out var operation))
             {
                 // Issued but no longer outstanding: timed out or duplicated. Never republish it.
-                if (id != 0 && id <= _nextOperation)
-                    return;
-                throw StaticBindingWire.Malformed("BindAck refers to an unissued operation on this Session.");
+                if (id == 0 || id > _nextOperation)
+                    throw StaticBindingWire.Malformed("BindAck refers to an unissued operation on this Session.");
             }
-            if (ack.ContractId != operation.Contract)
-                throw StaticBindingWire.Malformed("BindAck does not match its operation's contract.");
-            operation.Ack.TrySetResult(ack);
+            else
+            {
+                if (ack.ContractId != operation.Contract)
+                    throw StaticBindingWire.Malformed("BindAck does not match its operation's contract.");
+                operation.Ack.TrySetResult(ack);
+            }
         }
+        AckObservedTestHook?.Invoke(id);
     }
 
-    private sealed class Operation(ulong id, long contract, RpcHash128 hash, Task previousPublication, RpcDeadline deadline)
+    private sealed class Operation(ulong id, long contract, RpcHash128 hash, Task previousPublication, RpcDeadline deadline,
+        StaticBindingBudget.Lease bindingLease, StaticBindingBudget.Lease operationLease)
     {
         internal Task PreviousPublication { get; } = previousPublication;
         internal RpcDeadline Deadline { get; } = deadline;
         internal TaskCompletionSource Published { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal StaticBindingBudget.Lease BindingLease { get; } = bindingLease;
+        internal StaticBindingBudget.Lease OperationLease { get; } = operationLease;
+        internal bool BindingCommitted;
         internal ulong Id { get; } = id;
         internal long Contract { get; } = contract;
         internal RpcHash128 Hash { get; } = hash;
@@ -123,4 +179,6 @@ internal sealed class StaticBindingClientState(RpcSession session)
         internal TaskCompletionSource<StaticBindingAck> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
+
+internal enum StaticBindingPublicationPhase { BeforeSend, Enqueued }
 #endif

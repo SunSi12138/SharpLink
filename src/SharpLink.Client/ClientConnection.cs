@@ -45,7 +45,7 @@ internal sealed class ClientConnection :
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
 #if SHARPLINK_775_STATIC_SLICE
-        StaticBindings = new StaticBindingClientState(session);
+        StaticBindings = new StaticBindingClientState(session, client.BindingBudget);
 #endif
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
         ArgumentNullException.ThrowIfNull(runtimeContext);
@@ -604,18 +604,34 @@ internal sealed class ClientConnection :
     public ValueTask DisposeAsync()
     {
 #if SHARPLINK_775_STATIC_SLICE
-        StaticBindings.Close();
+        var bindingDrain = StaticBindings.CloseAsync();
 #endif
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
+#if SHARPLINK_775_STATIC_SLICE
+            return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain);
+#else
             return Session.DisposeAsync();
+#endif
 
         Fail(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Client connection is disposed."));
         _cancellation.Dispose();
         PendingCalls.Dispose();
+#if SHARPLINK_775_STATIC_SLICE
+        return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain);
+#else
         return Session.DisposeAsync();
+#endif
     }
+
+#if SHARPLINK_775_STATIC_SLICE
+    private static async ValueTask JoinBindingDrainAsync(ValueTask sessionDisposal, Task bindingDrain)
+    {
+        try { await sessionDisposal.ConfigureAwait(false); }
+        finally { await bindingDrain.ConfigureAwait(false); }
+    }
+#endif
 
     private void ReleaseAuxiliaryActiveCall()
     {

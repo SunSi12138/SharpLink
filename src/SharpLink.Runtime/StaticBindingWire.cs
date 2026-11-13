@@ -71,6 +71,15 @@ internal static class StaticBindingWire
 
     internal static ValueTask SendAckAsync(RpcSession session, ulong operation, StaticBindingAck ack,
         CancellationToken cancellationToken)
+        => session.SendPacketAndFlushAsync(CreateAck(session, operation, ack), cancellationToken);
+
+    // Refusal cannot wait for an exhausted operation slot. Synchronous publication uses
+    // the existing bounded normal queue. Full/closed queues fail, without retry tasks.
+    internal static void SendCapacityAck(RpcSession session, ulong operation, long contract)
+        => session.SendPacket(CreateAck(session, operation,
+            new StaticBindingAck(StaticBindingFailure.Capacity, contract, 0, 0, 0)));
+
+    private static IRpcByteBufferWriter CreateAck(RpcSession session, ulong operation, StaticBindingAck ack)
     {
         var writer = session.RentFrameWriter();
         try
@@ -87,7 +96,7 @@ internal static class StaticBindingWire
             }
         }
         catch { session.RuntimeContext.Buffers.Return(writer); throw; }
-        return session.SendPacketAndFlushAsync(writer, cancellationToken);
+        return writer;
     }
 }
 

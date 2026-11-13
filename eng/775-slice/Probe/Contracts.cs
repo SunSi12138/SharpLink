@@ -6,6 +6,12 @@ using SharpLink.Sdk;
 namespace SharpLink.BindingSlice;
 
 [RpcContract]
+public interface IQuotaRpc : IService
+{
+    [NonCancellable] ValueTask<int> PingAsync();
+}
+
+[RpcContract]
 public interface ISliceRpc : IService
 {
     [NonCancellable] ValueTask<int> PingAsync();
