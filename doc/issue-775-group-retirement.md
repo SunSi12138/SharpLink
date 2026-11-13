@@ -122,6 +122,16 @@ objects and managed stacks, with analyzer exit status and full mapped-image dump
 Only targeted text is retained; the raw heap is never uploaded. There is no product/fixture
 behavior change and no extra GC cycle. ALC remains a failed gate, not a waived oracle.
 
+Eighth diagnostic subjecta1b06857/run43387208326 reproduces the failure on both hosts and
+identifies the same external strong root: ExecuteReuseAndUnloadAsync.MoveNext's native
+stack slot → pre-unregister FrozenDictionary → ServiceRegistration[] → old RuntimeType →
+LoaderAllocator. The awaiting collector was invoked inline by the worker's Task.SetResult,
+so merely marking that async worker NoInlining did not pop its snapshot-bearing frame.
+The incarnation-exhaustion check now runs in a **synchronous** non-inlined helper, which
+returns before unregister and cannot retain that registry snapshot in the collector's stack.
+This targets the measured fixture root; all67 assertions, ten GC cycles and live owners
+remain unchanged. The next hosted matrix must establish the result before receipt starts.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

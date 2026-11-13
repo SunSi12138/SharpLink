@@ -305,16 +305,25 @@ internal static partial class Program
         await ExpectCode(() => f.CallAsync(0, stale, nameof(IHotRpc.GetAsync), token).AsTask(), SharpLinkErrorCode.Unavailable,
             prefix + " / lifecycle: stale wire Request cannot invoke reused slot");
 
+        VerifyIncarnationExhaustion(f);
+        await UnregisterAndDropGroupAsync(f, plugin, token);
+        return plugin.Weak;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void VerifyIncarnationExhaustion(GroupFixture f)
+    {
+        // A synchronous boundary is essential: an async worker can run its awaiting
+        // collector inline from SetResult while its own JIT snapshot temporary is live.
+        // The hosted GC root identified this exact old registry snapshot on that stack.
         var staticContract = f.ProbeManifest.Contracts.Single(c => c.ContractType == typeof(ISliceRpc));
         var registration = f.Registry.ServicesStorage[staticContract.ContractId];
         var budget = new StaticBindingBudget(); var table = new StaticBindingTable(budget);
         var incarnations = Field<uint[]>(table, "_incarnations");
         Array.Fill(incarnations, uint.MaxValue);
         GCheck(table.Install(staticContract.ContractId, registration, staticContract, 0).Failure == StaticBindingFailure.Capacity &&
-            table.Count == 0 && budget.Bindings == 0, prefix, "lifecycle: incarnation exhaustion never wraps or reserves quota");
+            table.Count == 0 && budget.Bindings == 0, "ABA", "lifecycle: incarnation exhaustion never wraps or reserves quota");
         table.Close();
-        await UnregisterAndDropGroupAsync(f, plugin, token);
-        return plugin.Weak;
     }
 }
 
