@@ -39,18 +39,19 @@ internal static partial class Program
                 .UseHeartbeat(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2))
                 .UseRuntime(o => { o.FlowControl.MaxSendQueueBytes = 1024; o.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency; })
                 .UseConnectionPool(o => { o.MinConnections = connections; o.MaxConnections = connections; });
+            IClientTransportFactory inner;
             if (transport == "tcp")
             {
                 sb.UseTcp(0, IPAddress.Loopback);
-                cb.UseTcp("127.0.0.1", ((IPEndPoint)sb.Transport!.LocalEndPoint!).Port);
+                inner = new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, ((IPEndPoint)sb.Transport!.LocalEndPoint!).Port));
             }
             else
             {
                 var name = "sharplink-775-control-" + Guid.NewGuid().ToString("N");
                 sb.UseTransport(new SharedMemoryServerTransportListener(name));
-                cb.UseSharedMemory(name);
+                inner = new SharedMemoryClientTransportFactory(name);
             }
-            Transport = new GateTransportFactory(cb.FixedTransportFactory!);
+            Transport = new GateTransportFactory(inner);
             cb.UseTransport(Transport);
             sb.ReplaceService<ISliceRpc>(_ => { Interlocked.Increment(ref Service.Activations); return Service; }, SharpLinkServiceLifetime.Call);
             Server = (SharpLinkServer)sb.Build();

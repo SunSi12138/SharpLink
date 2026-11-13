@@ -54,6 +54,13 @@ The final profile Release build has zero warnings/errors. Local RPC/performance 
 
 ## Hosted result and expansion decision
 
+First subject `815e1468`, run 43370740059: both default/profile builds and original 50 TCP
+controls passed. The new fixture then failed before its first control: it selected a client
+topology twice (UseTcp/UseSharedMemory followed by UseTransport). The correction constructs
+the existing socket/shared-memory factory directly, wraps it, and selects UseTransport once.
+No production source, control inventory or budget changes. SharedMemory was not run on that
+failed subject; original artifacts/logs remain failed.
+
 Pending. Keep dynamic retirement/receipt out of this stage until the frozen matrix and
 ownership checks pass. Even a pass does not complete production API/facts ABI/grammar,
 five-family physical ownership, package/Trim/NativeAOT, ordinary regression or performance
