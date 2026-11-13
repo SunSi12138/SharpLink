@@ -94,3 +94,7 @@ snapshot and restoration README: C:/Users/sunsi/Desktop/SharpLink-775-evidence/g
 The final handoff differs from the tested subject only in documentation and removal of
 the temporary workflow. CI-only branch/workflow are removed after evidence capture;
 historical runs remain, no production/probe/build input changes after validation.
+
+The following [method-facts/receiver ABI slice](issue-775-method-facts-abi.md) has now passed
+its own hosted matrix. Its report records the coordinated public delta and the next
+per-call streaming-admission/physical-ownership boundary.
