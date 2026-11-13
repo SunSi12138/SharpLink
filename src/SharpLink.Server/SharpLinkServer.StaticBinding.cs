@@ -4,6 +4,22 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     internal StaticBindingBudget BindingBudget { get; } = new();
+    private readonly Guid _bindingRegistryEpoch = Guid.NewGuid();
+
+    public RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly registeredAssembly, long contractId)
+    {
+        ArgumentNullException.ThrowIfNull(registeredAssembly);
+        lock (_registryGate)
+        {
+            if (!_services.TryGetValue(contractId, out var registration) || !registration.AcceptsCalls ||
+                !ReferenceEquals(registration.ContractType.Assembly, registeredAssembly))
+                throw StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch);
+            var manifest = registration.Module?.Manifest ?? FindManifest(registeredAssembly, []);
+            return new(_desiredSessionServerInstanceId, _bindingRegistryEpoch,
+                registration.Module?.BindingPublicationGeneration ?? 0, contractId, manifest.RpcAssemblyHash,
+                registration.StaticBindingRegistrationId);
+        }
+    }
     internal Func<ServerConnectionState, ulong, StaticBindingAck, CancellationToken, ValueTask>? BeforeBindingAckTestHook;
     private async ValueTask BindStaticContractAsync(ServerConnectionState connection, ulong operation,
         ReadOnlySequence<byte> payload)
@@ -25,7 +41,7 @@ internal sealed partial class SharpLinkServer
     }
 
     private StaticBindingAck CreateBindingAck(ServerConnectionState connection,
-        (long ContractId, RpcHash128 Hash) request)
+        StaticBindingRequest request)
     {
         StaticBindingAck ack;
         // Bind and group retirement share the same cold publication boundary.
@@ -42,6 +58,10 @@ internal sealed partial class SharpLinkServer
                 var manifest = registration.Module?.Manifest ?? FindManifest(registration.ContractType.Assembly, []);
                 if (request.Hash.IsEmpty || manifest.RpcAssemblyHash != request.Hash)
                     ack = StaticBindingTable.Failure(StaticBindingFailure.HashMismatch, request.ContractId);
+                else if (!request.Scope.MatchesPeer(_desiredSessionServerInstanceId, _bindingRegistryEpoch) ||
+                    !request.Scope.MatchesRegistration(request.ContractId, request.Hash, registration.StaticBindingRegistrationId,
+                        registration.Module?.BindingPublicationGeneration ?? 0))
+                    ack = StaticBindingTable.Failure(StaticBindingFailure.ReceiptMismatch, request.ContractId);
                 else
                 {
                     var contract = manifest.Contracts.Single(c => c.ContractId == request.ContractId);

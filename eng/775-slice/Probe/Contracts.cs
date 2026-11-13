@@ -20,6 +20,7 @@ public interface ISliceRpc : IService
     [NonCancellable] ValueTask<string> SessionAsync();
     [NonCancellable] ValueTask<string> MetadataAsync();
     ValueTask<int> HoldAsync(CancellationToken cancellationToken);
+    [NonCancellable] ValueTask<string> ReplaceGroupAsync();
 }
 
 [RpcCodec(typeof(SlicePayloadCodec))]
@@ -48,6 +49,9 @@ public sealed class SlicePayloadCodec : IRpcCodec<SlicePayload>
 [RpcService]
 public sealed class SliceService : ISliceRpc
 {
+    internal Func<ValueTask<string>>? ReplaceGroup;
+    public ValueTask<string> ReplaceGroupAsync() => ReplaceGroup?.Invoke()
+        ?? ValueTask.FromException<string>(new InvalidOperationException("No control operation configured."));
     internal readonly TaskCompletionSource<int> Notification = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal readonly TaskCompletionSource Held = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal readonly TaskCompletionSource Exited = new(TaskCreationOptions.RunContinuationsAsynchronously);

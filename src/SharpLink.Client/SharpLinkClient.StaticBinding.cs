@@ -6,6 +6,7 @@ internal sealed partial class SharpLinkClient
     internal StaticBindingBudget BindingBudget { get; } = new();
     private TaskCompletionSource _staticBindingChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _staticPrepareWaiters;
+    internal Func<ValueTask>? BeforeBindingSiteCommitTestHook;
 
     internal ValueTask PrepareStaticBindingAsync(StaticBindingCallSite site, TimeSpan timeout, CancellationToken token)
     {
@@ -93,17 +94,23 @@ internal sealed partial class SharpLinkClient
             var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
             var work = new List<Task<StaticBoundTarget>>();
             var mismatch = false;
+            var receiptMismatch = false;
             foreach (var connection in connections)
                 foreach (var manifest in manifests)
                 {
                     if (!ReferenceEquals(manifest.Session, connection.Session) || !connection.CanAcceptCalls) continue;
-                    if (manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var hash) && hash == site.Hash)
+                    if (!site.Scope.MatchesPeer(manifest.Manifest.ServerInstanceId, manifest.Manifest.RegistryEpoch))
+                        receiptMismatch = true;
+                    else if (site.Scope.Receipt.HasValue ||
+                        manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var hash) && hash == site.Hash)
                         work.Add(PrepareStaticTargetAsync(connection, site));
                     else mismatch = true;
                 }
             var targets = await Task.WhenAll(work).ConfigureAwait(false);
+            if (BeforeBindingSiteCommitTestHook is { } beforeCommit) await beforeCommit().ConfigureAwait(false);
             lock (_poolGate)
             lock (_remoteContractManifestGate)
+            lock (_staticBindingGate)
             {
                 EnsureStaticSliceAvailable();
                 if (!ReferenceEquals(connections, Volatile.Read(ref _readyConnections)) ||
@@ -112,9 +119,15 @@ internal sealed partial class SharpLinkClient
                     _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
                     return;
                 }
-                Volatile.Write(ref site.Failure, targets.Length == 0 && mismatch
-                    ? StaticBindingWire.Error(StaticBindingFailure.HashMismatch) : null);
-                Volatile.Write(ref site.Snapshot, targets);
+                // State Ack commit and site publication are separate boundaries. Invalidation
+                // first records its watermark, then takes this same site gate to prune routes.
+                // Recheck the scalar token here so an already-confirmed Ack cannot resurrect
+                // an invalidated target while its refresh continuation was delayed.
+                var confirmed = targets.Where(target => target.Connection.StaticBindings.IsConfirmedToken(target.Token)).ToArray();
+                if (confirmed.Length != targets.Length) _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
+                Volatile.Write(ref site.Failure, confirmed.Length == 0 && (mismatch || receiptMismatch)
+                    ? StaticBindingWire.Error(receiptMismatch ? StaticBindingFailure.ReceiptMismatch : StaticBindingFailure.HashMismatch) : null);
+                Volatile.Write(ref site.Snapshot, confirmed);
             }
         }
         catch (Exception failure) { Volatile.Write(ref site.Failure, failure); }
@@ -128,7 +141,7 @@ internal sealed partial class SharpLinkClient
 
     private static async Task<StaticBoundTarget> PrepareStaticTargetAsync(ClientConnection connection, StaticBindingCallSite site)
     {
-        var ack = await connection.StaticBindings.BindAsync(site.ContractId, site.Hash).ConfigureAwait(false);
+        var ack = await connection.StaticBindings.BindAsync(site.ContractId, site.Hash, site.Scope).ConfigureAwait(false);
         return new StaticBoundTarget(connection, ack.Token);
     }
 
@@ -164,7 +177,7 @@ internal sealed partial class SharpLinkClient
     {
         lock (_staticBindingGate)
             foreach (var reference in _staticBindingSites.Values)
-                if (reference.TryGetTarget(out var site) &&
+                if (reference.TryGetTarget(out var site) && !site.Scope.Receipt.HasValue &&
                     (!manifest.Contracts.TryGetValue(site.ContractId, out var hash) || hash != site.Hash))
                     Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
                         !ReferenceEquals(target.Connection.Session, session)).ToArray());

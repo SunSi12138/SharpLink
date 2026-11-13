@@ -21,6 +21,10 @@ internal sealed partial class SharpLinkClient
             PruneDisconnectedRemoteContractManifestsLocked();
             if (_remoteContractManifests.TryGetValue(session, out var current))
             {
+#if SHARPLINK_775_STATIC_SLICE
+                if (manifest.ServerInstanceId != current.ServerInstanceId || manifest.RegistryEpoch != current.RegistryEpoch)
+                    throw StaticBindingWire.Malformed("Server/epoch identity changed within a physical Session.");
+#endif
                 if (manifest.Generation < current.Generation)
                     return;
                 _remoteContractManifests[session] = manifest;

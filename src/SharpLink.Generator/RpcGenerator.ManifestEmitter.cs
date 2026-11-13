@@ -3,7 +3,7 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator
 {
 #if SHARPLINK_775_STATIC_SLICE
-    private const string GeneratedAbiIdentity = "sharplink-experimental-775-group-v2";
+    private const string GeneratedAbiIdentity = "sharplink-experimental-775-group-receipt-v3";
 #else
     private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
 #endif

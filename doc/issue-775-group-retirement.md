@@ -132,6 +132,13 @@ returns before unregister and cannot retain that registry snapshot in the collec
 This targets the measured fixture root; all67 assertions, ten GC cycles and live owners
 remain unchanged. The next hosted matrix must establish the result before receipt starts.
 
-Pending. Receipt implementation starts only after both transport/platform matrices pass.
+Ninth subjectfc9d7b9c41147773b4eeb467070ffaa9e1daf2b6 passed the complete hosted matrix:
+[run43387946751](https://github.com/SunSi12138/SharpLink/actions/runs/43387946751), Windows
+job131760761276 and Linux job131760761691. Each host validated both real transports against
+the exact99 previous controls and67 lifecycle cases. No GC budget, assertion or live-owner
+condition changed. All preceding failures remain archived with their subject and raw logs.
+
+**GO to the bounded receipt slice**, whose independent criteria are recorded in
+[the receipt report](issue-775-receipt-slice.md) before its first hosted run.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

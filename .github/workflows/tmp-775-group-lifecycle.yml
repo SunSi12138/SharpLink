@@ -50,6 +50,11 @@ jobs:
           }
           python eng/775-slice/verify.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/validation.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build independent unrelated-publication plugin
+        shell: pwsh
+        run: |
+          dotnet build eng/775-slice/GroupPluginUnrelated/SharpLink.GroupPluginUnrelated.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/unrelated-plugin-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install pinned hosted-only ALC diagnostic tool
         shell: pwsh
         run: |
@@ -65,6 +70,17 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           python eng/775-slice/verify-group.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/group-validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise independently frozen receipt gate
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll receipt $transport 2>&1 | Tee-Object "artifacts/775-slice/receipt-$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify-receipt.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/receipt-validation.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Analyze ALC failure roots without uploading raw heap
         if: always()

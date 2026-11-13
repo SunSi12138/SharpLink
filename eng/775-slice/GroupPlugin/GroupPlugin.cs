@@ -48,6 +48,7 @@ public sealed class HotPayloadCodec : IRpcCodec<HotPayload>
 [RpcService(Lifetime = SharpLinkServiceLifetime.Call)]
 public sealed class HotService : IHotRpc, IAsyncDisposable
 {
+    public HotService() => Signals.Observe?.Invoke("activate");
     public ValueTask<int> GetAsync() { Signals.Observe?.Invoke("get"); return ValueTask.FromResult(Signals.Tag); }
     public ValueTask<int> EchoAsync(HotPayload value) => ValueTask.FromResult(Signals.Tag * 1000 + value.Value);
     public async ValueTask<int> HoldAsync(CancellationToken cancellationToken)

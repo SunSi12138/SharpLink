@@ -7,7 +7,7 @@ internal sealed partial class SharpLinkClient
 {
     private readonly Guid _sliceIssuer = Guid.NewGuid();
     private readonly Lock _staticBindingGate = new();
-    private readonly Dictionary<long, WeakReference<StaticBindingCallSite>> _staticBindingSites = [];
+    private readonly Dictionary<(long, StaticBindingScope), WeakReference<StaticBindingCallSite>> _staticBindingSites = [];
 
     internal void EnsureStaticSliceAvailable()
     {
@@ -64,21 +64,26 @@ internal sealed partial class SharpLinkClient
         throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Exact local contract is unavailable.");
     }
 
-    private StaticBindingCallSite AcquireStaticSite(RpcLocalContract local)
+    private StaticBindingCallSite AcquireStaticSite(RpcLocalContract local, RpcProxyOptions? options)
     {
+        var scope = new StaticBindingScope(options?.Requirement ?? RpcRegistrationRequirement.Compatible, options?.Receipt);
+        if (!scope.IsValid || scope.Receipt is { } receipt &&
+            (receipt.ContractId != local.ContractId || receipt.RpcAssemblyHash != local.Hash))
+            throw StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch);
         if (_cluster is not null)
             throw new NotSupportedException("The nonshipping static slice supports a fixed endpoint only.");
         lock (_staticBindingGate)
         {
             EnsureStaticSliceAvailable();
-            if (!_staticBindingSites.TryGetValue(local.Generation, out var reference) || !reference.TryGetTarget(out var site))
+            var key = (local.Generation, scope);
+            if (!_staticBindingSites.TryGetValue(key, out var reference) || !reference.TryGetTarget(out var site))
             {
                 foreach (var pair in _staticBindingSites.ToArray())
                     if (!pair.Value.TryGetTarget(out _)) _staticBindingSites.Remove(pair.Key);
                 if (_staticBindingSites.Count == StaticBindingWire.Capacity)
                     throw StaticBindingWire.Error(StaticBindingFailure.Capacity);
-                site = new StaticBindingCallSite(this, local);
-                _staticBindingSites[local.Generation] = new WeakReference<StaticBindingCallSite>(site);
+                site = new StaticBindingCallSite(this, local, scope);
+                _staticBindingSites[key] = new WeakReference<StaticBindingCallSite>(site);
             }
             site.Constructions++;
             return site;
@@ -92,9 +97,9 @@ internal sealed partial class SharpLinkClient
             site.DemandCommitted |= published;
             site.Constructions--;
             if (!site.DemandCommitted && site.Constructions == 0 &&
-                _staticBindingSites.TryGetValue(site.Local.Generation, out var reference) &&
+                _staticBindingSites.TryGetValue((site.Local.Generation, site.Scope), out var reference) &&
                 reference.TryGetTarget(out var current) && ReferenceEquals(current, site))
-                _staticBindingSites.Remove(site.Local.Generation);
+                _staticBindingSites.Remove((site.Local.Generation, site.Scope));
         }
         if (published) ScheduleStaticBindingRefresh(site);
     }
@@ -105,7 +110,7 @@ internal sealed partial class SharpLinkClient
     public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
     {
         _ = ResolveStaticLocalContract(local);
-        var site = AcquireStaticSite(local);
+        var site = AcquireStaticSite(local, options);
         var published = false;
         try
         {
@@ -120,7 +125,7 @@ internal sealed partial class SharpLinkClient
     {
         var local = GetLocalContract<T>();
         var registration = ResolveStaticLocalContract(local);
-        var site = AcquireStaticSite(local);
+        var site = AcquireStaticSite(local, options);
         var published = false;
         try
         {

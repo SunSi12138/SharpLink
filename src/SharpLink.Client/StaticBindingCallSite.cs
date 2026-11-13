@@ -1,8 +1,9 @@
 #if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
-internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLocalContract local)
+internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLocalContract local, StaticBindingScope scope = default)
 {
+    internal StaticBindingScope Scope { get; } = scope;
     internal SharpLinkClient Owner { get; } = owner;
     internal RpcLocalContract Local { get; } = local;
     internal long ContractId => Local.ContractId;

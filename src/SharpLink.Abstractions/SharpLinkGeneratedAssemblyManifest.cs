@@ -161,7 +161,7 @@ public static class SharpLinkGeneratedManifestVersions
 
     /// <summary>Exact discriminator for the 3.0/API5 generated UnsafeBlit factory ABI.</summary>
 #if SHARPLINK_775_STATIC_SLICE
-    public const string AbiIdentity = "sharplink-experimental-775-group-v2";
+    public const string AbiIdentity = "sharplink-experimental-775-group-receipt-v3";
 #else
     public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
 #endif

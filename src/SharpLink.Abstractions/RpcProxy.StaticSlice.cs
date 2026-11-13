@@ -20,7 +20,28 @@ public sealed class RpcProxyOptions
 {
     /// <summary>Gets or initializes the immutable metadata attached to calls.</summary>
     public SharpLinkMetadata? Metadata { get; init; }
+
+    /// <summary>Gets the optional scalar registration receipt, scoped to one server and epoch.</summary>
+    public RpcRegistrationReceipt? Receipt { get; init; }
+
+    /// <summary>Gets the immutable registration constraint applied during binding.</summary>
+    public RpcRegistrationRequirement Requirement { get; init; }
 }
+
+/// <summary>Defines the cold binding constraint in the nonshipping profile.</summary>
+public enum RpcRegistrationRequirement
+{
+    /// <summary>Requires contract/hash compatibility and, with a receipt, the same server/epoch.</summary>
+    Compatible,
+    /// <summary>Also requires the registration's own publication generation to meet the receipt.</summary>
+    MinimumVersion,
+    /// <summary>Also requires the precise registration ID captured by the receipt.</summary>
+    ExactRegistration
+}
+
+/// <summary>Identifies one server registration using values only; it conveys no authorization.</summary>
+public readonly record struct RpcRegistrationReceipt(Guid ServerInstanceId, Guid RegistryEpoch,
+    long Generation, long ContractId, RpcHash128 RpcAssemblyHash, long RegistrationId);
 
 /// <summary>Pairs the generated service with preparation of precisely its captured channel.</summary>
 public sealed class RpcProxy<TContract> where TContract : IService

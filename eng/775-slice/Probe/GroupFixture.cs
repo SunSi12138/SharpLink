@@ -8,6 +8,7 @@ using SharpLink.Client;
 using SharpLink.GroupPlugin;
 using SharpLink.Runtime;
 using SharpLink.Server;
+using SharpLink.Sdk;
 
 namespace SharpLink.BindingSlice;
 
@@ -65,6 +66,7 @@ internal static partial class Program
     {
         internal SharpLinkServer Server { get; }
         internal SharpLinkClient Client { get; }
+        internal SliceService ControlService { get; } = new();
         internal ISharpLinkGeneratedAssemblyManifest LocalManifest { get; }
         internal ISharpLinkGeneratedAssemblyManifest ProbeManifest { get; }
         private readonly Func<SharpClientBuilder, SharpClientBuilder> _endpoint;
@@ -79,6 +81,7 @@ internal static partial class Program
             LocalManifest = manifest!;
             var probeManifest = ProbeManifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(ISliceRpc).Assembly);
             var sb = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([probeManifest]));
+            sb.ReplaceService<ISliceRpc>(_ => ControlService, SharpLinkServiceLifetime.Call);
             if (queue)
             {
                 var queuedMethod = LocalManifest.Contracts.Single(c => c.ContractType == typeof(ISecondHotRpc))
