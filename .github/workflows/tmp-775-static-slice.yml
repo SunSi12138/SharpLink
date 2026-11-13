@@ -14,12 +14,22 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/setup-dotnet
       - name: Create evidence directory independently of reused regression
         shell: pwsh
         run: New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
+      - name: Select regression for changed production/build inputs
+        id: subject
+        shell: pwsh
+        run: |
+          git diff --quiet HEAD^ HEAD -- src Directory.Build.props Directory.Packages.props global.json
+          if ($LASTEXITCODE -eq 1) { 'run_default=true' >> $env:GITHUB_OUTPUT }
+          elseif ($LASTEXITCODE -eq 0) { 'run_default=false' >> $env:GITHUB_OUTPUT }
+          else { exit $LASTEXITCODE }
       - name: Ordinary default build and regression once
-        if: github.event.created
+        if: steps.subject.outputs.run_default == 'true' 
         shell: pwsh
         run: |
           New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null

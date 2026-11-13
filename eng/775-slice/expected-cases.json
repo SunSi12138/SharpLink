@@ -47,5 +47,6 @@
   "sparse wire token cannot expand table",
   "method shape conflict rejects before invocation",
   "closed table detaches old entries",
-  "closed table cannot bind again"
+  "closed table cannot bind again",
+  "framework supervisor drained without rejected work"
 ]

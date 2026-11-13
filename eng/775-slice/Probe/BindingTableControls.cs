@@ -11,8 +11,9 @@ internal static partial class Program
     private static async Task CheckBindingTableAsync(ISharpLinkServer server, SharpLinkGeneratedContractDescriptor contract)
     {
         // Inspect the real server's already-built registration; do not introduce a product test API.
-        var services = (FrozenDictionary<long, ServiceRegistration>)typeof(SharpLinkServer)
-            .GetField("_services", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
+        var registry = (ServerServiceModuleRegistry)typeof(SharpLinkServer)
+            .GetField("_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
+        var services = registry.ServicesStorage;
         var registration = services[contract.ContractId];
         var table = new StaticBindingTable();
         var tokens = new HashSet<ulong>();

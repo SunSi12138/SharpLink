@@ -48,9 +48,11 @@ internal sealed partial class SharpLinkClient
 
     private void PulseStaticBindingDemands()
     {
+        StaticBindingCallSite[] sites;
         lock (_staticBindingGate)
-            foreach (var reference in _staticBindingSites.Values)
-                if (reference.TryGetTarget(out var site)) ScheduleStaticBindingRefresh(site);
+            sites = _staticBindingSites.Values.Select(reference => reference.TryGetTarget(out var site) ? site : null)
+                .OfType<StaticBindingCallSite>().ToArray();
+        foreach (var site in sites) ScheduleStaticBindingRefresh(site);
         SignalStaticBindingChange();
     }
 
@@ -60,19 +62,25 @@ internal sealed partial class SharpLinkClient
 
     private void ScheduleStaticBindingRefresh(StaticBindingCallSite site)
     {
-        while (true)
+        // Stop seals/drains the same supervisor under this existing publication gate.
+        // Register the queued task before releasing it; no unowned ThreadPool callback can
+        // turn up after Drain or schedule another demand on the final Stopped pulse.
+        lock (_poolGate)
         {
-            var state = Volatile.Read(ref site.RefreshState);
-            if (state == 2) return;
-            if (state == 1)
+            if (Volatile.Read(ref _stopStarted) != 0 || _poolStopping) return;
+            while (true)
             {
-                if (Interlocked.CompareExchange(ref site.RefreshState, 2, 1) == 1) return;
-                continue;
+                var state = Volatile.Read(ref site.RefreshState);
+                if (state == 2) return;
+                if (state == 1)
+                {
+                    if (Interlocked.CompareExchange(ref site.RefreshState, 2, 1) == 1) return;
+                    continue;
+                }
+                if (Interlocked.CompareExchange(ref site.RefreshState, 1, 0) == 0) break;
             }
-            if (Interlocked.CompareExchange(ref site.RefreshState, 1, 0) == 0) break;
+            TrackFrameworkTask(Task.Run(() => RefreshStaticBindingAsync(site)), "StaticBindingDemand");
         }
-        ThreadPool.UnsafeQueueUserWorkItem(static site =>
-            site.Owner.TrackFrameworkTask(site.Owner.RefreshStaticBindingAsync(site), "StaticBindingDemand"), site, false);
     }
 
     private async Task RefreshStaticBindingAsync(StaticBindingCallSite site)

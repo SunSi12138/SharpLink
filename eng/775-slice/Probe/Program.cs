@@ -206,6 +206,9 @@ internal static partial class Program
         Check(target.Connection.StaticBindings.PendingCount == 0, "Bind operations reclaimed");
         await other.StopAsync(token);
         await client.StopAsync(token);
-        await Expect<Exception>(() => rpc.PrepareAsync(TimeSpan.FromSeconds(1), token).AsTask(), "prepare wakes or rejects after stop");
+        var drained = client.FrameworkTaskSnapshotForDiagnostics;
+        Check(drained.IsDrained && drained.ActiveTasks == 0 && drained.RejectedRegistrations == 0,
+            "framework supervisor drained without rejected work");
+        await ExpectCode(() => rpc.PrepareAsync(TimeSpan.FromSeconds(1), token).AsTask(), SharpLinkErrorCode.ConnectionClosed, "prepare wakes or rejects after stop");
     }
 }

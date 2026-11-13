@@ -137,3 +137,13 @@ fixture omitted dev's mandatory explicit request-timeout policy. Both builders n
 UseRequestTimeout() (the recommended 30-second ordinary-call fallback). Prepare budgets,
 queue delay and watchdogs remain unchanged. The deliberate token-mutation control also
 waits on the controller's real completion signal instead of racing a scheduled refresh.
+
+Fourth subject226c690f32e4cf69c8cbb5db36fd0adfd690203f / run43352421151
+stopped in a new table fixture: _services is now a ref-return alias, not a server field.
+The fixture now reads the real ServerServiceModuleRegistry owner. Original failure stays.
+Source review also found a real experimental Stop race: a queued ThreadPool callback was
+registered only when it ran, so it could reach the supervisor after Drain. Demand tasks are
+now registered under the existing pool publication/Seal gate before execution is released;
+final stop pulses do not start work. The controller no longer enters that gate while holding
+its site-cache gate. This source change triggers a fresh ordinary default regression; later
+probe-only subjects reuse the latest applicable result via an explicit changed-input check.
