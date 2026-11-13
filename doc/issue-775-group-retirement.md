@@ -100,6 +100,18 @@ plugin being tested. It now uses the fixture's already captured static Probe man
 avoiding an unrelated catalog root in the checking frame. No production change, extra GC
 cycles, server/client teardown, assertion removal or receipt implementation is introduced.
 
+Sixth subject4b15d94c/run43384276147 still failed the final ABA ALC check on Linux;
+Windows also exposed a real unrelated-route NoBoundRoute during changed-hash publication.
+The latter came from the inherited profile clearing every route on each Manifest refresh;
+it now prunes only incompatible contract/hash routes, retaining unrelated bindings.
+The ALC oracle now separates the whole metadata/reuse/unload operation into one non-inlined
+method and checks only its WeakReference from the outer live-fixture frame, per the same
+.NET guidance. This also excludes JIT temporaries for registry snapshots, not just catalog
+snapshots. Assertions, GC count and live-server/client conditions are unchanged. A pinned
+GitHub-only dotnet-dump helper collects targeted allocator roots if the assertion still
+fails; raw heap stays ephemeral outside uploaded artifacts. No local diagnostic execution
+or receipt implementation is introduced.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

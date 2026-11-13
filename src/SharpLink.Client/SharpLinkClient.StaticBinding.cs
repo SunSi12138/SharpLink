@@ -160,6 +160,16 @@ internal sealed partial class SharpLinkClient
         PulseStaticBindingDemands();
     }
 
+    private void PruneIncompatibleBindingRoutes(RpcSession session, ProtocolV2ContractManifest manifest)
+    {
+        lock (_staticBindingGate)
+            foreach (var reference in _staticBindingSites.Values)
+                if (reference.TryGetTarget(out var site) &&
+                    (!manifest.Contracts.TryGetValue(site.ContractId, out var hash) || hash != site.Hash))
+                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
+                        !ReferenceEquals(target.Connection.Session, session)).ToArray());
+    }
+
     private StaticBoundTarget GetReadyStaticTarget(StaticBindingCallSite? site, RpcMethodDescriptor method, AttemptOutcomeState? outcome)
     {
         if (site is null || method.ContractId != site.ContractId)

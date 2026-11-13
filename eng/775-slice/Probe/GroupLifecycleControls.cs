@@ -12,7 +12,11 @@ internal static partial class Program
     private static string GroupPath(bool changed = false) => changed
         ? Path.GetFullPath("eng/775-slice/GroupPluginChanged/bin/Release/net10.0/SharpLink.GroupPlugin.dll")
         : typeof(IHotRpc).Assembly.Location;
-    private static void GCheck(bool condition, string prefix, string name) => Check(condition, prefix + " / " + name);
+    private static void GCheck(bool condition, string prefix, string name)
+    {
+        if (!condition && name.Contains("collectible", StringComparison.Ordinal)) CaptureAlcFailure();
+        Check(condition, prefix + " / " + name);
+    }
 
     private static async Task RunGroupAsync(string transport, CancellationToken token)
     {
@@ -263,8 +267,15 @@ internal static partial class Program
 
     private static async Task ReuseGroupAsync(string transport, CancellationToken token)
     {
-        const string prefix = "ABA";
         await using var f = new GroupFixture(transport);
+        var weak = await ExecuteReuseAndUnloadAsync(f, token);
+        GCheck(Collected(weak), "ABA", "lifecycle: reuse and watermark state do not retain collectible code");
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> ExecuteReuseAndUnloadAsync(GroupFixture f, CancellationToken token)
+    {
+        const string prefix = "ABA";
         var plugin = new LoadedGroup(GroupPath(), 3, new GroupSignals());
         if (!f.Server.RegisterAssembly(plugin.Assembly).Succeeded) throw new InvalidOperationException("Registration failed.");
         await f.ConnectAsync(token);
@@ -303,7 +314,7 @@ internal static partial class Program
             table.Count == 0 && budget.Bindings == 0, prefix, "lifecycle: incarnation exhaustion never wraps or reserves quota");
         table.Close();
         await UnregisterAndDropGroupAsync(f, plugin, token);
-        GCheck(Collected(plugin.Weak), prefix, "lifecycle: reuse and watermark state do not retain collectible code");
+        return plugin.Weak;
     }
 }
 

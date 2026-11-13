@@ -36,7 +36,7 @@ internal sealed partial class SharpLinkClient
             foreach (var pair in _remoteContractManifests)
                 snapshot[index++] = new RemoteContractManifestBinding(pair.Key, pair.Value);
 #if SHARPLINK_775_STATIC_SLICE
-            InvalidateStaticBindingRoutes(session);
+            PruneIncompatibleBindingRoutes(session, manifest);
 #endif
             Volatile.Write(ref _remoteContractManifestSnapshot, snapshot);
         }

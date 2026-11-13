@@ -50,7 +50,14 @@ jobs:
           }
           python eng/775-slice/verify.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/validation.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install pinned hosted-only ALC diagnostic tool
+        shell: pwsh
+        run: |
+          dotnet tool install dotnet-dump --version 10.0.750501 --tool-path artifacts/775-tools 2>&1 | Tee-Object artifacts/775-slice/diagnostic-tool.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Exercise frozen dynamic lifecycle gate before receipt
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
         shell: pwsh
         run: |
           foreach ($transport in @('tcp', 'sharedmemory')) {
@@ -59,6 +66,22 @@ jobs:
           }
           python eng/775-slice/verify-group.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/group-validation.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Analyze ALC failure roots without uploading raw heap
+        if: always()
+        shell: pwsh
+        run: |
+          $dump = 'artifacts/775-diagnostics/alc-failure.dmp'
+          if (-not (Test-Path -LiteralPath $dump)) { exit 0 }
+          $tool = if ($IsWindows) { './artifacts/775-tools/dotnet-dump.exe' } else { './artifacts/775-tools/dotnet-dump' }
+          $heap = & $tool analyze $dump -c 'dumpheap -type System.Reflection.LoaderAllocator' -c exit 2>&1
+          $heap | Set-Content artifacts/775-slice/alc-allocators.log
+          foreach ($line in $heap) {
+            if ("$line" -match '^\s*([0-9a-fA-F]{8,16})\s+([0-9a-fA-F]{8,16})\s+\d+') {
+              $address = $Matches[1]
+              & $tool analyze $dump -c "dumpobj $address" -c "gcroot $address" -c exit 2>&1 | Set-Content "artifacts/775-slice/alc-root-$address.log"
+            }
+          }
+          exit 0
       - name: Retain original evidence even on failure
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
