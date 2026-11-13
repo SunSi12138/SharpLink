@@ -294,8 +294,7 @@ internal static partial class Program
         await ExpectCode(() => f.CallAsync(0, stale, nameof(IHotRpc.GetAsync), token).AsTask(), SharpLinkErrorCode.Unavailable,
             prefix + " / lifecycle: stale wire Request cannot invoke reused slot");
 
-        var staticContract = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(ISliceRpc).Assembly)
-            .Contracts.Single(c => c.ContractType == typeof(ISliceRpc));
+        var staticContract = f.ProbeManifest.Contracts.Single(c => c.ContractType == typeof(ISliceRpc));
         var registration = f.Registry.ServicesStorage[staticContract.ContractId];
         var budget = new StaticBindingBudget(); var table = new StaticBindingTable(budget);
         var incarnations = Field<uint[]>(table, "_incarnations");

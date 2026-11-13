@@ -66,6 +66,7 @@ internal static partial class Program
         internal SharpLinkServer Server { get; }
         internal SharpLinkClient Client { get; }
         internal ISharpLinkGeneratedAssemblyManifest LocalManifest { get; }
+        internal ISharpLinkGeneratedAssemblyManifest ProbeManifest { get; }
         private readonly Func<SharpClientBuilder, SharpClientBuilder> _endpoint;
         private readonly List<SharpLinkClient> _additionalClients = [];
         internal TaskCompletionSource Queued { get; } = Signal();
@@ -76,7 +77,7 @@ internal static partial class Program
             var local = SharpLinkAssemblyManifestLoader.TryLoad(typeof(IHotRpc).Assembly, out var manifest);
             if (!local.Succeeded) throw new InvalidOperationException(local.Error?.Message);
             LocalManifest = manifest!;
-            var probeManifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(ISliceRpc).Assembly);
+            var probeManifest = ProbeManifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(ISliceRpc).Assembly);
             var sb = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([probeManifest]));
             if (queue)
             {

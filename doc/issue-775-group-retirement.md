@@ -92,6 +92,14 @@ It keeps the server/clients alive, all67 assertions, the deliberate-root negativ
 and the same10 GC cycles. The failed observation remains unresolved until that subject runs;
 it is not treated as harmless or permission to proceed to receipt.
 
+Fifth subjecte603b0ae/run43383452697 passed both replacement variants, their ALC controls,
+the held/late Ack ALC control, physical Codec and dynamic queued-generation controls, then
+failed the final ABA ALC check on both hosts. That fixture acquired a process-wide catalog
+snapshot immediately before its GC check; the snapshot includes the very collectible
+plugin being tested. It now uses the fixture's already captured static Probe manifest,
+avoiding an unrelated catalog root in the checking frame. No production change, extra GC
+cycles, server/client teardown, assertion removal or receipt implementation is introduced.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.
