@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/setup-dotnet
       - name: Ordinary default build and regression once
+        if: github.event.created
         shell: pwsh
         run: |
           New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
@@ -42,6 +43,8 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: static-bind-${{ matrix.os }}-${{ github.run_attempt }}
-          path: artifacts/775-slice
+          path: |
+            artifacts/775-slice
+            test/SharpLink.UnitTests/bin/Release/net10.0/artifacts/775-slice/default-tests
           if-no-files-found: error
           retention-days: 14

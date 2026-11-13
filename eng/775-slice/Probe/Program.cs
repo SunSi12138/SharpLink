@@ -8,7 +8,7 @@ using SharpLink.Sdk;
 
 namespace SharpLink.BindingSlice;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly List<string> Passed = [];
     private static void Check(bool condition, string name)
@@ -61,6 +61,7 @@ internal static class Program
         {
             o.Global.UseConcurrency(1);
             o.MaxQueuedCalls = 8;
+            o.MaxQueuedBytes = 1024 * 1024;
             o.MaxQueueDelay = TimeSpan.FromSeconds(10);
             o.QueueOneWayCalls = true;
             o.UsePartition(context =>
@@ -91,6 +92,7 @@ internal static class Program
         await using var server = serverBuilder.Build();
         await using var client = (SharpLinkClient)clientBuilder.Build();
         var publicClient = (ISharpLinkClient)client;
+        await CheckBindingTableAsync(server, contract);
         Check(typeof(ISharpLinkClient).GetMethods().All(m => m.Name is not ("Get" or "GetWithMetadata")), "no legacy factories");
         Check(!typeof(IRpcContractChannel).IsAssignableFrom(client.GetType()), "client is not a raw channel");
         Check(typeof(IRpcContractChannel).Assembly.GetType("SharpLink.Abstractions.IRpcChannel") is null, "no legacy channel type");

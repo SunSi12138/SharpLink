@@ -38,5 +38,14 @@
   "queued unary resumes captured bound pipeline",
   "queued OneWay resumes captured bound pipeline",
   "Bind operations reclaimed",
-  "prepare wakes or rejects after stop"
+  "prepare wakes or rejects after stop",
+  "binding table has exact bounded capacity",
+  "distinct creators never alias full tokens",
+  "65th binding rejects without table growth",
+  "duplicate Bind operation is a protocol violation",
+  "captured binding keeps exact registration and method",
+  "sparse wire token cannot expand table",
+  "method shape conflict rejects before invocation",
+  "closed table detaches old entries",
+  "closed table cannot bind again"
 ]

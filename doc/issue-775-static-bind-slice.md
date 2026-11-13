@@ -72,7 +72,7 @@ a proposed shipping API. No weakened correctness, retry or performance policy is
 
 Run once per Windows/Linux host and per TCP/SharedMemory transport. Compare reports to
 the committed exact case list, reject missing/duplicate/extra cases and wrong source SHA.
-The exact inventory is 40 cases per transport/host. Cases cover local-only construction, public API absence, finite preparation/cancel isolation,
+The first candidate froze 40 cases per transport/host; the fixture correction adds nine bounded-table controls before its next run. Cases cover local-only construction, public API absence, finite preparation/cancel isolation,
 real BindAck, synchronous ready preparation, generated/manual RPC, metadata/custom codec,
 OneWay receiver completion, zero service activation at Bind, full-token/unknown-method rejection before business decode/activation, queued Unary/OneWay resumption,
 foreign owner/assembly, equal numeric tokens on distinct physical Sessions, unsupported
@@ -110,3 +110,17 @@ and still compares the full original resource skeleton. Unknown directives fail;
 and conditional controls plus explicit queued-profile identity checks pass (5 tests).
 No default resource assertion or budget was removed. Full canonical/maintainability gates
 remain integration obligations, not implied by these basic checks.
+
+## First hosted subject (failure retained)
+
+Run 43350986775 / source 03ef562826012194531de9c26c771df885331e7e:
+Windows and Linux ordinary UnitTests each 2212 passed / 0 failed / 0 skipped; default
+and profile builds zero warnings/errors. Both probes stopped before the first RPC:
+new admission fixture enabled queue waiting without the required MaxQueuedBytes.
+The correction sets a 1 MiB fixture queue budget; no prior assertion, timeout or
+production source is changed. Original run/logs remain failed.
+
+The next subject changes only probe/collector/documentation, so its workflow reuses
+that valid ordinary default-source regression instead of running it again. Its default
+regression step is explicitly skipped; do not relabel the old run as exact-new-head
+execution. Any later production/build-input change requires restoring that step.
