@@ -124,3 +124,9 @@ The next subject changes only probe/collector/documentation, so its workflow reu
 that valid ordinary default-source regression instead of running it again. Its default
 regression step is explicitly skipped; do not relabel the old run as exact-new-head
 execution. Any later production/build-input change requires restoring that step.
+
+Second hosted subject b3b6f623833c35bdee409a10a703e7c6992a8216 / run43351755387
+stopped at collector setup: the deliberately reused default-regression step had owned
+creation of the evidence directory. No transport probe ran and upload had no files.
+The next collector creates its directory unconditionally; the 49 case inventory and all
+budgets are unchanged. Raw job logs are retained offline for this setup failure.

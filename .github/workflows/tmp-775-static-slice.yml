@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/setup-dotnet
+      - name: Create evidence directory independently of reused regression
+        shell: pwsh
+        run: New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
       - name: Ordinary default build and regression once
         if: github.event.created
         shell: pwsh
