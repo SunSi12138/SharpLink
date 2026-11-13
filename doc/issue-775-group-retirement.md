@@ -67,6 +67,13 @@ nonnullable result value; no RPC ran on that subject. The same repair adds five 
 missing real dynamic admission-queue controls before its first functional execution,
 extending62→67 without removing any prior control or changing budgets.
 
+Second subject8f4d2e55/run43380346207 passed the previous99-control matrices on Linux,
+then the new fixture sent a raw custom Codec payload where the generated method expects
+per-argument framing. The server rejected it as an invalid argument length. The fixture
+now constructs the actual generated Proxy over the deliberately stale/scoped test receiver,
+using the existing registration's codec provider; no hand-built substitute framing is added.
+The67 lifecycle assertions and all budgets remain unchanged.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

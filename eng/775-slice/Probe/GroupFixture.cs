@@ -138,23 +138,22 @@ internal static partial class Program
         internal ValueTask<int> CallAsync(int connection, StaticBindingAck ack, string methodName, CancellationToken token)
         {
             var second = ack.ContractId == Contract(true).ContractId;
-            var contract = Contract(second);
-            var method = contract.Methods.Single(m => m.Name == methodName);
-            var local = Client.GetLocalContract(typeof(IHotRpc).Assembly, contract.ContractId);
-            var scope = new StaticBindingCallSite(Client, local) { Snapshot = [new StaticBoundTarget(Connections[connection], ack.Token)] };
-            var descriptor = new RpcMethodDescriptor(contract.ContractId, method.MethodId, RpcMethodKind.Unary, true, false, false, null);
-            return scope.InvokeUnaryAsync(descriptor, default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
-                Client.RuntimeContext.Codecs.GetCodec<int>(), null, token);
+            if (second) return ((ISecondHotRpc)Proxy(connection, ack, typeof(ISecondHotRpc))).GetSecondAsync();
+            var proxy = (IHotRpc)Proxy(connection, ack, typeof(IHotRpc));
+            return methodName == nameof(IHotRpc.HoldAsync) ? proxy.HoldAsync(token) : proxy.GetAsync();
         }
         internal ValueTask<int> EchoAsync(int connection, StaticBindingAck ack, CancellationToken token)
+            => ((IHotRpc)Proxy(connection, ack, typeof(IHotRpc))).EchoAsync(new HotPayload(7));
+
+        private object Proxy(int connection, StaticBindingAck ack, Type contractType)
         {
-            var contract = Contract();
-            var method = contract.Methods.Single(m => m.Name == nameof(IHotRpc.EchoAsync));
-            var scope = new StaticBindingCallSite(Client, Client.GetLocalContract<IHotRpc>())
+            var contract = LocalManifest.Contracts.Single(c => c.ContractType == contractType);
+            var local = Client.GetLocalContract(typeof(IHotRpc).Assembly, contract.ContractId);
+            var scope = new StaticBindingCallSite(Client, local)
                 { Snapshot = [new StaticBoundTarget(Connections[connection], ack.Token)] };
-            var descriptor = new RpcMethodDescriptor(contract.ContractId, method.MethodId, RpcMethodKind.Unary, true, false, false, null);
-            return scope.InvokeUnaryAsync(descriptor, new HotPayload(7), new HotPayloadCodec(),
-                Client.RuntimeContext.Codecs.GetCodec<int>(), null, token);
+            var registration = Field<ClientAssemblyRegistry>(Client, "_assemblyRegistry").CaptureProxySnapshot()[contractType];
+            // Keep generated argument framing and codec ownership, including per-argument lengths.
+            return contract.ProxyFactory(scope, registration.Codecs);
         }
         public async ValueTask DisposeAsync()
         {
