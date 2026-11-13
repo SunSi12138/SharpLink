@@ -74,7 +74,7 @@ internal static partial class Program
                 return "slice";
             }, p => p.UseConcurrency(16));
         });
-        var clientBuilder = SharpClientBuilder.Create().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
+        var clientBuilder = SharpClientBuilder.Create().UseRequestTimeout().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
         string? sharedName = null;
         if (transport == "tcp")
         {
@@ -152,6 +152,13 @@ internal static partial class Program
         await ExpectCode(async () => await manual.InvokeUnaryAsync(descriptor with { ContractId = long.MaxValue },
             new SlicePayload(3), new SlicePayloadCodec(), intCodec, null, token), SharpLinkErrorCode.FailedPrecondition, "receiver contract mismatch");
         Check(SlicePayloadCodec.Serialized == serialized, "local identity rejection before serialization");
+        while (true)
+        {
+            var changed = (TaskCompletionSource)typeof(SharpLinkClient).GetField("_staticBindingChanged",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(client)!;
+            if (Volatile.Read(ref site.RefreshState) == 0) break;
+            await changed.Task.WaitAsync(token);
+        }
         site.Snapshot = [target with { Token = target.Token ^ (1UL << 48) }];
         try
         {
@@ -160,7 +167,7 @@ internal static partial class Program
             Check(service.Invocations == count && service.Activations == activations && SlicePayloadCodec.Deserialized == decoded, "wrong token no business decode or activation");
         }
         finally { site.Snapshot = [target]; }
-        var otherBuilder = SharpClientBuilder.Create().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
+        var otherBuilder = SharpClientBuilder.Create().UseRequestTimeout().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
         if (transport == "tcp") otherBuilder.UseTcp("127.0.0.1", ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port);
         else otherBuilder.UseSharedMemory(sharedName!);
         await using var other = (SharpLinkClient)otherBuilder.Build();

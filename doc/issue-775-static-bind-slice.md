@@ -130,3 +130,10 @@ stopped at collector setup: the deliberately reused default-regression step had 
 creation of the evidence directory. No transport probe ran and upload had no files.
 The next collector creates its directory unconditionally; the 49 case inventory and all
 budgets are unchanged. Raw job logs are retained offline for this setup failure.
+
+Third hosted subject545fe09797a0cda55d287fa221394756bb12645e / run43352032227
+built the profile successfully, then stopped before client construction because the new
+fixture omitted dev's mandatory explicit request-timeout policy. Both builders now select
+UseRequestTimeout() (the recommended 30-second ordinary-call fallback). Prepare budgets,
+queue delay and watchdogs remain unchanged. The deliberate token-mutation control also
+waits on the controller's real completion signal instead of racing a scheduled refresh.
