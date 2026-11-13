@@ -14,8 +14,8 @@ def ordinary(source):
     output, stack = [], [True]
     for line in source.splitlines():
         directive = line.strip()
-        if directive == "#if SHARPLINK_775_STATIC_SLICE":
-            stack.append(False)
+        if directive in ("#if SHARPLINK_775_STATIC_SLICE", "#if !SHARPLINK_775_STATIC_SLICE"):
+            stack.append(directive.startswith("#if !"))
         elif len(stack) > 1 and directive == "#else":
             stack[-1] = not stack[-1]
         elif len(stack) > 1 and directive == "#endif":

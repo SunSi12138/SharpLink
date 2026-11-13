@@ -8,6 +8,8 @@ internal sealed class StaticBindingClientState(RpcSession session, StaticBinding
     private readonly Dictionary<(long, RpcHash128), (StaticBindingAck Ack, StaticBindingBudget.Lease Lease)> _completed = [];
     private readonly Dictionary<(long, RpcHash128), Operation> _inflight = [];
     private readonly Dictionary<ulong, Operation> _operations = [];
+    private readonly uint[] _retiredIncarnations = new uint[StaticBindingWire.Capacity];
+    internal Action? InvalidationObservedTestHook;
     private readonly CancellationTokenSource _closing = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _closed;
@@ -90,6 +92,7 @@ internal sealed class StaticBindingClientState(RpcSession session, StaticBinding
                     throw StaticBindingWire.Error(StaticBindingFailure.Unavailable);
                 if (operation.Deadline.IsExpired(clock))
                     throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Bind operation deadline expired.");
+                if (IsRetired(ack.Token)) throw StaticBindingWire.Error(StaticBindingFailure.Retired);
                 _completed.Add((operation.Contract, operation.Hash), (ack, operation.BindingLease));
                 operation.BindingCommitted = true;
             }
@@ -128,6 +131,28 @@ internal sealed class StaticBindingClientState(RpcSession session, StaticBinding
         }
         _ = FinishCloseAsync(finished);
         return _drained.Task;
+    }
+
+    private bool IsRetired(ulong token)
+    {
+        var slot = (uint)token;
+        if (slot is 0 or > StaticBindingWire.Capacity) return true;
+        return (uint)(token >> 32) <= _retiredIncarnations[slot - 1];
+    }
+
+    internal void Invalidate(ulong[] tokens)
+    {
+        lock (_gate)
+        {
+            foreach (var token in tokens)
+            {
+                var slot = (uint)token;
+                _retiredIncarnations[slot - 1] = Math.Max(_retiredIncarnations[slot - 1], (uint)(token >> 32));
+            }
+            foreach (var pair in _completed.ToArray())
+                if (IsRetired(pair.Value.Ack.Token)) { _completed.Remove(pair.Key); pair.Value.Lease.Dispose(); }
+        }
+        InvalidationObservedTestHook?.Invoke();
     }
 
     private async Task FinishCloseAsync(Task[] finished)

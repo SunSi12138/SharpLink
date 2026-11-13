@@ -38,7 +38,7 @@ internal static class ServerRequestEnvelopeReader
         }
         var decoded = Read(session, decodedPayload, flags, maxMetadataBytes, timeProvider, original.RpcDeadline);
 #if SHARPLINK_775_STATIC_SLICE
-        decoded = decoded with { BoundMethod = original.BoundMethod };
+        decoded = decoded with { BoundMethod = original.BoundMethod, BoundCall = original.BoundCall };
 #endif
         return decoded;
     }
@@ -120,5 +120,6 @@ internal readonly record struct ServerRequestEnvelope(
 {
 #if SHARPLINK_775_STATIC_SLICE
     internal StaticBindingMethod? BoundMethod { get; init; }
+    internal BoundInvocation? BoundCall { get; init; }
 #endif
 }

@@ -39,6 +39,8 @@ internal sealed partial class SharpLinkServer
 
 #if SHARPLINK_775_STATIC_SLICE
             var boundMethod = retainedAdmissionPayload?.SliceMethod ?? throw new InvalidOperationException("Missing captured binding facts.");
+            var bindingSelection = retainedAdmissionPayload!.SliceSelection;
+            request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
             var descriptor = boundMethod.Descriptor;
 #else
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
@@ -70,7 +72,11 @@ internal sealed partial class SharpLinkServer
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                 return ValueTask.CompletedTask;
             }
+#if SHARPLINK_775_STATIC_SLICE
+            if (!serviceInfo.AcceptsCalls && request.BoundCall is null)
+#else
             if (!serviceInfo.AcceptsCalls)
+#endif
             {
                 DrainRejectedOneWayStreams(
                     session,
@@ -153,6 +159,9 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
+#if SHARPLINK_775_STATIC_SLICE
+                        request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
+#endif
                     }
                     else
                     {
@@ -316,7 +325,7 @@ internal sealed partial class SharpLinkServer
                     invokeToken,
                     callContext
 #if SHARPLINK_775_STATIC_SLICE
-                    , boundMethod.Descriptor
+                    , boundMethod.Descriptor, request.BoundCall
 #endif
                     );
                 if (invokeTask.IsCompletedSuccessfully)

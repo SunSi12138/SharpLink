@@ -11,6 +11,9 @@ internal sealed partial class SharpLinkServer
     {
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+#if SHARPLINK_775_STATIC_SLICE
+        return UnregisterBoundAssemblyAsync(assembly, gracefulTimeout, cancellationToken);
+#else
         Task<SharpLinkAssemblyUnregisterResult> operation;
         lock (_registryGate)
         {
@@ -35,6 +38,7 @@ internal sealed partial class SharpLinkServer
                 TaskObservationMode.ExternallyObserved);
         }
         return WaitForUnregisterAsync(operation, cancellationToken);
+#endif
     }
 
     private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
@@ -85,6 +89,16 @@ internal sealed partial class SharpLinkServer
         TimeSpan gracefulTimeout,
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
     {
+#if SHARPLINK_775_STATIC_SLICE
+        SharpLinkAssemblyUnregisterResult? result = null;
+        Exception? failure = null;
+        try { result = await UnregisterCoreAsync(assembly, module, gracefulTimeout).ConfigureAwait(false); }
+        catch (Exception exception) { failure = exception; }
+        // Remove the Assembly-keyed operation root before publishing ReferencesReleased.
+        lock (_registryGate) _unregisterOperations.Remove(assembly);
+        if (failure is not null) completion.TrySetException(failure);
+        else completion.TrySetResult(result!);
+#else
         try
         {
             completion.TrySetResult(await UnregisterCoreAsync(
@@ -99,6 +113,7 @@ internal sealed partial class SharpLinkServer
             lock (_registryGate)
                 _unregisterOperations.Remove(assembly);
         }
+#endif
     }
 
     private async Task CompleteTimedOutUnregisterAsync(
@@ -110,7 +125,11 @@ internal sealed partial class SharpLinkServer
         await ReleaseModuleAsync(assembly, module).ConfigureAwait(false);
     }
 
+#if SHARPLINK_775_STATIC_SLICE
+    private async Task ReleaseBoundModuleCoreAsync(Assembly assembly, SharpLinkDynamicModule module)
+#else
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
+#endif
     {
         ServiceRegistration[] removedServices;
         RpcGeneratedManifestRegistration codecRegistration;

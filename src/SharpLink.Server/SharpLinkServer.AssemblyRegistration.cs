@@ -102,6 +102,9 @@ internal sealed partial class SharpLinkServer
 
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+#if SHARPLINK_775_STATIC_SLICE
+                        module.BindingPublicationGeneration = _registryGeneration + 1;
+#endif
                         Volatile.Write(ref _services, candidate.Services);
                         _dynamicModules.Add(assembly, module);
                         _registryGeneration++;
@@ -173,6 +176,9 @@ internal sealed partial class SharpLinkServer
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
+#if SHARPLINK_775_STATIC_SLICE
+        BindingRetirementBatch[] bindingRetirement = [];
+#endif
         RpcGeneratedManifestRegistration? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
@@ -283,6 +289,11 @@ internal sealed partial class SharpLinkServer
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
                         }
 
+#if SHARPLINK_775_STATIC_SLICE
+                        if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+                            throw new InvalidOperationException("Server stopped before binding replacement commit.");
+                        bindingRetirement = PrepareBindingRetirement(oldModule);
+#endif
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
@@ -291,10 +302,16 @@ internal sealed partial class SharpLinkServer
                         _detachedModuleServices.Add(oldModule, detachedServices);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+#if SHARPLINK_775_STATIC_SLICE
+                        newModule.BindingPublicationGeneration = _registryGeneration + 1;
+                        CommitBindingCut(oldModule, bindingRetirement);
+#endif
                         Volatile.Write(ref _services, candidate.Services);
                         _registryGeneration++;
+#if !SHARPLINK_775_STATIC_SLICE
                         ScheduleContractManifestPublish();
                         oldModule.TryBeginDraining();
+#endif
                         published = true;
                         break;
                     }
@@ -337,6 +354,10 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+#if SHARPLINK_775_STATIC_SLICE
+        PublishBindingRetirement(bindingRetirement);
+        ScheduleContractManifestPublish();
+#endif
         TrackFrameworkTask(
             drainOperation!,
             "DynamicAssemblyReplacementDrain",

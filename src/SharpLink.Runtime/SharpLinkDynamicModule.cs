@@ -191,6 +191,11 @@ internal static class SharpLinkAssemblyManifestLoader
 
 internal sealed class SharpLinkDynamicModule
 {
+#if SHARPLINK_775_STATIC_SLICE
+    internal long BindingPublicationGeneration { get; set; }
+    internal int BindingReleaseStarted;
+    internal TaskCompletionSource BindingPhysicalReleased { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+#endif
     private readonly PaddedCounter[] _callCounters;
     private readonly PaddedCounter[] _streamCounters;
     private readonly int _stripeMask;

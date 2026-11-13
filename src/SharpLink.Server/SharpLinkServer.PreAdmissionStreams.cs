@@ -274,6 +274,7 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
 #if SHARPLINK_775_STATIC_SLICE
     internal StaticBindingMethod? SliceMethod { get; set; }
+    internal BoundRequestSelection SliceSelection { get; set; }
 #endif
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -372,6 +373,10 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     private void ReleaseCore()
     {
         SelectedService = default;
+#if SHARPLINK_775_STATIC_SLICE
+        SliceSelection = default;
+        SliceMethod = null;
+#endif
         try
         {
             _pool.Return(_owner);

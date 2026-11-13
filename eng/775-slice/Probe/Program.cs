@@ -31,15 +31,20 @@ internal static partial class Program
 
     public static async Task Main(string[] args)
     {
-        var transport = args[0];
-        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await RunAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
-        await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
-        await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
-        var report = new { transport, kind = "functional-only", passed = Passed.Count, cases = Passed,
+        var group = args[0] == "group";
+        var transport = group ? args[1] : args[0];
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(group ? 120 : 60));
+        if (group) await RunGroupAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        else
+        {
+            await RunAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+            await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+            await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        }
+        var report = new { transport, kind = group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
             source = Environment.GetEnvironmentVariable("GITHUB_SHA"), runtime = Environment.Version.ToString() };
         Directory.CreateDirectory("artifacts/775-slice");
-        await File.WriteAllTextAsync($"artifacts/775-slice/{transport}.json", JsonSerializer.Serialize(report));
+        await File.WriteAllTextAsync($"artifacts/775-slice/{(group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
         Console.WriteLine("RESULT " + JsonSerializer.Serialize(report));
     }
 

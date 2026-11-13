@@ -602,6 +602,11 @@ internal sealed partial class SharpLinkClient
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                                 break;
 #if SHARPLINK_775_STATIC_SLICE
+                            case StaticBindingWire.Invalidate:
+                                var retiredTokens = StaticBindingWire.ReadInvalidation(payload);
+                                connection.StaticBindings.Invalidate(retiredTokens);
+                                InvalidateBoundTokens(session, retiredTokens);
+                                break;
                             case StaticBindingWire.Ack:
                                 connection.StaticBindings.Receive(header.RequestId, StaticBindingWire.ReadAck(payload));
                                 break;

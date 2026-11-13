@@ -140,7 +140,7 @@ internal sealed partial class SharpLinkServer
                     serviceInfo, connection, session, request.MethodHash, requestId,
                     request.Arguments, output: null, invokeToken, callContext
 #if SHARPLINK_775_STATIC_SLICE
-                    , request.BoundMethod!.Descriptor
+                    , request.BoundMethod!.Descriptor, request.BoundCall
 #endif
                     );
                 if (!invokeTask.IsCompletedSuccessfully)
@@ -263,7 +263,7 @@ internal sealed partial class SharpLinkServer
                 serviceInfo, connection, session, request.MethodHash, requestId,
                 request.Arguments, writer, invokeToken, responseCallContext
 #if SHARPLINK_775_STATIC_SLICE
-                    , request.BoundMethod!.Descriptor
+                    , request.BoundMethod!.Descriptor, request.BoundCall
 #endif
                     );
             if (!invokeTask.IsCompletedSuccessfully)

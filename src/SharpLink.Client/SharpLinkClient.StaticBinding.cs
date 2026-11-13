@@ -150,6 +150,16 @@ internal sealed partial class SharpLinkClient
                         !ReferenceEquals(target.Connection.Session, session)).ToArray());
     }
 
+    private void InvalidateBoundTokens(RpcSession session, ulong[] tokens)
+    {
+        lock (_staticBindingGate)
+            foreach (var reference in _staticBindingSites.Values)
+                if (reference.TryGetTarget(out var site))
+                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
+                        !ReferenceEquals(target.Connection.Session, session) || !tokens.Contains(target.Token)).ToArray());
+        PulseStaticBindingDemands();
+    }
+
     private StaticBoundTarget GetReadyStaticTarget(StaticBindingCallSite? site, RpcMethodDescriptor method, AttemptOutcomeState? outcome)
     {
         if (site is null || method.ContractId != site.ContractId)

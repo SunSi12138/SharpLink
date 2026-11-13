@@ -12,7 +12,11 @@ internal sealed partial class SharpLinkServer
         AdmissionProgram? admissionProgram,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
-        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null
+#if SHARPLINK_775_STATIC_SLICE
+        , BoundRequestSelection bindingSelection = default, ServerRequestEnvelope preparedRequest = default
+#endif
+        )
     {
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
@@ -20,8 +24,12 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
+#if SHARPLINK_775_STATIC_SLICE
+            var request = preparedRequest;
+#else
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
+#endif
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -42,9 +50,10 @@ internal sealed partial class SharpLinkServer
                 return responseSend;
             }
 #if SHARPLINK_775_STATIC_SLICE
-            var bindingFailure = ResolveStaticRequest(connection, flags, unchecked((ulong)request.InterfaceHash),
-                request.MethodHash, out var serviceInfo, out var boundMethod);
-            if (bindingFailure != StaticBindingFailure.None)
+            var serviceInfo = bindingSelection.Registration;
+            var boundMethod = bindingSelection.Method;
+            var bindingFailure = StaticBindingFailure.None;
+            if (serviceInfo is null)
 #else
             if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
 #endif
@@ -71,9 +80,13 @@ internal sealed partial class SharpLinkServer
                 return responseSend;
             }
 #if SHARPLINK_775_STATIC_SLICE
-            request = request with { BoundMethod = boundMethod };
+            request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
 #endif
+#if SHARPLINK_775_STATIC_SLICE
+            if (!serviceInfo.AcceptsCalls && request.BoundCall is null)
+#else
             if (!serviceInfo.AcceptsCalls)
+#endif
             {
                 ValueTask responseSend;
                 try
@@ -164,6 +177,7 @@ internal sealed partial class SharpLinkServer
                         admittedCallState);
 #if SHARPLINK_775_STATIC_SLICE
                     queuedRetainedPayload!.SliceMethod = boundMethod;
+                    queuedRetainedPayload!.SliceSelection = bindingSelection;
 #endif
                     return AwaitRpcAdmissionAsync(
                         admissionTask,
@@ -293,7 +307,7 @@ internal sealed partial class SharpLinkServer
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
 #if SHARPLINK_775_STATIC_SLICE
-                        request = request with { BoundMethod = boundMethod };
+                        request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
 #endif
                     }
                     else

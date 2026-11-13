@@ -120,6 +120,21 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal WeakReference<ServiceRegistration> QueuedWeakIdentity => _queuedWeakIdentity!;
     internal bool HasModule => _hasModule;
     internal CancellationToken ModuleCancellation => _hasModule ? Module!.ForcedCancellation : CancellationToken.None;
+#if SHARPLINK_775_STATIC_SLICE
+    internal ValueTask<ServiceLease> AcquireBoundAsync(BoundInvocation protection, ServerConnectionState connection,
+        IRpcGeneratedServerBridge bridge, long requestId)
+    {
+        if (!protection.Protects(this)) throw new InvalidOperationException("Missing exact binding protection.");
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        // The outer bound dispatch already owns the module protection. Never re-acquire
+        // after retirement, or activate a different registration while resuming a queue.
+        if (_rootProvider is not null)
+            return ValueTask.FromResult(new ServiceLease(GetOrCreateSingleton(bridge, requestId)));
+        if (Lifetime == SharpLinkServiceLifetime.Connection)
+            return connection.AcquireServiceAsync(this, default, bridge, requestId);
+        return AcquirePerCallAsync(default, bridge, requestId);
+    }
+#endif
     internal bool AcceptsCalls => !_hasModule || Module!.State == SharpLinkDynamicModuleState.Running;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -13,10 +13,22 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context
 #if SHARPLINK_775_STATIC_SLICE
-        , RpcMethodDescriptor? resolvedMethod = null
+        , RpcMethodDescriptor? resolvedMethod = null, BoundInvocation? boundCall = null
 #endif
         )
     {
+#if SHARPLINK_775_STATIC_SLICE
+        if (registration.HasModule)
+        {
+            var protection = boundCall ?? throw new InvalidOperationException("Unprotected dynamic binding invocation.");
+            var boundAcquisition = registration.AcquireBoundAsync(protection, connection, connection.GeneratedBridge, requestId);
+            return boundAcquisition.IsCompletedSuccessfully
+                ? InvokeAcquiredServiceAsync(registration.Stub, boundAcquisition.Result, session, connection.GeneratedBridge,
+                    methodId, requestId, arguments, output, cancellationToken, context, false, resolvedMethod)
+                : InvokeServiceAfterAcquisitionAsync(boundAcquisition, registration.Stub, session, connection.GeneratedBridge,
+                    methodId, requestId, arguments, output, cancellationToken, context, false, resolvedMethod);
+        }
+#endif
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
                 requestId,

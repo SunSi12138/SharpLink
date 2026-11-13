@@ -256,6 +256,11 @@ internal sealed partial class SharpLinkServer
                             switch (header.Type)
                             {
 #if SHARPLINK_775_STATIC_SLICE
+                                case StaticBindingWire.Release:
+                                    var releasedToken = StaticBindingWire.ReadRelease(payload);
+                                    connection.StaticBindings.Release(releasedToken);
+                                    StaticBindingWire.SendInvalidation(session, [releasedToken]);
+                                    break;
                                 case StaticBindingWire.Bind:
                                     await BindStaticContractAsync(connection, header.RequestId, payload).ConfigureAwait(false);
                                     break;
@@ -427,6 +432,10 @@ internal sealed partial class SharpLinkServer
             ValueTask dispatchTask;
             try
             {
+#if SHARPLINK_775_STATIC_SLICE
+                dispatchTask = DispatchBoundRequestAsync(connection, requestId, flags, payload,
+                    requestCancellationMap, serverLoopToken, admissionProgram);
+#else
                 dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
                     ? DispatchOneWayRpc(
                         connection,
@@ -444,6 +453,7 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admissionProgram);
+#endif
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)

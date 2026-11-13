@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings><IsPackable>false</IsPackable>
+    <AssemblyName>SharpLink.GroupPlugin</AssemblyName>
+    <DefineConstants>$(DefineConstants);GROUP_CHANGED_HASH</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../GroupPlugin/GroupPlugin.cs" Link="GroupPlugin.cs" />
+    <ProjectReference Include="../../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

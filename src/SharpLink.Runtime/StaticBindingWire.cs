@@ -2,7 +2,7 @@
 namespace SharpLink.Runtime;
 
 // Private, bounded experimental control protocol. These are not ordinary RPC methods.
-internal static class StaticBindingWire
+internal static partial class StaticBindingWire
 {
     internal const ProtocolV2FrameType Bind = (ProtocolV2FrameType)240;
     internal const ProtocolV2FrameType Ack = (ProtocolV2FrameType)241;
@@ -16,7 +16,7 @@ internal static class StaticBindingWire
         => new(failure switch
         {
             StaticBindingFailure.Capacity => SharpLinkErrorCode.ResourceExhausted,
-            StaticBindingFailure.NoBoundRoute or StaticBindingFailure.Unavailable => SharpLinkErrorCode.Unavailable,
+            StaticBindingFailure.NoBoundRoute or StaticBindingFailure.Unavailable or StaticBindingFailure.Retired => SharpLinkErrorCode.Unavailable,
             StaticBindingFailure.UnknownMethod => SharpLinkErrorCode.Unimplemented,
             _ => SharpLinkErrorCode.FailedPrecondition
         }, (ushort)(60000 + (ushort)failure), $"Static binding prototype: {failure}.");
@@ -103,7 +103,7 @@ internal static class StaticBindingWire
 internal enum StaticBindingFailure : ushort
 {
     None, ContractMissing, HashMismatch, DynamicUnsupported, Capacity, Unavailable,
-    UnknownBinding, UnknownMethod, UnsupportedShape, NoBoundRoute
+    UnknownBinding, UnknownMethod, UnsupportedShape, Retired, NoBoundRoute
 }
 
 internal readonly record struct StaticBindingAck(
