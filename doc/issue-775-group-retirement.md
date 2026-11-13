@@ -83,6 +83,15 @@ That concrete protocol error is corrected. Drain ownership now starts before bes
 notifications; a publication failure is logged, faults only that Session and cannot lose the
 already-committed old module cleanup owner. No lifecycle assertion or deadline is relaxed.
 
+Fourth subject42a83cea/run43381753829 passed the control plane, same-hash cut/reject,
+physical disposal, old-A collectibility and unregister, then failed the immediate replacement-B
+ALC collection check on both hosts. The next discriminating change isolates the Assembly
+argument and unregister/unload work in a non-inlined helper before the checking frame runs,
+following [.NET's unloadability guidance](https://learn.microsoft.com/en-us/dotnet/standard/assembly/unloadability).
+It keeps the server/clients alive, all67 assertions, the deliberate-root negative control
+and the same10 GC cycles. The failed observation remains unresolved until that subject runs;
+it is not treated as harmless or permission to proceed to receipt.
+
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
 acceptance is implied by this development profile.

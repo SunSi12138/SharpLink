@@ -132,10 +132,9 @@ internal static partial class Program
             GCheck(!Collected(old.Weak), prefix, "lifecycle: deliberate caller ALC root is detected");
             old.Drop();
             GCheck(Collected(old.Weak), prefix, "lifecycle: idle bindings snapshots and caches release old ALC");
-            var removal = await f.Server.UnregisterAssemblyAsync(next.Assembly, TimeSpan.FromSeconds(5), token);
+            var removal = await UnregisterAndDropGroupAsync(f, next, token);
             GCheck(removal.ReferencesReleased && nextModule.State == SharpLinkDynamicModuleState.Released, prefix,
                 "lifecycle: unregister uses the same group retirement owner");
-            next.Drop();
             GCheck(Collected(next.Weak), prefix, "lifecycle: unregistered replacement ALC is collectible");
             await f.Client.StopAsync(token); await f.Server.StopAsync(TimeSpan.FromSeconds(5), token);
             GCheck(f.Client.BindingBudget.Bindings == 0 && f.Client.BindingBudget.Operations == 0 &&
@@ -304,8 +303,7 @@ internal static partial class Program
         GCheck(table.Install(staticContract.ContractId, registration, staticContract, 0).Failure == StaticBindingFailure.Capacity &&
             table.Count == 0 && budget.Bindings == 0, prefix, "lifecycle: incarnation exhaustion never wraps or reserves quota");
         table.Close();
-        await f.Server.UnregisterAssemblyAsync(plugin.Assembly, TimeSpan.FromSeconds(5), token);
-        plugin.Drop();
+        await UnregisterAndDropGroupAsync(f, plugin, token);
         GCheck(Collected(plugin.Weak), prefix, "lifecycle: reuse and watermark state do not retain collectible code");
     }
 }

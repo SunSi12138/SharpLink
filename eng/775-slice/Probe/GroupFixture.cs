@@ -165,6 +165,16 @@ internal static partial class Program
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<SharpLinkAssemblyUnregisterResult> UnregisterAndDropGroupAsync(
+        GroupFixture fixture, LoadedGroup group, CancellationToken token)
+    {
+        // Keep the Assembly argument/JIT temporary outside the frame that checks Weak.IsAlive.
+        var result = await fixture.Server.UnregisterAssemblyAsync(group.Assembly, TimeSpan.FromSeconds(5), token).ConfigureAwait(false);
+        group.Drop();
+        return result;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool Collected(WeakReference reference)
     {
         for (var i = 0; i < 10; i++)
