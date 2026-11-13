@@ -245,7 +245,7 @@ internal static partial class Program
         {
             var binding = connection.StaticBindings.BindAsync(receipt.ContractId, receipt.RpcAssemblyHash, Scope(receipt, RpcRegistrationRequirement.ExactRegistration));
             await entered.Task.WaitAsync(token);
-            var result = await f.Server.ReplaceAssemblyAsync(old.Assembly, next.Assembly, TimeSpan.FromSeconds(5), token);
+            var result = await ReplaceGroupAtBoundary(f, old, next, token);
             await invalidated.Task.WaitAsync(token);
             Check(result.Succeeded && !binding.IsCompleted, "receipt registration retires before held exact BindAck arrives");
             old.Drop();
@@ -290,7 +290,7 @@ internal static partial class Program
                 "receipt committed Acks remain unready while actual site publication is held");
             var invalidated = new[] { Signal(), Signal() };
             for (var i = 0; i < 2; i++) { var index = i; f.Connections[i].StaticBindings.InvalidationObservedTestHook = () => invalidated[index].TrySetResult(); }
-            await f.Server.ReplaceAssemblyAsync(old.Assembly, next.Assembly, TimeSpan.FromSeconds(5), token);
+            await ReplaceGroupAtBoundary(f, old, next, token);
             await Task.WhenAll(invalidated.Select(signal => signal.Task)).WaitAsync(token);
             Check(f.Connections.All(c => c.StaticBindings.CompletedCount == 0) && site.Snapshot.Length == 0,
                 "receipt invalidation detaches confirmed state before delayed site commit");
@@ -309,4 +309,11 @@ internal static partial class Program
         finally { release.TrySetResult(); f.Client.BeforeBindingSiteCommitTestHook = null; }
         await UnregisterAndDropGroupAsync(f, next, token);
     }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static ValueTask<SharpLinkAssemblyReplacementResult> ReplaceGroupAtBoundary(
+        GroupFixture fixture, LoadedGroup old, LoadedGroup next, CancellationToken token)
+        // Synchronous forwarding pops the Assembly-argument frame before the caller can
+        // check collection, even when all subsequent awaits complete synchronously.
+        => fixture.Server.ReplaceAssemblyAsync(old.Assembly, next.Assembly, TimeSpan.FromSeconds(5), token);
 }

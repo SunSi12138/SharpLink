@@ -53,6 +53,14 @@ when its site continuation was delayed. The added deterministic control exercise
 
 ## Results and remaining obligations
 
+First receipt subject1a3fdc92/run43389913243 passed prior99 + group67 on Linux, then passed
+the stale-Manifest, constraint, per-registration generation and held-late-Ack controls.
+The delayed-site-commit ALC check failed. The hosted full dump identifies a RuntimeAssembly
+in ReceiptCommitInvalidationAsync.MoveNext's native stack slot, from its direct Replace
+Assembly arguments. A synchronous non-inlined forwarding boundary now pops that exact
+argument-bearing frame before the collector can run. All49 assertions, ten GC cycles,
+live owners and120s watchdog remain unchanged. The failed run remains failed.
+
 Pending hosted validation. Keep #775/#805 open. Full five-family method-facts ABI and
 streaming ownership, dynamic local generations, final canonical API/package/Trim/NativeAOT,
 ordinary Windows Stop failure and valid performance acceptance remain separate obligations.
