@@ -1,4 +1,9 @@
 <Project>
+    <!-- Nonshipping #775 slice. The ordinary build has no alternate wire/API mode. -->
+    <PropertyGroup Condition="'$(SharpLink775StaticSlice)' == 'true'">
+        <DefineConstants>$(DefineConstants);SHARPLINK_775_STATIC_SLICE</DefineConstants>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
     <PropertyGroup>
         <TargetFramework Condition="'$(MSBuildProjectName)' != 'SharpLink.Generator'">net10.0</TargetFramework>
         <TargetFramework Condition="'$(MSBuildProjectName)' == 'SharpLink.Generator'">netstandard2.0</TargetFramework>

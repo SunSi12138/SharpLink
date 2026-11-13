@@ -256,6 +256,9 @@ internal sealed partial class SharpLinkClient
         if (index != snapshot.Length)
             Array.Resize(ref snapshot, index);
         Volatile.Write(ref _readyConnections, snapshot);
+#if SHARPLINK_775_STATIC_SLICE
+        PruneStaticBindingRoutes(snapshot);
+#endif
         PublishReadinessFacts(new ClientReadinessFacts(
             ActiveEndpoints: 1,
             ReadyEndpoints: snapshot.Length == 0 ? 0 : 1,
@@ -325,18 +328,27 @@ internal sealed partial class SharpLinkClient
         }
     }
 
+#if !SHARPLINK_775_STATIC_SLICE
     public T Get<T>() where T : IService
     {
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
+#if SHARPLINK_775_STATIC_SLICE
+            var bindingSite = GetStaticBindingSite(registration);
+#else
             ValidateRemoteContractAssembly(registration);
+#endif
             var existing = Volatile.Read(ref registration.Proxy);
             if (existing is not null)
                 return (T)existing;
 
+#if SHARPLINK_775_STATIC_SLICE
+            IRpcChannel channel = new StaticBindingRpcChannel(this, bindingSite);
+#else
             var channel = registration.Module is null
                 ? (IRpcChannel)this
                 : new SharpLinkModuleRpcChannel(this, registration.Module);
+#endif
             var created = registration.Descriptor.ProxyFactory(channel, registration.Codecs);
             var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
             return (T)(published ?? created);
@@ -353,16 +365,24 @@ internal sealed partial class SharpLinkClient
 
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
+#if !SHARPLINK_775_STATIC_SLICE
             ValidateRemoteContractAssembly(registration);
+#endif
+#if SHARPLINK_775_STATIC_SLICE
+            IRpcChannel channel = new StaticBindingRpcChannel(this, GetStaticBindingSite(registration));
+#else
             IRpcChannel channel = registration.Module is null
                 ? this
                 : new SharpLinkModuleRpcChannel(this, registration.Module);
+#endif
             channel = new SharpLinkMetadataRpcChannel(channel, metadata);
             return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
         }
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }
+
+#endif
 
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
@@ -581,6 +601,11 @@ internal sealed partial class SharpLinkClient
                             case ProtocolV2FrameType.HealthResponse:
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                                 break;
+#if SHARPLINK_775_STATIC_SLICE
+                            case StaticBindingWire.Ack:
+                                connection.StaticBindings.Receive(header.RequestId, StaticBindingWire.ReadAck(payload));
+                                break;
+#endif
                             case ProtocolV2FrameType.ContractManifest:
                                 PublishRemoteContractManifest(
                                     session,

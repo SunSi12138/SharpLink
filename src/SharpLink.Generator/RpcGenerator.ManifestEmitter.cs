@@ -2,7 +2,16 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
+#if SHARPLINK_775_STATIC_SLICE
+    private const string GeneratedAbiIdentity = "sharplink-experimental-775-scoped-static-v1";
+#else
     private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+#endif
+#if SHARPLINK_775_STATIC_SLICE
+    private const string GeneratedChannelType = "IRpcContractChannel";
+#else
+    private const string GeneratedChannelType = "IRpcChannel";
+#endif
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -147,7 +156,7 @@ public partial class RpcGenerator
         foreach (var contract in contracts)
         {
             var identity = GetContractArtifactIdentity(contract);
-            sb.AppendLine($"    private static object __CreateProxy_{identity}(IRpcChannel channel, IRpcCodecProvider codecs)");
+            sb.AppendLine($"    private static object __CreateProxy_{identity}({GeneratedChannelType} channel, IRpcCodecProvider codecs)");
             sb.AppendLine($"        => new __Proxy_{identity}(channel, codecs);");
             sb.AppendLine();
             sb.AppendLine($"    private static IRpcStub __CreateStub_{identity}(IRpcCodecProvider codecs)");

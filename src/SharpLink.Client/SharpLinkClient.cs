@@ -1,7 +1,9 @@
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient :
+    #if !SHARPLINK_775_STATIC_SLICE
     IRpcChannel,
+    #endif
     ISharpLinkClient,
     IDynamicAssemblyRegistrationInspector,
     ISharpLinkClientDrainInspector,

@@ -1,4 +1,5 @@
 namespace SharpLink.Client;
+#if !SHARPLINK_775_STATIC_SLICE
 
 internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLinkDynamicModule module) : IRpcChannel
 {
@@ -225,6 +226,8 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         public void Dispose() => source?.Dispose();
     }
 }
+
+#endif
 
 internal sealed class SharpLinkClientStreamModuleLeaseOwner(SharpLinkDynamicModuleLease lease) : IDisposable
 {

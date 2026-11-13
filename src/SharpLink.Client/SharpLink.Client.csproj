@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <ItemGroup>
       <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
       <ProjectReference Include="..\SharpLink.Runtime\SharpLink.Runtime.csproj" />
@@ -7,4 +7,7 @@
       <InternalsVisibleTo Include="SharpLink.UnitTests" />
       <InternalsVisibleTo Include="SharpLink.IntegrationTests" />
     </ItemGroup>
+  <ItemGroup Condition="'$(SharpLink775StaticSlice)' == 'true'">
+    <InternalsVisibleTo Include="SharpLink.BindingSlice" />
+  </ItemGroup>
 </Project>

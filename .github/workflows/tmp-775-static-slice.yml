@@ -1,0 +1,47 @@
+name: Temporary 775 static Bind slice
+on:
+  push:
+    branches: [codex/775-slice-validate-20261113]
+permissions:
+  contents: read
+jobs:
+  functional:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Ordinary default build and regression once
+        shell: pwsh
+        run: |
+          New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
+          dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/default-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --report-trx --results-directory artifacts/775-slice/default-tests 2>&1 | Tee-Object artifacts/775-slice/default-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build scoped nonshipping slice
+        shell: pwsh
+        run: |
+          dotnet build eng/775-slice/Probe/SharpLink.BindingSlice.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/slice-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise real TCP and SharedMemory
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll $transport 2>&1 | Tee-Object "artifacts/775-slice/$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain original evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: static-bind-${{ matrix.os }}-${{ github.run_attempt }}
+          path: artifacts/775-slice
+          if-no-files-found: error
+          retention-days: 14

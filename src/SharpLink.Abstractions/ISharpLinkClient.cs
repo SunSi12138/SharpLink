@@ -438,6 +438,18 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
         CancellationToken cancellationToken = default);
 
+#if SHARPLINK_775_STATIC_SLICE
+    /// <summary>Gets this client's runtime capability without a raw channel cast.</summary>
+    IRpcRuntimeContext RuntimeContext { get; }
+    /// <summary>Creates a local-only service and exact-site preparation handle.</summary>
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService;
+    /// <summary>Captures the exact local registration of a generated contract.</summary>
+    RpcLocalContract GetLocalContract<TContract>() where TContract : IService;
+    /// <summary>Captures the exact registration owned by the supplied registered assembly.</summary>
+    RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId);
+    /// <summary>Creates a locally validated receiver for one immutable local selector.</summary>
+    IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null);
+#else
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;
@@ -446,4 +458,5 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     /// <param name="metadata">Envelope metadata attached without adding a business-contract parameter.</param>
     TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+#endif
 }

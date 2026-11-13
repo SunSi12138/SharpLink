@@ -272,6 +272,9 @@ internal sealed partial class SharpLinkServer
 internal sealed class ServerRetainedAdmissionPayload : IDisposable
 {
     internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
+#if SHARPLINK_775_STATIC_SLICE
+    internal StaticBindingMethod? SliceMethod { get; set; }
+#endif
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     internal void CaptureSelectedService(ServiceRegistration service)

@@ -2,20 +2,28 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+#if SHARPLINK_775_STATIC_SLICE
+    internal ValueTask<TResponse> InvokeStaticUnaryAsync<TRequest, TResponse>(
+        StaticBindingCallSite bindingSite,
+#else
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata,
+#endif
+        RpcMethodDescriptor method, in TRequest request, IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+#if SHARPLINK_775_STATIC_SLICE
+        bindingSite.Validate(method, RpcMethodKind.Unary);
+#endif
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: true, interceptors);
+#if SHARPLINK_775_STATIC_SLICE
+        control = control with { BindingSite = bindingSite };
+#endif
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -35,7 +43,12 @@ internal sealed partial class SharpLinkClient
         }
     }
 
+#if SHARPLINK_775_STATIC_SLICE
+    internal ValueTask InvokeStaticOneWayAsync<TRequest, TStreams>(
+        StaticBindingCallSite bindingSite,
+#else
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
+#endif
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -45,10 +58,16 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
+#if SHARPLINK_775_STATIC_SLICE
+        bindingSite.Validate(method, RpcMethodKind.OneWay);
+#endif
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
+#if SHARPLINK_775_STATIC_SLICE
+        control = control with { BindingSite = bindingSite };
+#endif
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -371,6 +390,9 @@ internal sealed partial class SharpLinkClient
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
+#if SHARPLINK_775_STATIC_SLICE
+        long routingId = 0;
+#endif
         ClientConnection? connection = null;
         var reservationOwned = false;
         try
@@ -378,7 +400,13 @@ internal sealed partial class SharpLinkClient
             // Connection selection is the first step that can block, so the pre-registration
             // checkpoint below is the first place a fresh sample carries new information. A sample
             // here would only repeat the stage-local validation the call control already did.
+#if SHARPLINK_775_STATIC_SLICE
+            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
+            connection = target.Connection;
+            routingId = unchecked((long)target.Token);
+#else
             connection = GetReadyConnection(method, retrySelection: null, outcome);
+#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             var operation = connection.PendingCalls.Rent(
@@ -393,7 +421,11 @@ internal sealed partial class SharpLinkClient
             reservationOwned = false;
             return StartUnaryCall(
                 connection,
+#if SHARPLINK_775_STATIC_SLICE
+                routingId,
+#else
                 method.ContractId,
+#endif
                 method.MethodId,
                 requestId,
                 method.HasResponsePayload,
@@ -536,12 +568,21 @@ internal sealed partial class SharpLinkClient
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
 
+#if SHARPLINK_775_STATIC_SLICE
+        long routingId = 0;
+#endif
         ClientConnection? connection = null;
         var reservationOwned = false;
         try
         {
             EnsureLogicalCallProgress(control);
+#if SHARPLINK_775_STATIC_SLICE
+            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
+            connection = target.Connection;
+            routingId = unchecked((long)target.Token);
+#else
             connection = GetReadyConnection(method, retrySelection: null, outcome);
+#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -613,7 +654,11 @@ internal sealed partial class SharpLinkClient
             {
                 var emission = SendRpcCall(
                     connection.Session,
+#if SHARPLINK_775_STATIC_SLICE
+                    routingId,
+#else
                     method.ContractId,
+#endif
                     method.MethodId,
                     requestId,
                     flags,

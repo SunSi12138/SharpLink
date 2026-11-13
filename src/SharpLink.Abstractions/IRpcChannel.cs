@@ -265,8 +265,16 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
 }
 
 /// <summary>Client channel consumed by generated proxies.</summary>
+#if SHARPLINK_775_STATIC_SLICE
+public interface IRpcContractChannel
+#else
 public interface IRpcChannel
+#endif
 {
+#if SHARPLINK_775_STATIC_SLICE
+    /// <summary>Waits within one finite original budget for this exact receiver.</summary>
+    ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
+#endif
     /// <summary>Gets the runtime context owned by this channel.</summary>
     IRpcRuntimeContext RuntimeContext { get; }
 

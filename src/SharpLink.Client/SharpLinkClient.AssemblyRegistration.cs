@@ -51,6 +51,10 @@ internal sealed partial class SharpLinkClient
 
         internal IRpcCodecProvider Codecs { get; }
 
+#if SHARPLINK_775_STATIC_SLICE
+        private static long s_nextSliceGeneration;
+        internal long SliceGeneration { get; } = Interlocked.Increment(ref s_nextSliceGeneration);
+#endif
         internal object? Proxy;
     }
 }

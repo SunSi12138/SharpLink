@@ -11,7 +11,11 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context
+#if SHARPLINK_775_STATIC_SLICE
+        , RpcMethodDescriptor? resolvedMethod = null
+#endif
+        )
     {
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
@@ -28,12 +32,20 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context
+#if SHARPLINK_775_STATIC_SLICE
+                , resolvedMethod
+#endif
+                );
         }
 
         var isStream = false;
         var hasRequestStreams = false;
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor? methodDescriptor = resolvedMethod;
+#else
         RpcMethodDescriptor? methodDescriptor = null;
+#endif
         if (registration.HasModule)
         {
             var descriptor = GetMethodDescriptor(registration.Stub, methodId);

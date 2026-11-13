@@ -41,16 +41,26 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
+#if SHARPLINK_775_STATIC_SLICE
+            var bindingFailure = ResolveStaticRequest(connection, flags, unchecked((ulong)request.InterfaceHash),
+                request.MethodHash, out var serviceInfo, out var boundMethod);
+            if (bindingFailure != StaticBindingFailure.None)
+#else
             if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+#endif
             {
                 ValueTask responseSend;
                 try
                 {
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
+#if SHARPLINK_775_STATIC_SLICE
+                        StaticBindingWire.Error(bindingFailure),
+#else
                         new SharpLinkException(
                             SharpLinkErrorCode.Unimplemented,
                             $"Service {request.InterfaceHash} is not implemented."),
+#endif
                         connection.ConnectionToken);
                 }
                 finally
@@ -60,6 +70,9 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
+#if SHARPLINK_775_STATIC_SLICE
+            request = request with { BoundMethod = boundMethod };
+#endif
             if (!serviceInfo.AcceptsCalls)
             {
                 ValueTask responseSend;
@@ -91,7 +104,11 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
+#if SHARPLINK_775_STATIC_SLICE
+                var descriptor = request.BoundMethod!.Descriptor;
+#else
                 var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+#endif
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
@@ -145,6 +162,9 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         descriptor.ClientStreamCount,
                         admittedCallState);
+#if SHARPLINK_775_STATIC_SLICE
+                    queuedRetainedPayload!.SliceMethod = boundMethod;
+#endif
                     return AwaitRpcAdmissionAsync(
                         admissionTask,
                         queuedRetainedPayload!,
@@ -272,6 +292,9 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
+#if SHARPLINK_775_STATIC_SLICE
+                        request = request with { BoundMethod = boundMethod };
+#endif
                     }
                     else
                     {

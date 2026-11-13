@@ -37,6 +37,10 @@ internal sealed partial class SharpLinkServer
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
 
+#if SHARPLINK_775_STATIC_SLICE
+            var boundMethod = retainedAdmissionPayload?.SliceMethod ?? throw new InvalidOperationException("Missing captured binding facts.");
+            var descriptor = boundMethod.Descriptor;
+#else
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
             // client streams still needs a receive route so the peer can finish sending and recover
             // its receive credit even though no user invocation will run. If the method shape cannot
@@ -53,6 +57,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
+#endif
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 DrainRejectedOneWayStreams(
@@ -255,7 +260,11 @@ internal sealed partial class SharpLinkServer
 
             var supportsCooperativeCancellation =
                 (isCancellable || serviceInfo.Module is not null) &&
+#if SHARPLINK_775_STATIC_SLICE
+                boundMethod.SupportsCancellation;
+#else
                 serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+#endif
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,
@@ -278,7 +287,11 @@ internal sealed partial class SharpLinkServer
 
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken
+#if SHARPLINK_775_STATIC_SLICE
+                , boundMethod.Descriptor
+#endif
+                );
             try
             {
                 // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install
@@ -301,7 +314,11 @@ internal sealed partial class SharpLinkServer
                     request.Arguments,
                     output: null,
                     invokeToken,
-                    callContext);
+                    callContext
+#if SHARPLINK_775_STATIC_SLICE
+                    , boundMethod.Descriptor
+#endif
+                    );
                 if (invokeTask.IsCompletedSuccessfully)
                 {
                     if (callContext is SharpLinkServerInvocationContext
