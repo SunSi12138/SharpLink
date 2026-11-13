@@ -20,6 +20,7 @@ internal static partial class Program
         await ReplacementGroupAsync(transport, true, token);
         await LateAckGroupAsync(transport, token);
         await CodecGroupAsync(transport, token);
+        await QueuedGroupAsync(transport, token);
         await ReuseGroupAsync(transport, token);
     }
 
@@ -220,6 +221,43 @@ internal static partial class Program
             GCheck(Collected(old.Weak), prefix, "lifecycle: physical Codec exit releases collectible generation");
         }
         finally { release.Set(); }
+        await f.Server.UnregisterAssemblyAsync(next.Assembly, TimeSpan.FromSeconds(5), token);
+        next.Drop();
+    }
+
+    private static async Task QueuedGroupAsync(string transport, CancellationToken token)
+    {
+        const string prefix = "queued generation";
+        await using var f = new GroupFixture(transport, queue: true);
+        var signals = new GroupSignals();
+        var old = new LoadedGroup(GroupPath(), 1, signals);
+        var next = new LoadedGroup(GroupPath(), 2, new GroupSignals());
+        if (!f.Server.RegisterAssembly(old.Assembly).Succeeded) throw new InvalidOperationException("Registration failed.");
+        await f.ConnectAsync(token);
+        var bindings = await f.BindAllAsync(token);
+        old.Set("Body", (Func<Task>)(() => signals.ReleaseBody.Task));
+        try
+        {
+            var held = f.CallAsync(0, bindings[0][0], nameof(IHotRpc.HoldAsync), token).AsTask();
+            await signals.BodyEntered.Task.WaitAsync(token);
+            var queued = f.CallAsync(1, bindings[1][1], nameof(ISecondHotRpc.GetSecondAsync), token).AsTask();
+            await f.Queued.Task.WaitAsync(token);
+            var module = f.Module(old);
+            GCheck(!queued.IsCompleted && module.RemainingCalls == 2, prefix,
+                "lifecycle: admission queue holds the exact pre-cut registration protection");
+            var replacing = f.Server.ReplaceAssemblyAsync(old.Assembly, next.Assembly, TimeSpan.FromSeconds(30), token).AsTask();
+            GCheck(!replacing.IsCompleted && module.State == SharpLinkDynamicModuleState.Draining && module.RemainingCalls == 2,
+                prefix, "lifecycle: group replacement waits for queued and active old work");
+            signals.ReleaseBody.TrySetResult();
+            GCheck(await held.WaitAsync(token) == 1 && await queued.WaitAsync(token) == 1, prefix,
+                "lifecycle: admitted continuation never reacquires or retargets after cut");
+            await replacing.WaitAsync(token);
+            GCheck(module.RemainingCalls == 0 && module.BindingPhysicalReleased.Task.IsCompletedSuccessfully, prefix,
+                "lifecycle: queue and invocation release one protection each");
+            old.Drop();
+            GCheck(Collected(old.Weak), prefix, "lifecycle: resumed queue facts and weak selections release old ALC");
+        }
+        finally { signals.ReleaseBody.TrySetResult(); }
         await f.Server.UnregisterAssemblyAsync(next.Assembly, TimeSpan.FromSeconds(5), token);
         next.Drop();
     }

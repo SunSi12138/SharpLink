@@ -90,14 +90,14 @@ internal sealed partial class SharpLinkServer
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
     {
 #if SHARPLINK_775_STATIC_SLICE
-        SharpLinkAssemblyUnregisterResult? result = null;
+        SharpLinkAssemblyUnregisterResult result = default;
         Exception? failure = null;
         try { result = await UnregisterCoreAsync(assembly, module, gracefulTimeout).ConfigureAwait(false); }
         catch (Exception exception) { failure = exception; }
         // Remove the Assembly-keyed operation root before publishing ReferencesReleased.
         lock (_registryGate) _unregisterOperations.Remove(assembly);
         if (failure is not null) completion.TrySetException(failure);
-        else completion.TrySetResult(result!);
+        else completion.TrySetResult(result);
 #else
         try
         {

@@ -68,15 +68,28 @@ internal static partial class Program
         internal ISharpLinkGeneratedAssemblyManifest LocalManifest { get; }
         private readonly Func<SharpClientBuilder, SharpClientBuilder> _endpoint;
         private readonly List<SharpLinkClient> _additionalClients = [];
+        internal TaskCompletionSource Queued { get; } = Signal();
         internal ClientConnection[] Connections => Field<ClientConnection[]>(Client, "_readyConnections");
         internal ServerServiceModuleRegistry Registry => Field<ServerServiceModuleRegistry>(Server, "_serviceModuleRegistry");
-        internal GroupFixture(string transport)
+        internal GroupFixture(string transport, bool queue = false)
         {
             var local = SharpLinkAssemblyManifestLoader.TryLoad(typeof(IHotRpc).Assembly, out var manifest);
             if (!local.Succeeded) throw new InvalidOperationException(local.Error?.Message);
             LocalManifest = manifest!;
             var probeManifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(ISliceRpc).Assembly);
             var sb = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([probeManifest]));
+            if (queue)
+            {
+                var queuedMethod = LocalManifest.Contracts.Single(c => c.ContractType == typeof(ISecondHotRpc))
+                    .Methods.Single().MethodId;
+                sb.UseAdmissionControl(o =>
+                {
+                    o.Global.UseConcurrency(1); o.MaxQueuedCalls = 8; o.MaxQueuedBytes = 1024 * 1024;
+                    o.MaxQueueDelay = TimeSpan.FromSeconds(10);
+                    o.UsePartition(context => { if (context.MethodId == queuedMethod) Queued.TrySetResult(); return "group"; },
+                        partition => partition.UseConcurrency(8));
+                });
+            }
             var cb = SharpClientBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([LocalManifest, probeManifest]))
                 .UseRequestTimeout().UseConnectionPool(o => { o.MinConnections = 2; o.MaxConnections = 2; });
             if (transport == "tcp")

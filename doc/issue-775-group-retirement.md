@@ -7,7 +7,7 @@ Receipt is gated on the hosted lifecycle matrix; no performance experiment is sc
 ## Criteria frozen before the first hosted group run
 
 - Windows/Linux x64 × real TCP/SharedMemory. Retain the previous exact99 control inventory
-  with its60s watchdog, plus a separate **62-case lifecycle inventory** with a120s process
+  with its60s watchdog, plus a separate **67-case lifecycle inventory** with a120s process
   watchdog. The lifecycle work is not a shortened replacement for the previous controls.
 - One dynamically registered collectible module owns two services on two physical Sessions.
   Same-hash and changed-hash replacements close the old striped module gate before publishing
@@ -60,6 +60,12 @@ errors. Ordinary compilation remains subject to the exact-token/build-input coll
 basic host build; the unchanged Windows Unit Stop failure from #387 is retained, not rerun.
 
 ## Hosted result / receipt gate
+
+First subject4b1e05d7/run43379674272 passed default basic builds but failed profile compilation:
+the new completion publisher used a nullable unregister-result struct. Corrected to the
+nonnullable result value; no RPC ran on that subject. The same repair adds five previously
+missing real dynamic admission-queue controls before its first functional execution,
+extending62→67 without removing any prior control or changing budgets.
 
 Pending. Receipt implementation starts only after both transport/platform matrices pass.
 Keep #775/#805 open; no PR, merge, final API/facts ABI/grammar, platform or performance
