@@ -69,9 +69,13 @@ internal sealed class ServerGeneratedBridge(
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor method,
+#else
         bool payloadNullable,
         long contractId,
         long methodId,
+#endif
         CancellationToken cancellationToken)
     {
         try
@@ -81,9 +85,13 @@ internal sealed class ServerGeneratedBridge(
                 streamId,
                 new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
                 codec,
+#if SHARPLINK_775_STATIC_SLICE
+                method,
+#else
                 payloadNullable,
                 contractId,
                 methodId,
+#endif
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
@@ -104,8 +112,12 @@ internal sealed class ServerGeneratedBridge(
                 callCancellations,
                 session,
                 requestId,
+#if SHARPLINK_775_STATIC_SLICE
+                method,
+#else
                 contractId,
                 methodId,
+#endif
                 exception);
             session.SendStreamErrorAsync(requestId, streamId, protocolError);
         }

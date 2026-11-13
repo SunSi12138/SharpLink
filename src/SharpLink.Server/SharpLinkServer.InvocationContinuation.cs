@@ -156,8 +156,12 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         connection,
                         callContext,
+#if SHARPLINK_775_STATIC_SLICE
+                        request.BoundMethod!.Descriptor,
+#else
                         serviceInfo.Stub,
                         request.MethodHash,
+#endif
                         invokeToken,
                         requestOwner);
                 }
@@ -224,8 +228,12 @@ internal sealed partial class SharpLinkServer
                             exception,
                             callContext,
                             session,
+#if SHARPLINK_775_STATIC_SLICE
+                            request.BoundMethod!.Descriptor,
+#else
                             serviceInfo.Stub,
                             request.MethodHash,
+#endif
                             requestId,
                             invokeToken),
                         connection.ConnectionToken);
@@ -281,8 +289,12 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap,
                     connection,
                     responseCallContext,
+#if SHARPLINK_775_STATIC_SLICE
+                    request.BoundMethod!.Descriptor,
+#else
                     serviceInfo.Stub,
                     request.MethodHash,
+#endif
                     invokeToken,
                     requestOwner);
             }
@@ -376,8 +388,12 @@ internal sealed partial class SharpLinkServer
                         exception,
                         responseCallContext,
                         session,
+#if SHARPLINK_775_STATIC_SLICE
+                        request.BoundMethod!.Descriptor,
+#else
                         serviceInfo.Stub,
                         request.MethodHash,
+#endif
                         requestId,
                         invokeToken),
                     connection.ConnectionToken);

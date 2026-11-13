@@ -33,9 +33,11 @@ internal static partial class Program
     {
         var group = args[0] == "group";
         var receipt = args[0] == "receipt";
-        var transport = group || receipt ? args[1] : args[0];
-        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(group || receipt ? 120 : 60));
-        if (receipt) await RunReceiptAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        var facts = args[0] == "facts";
+        var transport = group || receipt || facts ? args[1] : args[0];
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(group || receipt || facts ? 120 : 60));
+        if (facts) await RunFactsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        else if (receipt) await RunReceiptAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         else if (group) await RunGroupAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         else
         {
@@ -43,10 +45,10 @@ internal static partial class Program
             await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
             await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         }
-        var report = new { transport, kind = receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
+        var report = new { transport, kind = facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
             source = Environment.GetEnvironmentVariable("GITHUB_SHA"), runtime = Environment.Version.ToString() };
         Directory.CreateDirectory("artifacts/775-slice");
-        await File.WriteAllTextAsync($"artifacts/775-slice/{(receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
+        await File.WriteAllTextAsync($"artifacts/775-slice/{(facts ? "facts-" : receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
         Console.WriteLine("RESULT " + JsonSerializer.Serialize(report));
     }
 

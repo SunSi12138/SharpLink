@@ -2,6 +2,11 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+#if SHARPLINK_775_STATIC_SLICE
+    private static RpcMethodDescriptor RequireResolvedMethod(RpcMethodDescriptor? method)
+        => method ?? throw new InvalidOperationException("Resolved binding facts are required.");
+#endif
+
     private ValueTask InvokeServiceAsync(
         ServiceRegistration registration,
         ServerConnectionState connection,
@@ -58,6 +63,7 @@ internal sealed partial class SharpLinkServer
 #else
         RpcMethodDescriptor? methodDescriptor = null;
 #endif
+#if !SHARPLINK_775_STATIC_SLICE
         if (registration.HasModule)
         {
             var descriptor = GetMethodDescriptor(registration.Stub, methodId);
@@ -68,6 +74,7 @@ internal sealed partial class SharpLinkServer
                 RpcMethodKind.DuplexStreaming;
         }
 
+#endif
         SharpLinkDynamicModuleLease dynamicSingletonLease = default;
         try
         {
@@ -101,7 +108,11 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
+#if SHARPLINK_775_STATIC_SLICE
+                RequireResolvedMethod(methodDescriptor), requestId);
+#else
                 methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+#endif
             failedTelemetry.Complete(exception);
             return CompleteDynamicSingletonInvocationAsync(
                 ValueTask.FromException(exception),
@@ -123,7 +134,11 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
+#if SHARPLINK_775_STATIC_SLICE
+                RequireResolvedMethod(methodDescriptor), requestId);
+#else
                 methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+#endif
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -267,7 +282,11 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
+#if SHARPLINK_775_STATIC_SLICE
+                RequireResolvedMethod(methodDescriptor), requestId);
+#else
                 methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+#endif
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -301,7 +320,11 @@ internal sealed partial class SharpLinkServer
         RpcMethodDescriptor? methodDescriptor = null)
     {
         var telemetry = StartServerTelemetryCall(
-            methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+            #if SHARPLINK_775_STATIC_SLICE
+                RequireResolvedMethod(methodDescriptor), requestId);
+#else
+                methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+#endif
         try
         {
             var invocation = InvokeServiceCoreAsync(
@@ -314,7 +337,11 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context
+#if SHARPLINK_775_STATIC_SLICE
+                , RequireResolvedMethod(methodDescriptor)
+#endif
+                );
             if (!telemetry.IsEnabled)
                 return invocation;
             if (invocation.IsCompletedSuccessfully)
@@ -417,7 +444,11 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context
+#if SHARPLINK_775_STATIC_SLICE
+        , RpcMethodDescriptor resolvedMethod
+#endif
+        )
     {
         if (context.Authentication?.IsExpired() == true)
         {
@@ -430,9 +461,19 @@ internal sealed partial class SharpLinkServer
         {
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
+
+#if SHARPLINK_775_STATIC_SLICE
+                    service, generatedBridge, resolvedMethod, requestId, arguments, cancellationToken)
+#else
                     service, generatedBridge, methodId, requestId, arguments, cancellationToken)
+#endif
                 : stub.InvokeCancellableAsync(
+
+#if SHARPLINK_775_STATIC_SLICE
+                    service, generatedBridge, resolvedMethod, requestId, arguments, output, cancellationToken);
+#else
                     service, generatedBridge, methodId, requestId, arguments, output, cancellationToken);
+#endif
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
@@ -581,15 +622,23 @@ internal sealed partial class SharpLinkServer
         Exception exception,
         SharpLinkCallContextSnapshot callContext,
         RpcSession session,
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor resolvedMethod,
+#else
         IRpcStub stub,
         long methodId,
+#endif
         long requestId,
         CancellationToken cancellationToken)
     {
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
+#if SHARPLINK_775_STATIC_SLICE
+                resolvedMethod,
+#else
                 GetMethodDescriptor(stub, methodId),
+#endif
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
@@ -626,8 +675,12 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> callCancellations,
         RpcSession session,
         long requestId,
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor resolvedMethod,
+#else
         long contractId,
         long methodId,
+#endif
         Exception exception)
     {
         if (exception is OperationCanceledException &&
@@ -651,6 +704,10 @@ internal sealed partial class SharpLinkServer
 
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
+#if SHARPLINK_775_STATIC_SLICE
+        if (SharpLinkCallContext.Current is { } callContext)
+            return MapServiceException(exception, callContext, session, resolvedMethod, requestId, CancellationToken.None);
+#else
         if (SharpLinkCallContext.Current is { } callContext &&
             Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
         {
@@ -663,6 +720,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 CancellationToken.None);
         }
+#endif
         return exception as SharpLinkException ?? new SharpLinkException(
             SharpLinkErrorCode.Internal,
             "Internal stream error.",

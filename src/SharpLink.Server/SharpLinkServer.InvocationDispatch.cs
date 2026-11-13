@@ -404,8 +404,12 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor resolvedMethod,
+#else
         IRpcStub stub,
         long methodId,
+#endif
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -458,8 +462,12 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
+#if SHARPLINK_775_STATIC_SLICE
+                        resolvedMethod,
+#else
                         stub,
                         methodId,
+#endif
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -491,8 +499,12 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor resolvedMethod,
+#else
         IRpcStub stub,
         long methodId,
+#endif
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -564,8 +576,12 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
+#if SHARPLINK_775_STATIC_SLICE
+                        resolvedMethod,
+#else
                         stub,
                         methodId,
+#endif
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);

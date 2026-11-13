@@ -45,9 +45,39 @@ public partial class RpcGenerator
         sb.AppendLine($"    public long InterfaceHash => {model.Hash}L;");
         AppendStubCodecFieldsAndConstructor(sb, model, concreteCodecTypes);
         AppendSizeFieldsByType(sb, model.Methods);
+#if !SHARPLINK_775_STATIC_SLICE
         AppendCancellationSupport(sb, model.Methods);
+#endif
         AppendMethodDescriptors(sb, model);
         AppendStubResponseAwaitHelpers(sb, responseMethods);
+#if SHARPLINK_775_STATIC_SLICE
+        sb.AppendLine($$"""
+                            private static void __ValidateResponse<T>(T result, bool responseNullable)
+                            {
+                                if (!responseNullable && default(T) is null && result is null)
+                                    throw new SharpLinkException(SharpLinkErrorCode.Internal, "A non-nullable RPC response was null.");
+                            }
+                            private static async ValueTask __AwaitTaskIgnoreAsync<T>(Task<T> task)
+                            {
+                                _ = await task.ConfigureAwait(false);
+                            }
+                            private static async ValueTask __AwaitValueTaskIgnoreAsync<T>(ValueTask<T> task)
+                            {
+                                _ = await task.ConfigureAwait(false);
+                            }
+                            public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args)
+                                => InvokeNoReturnCoreAsync(service, bridge, method, requestId, args, CancellationToken.None);
+                            public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+                                => InvokeNoReturnCoreAsync(service, bridge, method, requestId, args, cancellationToken);
+                            private ValueTask InvokeNoReturnCoreAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+                            {
+                                if (method.ContractId != {{model.Hash}}L)
+                                    throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Resolved method belongs to another contract.");
+                                var methodHash = method.MethodId;
+                                var impl = ({{model.FullName}})service;
+                                var reader = new SequenceReader<byte>(args);
+                        """);
+#else
         sb.AppendLine($$"""
                             private static void __ValidateResponse<T>(T result, bool responseNullable)
                             {
@@ -77,6 +107,7 @@ public partial class RpcGenerator
                                 var reader = new SequenceReader<byte>(args);
                         """);
 
+#endif
         if (noReturnMethods.Length == 0)
         {
             sb.AppendLine("""
@@ -99,6 +130,21 @@ public partial class RpcGenerator
             sb.AppendLine("    }");
         }
 
+#if SHARPLINK_775_STATIC_SLICE
+        sb.AppendLine($$"""
+                            public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+                                => InvokeCoreAsync(service, bridge, method, requestId, args, output, CancellationToken.None);
+                            public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                                => InvokeCoreAsync(service, bridge, method, requestId, args, output, cancellationToken);
+                            private ValueTask InvokeCoreAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            {
+                                if (method.ContractId != {{model.Hash}}L)
+                                    throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Resolved method belongs to another contract.");
+                                var methodHash = method.MethodId;
+                                var impl = ({{model.FullName}})service;
+                                var reader = new SequenceReader<byte>(args);
+                        """);
+#else
         sb.AppendLine($$"""
                             public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
                                 => InvokeCoreAsync(service, bridge, methodHash, requestId, args, output, CancellationToken.None);
@@ -112,6 +158,7 @@ public partial class RpcGenerator
                                 var reader = new SequenceReader<byte>(args);
                         """);
 
+#endif
         if (responseMethods.Length == 0)
         {
             sb.AppendLine("""
@@ -259,7 +306,11 @@ public partial class RpcGenerator
 
     private static void AppendMethodDescriptors(StringBuilder sb, RpcInterfaceModel model)
     {
+#if SHARPLINK_775_STATIC_SLICE
+        sb.AppendLine("    public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)");
+#else
         sb.AppendLine("    public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)");
+#endif
         sb.AppendLine("    {");
         sb.AppendLine("        switch (methodHash)");
         sb.AppendLine("        {");
@@ -273,7 +324,11 @@ public partial class RpcGenerator
                 ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
                 : "null";
             sb.AppendLine($"            case {method.Hash}L:");
+#if SHARPLINK_775_STATIC_SLICE
+            sb.AppendLine($"                descriptor = {MethodFactsExpression(model.Hash, method)};");
+#else
             sb.AppendLine($"                descriptor = new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
+#endif
             sb.AppendLine("                return true;");
         }
         sb.AppendLine("            default:");
@@ -381,7 +436,11 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
+#if SHARPLINK_775_STATIC_SLICE
+                sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, method, cancellationToken);");
+#else
                 sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, {(method.ResponseNullable ? "true" : "false")}, {interfaceHash}L, {method.Hash}L, cancellationToken);");
+#endif
             }
             else if (method.IsVoid)
             {

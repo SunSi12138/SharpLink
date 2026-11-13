@@ -5,13 +5,12 @@ internal sealed record StaticBindingMethod
 {
     internal const ProtocolV2FrameFlags ShapeMask = ProtocolV2FrameFlags.OneWay | ProtocolV2FrameFlags.HasReturn;
     internal RpcMethodDescriptor Descriptor { get; }
-    internal bool SupportsCancellation { get; }
+    internal bool SupportsCancellation => Descriptor.SupportsCancellation;
     internal int RequiredRequestFlags { get; }
 
-    internal StaticBindingMethod(RpcMethodDescriptor descriptor, bool supportsCancellation)
+    internal StaticBindingMethod(RpcMethodDescriptor descriptor)
     {
         Descriptor = descriptor;
-        SupportsCancellation = supportsCancellation;
         RequiredRequestFlags = descriptor.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay) ||
             descriptor.HasClientStreams || descriptor.ClientStreamCount != 0 ? -1 :
             (int)((descriptor.Kind == RpcMethodKind.OneWay ? ProtocolV2FrameFlags.OneWay : 0) |
@@ -55,12 +54,12 @@ internal sealed class StaticBindingTable(StaticBindingBudget ownerBudget)
             var methods = new Dictionary<long, StaticBindingMethod>();
             foreach (var method in contract.Methods)
             {
-                if (!registration.Stub.TryGetMethodDescriptor(method.MethodId, out var descriptor) ||
-                    descriptor.ContractId != contractId || descriptor.MethodId != method.MethodId ||
-                    descriptor.Kind != method.Kind ||
-                    registration.Stub.SupportsCancellation(method.MethodId) != method.SupportsCancellation)
+                if (!registration.Stub.TryResolveMethod(method.MethodId, out var descriptor) ||
+                    !ResolvedMethodValidation.IsValid(descriptor, contractId, method.MethodId) ||
+                    descriptor != method.Facts || descriptor.Kind != method.Kind ||
+                    descriptor.SupportsCancellation != method.SupportsCancellation)
                     return Failure(StaticBindingFailure.UnsupportedShape, contractId);
-                if (!methods.TryAdd(method.MethodId, new StaticBindingMethod(descriptor, method.SupportsCancellation)))
+                if (!methods.TryAdd(method.MethodId, new StaticBindingMethod(descriptor)))
                     return Failure(StaticBindingFailure.UnsupportedShape, contractId);
             }
             var lease = ownerBudget.TryReserveBinding();

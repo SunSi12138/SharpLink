@@ -187,7 +187,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             return connection.GetCallContextSnapshot(deadline, metadata);
 
 #if SHARPLINK_775_STATIC_SLICE
-        var method = resolvedMethod ?? GetMethodDescriptor(stub, methodId);
+        var method = resolvedMethod ?? throw new InvalidOperationException("Resolved binding facts are required.");
 #else
         var method = GetMethodDescriptor(stub, methodId);
 #endif
@@ -237,6 +237,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             interceptors);
     }
 
+#if !SHARPLINK_775_STATIC_SLICE
     private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)
     {
         if (!stub.TryGetMethodDescriptor(methodId, out var method))
@@ -252,6 +253,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         }
         return method;
     }
+#endif
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
         => _callAdmission.TryAcquireCall(connection);

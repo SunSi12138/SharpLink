@@ -28,6 +28,15 @@ public readonly record struct RpcMethodDescriptor
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
     private const byte HasMethodTimeoutValueFlag = 1 << 5;
+#if SHARPLINK_775_STATIC_SLICE
+    private const byte SupportsCancellationFlag = 1 << 6;
+    /// <summary>Gets whether generated invocation consumes a token or owns a cancellable stream.</summary>
+    public bool SupportsCancellation
+    {
+        get => (_flags & SupportsCancellationFlag) != 0;
+        init => _flags = SetFlag(_flags, SupportsCancellationFlag, value);
+    }
+#endif
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>

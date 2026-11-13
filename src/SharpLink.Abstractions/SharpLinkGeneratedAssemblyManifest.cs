@@ -78,7 +78,15 @@ public sealed record SharpLinkGeneratedMethodDescriptor(
     bool SupportsCancellation,
     string RequestSchema,
     string ResponseSchema,
-    string Fingerprint);
+    string Fingerprint)
+#if SHARPLINK_775_STATIC_SLICE
+{
+    /// <summary>Gets the exact scalar facts emitted with this manifest's Stub and Proxy.</summary>
+    public RpcMethodDescriptor Facts { get; init; }
+}
+#else
+;
+#endif
 
 /// <summary>Describes the contract-owned generated artifacts in one assembly.</summary>
 public sealed record SharpLinkGeneratedContractDescriptor(
@@ -161,7 +169,7 @@ public static class SharpLinkGeneratedManifestVersions
 
     /// <summary>Exact discriminator for the 3.0/API5 generated UnsafeBlit factory ABI.</summary>
 #if SHARPLINK_775_STATIC_SLICE
-    public const string AbiIdentity = "sharplink-experimental-775-group-receipt-v3";
+    public const string AbiIdentity = "sharplink-experimental-775-method-facts-v4";
 #else
     public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
 #endif

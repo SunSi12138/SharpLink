@@ -357,8 +357,12 @@ internal sealed partial class SharpLinkServer
                     connection,
                     callContext,
                     session,
+#if SHARPLINK_775_STATIC_SLICE
+                    request.BoundMethod!.Descriptor,
+#else
                     serviceInfo.Stub,
                     request.MethodHash,
+#endif
                     descriptor.ClientStreamCount,
                     invokeToken,
                     requestOwner));
@@ -369,7 +373,12 @@ internal sealed partial class SharpLinkServer
                 if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     LogOnewayRpcDispatchFailed(_logger, MapServiceException(
+
+#if SHARPLINK_775_STATIC_SLICE
+                        ex, callContext, session, request.BoundMethod!.Descriptor, requestId, invokeToken));
+#else
                         ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
+#endif
                 }
                 ReleaseOneWayDispatchResources(
                     callState,

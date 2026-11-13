@@ -389,15 +389,23 @@ internal sealed class RpcSessionGeneratedServerBridge(RpcSession session) : IRpc
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
+#if SHARPLINK_775_STATIC_SLICE
+        RpcMethodDescriptor method,
+#else
         bool payloadNullable,
         long contractId,
         long methodId,
+#endif
         CancellationToken cancellationToken)
         => session.PumpGeneratedOutboundStreamAsync(
             requestId,
             streamId,
             stream,
             codec,
+#if SHARPLINK_775_STATIC_SLICE
+            method.ResponseNullable,
+#else
             payloadNullable,
+#endif
             cancellationToken);
 }

@@ -237,6 +237,11 @@ internal sealed partial class SharpLinkServer
 
     private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
     {
+#if SHARPLINK_775_STATIC_SLICE
+        // A raw BindingId is not a ContractId. Streaming remains fail closed in this stage;
+        // unknown raw requests must not probe a latest registration or an unprotected Stub.
+        return UnresolvedClientStreamCount;
+#else
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long contractId) ||
             !reader.TryReadLittleEndian(out long methodId) ||
@@ -247,6 +252,7 @@ internal sealed partial class SharpLinkServer
         }
 
         return descriptor.ClientStreamCount;
+#endif
     }
 
     private static void CompleteFailedRequestStreams(

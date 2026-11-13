@@ -3,7 +3,7 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator
 {
 #if SHARPLINK_775_STATIC_SLICE
-    private const string GeneratedAbiIdentity = "sharplink-experimental-775-group-receipt-v3";
+    private const string GeneratedAbiIdentity = "sharplink-experimental-775-method-facts-v4";
 #else
     private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
 #endif
@@ -210,7 +210,11 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
+#if SHARPLINK_775_STATIC_SLICE
+                sb.AppendLine($"                    \"{method.Fingerprint}\") {{ Facts = {MethodFactsExpression(contract.Hash, method)} }},");
+#else
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");
+#endif
             }
             sb.AppendLine("            }),");
             sb.AppendLine($"            static (channel, codecs) => __CreateProxy_{GetContractArtifactIdentity(contract)}(channel, codecs),");
