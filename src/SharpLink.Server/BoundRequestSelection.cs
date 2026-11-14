@@ -52,11 +52,9 @@ internal sealed partial class SharpLinkServer
             if (failure == StaticBindingFailure.None && (flags & ProtocolV2FrameFlags.OneWay) != 0 &&
                 selection.Method.Descriptor.ClientStreamCount != oneWayInputCount)
                 throw StaticBindingWire.Malformed("OneWay wire input count conflicts with bound facts.");
-            if (failure != StaticBindingFailure.None || IsDeadlineExceeded(request.RpcDeadline))
+            var deadlineExpired = IsDeadlineExceeded(request.RpcDeadline);
+            if (failure != StaticBindingFailure.None || deadlineExpired)
             {
-                var rejection = IsDeadlineExceeded(request.RpcDeadline)
-                    ? new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Request deadline expired.")
-                    : StaticBindingWire.Error(failure);
                 // No admission or business work can use this publication now. A stalled error
                 // send owns itself; it must not pin an otherwise retired admission generation
                 // or the rejected raw request while it waits for transport capacity.
@@ -68,7 +66,9 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(connection.Session, requestId, oneWayInputCount);
                 else
                     await connection.Session.SendRpcErrorWithBackpressureAsync(requestId,
-                        rejection, connection.ConnectionToken).ConfigureAwait(false);
+                        deadlineExpired
+                            ? new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Request deadline expired.")
+                            : StaticBindingWire.Error(failure), connection.ConnectionToken).ConfigureAwait(false);
                 return;
             }
             request = request with { BoundMethod = selection.Method, BoundCall = selection.Invocation };

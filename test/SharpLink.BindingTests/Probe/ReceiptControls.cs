@@ -32,9 +32,9 @@ internal static partial class Program
     {
         f.ControlService.ReplaceGroup = async () =>
         {
-            var replaced = await f.Server.ReplaceAssemblyAsync(old.Assembly, next.Assembly, TimeSpan.FromSeconds(5), token);
-            if (!replaced.Succeeded) throw new InvalidOperationException("Control replacement failed.");
-            return JsonSerializer.Serialize(new ReceiptMessage(f.Server.GetRegistrationReceipt(next.Assembly, f.Contract().ContractId)));
+            var replaced = await f.Server.ReplaceAssemblyWithReceiptsAsync(old.Assembly, next.Assembly, TimeSpan.FromSeconds(5), token);
+            if (!replaced.Replacement.Succeeded) throw new InvalidOperationException("Control replacement failed.");
+            return JsonSerializer.Serialize(new ReceiptMessage(replaced.Receipts.Single(receipt => receipt.ContractId == f.Contract().ContractId)));
         };
         try { return JsonSerializer.Deserialize<ReceiptMessage>(await control.Service.ReplaceGroupAsync())!.Receipt; }
         finally { f.ControlService.ReplaceGroup = null; }

@@ -7,7 +7,18 @@ internal sealed partial class SharpLinkServer
     private const int MaximumDynamicModules = 4_096;
 
     public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+        => RegisterAssemblyCore(assembly, captureReceipts: false, out _);
+
+    public SharpLinkServerAssemblyRegistrationResult RegisterAssemblyWithReceipts(Assembly assembly)
     {
+        var registration = RegisterAssemblyCore(assembly, captureReceipts: true, out var receipts);
+        return new(registration, receipts);
+    }
+
+    private SharpLinkAssemblyRegistrationResult RegisterAssemblyCore(Assembly assembly, bool captureReceipts,
+        out IReadOnlyList<RpcRegistrationReceipt> receipts)
+    {
+        receipts = Array.Empty<RpcRegistrationReceipt>();
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
         if (!loaded.Succeeded)
             return loaded;
@@ -100,6 +111,9 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
+                        var publicationReceipts = captureReceipts
+                            ? CapturePublicationReceipts(candidate.Services, module, currentModules, _registryGeneration + 1)
+                            : Array.Empty<RpcRegistrationReceipt>();
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         module.BindingPublicationGeneration = _registryGeneration + 1;
@@ -108,6 +122,7 @@ internal sealed partial class SharpLinkServer
                         _registryGeneration++;
                         ScheduleContractManifestPublish();
                         published = true;
+                        receipts = publicationReceipts;
                         return SharpLinkAssemblyRegistrationResult.Success();
                     }
                 }
@@ -154,7 +169,27 @@ internal sealed partial class SharpLinkServer
         Assembly newAssembly,
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default)
+        => ReplaceAssemblyCore(oldAssembly, newAssembly, gracefulTimeout, cancellationToken,
+            captureReceipts: false, out _);
+
+    public ValueTask<SharpLinkServerAssemblyReplacementResult> ReplaceAssemblyWithReceiptsAsync(
+        Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout,
+        CancellationToken cancellationToken = default)
     {
+        var replacement = ReplaceAssemblyCore(oldAssembly, newAssembly, gracefulTimeout, cancellationToken,
+            captureReceipts: true, out var receipts);
+        return AwaitReplacementReceiptsAsync(replacement, receipts);
+    }
+
+    private static async ValueTask<SharpLinkServerAssemblyReplacementResult> AwaitReplacementReceiptsAsync(
+        ValueTask<SharpLinkAssemblyReplacementResult> replacement, IReadOnlyList<RpcRegistrationReceipt> receipts)
+        => new(await replacement.ConfigureAwait(false), receipts);
+
+    private ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyCore(
+        Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout, CancellationToken cancellationToken,
+        bool captureReceipts, out IReadOnlyList<RpcRegistrationReceipt> receipts)
+    {
+        receipts = Array.Empty<RpcRegistrationReceipt>();
         ArgumentNullException.ThrowIfNull(oldAssembly);
         ArgumentNullException.ThrowIfNull(newAssembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
@@ -287,6 +322,9 @@ internal sealed partial class SharpLinkServer
 
                         if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
                             throw new InvalidOperationException("Server stopped before binding replacement commit.");
+                        var publicationReceipts = captureReceipts
+                            ? CapturePublicationReceipts(candidate.Services, newModule, currentModules, _registryGeneration + 1)
+                            : Array.Empty<RpcRegistrationReceipt>();
                         bindingRetirement = PrepareBindingRetirement(oldModule);
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -301,6 +339,7 @@ internal sealed partial class SharpLinkServer
                         Volatile.Write(ref _services, candidate.Services);
                         _registryGeneration++;
                         published = true;
+                        receipts = publicationReceipts;
                         break;
                     }
                 }

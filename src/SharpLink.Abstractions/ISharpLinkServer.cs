@@ -4,8 +4,37 @@ namespace SharpLink.Abstractions;
 public interface ISharpLinkServer : ISharpLinkAssemblyRegistry, IAsyncDisposable
 {
     /// <summary>Captures a scalar receipt only if the exact assembly still owns the current registration.</summary>
-    /// <remarks>For a dynamic service, pass its service module assembly, not a separately registered contract assembly.</remarks>
+    /// <remarks>For a dynamic service, pass its service module assembly, not a separately registered contract assembly.
+    /// This is a current-state snapshot; use the receipt-bearing registration/replacement APIs to identify a particular operation.</remarks>
     RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly registeredAssembly, long contractId);
+    /// <summary>Registers an assembly and captures its service receipts in the same registry publication.</summary>
+    /// <param name="assembly">The assembly containing a generated SharpLink manifest.</param>
+    /// <returns>The structured outcome and immutable receipts for exactly this operation, not a later registry lookup.</returns>
+    /// <exception cref="NotSupportedException">This server does not support publication receipts.</exception>
+    SharpLinkServerAssemblyRegistrationResult RegisterAssemblyWithReceipts(System.Reflection.Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        throw new NotSupportedException("This ISharpLinkServer implementation does not support publication receipts.");
+    }
+
+    /// <summary>Replaces an assembly and captures the new service receipts in the same publication before waiting for old work to drain.</summary>
+    /// <param name="oldAssembly">The exact running assembly to replace.</param>
+    /// <param name="newAssembly">The generated assembly publishing the replacement services.</param>
+    /// <param name="gracefulTimeout">The existing old-registration drain budget.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait, not publication or cleanup; cancellation returns no result.</param>
+    /// <returns>The original publication/drain outcome paired with the new publication's immutable receipts.</returns>
+    /// <exception cref="NotSupportedException">This server does not support publication receipts.</exception>
+    ValueTask<SharpLinkServerAssemblyReplacementResult> ReplaceAssemblyWithReceiptsAsync(
+        System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly,
+        TimeSpan gracefulTimeout, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(oldAssembly);
+        ArgumentNullException.ThrowIfNull(newAssembly);
+        ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+        return ValueTask.FromException<SharpLinkServerAssemblyReplacementResult>(
+            new NotSupportedException("This ISharpLinkServer implementation does not support publication receipts."));
+    }
+
     /// <summary>Gets the lifecycle state of the local server runtime.</summary>
     SharpLinkServerLifecycleState LifecycleState { get; }
 

@@ -51,6 +51,28 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
             "invalid custom-server flush input must remain a parameter exception");
     }
 
+    [Test]
+    public async Task CustomServerReceiptApisMustRejectWithoutInvokingLegacyRegistry()
+    {
+        var custom = new CustomServer();
+        ISharpLinkServer server = custom;
+        var assembly = typeof(RuntimeConfigurationUnsupportedImplementationTests).Assembly;
+        Ensure(CaptureException(() => server.RegisterAssemblyWithReceipts(assembly)) is NotSupportedException,
+            "unsupported receipt registration must not call the legacy register entry");
+        Ensure(CaptureException(() => server.RegisterAssemblyWithReceipts(null!)) is ArgumentNullException,
+            "invalid receipt registration input wins before unsupported implementation");
+        try
+        {
+            await server.ReplaceAssemblyWithReceiptsAsync(assembly, assembly, TimeSpan.Zero);
+            throw new Exception("expected unsupported receipt replacement");
+        }
+        catch (NotSupportedException) { }
+        Ensure(CaptureException(() => server.ReplaceAssemblyWithReceiptsAsync(assembly, assembly,
+                TimeSpan.FromTicks(-1))) is ArgumentOutOfRangeException,
+            "invalid receipt replacement budget wins before unsupported implementation");
+        Ensure(custom.RegistryCalls == 0, "unsupported receipt APIs must never fall back to old registry mutations");
+    }
+
     private static Exception CaptureException(Action action)
     {
         try
@@ -114,6 +136,8 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
 
     private sealed class CustomServer : ISharpLinkServer
     {
+        internal int RegistryCalls { get; private set; }
+
         public RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly assembly, long contractId)
             => throw new NotSupportedException();
 
@@ -133,7 +157,10 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
             => ValueTask.CompletedTask;
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
-            => throw new NotSupportedException();
+        {
+            RegistryCalls++;
+            throw new NotSupportedException();
+        }
 
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,
@@ -146,7 +173,10 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
             Assembly newAssembly,
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SharpLinkAssemblyReplacementResult>(new NotSupportedException());
+        {
+            RegistryCalls++;
+            return ValueTask.FromException<SharpLinkAssemblyReplacementResult>(new NotSupportedException());
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

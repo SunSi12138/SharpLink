@@ -9,6 +9,38 @@
 不会序列化业务参数或启动输入 producer。连接 Ready 不代表契约已绑定；重连或替换后必须
 在新物理 Session 上重新绑定，不能搬用旧 binding token。
 
+## 用注册结果准备精确服务
+
+控制侧需要把一次动态注册的确切结果交给数据侧时，使用 Server 的
+`RegisterAssemblyWithReceipts` 或 `ReplaceAssemblyWithReceiptsAsync`。返回值分别包含原有
+`Registration` / `Replacement` 结果，以及同一次发布捕获的只读 `Receipts`；按 ContractId
+选择对应服务。只有契约、没有 Service 的发布和失败结果均返回空集合。
+
+```csharp
+var publication = server.RegisterAssemblyWithReceipts(serviceAssembly);
+if (!publication.Registration.Succeeded)
+    throw new InvalidOperationException(publication.Registration.Error!.Message);
+var receipt = publication.Receipts.Single(item => item.ContractId == contractId);
+
+var rpc = client.CreateProxy<IMyService>(new RpcProxyOptions
+{
+    Receipt = receipt,
+    Requirement = RpcRegistrationRequirement.ExactRegistration
+});
+await rpc.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+await rpc.Service.GetAsync(id, cancellationToken);
+```
+
+receipt 使用 Contract 所有者的 hash 和 Service 的注册 ID/发布代次；分离程序集时不能把 Service
+程序集 hash 当成契约 hash。替换等待旧工作退出期间即使又发布了下一代，结果仍返回本次新代的
+receipt，不重新查 latest。原来的 `RegisterAssembly` / `ReplaceAssemblyAsync` 及共享结果类型
+不变。`GetRegistrationReceipt` 只读取精确程序集当前拥有的注册，不能代替某次操作的原始结果。
+
+`Compatible` 检查契约/hash，显式 receipt 还限定同一 Server/epoch；`MinimumVersion` 加上该服务
+自身的最低发布代次；`ExactRegistration` 再限定原注册 ID。receipt 不预留容量或授权；旧代退休后，
+旧 Exact receipt 不能降级到新代。替换等待取消不会回滚已发布的新代，也不返回结果；物理清理仍由
+Server 完成。`Replacement.ReferencesReleased` 说明旧代回收状态，不是新代可调用或 Bind 完成的证明。
+
 ## 超时、RpcDeadline 与 TimeBudget
 
 Client 不再隐式选择请求超时 fallback。每个 `SharpClientBuilder` 必须在 Build 前显式三选一：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 Client-wide fallback；保持未指定状态会使 Build 失败。这个 Client-wide fallback 只自动应用于普通 Unary 调用；OneWay、ClientStreaming、ServerStreaming 和 Duplex 不自动继承它。流式/OneWay 调用若要携带本地 `TimeBudget`，应使用方法 `[Timeout]`，或继承已有父调用 lifetime。方法 `[Timeout]` 是方法级策略，会覆盖 Client fallback；例如 Client custom fallback 为 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。无参数 `[Timeout]` 继续表示使用 Client fallback，因此 Client 选择 `DisableRequestTimeout()` 时不能凭空产生一个 fallback。

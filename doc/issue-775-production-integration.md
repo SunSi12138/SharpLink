@@ -532,3 +532,61 @@ Selected production compatibility boundary:
   ABI-family suffixes are initialv1, not continuation of the old family's suffix. All16 source
   version declarations verify; this is implementer calibration pending final #805 review.
 - Actual candidate package build/runtime/Trim/NativeAOT remain to be run after this migration.
+
+### Receipt publication completion — frozen before new runtime controls
+
+The promoted current-state GetRegistrationReceipt is not an atomic Register/Replace result.
+Complete that remaining #775 contract with server-only RegisterAssemblyWithReceipts and
+ReplaceAssemblyWithReceiptsAsync. Existing ISharpLinkAssemblyRegistry entries/results keep
+exactly their original contracts; client registration results gain no receipt fields. Two sealed
+server result wrappers pair the original outcome with a read-only, ContractId-ordered scalar
+receipt list. Contract-only success and every rejected publication return an empty list. Capture
+all receipt storage/Contract hashes under the existing registry gate before irreversible codec
+publication or old-group cut; commit that prepared snapshot with the new module. Later drain,
+replacement, unregister or a same-Assembly re-registration cannot rewrite the captured result.
+The current-state getter remains a separate cold snapshot for static or already-running services,
+with explicit snapshot-vs-operation documentation; neither API grants authorization or a lease.
+
+Freeze these four new controls before running them: atomic separated-owner registration and
+immutable/failed/contract-only outcomes; R1 physical hold with R2 then R3 publication while the
+R1 drain is pending, returning R2 not latest; retained result plus actual collectible unload after
+ReferencesReleased; unsupported custom-server default methods must not call its old registry.
+Use existing2s/5s physical phase budgets and the original30-cycle GC budget. Stop on the first
+new runtime failure, preserve it, and correct the cause without extending budgets or dropping
+assertions. Existing513-per-transport controls and paused #387 remain unchanged. API/ABI
+inventory/package/platform acceptance must include this actual public delta before final signoff.
+
+- The four newly frozen publication controls pass: three ordinary real-RPC/ALC Integration
+  cases plus the custom-server default-method case (which explicitly observes zero legacy
+  registry calls). R1 stays physically held across R2 then R3 publication; the delayed R1 drain
+  returns R2's original receipt, retired Exact R2 fails instead of binding R3, and Exact R3
+  succeeds. A retained publication result survives while its Contract/Service/runtime/ALC owners
+  collect within the unchanged30-cycle budget. Contract-only/duplicate outcomes and read-only
+  mutation rejection pass with zero Bind activation. Backpressured rejection remains4/4 after
+  avoiding construction of a two-way error object on the no-response OneWay branch.
+- The real independent control/data stale-Manifest receipt control now serializes the atomic
+  ReplaceAssemblyWithReceiptsAsync result, not a post-operation GetRegistrationReceipt query.
+  Its49 names/assertions/budgets remain unchanged; complete513-per-transport revalidation follows.
+
+### First ordinary package/native evidence (source c2bae225, before receipt-result delta)
+
+- Complete Release solution builds0 warnings/errors in16.62s and all nine nupkg/snupkg pairs
+  pack successfully. A newly isolated package cache builds/runs PackageSmoke: real TCP and
+  SharedMemory GenerationControl query/duplex/epoch-reset/cancellation, all existing transport/
+  Codec/resolver/inheritance/SPIs, DTO round trip, runtime multi-cluster/static/dynamic topology,
+  and referenced-assembly process rooting pass. No ProjectReference to production assemblies
+  substitutes for its consumed candidate packages.
+- The existing packaged runner passes isolated Windows full Trim, partial Trim and NativeAOT
+  consumers, each with fresh package/HTTP/MSBuild caches, warnings-as-errors, no ProjectReference,
+  candidate closure identity, generated standalone round trip and missing-ABI rejection controls.
+  Evidence: artifacts/775-integration/packaged-trim-c2bae225/win-x64-mk4a4q0d/evidence.json.
+  These are serialization/metadata consumers, not AOT RPC or dynamic registration evidence.
+- Actual Windows NativeAOT SharpLink.AotSmoke also publishes and runs: referenced service,
+  static readiness and real TCP/dynamic+multi-cluster topologies pass. Its isolated publish,
+  native executable and logs are under artifacts/775-integration/aot-c2bae225. SharedMemory
+  process, sidecar/precredit and hosted Linux/macOS remain pending.
+- Package public/protected API extraction succeeds but the gate correctly rejects the unreviewed
+  channel/facts/protocol/public receipt delta against the old3.0 baseline. Nine inventories,
+  unchanged20-name SDK forwarding inventory and exact diff are retained in
+  artifacts/775-integration/public-api-c2bae225; no baseline was blindly overwritten. The new
+  receipt-result public declarations also require inclusion in final source/package review.
