@@ -90,3 +90,16 @@ through retirement, service disposal and ALC. Authentication uses the existing p
 policy cut (not a new authentication implementation). Client-local dynamic streaming and
 OneWay input grammar remain unimplemented. The changed-hash/ABA/receipt controls from prior
 stages remain mandatory regressions, not newly claimed stream-generation coverage.
+
+### First hosted counterexample and correction
+
+Subject08c362b02277d34cc3a6e8218d9c399c05b202d0 / run43549531784:
+Windows passes all five inventories on both transports. Linux passes prior99/67/receipt49/
+revisedfacts49 on both transports and reaches the outbound-generation stream case, then
+fails: `Successful stream progress preceded RequestAccepted`. The stack is a consumer's
+`SlowMoveNextAsync -> TryAcquireLocalAbortDelivery -> TryAcceptStreamData`, not receipt of
+an actual StreamData frame. This shared delivery gate also arbitrates a legitimate local
+wait before the first Ack. Requiring acceptance there was too early. Move only the protocol
+check to the actual receive-loop StreamData boundary; keep pending terminal/deadline gating
+for local consumer progress. No inventory, watchdog, GC budget or assertion is weakened.
+Original ZIPs and both raw logs retained in streams-20261114 before the corrected run.

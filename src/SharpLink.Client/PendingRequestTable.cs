@@ -403,9 +403,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool TryAcceptStreamData(long id)
     {
-#if SHARPLINK_775_STATIC_SLICE
-        RequireStreamAcceptance(id);
-#endif
         var slots = Volatile.Read(ref _slots);
         if (slots is null)
             return false;

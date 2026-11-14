@@ -622,6 +622,11 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case ProtocolV2FrameType.StreamData:
                                 var streamRequestId = unchecked((long)header.RequestId);
+#if SHARPLINK_775_STATIC_SLICE
+                                // This gate also serves a consumer waiting for its first item;
+                                // only an actual inbound progress frame requires prior acceptance.
+                                connection.PendingCalls.RequireStreamAcceptance(streamRequestId);
+#endif
                                 if (connection.PendingCalls.TryAcceptStreamData(streamRequestId))
                                 {
                                     var dispatchTask = DispatchStreamChunkAsync(session, streamRequestId, payload);
