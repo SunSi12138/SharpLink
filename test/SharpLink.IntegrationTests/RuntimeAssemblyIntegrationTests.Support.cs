@@ -160,13 +160,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         private readonly Lock _gate = new();
         private readonly HashSet<Assembly> _registeredAssemblies = new(ReferenceEqualityComparer.Instance);
         private readonly SharpLinkAssemblyRegistrationResult _registrationResult;
+        private readonly ISharpLinkClient _factoryOwner;
         private int _unregisterCalls;
         private int _rejectNextUnregister;
         private int _blockNextUnregisterRejection;
         private int _publishReplacementThenFailCleanup;
 
-        internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
+        internal ControlledDynamicAssemblyClient(ISharpLinkClient factoryOwner,
+            SharpLinkAssemblyRegistrationResult registrationResult)
         {
+            _factoryOwner = factoryOwner;
             _registrationResult = registrationResult;
         }
 
@@ -217,7 +220,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
         }
 
-        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+        public async ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
             Assembly oldAssembly,
             Assembly newAssembly,
             TimeSpan gracefulTimeout,
@@ -227,13 +230,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             _ = cancellationToken;
             if (Interlocked.Exchange(ref _publishReplacementThenFailCleanup, 0) == 0)
                 throw new NotSupportedException();
+            var published = await _factoryOwner.ReplaceAssemblyAsync(
+                oldAssembly, newAssembly, gracefulTimeout, cancellationToken);
+            Ensure(published.Succeeded, "the controlled child must publish its real local receiver generation");
             lock (_gate)
             {
                 _registeredAssemblies.Remove(oldAssembly);
                 _registeredAssemblies.Add(newAssembly);
             }
-            return ValueTask.FromException<SharpLinkAssemblyReplacementResult>(
-                new InvalidOperationException("controlled replacement cleanup failure"));
+            throw new InvalidOperationException("controlled replacement cleanup failure");
         }
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
@@ -244,12 +249,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
         public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
-            => throw new NotSupportedException();
-        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
-        public RpcLocalContract GetLocalContract<T>() where T : IService => throw new NotSupportedException();
-        public RpcLocalContract GetLocalContract(Assembly assembly, long contractId) => throw new NotSupportedException();
+            => _factoryOwner.CreateProxy<TContract>(options);
+        public IRpcRuntimeContext RuntimeContext => _factoryOwner.RuntimeContext;
+        public RpcLocalContract GetLocalContract<T>() where T : IService => _factoryOwner.GetLocalContract<T>();
+        public RpcLocalContract GetLocalContract(Assembly assembly, long contractId)
+            => _factoryOwner.GetLocalContract(assembly, contractId);
         public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
-            => throw new NotSupportedException();
+            => _factoryOwner.CreateContractChannel(local, options);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

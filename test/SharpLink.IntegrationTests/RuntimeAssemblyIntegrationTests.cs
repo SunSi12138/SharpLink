@@ -196,7 +196,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .Build();
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "runtime-remove setup registration");
-        object? proxy = await CreatePreparedMultiClusterServiceAsync(client, plugin.ContractType);
+        object? proxy = CreateLocalMultiClusterService(client, plugin.ContractType);
         Ensure(proxy is not null, "runtime-remove setup proxy");
 
         var removal = await client.RemoveClusterAsync("plugins", TimeSpan.FromSeconds(2));

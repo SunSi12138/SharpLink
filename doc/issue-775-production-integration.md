@@ -433,3 +433,11 @@ Selected production compatibility boundary:
   and requires structured Unavailable/NoBoundRoute or Retired for new work. The original20ms
   drain timeout, one surviving physical call and eventual service disposal proof are unchanged;
   that focused control passes. Already-admitted call cancellation diagnostics remain separate.
+
+- Multi-cluster dynamic controls pass10/10. Two disconnected registration/removal tests now
+  construct local services without unnecessary Prepare against dummy ports, retaining Created
+  state and collectible removal. Controlled child fixtures delegate the new opaque factory,
+  channel and RuntimeContext API to their real externally owned registration source; published
+  replacement performs that source's real local generation change before injecting cleanup
+  failure. No fabricated handle, default identity or unsupported factory bypass is used. Actual
+  multi-cluster RPCs still prepare the exact returned handle before invoking it.

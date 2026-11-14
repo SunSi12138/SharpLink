@@ -22,8 +22,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var first = client.RegisterAssembly("plugins", plugin.ContractAssembly);
         Ensure(first.Succeeded, $"multi-cluster plugin registration: {first.Error}");
 
-        var proxy = await CreatePreparedMultiClusterServiceAsync(client, plugin.ContractType);
-        Ensure(proxy is not null, "multi-cluster Get should create the dynamically routed proxy");
+        var proxy = CreateLocalMultiClusterService(client, plugin.ContractType);
+        Ensure(proxy is not null && client.State == SharpLinkMultiClusterState.Created,
+            "multi-cluster factory must construct the explicitly routed local proxy without connecting");
 
         var second = client.RegisterAssembly("other", plugin.ContractAssembly);
         Ensure(!second.Succeeded, "contract-owning assembly must not register in a second cluster");
@@ -156,7 +157,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
         Ensure(registrationResult.Succeeded, "controlled child registration result");
 
-        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var child = new ControlledDynamicAssemblyClient(registrationSource, registrationResult);
         var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
         await using var client = new SharpLinkMultiClusterClient(
             new SharpLinkMultiClusterOptions(),
@@ -190,7 +191,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
         Ensure(registrationResult.Succeeded, "controlled child registration result");
 
-        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var child = new ControlledDynamicAssemblyClient(registrationSource, registrationResult);
         var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
         await using var client = new SharpLinkMultiClusterClient(
             new SharpLinkMultiClusterOptions(),
@@ -230,8 +231,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var registrationResult = registrationSource.RegisterAssembly(originalPlugin.ContractAssembly);
         Ensure(registrationResult.Succeeded, "controlled child registration result");
 
-        var originalChild = new ControlledDynamicAssemblyClient(registrationResult);
-        var reloadedChild = new ControlledDynamicAssemblyClient(registrationResult);
+        var originalChild = new ControlledDynamicAssemblyClient(registrationSource, registrationResult);
+        var reloadedChild = new ControlledDynamicAssemblyClient(registrationSource, registrationResult);
         var originalSlot = new SharpLinkClusterSlot("original", originalChild, AllowDynamicContracts: true);
         var reloadedSlot = new SharpLinkClusterSlot("reloaded", reloadedChild, AllowDynamicContracts: true);
         await using var client = new SharpLinkMultiClusterClient(
@@ -281,7 +282,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var registrationResult = registrationSource.RegisterAssembly(oldPlugin.ContractAssembly);
         Ensure(registrationResult.Succeeded, "controlled child registration result");
 
-        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var child = new ControlledDynamicAssemblyClient(registrationSource, registrationResult);
         var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
         await using var client = new SharpLinkMultiClusterClient(
             new SharpLinkMultiClusterOptions(),
