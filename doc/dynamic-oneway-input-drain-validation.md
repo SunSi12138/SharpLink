@@ -63,3 +63,27 @@ The subsequent temporary run performs only that allocation line plus the previou
 suite on Linux and Windows.512 is the actual discovered495 existing +12 RPC +5 component UID inventory.
 The normal Unit census remains2212, so its fixed-old regression counts must not be edited.
 
+## Final evidence and cost
+
+- [Public baseline](https://github.com/SunSi12138/SharpLink/actions/runs/43611786361), test-only9ab3aea8 / production0acc813a:
+  precisely Singleton/Call OneWay fail at DYNAMIC_ONEWAY_PHYSICAL_EXIT_V1; four controls pass.
+  The actual console/HTML artifact14120800965 was read back offline. The wrapper remains failed for its missing JUnit exporter.
+- [Refined functional subject56bc05b5](https://github.com/SunSi12138/SharpLink/actions/runs/43613725539):
+  Windows/Linux × TCP/SharedMemory, each12 RPC/active-runtime ALC +5 physical-disposal/credit/capture components pass.
+  The four downloaded ZIPs independently contain exactly48 source-bound JSON cases and12 actual HTML reports.
+  TCP job failures are the subsequent allocation driver's namespace error, not a functional pass relabelled as a green workflow.
+- [Completion subjectec6b8aad](https://github.com/SunSi12138/SharpLink/actions/runs/43614143833):
+  all four jobs pass. Ordinary Integration is512/512 on Linux and Windows, zero failures/skips.
+  Product source is identical to56bc05b5; only the collector/tool and test formatting changed.
+- Allocation-only matched driver reports Linux +8.000 and Windows +7.811 B/mailbox relative to0acc813a,
+  within the predeclared0–16 B state budget. The noninteger Windows delta includes common warmed reflection-driver work;
+  do not interpret it as a fractional CLR field size. Both arms use runtime10.0.15,32768 constructions after4096 warmups.
+  Single-input capture itself allocates0 bytes over65536 warmed captures. Multiple inputs use a bounded array.
+  These results quantify the retained Task/flag state, not RPC throughput, tail latency or full#775 performance acceptance.
+- No production public surface, generated API5 identity, wire2.4 grammar, OneWay ACK contract, optional Stub metadata fallback,
+  descriptor representation or request/CTS owner is replaced. Existing static/non-input completion bodies remain intact.
+
+The temporary workflow and validation branches are removed after consuming terminal runs; historical runs/artifacts remain.
+Local downloaded ZIPs, offline exact-inventory readbacks, raw logs and discovery live under
+artifacts/dynamic-oneway-drain/ in the owning worktree. No new raw log upload/release is part of this PR.
+
