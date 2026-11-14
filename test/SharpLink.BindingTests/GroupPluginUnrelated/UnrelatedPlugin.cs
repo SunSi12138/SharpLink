@@ -1,6 +1,7 @@
 using SharpLink.Abstractions;
 using SharpLink.Sdk;
 namespace SharpLink.GroupPlugin;
+
 public static class Signals { public static int Tag; public static Action<string>? Observe; }
 [RpcContract]
 public interface IUnrelatedRpc : IService { [NonCancellable] ValueTask<int> GetAsync(); }

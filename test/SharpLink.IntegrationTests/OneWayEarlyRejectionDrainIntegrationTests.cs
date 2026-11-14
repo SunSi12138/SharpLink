@@ -110,7 +110,8 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             .Single(static item => item.ContractType == typeof(IOneWayInboundDrainService));
         Ensure(contract.Methods.All(static item => item.MethodId != long.MaxValue), "negative MethodId must really be absent");
         return contract.Methods.Single(static item => item.Name == nameof(IOneWayInboundDrainService.IgnoreStreamAfterGateAsync))
-            .Facts with { MethodId = long.MaxValue };
+            .Facts with
+        { MethodId = long.MaxValue };
     }
 
     private readonly struct InputWriter(IAsyncEnumerable<byte[]> items, IRpcCodec<byte[]> codec) : IRpcClientStreamWriter

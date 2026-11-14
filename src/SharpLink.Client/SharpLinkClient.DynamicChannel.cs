@@ -1,4 +1,5 @@
 namespace SharpLink.Client;
+
 using CombinedCancellation = SharpLink.Client.SharpLinkClientModuleCancellation;
 internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, StaticBindingCallSite site, SharpLinkDynamicModule module) : IRpcContractChannel
 {

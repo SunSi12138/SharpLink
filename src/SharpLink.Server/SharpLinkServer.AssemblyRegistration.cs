@@ -6,14 +6,6 @@ internal sealed partial class SharpLinkServer
 {
     private const int MaximumDynamicModules = 4_096;
 
-    public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
-        => RegisterAssemblyCore(assembly, captureReceipts: false, out _);
-
-    public SharpLinkServerAssemblyRegistrationResult RegisterAssemblyWithReceipts(Assembly assembly)
-    {
-        var registration = RegisterAssemblyCore(assembly, captureReceipts: true, out var receipts);
-        return new(registration, receipts);
-    }
 
     private SharpLinkAssemblyRegistrationResult RegisterAssemblyCore(Assembly assembly, bool captureReceipts,
         out IReadOnlyList<RpcRegistrationReceipt> receipts)
@@ -164,26 +156,6 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
-        Assembly oldAssembly,
-        Assembly newAssembly,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken = default)
-        => ReplaceAssemblyCore(oldAssembly, newAssembly, gracefulTimeout, cancellationToken,
-            captureReceipts: false, out _);
-
-    public ValueTask<SharpLinkServerAssemblyReplacementResult> ReplaceAssemblyWithReceiptsAsync(
-        Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken = default)
-    {
-        var replacement = ReplaceAssemblyCore(oldAssembly, newAssembly, gracefulTimeout, cancellationToken,
-            captureReceipts: true, out var receipts);
-        return AwaitReplacementReceiptsAsync(replacement, receipts);
-    }
-
-    private static async ValueTask<SharpLinkServerAssemblyReplacementResult> AwaitReplacementReceiptsAsync(
-        ValueTask<SharpLinkAssemblyReplacementResult> replacement, IReadOnlyList<RpcRegistrationReceipt> receipts)
-        => new(await replacement.ConfigureAwait(false), receipts);
 
     private ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyCore(
         Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout, CancellationToken cancellationToken,

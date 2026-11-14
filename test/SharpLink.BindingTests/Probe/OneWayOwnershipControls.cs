@@ -6,6 +6,7 @@ using SharpLink.Runtime;
 using SharpLink.Server;
 
 namespace SharpLink.BindingTests;
+
 internal static partial class Program
 {
     [MethodImpl(MethodImplOptions.NoInlining)]

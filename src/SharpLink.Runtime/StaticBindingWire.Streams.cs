@@ -1,4 +1,5 @@
 namespace SharpLink.Runtime;
+
 internal static partial class StaticBindingWire
 {
     internal const ProtocolV2FrameType RequestAccepted = ProtocolV2FrameType.RequestAccepted;

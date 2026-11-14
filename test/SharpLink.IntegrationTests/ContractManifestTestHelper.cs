@@ -22,7 +22,7 @@ internal static class ContractManifestTestHelper
             new ProtocolV2ContractManifest(
                 0,
                 [KeyValuePair.Create(contract.ContractId, localManifest.RpcAssemblyHash)])
-                { ServerInstanceId = Guid.NewGuid(), RegistryEpoch = Guid.NewGuid() },
+            { ServerInstanceId = Guid.NewGuid(), RegistryEpoch = Guid.NewGuid() },
             new SharpLinkProtocolOptions());
         ProtocolV2FrameWriter.EndFrame(writer, manifestToken);
     }

@@ -345,7 +345,8 @@ public class SharpLinkServerRequestScopeReviewTests
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
             var facts = new RpcMethodDescriptor(stub.InterfaceHash, ControlledStub.MethodHash,
-                stub.Kind, false, false, false, null) { SupportsCancellation = true };
+                stub.Kind, false, false, false, null)
+            { SupportsCancellation = true };
             _bindingToken = ServerBindingTestFixture.Install(Connection, registration, facts);
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -438,7 +439,8 @@ public class SharpLinkServerRequestScopeReviewTests
                 HasResponsePayload: false,
                 HasClientStreams: false,
                 HasMethodTimeout: false,
-                MethodTimeout: null) { SupportsCancellation = true };
+                MethodTimeout: null)
+            { SupportsCancellation = true };
             if (methodHash == MethodHash) return true;
             descriptor = default;
             return false;

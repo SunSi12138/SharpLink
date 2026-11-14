@@ -26,7 +26,8 @@ internal static partial class Program
         foreach (var ticks in new[] { long.MinValue, -1L, 0L, 1L, 123456789L, long.MaxValue })
         {
             var m = new RpcMethodDescriptor(-17, long.MaxValue, RpcMethodKind.Unary, true, false, true,
-                TimeSpan.FromTicks(ticks), true, 0, true) { SupportsCancellation = true };
+                TimeSpan.FromTicks(ticks), true, 0, true)
+            { SupportsCancellation = true };
             ticksPreserved &= m.MethodTimeout!.Value.Ticks == ticks && m.HasMethodTimeout && m.IsIdempotent && m.ResponseNullable &&
                 m.SupportsCancellation && m.HasResponsePayload && m.ContractId == -17 && m.MethodId == long.MaxValue;
         }
@@ -37,9 +38,9 @@ internal static partial class Program
             (absent with { MethodTimeout = TimeSpan.Zero }).MethodTimeout == TimeSpan.Zero,
             "facts timeout declaration null and zero remain distinct");
         Check(ResolvedMethodValidation.IsValid(new(1, 2, RpcMethodKind.ClientStreaming, true, true, false, null, ClientStreamCount: 127)
-            { SupportsCancellation = true }, 1, 2), "facts client stream count 127 is not narrowed");
+        { SupportsCancellation = true }, 1, 2), "facts client stream count 127 is not narrowed");
         Check(!ResolvedMethodValidation.IsValid(new(1, 2, RpcMethodKind.ClientStreaming, true, true, false, null, ClientStreamCount: 128)
-            { SupportsCancellation = true }, 1, 2), "facts client stream count 128 fails closed");
+        { SupportsCancellation = true }, 1, 2), "facts client stream count 128 fails closed");
         Check(!ResolvedMethodValidation.IsValid(absent with { Kind = (RpcMethodKind)255 }, 1, 2) &&
             !ResolvedMethodValidation.IsValid(absent with { HasClientStreams = true }, 1, 2) &&
             !ResolvedMethodValidation.IsValid(absent with { Kind = RpcMethodKind.OneWay, HasClientStreams = true, ClientStreamCount = 1 }, 1, 2),

@@ -295,7 +295,8 @@ public partial class SharpLinkServerInvocationTests
                 HasResponsePayload: false,
                 HasClientStreams: false,
                 HasMethodTimeout: false,
-                MethodTimeout: null) { SupportsCancellation = true };
+                MethodTimeout: null)
+            { SupportsCancellation = true };
             if (methodHash == 1) return true;
             descriptor = default;
             return false;
@@ -332,7 +333,8 @@ public partial class SharpLinkServerInvocationTests
                 HasResponsePayload: true,
                 HasClientStreams: false,
                 HasMethodTimeout: false,
-                MethodTimeout: null) { SupportsCancellation = true };
+                MethodTimeout: null)
+            { SupportsCancellation = true };
             if (methodHash == 1) return true;
             descriptor = default;
             return false;
@@ -378,7 +380,8 @@ public partial class SharpLinkServerInvocationTests
                 HasResponsePayload: false,
                 HasClientStreams: false,
                 HasMethodTimeout: false,
-                MethodTimeout: null) { SupportsCancellation = true };
+                MethodTimeout: null)
+            { SupportsCancellation = true };
             if (methodHash == 1) return true;
             descriptor = default;
             return false;
@@ -513,7 +516,7 @@ public partial class SharpLinkServerInvocationTests
             var bound = new StaticBindingMethod(descriptor);
             var selection = new BoundRequestSelection(_registration, bound, default);
             var prepared = new ServerRequestEnvelope(_stub.InterfaceHash, 1, ReadOnlySequence<byte>.Empty, default, null)
-                { BoundMethod = bound };
+            { BoundMethod = bound };
             // This unit exercises the post-Bind resource continuation; real wire/Bind validation
             // is covered by the ordinary SharpLink.BindingTests transport controls.
             return (ValueTask)DispatchMethod.Invoke(Server,

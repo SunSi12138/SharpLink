@@ -17,7 +17,8 @@ public sealed class ProtocolV2ContractManifestTests
             [
                 new KeyValuePair<long, RpcHash128>(42, secondHash),
                 new KeyValuePair<long, RpcHash128>(3, firstHash)
-            ]) { ServerInstanceId = Guid.NewGuid(), RegistryEpoch = Guid.NewGuid() };
+            ])
+        { ServerInstanceId = Guid.NewGuid(), RegistryEpoch = Guid.NewGuid() };
         using var writer = new PooledByteBufferWriter();
 
         ProtocolV2ContractManifestCodec.Write(writer, manifest, Limits);

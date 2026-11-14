@@ -121,44 +121,44 @@ internal sealed partial class SharpLinkClient
             var targets = await Task.WhenAll(work).ConfigureAwait(false);
             if (BeforeBindingSiteCommitTestHook is { } beforeCommit) await beforeCommit().ConfigureAwait(false);
             lock (_poolGate)
-            lock (_remoteContractManifestGate)
-            lock (_staticBindingGate)
-            {
-                EnsureStaticSliceAvailable();
-                site.EnsureLocalRunning();
-                if (!ReferenceEquals(topology, Volatile.Read(ref _bindingTopology)) ||
-                    !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
-                {
-                    _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
-                    return;
-                }
-                // State Ack commit and site publication are separate boundaries. Invalidation
-                // first records its watermark, then takes this same site gate to prune routes.
-                // Recheck the scalar token here so an already-confirmed Ack cannot resurrect
-                // an invalidated target while its refresh continuation was delayed.
-                var confirmed = targets.Where(target => target.Connection.StaticBindings.IsConfirmedToken(target.Token)).ToArray();
-                if (confirmed.Length != targets.Length) _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
-                Volatile.Write(ref site.Failure, confirmed.Length == 0 && (mismatch || receiptMismatch)
-                    ? receiptMismatch ? StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch)
-                        : new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
-                            (ushort)(60000 + (ushort)StaticBindingFailure.HashMismatch),
-                            $"Contract '{site.ContractName}' ({site.ContractId}) cannot bind assembly hash {site.Hash}; " +
-                            $"Ready peers advertise {string.Join(", ", observedHashes.Distinct())}.")
-                    : null);
-                Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, confirmed));
-            }
+                lock (_remoteContractManifestGate)
+                    lock (_staticBindingGate)
+                    {
+                        EnsureStaticSliceAvailable();
+                        site.EnsureLocalRunning();
+                        if (!ReferenceEquals(topology, Volatile.Read(ref _bindingTopology)) ||
+                            !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
+                        {
+                            _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
+                            return;
+                        }
+                        // State Ack commit and site publication are separate boundaries. Invalidation
+                        // first records its watermark, then takes this same site gate to prune routes.
+                        // Recheck the scalar token here so an already-confirmed Ack cannot resurrect
+                        // an invalidated target while its refresh continuation was delayed.
+                        var confirmed = targets.Where(target => target.Connection.StaticBindings.IsConfirmedToken(target.Token)).ToArray();
+                        if (confirmed.Length != targets.Length) _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
+                        Volatile.Write(ref site.Failure, confirmed.Length == 0 && (mismatch || receiptMismatch)
+                            ? receiptMismatch ? StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch)
+                                : new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                                    (ushort)(60000 + (ushort)StaticBindingFailure.HashMismatch),
+                                    $"Contract '{site.ContractName}' ({site.ContractId}) cannot bind assembly hash {site.Hash}; " +
+                                    $"Ready peers advertise {string.Join(", ", observedHashes.Distinct())}.")
+                            : null);
+                        Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, confirmed));
+                    }
         }
         catch (Exception failure)
         {
             lock (_poolGate)
-            lock (_remoteContractManifestGate)
-            lock (_staticBindingGate)
-            {
-                if (!ReferenceEquals(topology, Volatile.Read(ref _bindingTopology)) ||
-                    !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
-                    _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
-                else Volatile.Write(ref site.Failure, failure);
-            }
+                lock (_remoteContractManifestGate)
+                    lock (_staticBindingGate)
+                    {
+                        if (!ReferenceEquals(topology, Volatile.Read(ref _bindingTopology)) ||
+                            !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
+                            _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
+                        else Volatile.Write(ref site.Failure, failure);
+                    }
         }
         finally
         {

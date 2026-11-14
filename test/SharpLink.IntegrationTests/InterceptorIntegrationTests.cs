@@ -11,9 +11,7 @@ public class InterceptorIntegrationTests
             clientInterceptor: clientInterceptor,
             serverInterceptor: serverInterceptor);
 
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
         var result = await service.DescribeAsync(17);
 
         Ensure(result.Contains("client-interceptor", StringComparison.Ordinal), "client metadata reached service");
@@ -49,9 +47,7 @@ public class InterceptorIntegrationTests
     {
         await using var harness = await InterceptorHarness.CreateAsync(
             serverInterceptor: new RejectingServerInterceptor());
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var exception = await CaptureSharpLinkException(service.DescribeNumberAsync(1).AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.PermissionDenied, "server interceptor status");
@@ -65,9 +61,7 @@ public class InterceptorIntegrationTests
         await using (var clientHarness = await InterceptorHarness.CreateAsync(
                          clientInterceptor: clientInterceptor))
         {
-            var serviceProxy = clientHarness.Client.CreateProxy<IInterceptorTestService>();
-            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-            var service = serviceProxy.Service;
+            var service = await PrepareServiceAsync(clientHarness.Client);
             var exception = await CaptureSharpLinkException(service.DescribeNumberAsync(1).AsTask());
             Ensure(exception.Code == SharpLinkErrorCode.Cancelled, "client structured cancellation code");
             Ensure(clientInterceptor.Context?.Status == SharpLinkInvocationStatus.Cancelled,
@@ -80,9 +74,7 @@ public class InterceptorIntegrationTests
         await using (var serverHarness = await InterceptorHarness.CreateAsync(
                          serverInterceptor: serverInterceptor))
         {
-            var serviceProxy = serverHarness.Client.CreateProxy<IInterceptorTestService>();
-            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-            var service = serviceProxy.Service;
+            var service = await PrepareServiceAsync(serverHarness.Client);
             var exception = await CaptureSharpLinkException(service.DescribeNumberAsync(1).AsTask());
             Ensure(exception.Code == SharpLinkErrorCode.Cancelled, "server structured cancellation code");
             Ensure(serverInterceptor.Context?.Status == SharpLinkInvocationStatus.Cancelled,
@@ -97,9 +89,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new FailureObservingServerInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(serverInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var failure = await CaptureSharpLinkException(service.FailAsync().AsTask());
 
@@ -145,9 +135,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new MissingNextServerInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(serverInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var failure = await CaptureSharpLinkException(service.DescribeNumberAsync(1).AsTask());
 
@@ -164,9 +152,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new WrongTypeClientInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var failure = await CaptureException(service.DescribeNumberAsync(1).AsTask());
 
@@ -237,9 +223,7 @@ public class InterceptorIntegrationTests
     public async Task ClientStreamConsumerMustNotCaptureCallerSynchronizationContext()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
         var stream = new ControlledClientStream(42);
         var context = new CountingSynchronizationContext();
         Task<int> call;
@@ -318,9 +302,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new AsyncBeforeNextBoundaryClientInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         Ensure(await service.DescribeNumberAsync(41) == 42, "async-before-next unary result");
         Ensure(interceptor.Context?.Status == SharpLinkInvocationStatus.Succeeded,
@@ -332,9 +314,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new AsyncAfterNextBoundaryClientInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         Ensure(await service.DescribeNumberAsync(41) == 42, "async-after-next unary result");
         Ensure(interceptor.Context?.Status == SharpLinkInvocationStatus.Succeeded,
@@ -346,9 +326,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new AsyncBeforeAndAfterBoundaryClientInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         await service.NotifyAsync(17);
 
@@ -361,9 +339,7 @@ public class InterceptorIntegrationTests
     public async Task NonNullableResponsesMustRejectNullAtEveryGeneratedBoundary()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var unary = await CaptureSharpLinkException(service.RequiredNullAsync().AsTask());
         Ensure(unary.Code == SharpLinkErrorCode.Internal, "required unary null response");
@@ -432,9 +408,7 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new DelayedFirstServerInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(serverInterceptor: interceptor);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var delayed = service.DescribeNumberAsync(123_456).AsTask();
         await interceptor.Entered.WaitAsync(TimeSpan.FromSeconds(3));
@@ -481,9 +455,7 @@ public class InterceptorIntegrationTests
     public async Task DefaultExceptionMapperShouldHideServiceDetails()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var exception = await CaptureSharpLinkException(service.FailAsync().AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.Internal, "default mapper status");
@@ -508,9 +480,7 @@ public class InterceptorIntegrationTests
     public async Task DefaultExceptionMapperShouldPreserveStructuredServiceFailure()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var unary = await CaptureSharpLinkException(service.FailMappedAsync().AsTask());
         Ensure(unary is { Code: SharpLinkErrorCode.ResourceExhausted, Message: "public-structured" },
@@ -535,9 +505,7 @@ public class InterceptorIntegrationTests
     {
         await using var harness = await InterceptorHarness.CreateAsync(
             requestTimeout: TimeSpan.FromMilliseconds(150));
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var deadlineStream = service.WaitStreamAsync(CancellationToken.None).GetAsyncEnumerator();
         try
@@ -575,9 +543,7 @@ public class InterceptorIntegrationTests
     public async Task DetailedErrorsShouldRequireExplicitOptIn()
     {
         await using var harness = await InterceptorHarness.CreateAsync(enableDetailedErrors: true);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var exception = await CaptureSharpLinkException(service.FailAsync().AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.Internal, "detailed mapper status");
@@ -589,9 +555,7 @@ public class InterceptorIntegrationTests
     {
         await using var harness = await InterceptorHarness.CreateAsync(
             exceptionMapper: new TestExceptionMapper());
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var unary = await CaptureSharpLinkException(service.FailAsync().AsTask());
         Ensure(unary.Code == SharpLinkErrorCode.FailedPrecondition, "custom unary status");
@@ -634,9 +598,7 @@ public class InterceptorIntegrationTests
     {
         var mapper = new ThrowingExceptionMapper();
         await using var harness = await InterceptorHarness.CreateAsync(exceptionMapper: mapper);
-        var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
-        var service = serviceProxy.Service;
+        var service = await PrepareServiceAsync(harness.Client);
 
         var unary = await CaptureSharpLinkException(service.FailAsync().AsTask());
         var stream = service.FailStreamAsync().GetAsyncEnumerator();
@@ -658,6 +620,13 @@ public class InterceptorIntegrationTests
         Ensure(mapper.CallCount == 2, "both unary and stream failures must reach the configured mapper once");
         Ensure(await service.DescribeNumberAsync(41) == 42,
             "mapper failure must not terminate or poison the owning connection");
+    }
+
+    private static async Task<IInterceptorTestService> PrepareServiceAsync(ISharpLinkClient client)
+    {
+        var proxy = client.CreateProxy<IInterceptorTestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        return proxy.Service;
     }
 
     private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)

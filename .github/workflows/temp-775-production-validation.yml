@@ -1,0 +1,110 @@
+name: Temporary 775 production validation
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: ['codex/775-production-integration']
+
+# Remove this workflow after its source-bound reports are consumed. This is not
+# a full Unit/release-green claim: paused/red #387 is deliberately not executed.
+jobs:
+  correctness-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-15
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      SHARPLINK_AOT_RID: ${{ matrix.rid }}
+      SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/775-ci/native
+    steps:
+      - name: Preserve repository line endings on the hosted Windows runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build ordinary Release solution
+        run: dotnet build Sharplink.slnx -c Release -v minimal
+      - name: Check solution formatting
+        if: runner.os == 'Linux'
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - name: Exact binding inventories on both transports
+        run: python eng/run-contract-binding-tests.py --out artifacts/775-ci/binding
+      - name: Ordinary Integration, Generator and load-driver tests
+        shell: bash
+        run: |
+          for project in IntegrationTests Generator.Tests LoadTest.Tests StreamLoadTest.Tests; do
+            dotnet test --project "test/SharpLink.$project/SharpLink.$project.csproj" -c Release --no-build
+          done
+      - name: Real native process, topology, sidecar and pre-credit smokes
+        shell: bash
+        run: bash eng/run-shared-memory-aot-process-smoke.sh
+      - name: Preserve platform evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: 775-platform-${{ matrix.rid }}-${{ github.sha }}
+          path: |
+            artifacts/775-ci/binding
+            artifacts/775-ci/native/*.log
+            artifacts/775-ci/native/sharppack-sidecar/*.log
+            artifacts/775-ci/native/precredit/*.log
+            test/*/bin/Release/net10.0/TestResults
+          if-no-files-found: warn
+          retention-days: 30
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - run: dotnet pack Sharplink.slnx -c Release -o artifacts/nuget -v minimal
+      - uses: ./.github/actions/verify-packages
+      - name: Reviewed API, release identity and real external SPI
+        run: |
+          bash eng/verify-public-api.sh
+          python eng/verify-release-versions.py
+          bash eng/verify-generated-abi-mixing.sh
+      - name: Actual package RPC consumers and fresh samples
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/artifacts/775-ci/package-cache
+        run: |
+          dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+          dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+          bash eng/run-quickstart-package-smoke.sh artifacts/nuget
+      - name: Preserve package/API/SPI evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: 775-package-evidence-${{ github.sha }}
+          path: |
+            artifacts/public-api
+            artifacts/generated-abi-mixing
+            artifacts/packaged-method-facts
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Publish one verified package set for native consumers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: 775-verified-packages
+          path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
+          if-no-files-found: error
+          retention-days: 30
+  packaged-platforms:
+    needs: pack
+    uses: ./.github/workflows/packaged-trim-smoke.yml
+    with:
+      package-artifact: 775-verified-packages

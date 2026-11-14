@@ -6,6 +6,7 @@ using SharpLink.Runtime;
 using SharpLink.Server;
 
 namespace SharpLink.BindingTests;
+
 internal static partial class Program
 {
     private static async Task RunOneWayAsync(string transport, CancellationToken ct)
@@ -227,7 +228,7 @@ internal static partial class Program
             // Producer may observe the remote/server deadline only through its original local
             // deadline; all later items are already terminal discard, not another provider call.
             await call.WaitAsync(ct); await f.QuiesceAsync(ct);
-            Console.WriteLine($"ONEWAY_DEADLINE cooperative={cooperative} deadline={f.Service.Deadline.HasValue} codec={OneWayValueCodec.Decodes-before} provider={f.Compression.Decodes} calls={f.Service.Calls} connected={f.Connection.Session.IsConnected}");
+            Console.WriteLine($"ONEWAY_DEADLINE cooperative={cooperative} deadline={f.Service.Deadline.HasValue} codec={OneWayValueCodec.Decodes - before} provider={f.Compression.Decodes} calls={f.Service.Calls} connected={f.Connection.Session.IsConnected}");
             Check(OneWayValueCodec.Decodes - before == 1 && f.Compression.Decodes == 2 && f.Service.Calls == 1,
                 prefix + " reclaims progress after original provider without wrong Codec");
             Check(await f.Rpc.Service.BarrierAsync(ct) == 42 && f.Mapper.Failures.All(e => e is OperationCanceledException),

@@ -338,12 +338,18 @@ public partial class IntegrationBehaviorTests
     public async Task CallerSelectedMetadataShouldVaryPerInvocation()
     {
         await using var harness = await TestHarness.CreateAsync();
-        var tenantAProxy = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions { Metadata = new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "a")) });
+        var tenantAProxy = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "a"))
+        });
         await tenantAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var tenantA = tenantAProxy.Service;
-        var tenantBProxy = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions { Metadata = new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "b")) });
+        var tenantBProxy = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "b"))
+        });
         await tenantBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var tenantB = tenantBProxy.Service;
 

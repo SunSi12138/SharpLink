@@ -650,3 +650,37 @@ inventory/package/platform acceptance must include this actual public delta befo
   and requires2230. Their focused counts and historical fixed-source controls do not change.
   No runner lowers its success criterion or silently excludes #387. Do not run those full arms
   while that investigation remains paused; the separate2221-case continuation is not full green.
+
+### Current package/native results and production layout
+
+- The real historical-source replay passes at9c1b8045: exact d5665 API5 packages generate
+  and register their own nonempty plugin, current API6 packages do the same, and API6 rejects
+  the actual old DLL through public RegisterAssembly with IncompatibleManifest naming both
+  identities. Source/plugin/host/generated outputs and logs are retained in
+  artifacts/775-integration/api5-replay-binding-1. No original historical CI binary is claimed.
+- All nine package pairs pack at9c1b8045. A fresh cache runs actual PackageSmoke successfully,
+  including TCP/SharedMemory GenerationControl, external SPIs, serialization and two-process
+  referenced rooting. The isolated packaged full Trim, partial Trim and NativeAOT consumers
+  also pass with warnings-as-errors and no production ProjectReference; evidence is
+  packaged-trim-9c1b8045/win-x64-8wr30fyo/evidence.json.
+- Current real Windows NativeAOT binaries pass TCP/static/referenced/topology, separate-process
+  SharedMemory, SharpPack sidecar, and pre-credit TCP/SharedMemory. Native builds, executables
+  and phase logs are retained in artifacts/775-integration/aot-9c1b8045. These RPC/native results
+  are distinct from the packaged serialization consumers and are not performance measurements.
+- Found and repaired six source-sample defaults still pinning2.0.0 after their API6 caller
+  migration. They now default to3.0.0; explicit package-version overrides remain supported.
+  A bulk local fresh-sample command was rejected before execution, so no local fresh-sample
+  pass is claimed. The existing unmodified fresh-copy package smoke is assigned to hosted CI.
+- The existing maintainability gate exposed four file-size regressions. Preserved method
+  bodies/owner state while grouping typed contract entry points, stream-state pooling and
+  atomic publication APIs into cohesive partials, and consolidated19 identical interceptor
+  test preparation sequences without moving preparation into RPC invocation. No debt allowance
+  was raised. The gate now passes1328 files; the complete Release solution builds0 warnings/
+  errors in14.16s. Interceptor25 and StreamFlowController43 focused cases pass; the source
+  dispatch-parity six and the one-cold-resolver guard pass. Solution whitespace formatting
+  also verifies after applying the established layout rules.
+- Temporary hosted validation will run the real binding inventories, ordinary Integration/
+  Generator/load-driver suites, all three native smokes and the actual package consumers on
+  supported hosts. It deliberately does not run paused #387 or claim full Unit/release green.
+  Delete temp-775-production-validation.yml after consuming its source-bound evidence.
+  Performance criteria are not yet frozen and no performance measurement has run.

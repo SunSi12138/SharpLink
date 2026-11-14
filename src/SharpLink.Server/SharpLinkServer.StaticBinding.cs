@@ -5,41 +5,6 @@ internal sealed partial class SharpLinkServer
     internal StaticBindingBudget BindingBudget { get; } = new();
     private readonly Guid _bindingRegistryEpoch = Guid.NewGuid();
 
-    public RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly registeredAssembly, long contractId)
-    {
-        ArgumentNullException.ThrowIfNull(registeredAssembly);
-        lock (_registryGate)
-        {
-            if (!_services.TryGetValue(contractId, out var registration) || !registration.AcceptsCalls ||
-                !ReferenceEquals(registration.Module?.Manifest.OwnerAssembly ?? registration.ContractType.Assembly,
-                    registeredAssembly))
-                throw StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch);
-            var manifest = FindManifest(registration.ContractType.Assembly, _dynamicModules.Values.ToArray());
-            return new(_desiredSessionServerInstanceId, _bindingRegistryEpoch,
-                registration.Module?.BindingPublicationGeneration ?? 0, contractId, manifest.RpcAssemblyHash,
-                registration.StaticBindingRegistrationId);
-        }
-    }
-    // Called under the registry publication gate, before any irreversible publication/cut.
-    // All allocations/hash-owner validation finish here; the committed result retains no module.
-    private IReadOnlyList<RpcRegistrationReceipt> CapturePublicationReceipts(
-        IReadOnlyDictionary<long, ServiceRegistration> services, SharpLinkDynamicModule module,
-        SharpLinkDynamicModule[] currentModules, long generation)
-    {
-        var owned = services.Where(pair => ReferenceEquals(pair.Value.Module, module))
-            .OrderBy(static pair => pair.Key).ToArray();
-        if (owned.Length == 0) return Array.Empty<RpcRegistrationReceipt>();
-        var modules = currentModules.Append(module).ToArray();
-        var receipts = new RpcRegistrationReceipt[owned.Length];
-        for (var index = 0; index < owned.Length; index++)
-        {
-            var registration = owned[index].Value;
-            var contract = FindManifest(registration.ContractType.Assembly, modules);
-            receipts[index] = new(_desiredSessionServerInstanceId, _bindingRegistryEpoch, generation,
-                owned[index].Key, contract.RpcAssemblyHash, registration.StaticBindingRegistrationId);
-        }
-        return Array.AsReadOnly(receipts);
-    }
 
     internal Func<ServerConnectionState, ulong, StaticBindingAck, CancellationToken, ValueTask>? BeforeBindingAckTestHook;
     private async ValueTask BindStaticContractAsync(ServerConnectionState connection, ulong operation,

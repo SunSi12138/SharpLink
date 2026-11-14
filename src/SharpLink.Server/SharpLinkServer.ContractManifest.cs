@@ -28,7 +28,7 @@ internal sealed partial class SharpLinkServer
                 manifest.RpcAssemblyHash);
         }
         return new ProtocolV2ContractManifest(_registryGeneration, entries)
-            { ServerInstanceId = _desiredSessionServerInstanceId, RegistryEpoch = _bindingRegistryEpoch };
+        { ServerInstanceId = _desiredSessionServerInstanceId, RegistryEpoch = _bindingRegistryEpoch };
     }
 
     private void ScheduleContractManifestPublish()

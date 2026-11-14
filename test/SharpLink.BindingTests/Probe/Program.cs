@@ -61,9 +61,16 @@ internal static partial class Program
             await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
             await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         }
-        var report = new { transport, kind = routing ? "functional-bound-routing" : oneWay ? "functional-oneway-input" : localModules ? "functional-local-module" : streams ? "functional-stream-admission" : facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
+        var report = new
+        {
+            transport,
+            kind = routing ? "functional-bound-routing" : oneWay ? "functional-oneway-input" : localModules ? "functional-local-module" : streams ? "functional-stream-admission" : facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only",
+            passed = Passed.Count,
+            cases = Passed,
             source = Environment.GetEnvironmentVariable("SHARPLINK_TEST_SOURCE") ?? Environment.GetEnvironmentVariable("GITHUB_SHA"),
-            execution = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" ? "github_actions" : "local", runtime = Environment.Version.ToString() };
+            execution = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" ? "github_actions" : "local",
+            runtime = Environment.Version.ToString()
+        };
         Directory.CreateDirectory("artifacts/775-slice");
         await File.WriteAllTextAsync($"artifacts/775-slice/{(routing ? "routing-" : oneWay ? "oneway-" : localModules ? "local-" : streams ? "streams-" : facts ? "facts-" : receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
         Console.WriteLine("RESULT " + JsonSerializer.Serialize(report));

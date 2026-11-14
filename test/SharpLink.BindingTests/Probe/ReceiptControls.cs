@@ -15,7 +15,8 @@ internal static partial class Program
         ulong High, ulong Low, long Registration)
     {
         internal ReceiptMessage(RpcRegistrationReceipt r) : this(r.ServerInstanceId, r.RegistryEpoch,
-            r.Generation, r.ContractId, r.RpcAssemblyHash.High, r.RpcAssemblyHash.Low, r.RegistrationId) { }
+            r.Generation, r.ContractId, r.RpcAssemblyHash.High, r.RpcAssemblyHash.Low, r.RegistrationId)
+        { }
         internal RpcRegistrationReceipt Receipt => new(Server, Epoch, Generation, Contract, new(High, Low), Registration);
     }
 

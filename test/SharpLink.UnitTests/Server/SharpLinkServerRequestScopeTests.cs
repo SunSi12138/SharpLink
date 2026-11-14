@@ -362,7 +362,8 @@ public class SharpLinkServerRequestScopeTests
             var method = new StaticBindingMethod(facts);
             _selection = new BoundRequestSelection(registration, method, default);
             _request = new ServerRequestEnvelope(stub.InterfaceHash, facts.MethodId,
-                ReadOnlySequence<byte>.Empty, default, null) { BoundMethod = method };
+                ReadOnlySequence<byte>.Empty, default, null)
+            { BoundMethod = method };
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;

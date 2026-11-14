@@ -226,9 +226,9 @@ internal sealed partial class SharpLinkServer
                                             out _))
                                     {
                                         if (!oneWayCompressedDispatch)
-                                        await DrainTerminalStreamProgressAsync(
-                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
-                                            .ConfigureAwait(false);
+                                            await DrainTerminalStreamProgressAsync(
+                                                session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
+                                                .ConfigureAwait(false);
                                         continue;
                                     }
 
