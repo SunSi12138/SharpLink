@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Reflection;
 
 namespace SharpLink.IntegrationTests;
@@ -21,7 +20,13 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var service = serviceProxy.Service;
 
-        using (harness.RejectOneWayInboundDrainServiceCalls())
+        harness.Server.EnableAdmissionControl(options => options.Global.UseConcurrency(1));
+        var program = ((SharpLinkServer)harness.Server).CurrentAdmissionProgramForTests!;
+        var held = await program.Controller.AcquireAsync(
+            new SharpLinkAdmissionContext(1, 1, RpcMethodKind.OneWay, "held-control", null, null),
+            1, allowQueue: false, CancellationToken.None);
+        Ensure(held.IsAcquired, "the actual server admission permit must be held before rejection");
+        using (held.Lease)
         {
             var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
             await send.WaitAsync(PhaseTimeout);
@@ -33,11 +38,12 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         var probe = await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout);
         Ensure(probe == 52,
             "a unary request on the same connection should succeed after the rejected client stream drains to peer terminal");
+        await harness.WaitForPhysicalDrainAsync();
     }
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeShouldTerminateInsteadOfStallingOversizedStream()
+    public async Task UnknownBoundOneWayMethodShouldDrainBeyondWindowAndKeepConnectionUsable()
     {
         OneWayInboundDrainService.Reset();
         await using var harness = await Harness.CreateAsync(options =>
@@ -49,23 +55,24 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var service = serviceProxy.Service;
 
-        using (harness.HideOneWayInboundDrainMethodShape())
-        {
-            var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
-            var failure = await CaptureFailureAsync(send);
-
-            Ensure(failure is not null,
-                "an unresolved OneWay method shape should terminate the connection instead of completing successfully");
-            Ensure(failure is not TimeoutException,
-                "an unresolved OneWay method shape must not leave oversized client-stream data stalled behind receive flow control");
-            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                "an unresolved OneWay method must not invoke the service method");
-        }
+        var channel = harness.Client.CreateContractChannel(
+            harness.Client.GetLocalContract<IOneWayInboundDrainService>());
+        await channel.PrepareAsync(PhaseTimeout);
+        var method = UnknownOneWayMethod();
+        var request = default(RpcEmptyRequest);
+        var writer = new InputWriter(ManyPayloads(128, 32), channel.RuntimeContext.Codecs.GetCodec<byte[]>());
+        await channel.InvokeOneWayAsync(method, in request, RpcEmptyRequestCodec.Instance,
+            in writer, null).AsTask().WaitAsync(PhaseTimeout);
+        Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
+            "the actual unknown MethodId must perform zero business invocation");
+        Ensure(await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout) == 52,
+            "independent bounded input shape must permit safe drain without terminating the Session");
+        await harness.WaitForPhysicalDrainAsync();
     }
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeShouldTerminateBeforeCompressedDecodeAndStreamWindowStalls()
+    public async Task UnknownBoundOneWayMethodShouldDrainCompressedInputWithoutDecoding()
     {
         OneWayInboundDrainService.Reset();
         var compression = new CorruptingCompressionProvider();
@@ -79,38 +86,37 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var service = serviceProxy.Service;
 
-        using (harness.HideOneWayInboundDrainMethodShape())
-        {
-            var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
-            var send = service.IgnoreCorruptiblePayloadAndStreamAsync(
-                requestPayload,
-                ManyPayloads(128, 32)).AsTask();
-            var failure = await CaptureFailureAsync(send);
-
-            Ensure(Volatile.Read(ref compression.CompressCount) > 0,
-                "the large OneWay request payload must use the negotiated compression provider");
-            Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
-                "an unresolved OneWay method shape must terminate before invoking the request decompressor");
-            Ensure(failure is not null,
-                "an unresolved compressed OneWay shape should terminate the connection");
-            Ensure(failure is not TimeoutException,
-                "an unresolved compressed OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
-            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                "an unresolved compressed OneWay request must not invoke the service method");
-        }
+        var channel = harness.Client.CreateContractChannel(
+            harness.Client.GetLocalContract<IOneWayInboundDrainService>());
+        await channel.PrepareAsync(PhaseTimeout);
+        var method = UnknownOneWayMethod();
+        var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
+        var codec = channel.RuntimeContext.Codecs.GetCodec<byte[]>();
+        var writer = new InputWriter(ManyPayloads(128, 32), codec);
+        await channel.InvokeOneWayAsync(method, in requestPayload, codec, in writer, null)
+            .AsTask().WaitAsync(PhaseTimeout);
+        Ensure(Volatile.Read(ref compression.CompressCount) > 0,
+            "the large unknown-method head must use the actual negotiated compression provider");
+        Ensure(Volatile.Read(ref compression.DecompressCount) == 0 && !OneWayInboundDrainService.Entered.IsCompleted,
+            "unknown bound MethodId must drain without request/item decompression or business invocation");
+        Ensure(await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout) == 52,
+            "rejected corrupt compressed input must not poison the healthy Session");
+        await harness.WaitForPhysicalDrainAsync();
     }
 
-    private static async Task<Exception?> CaptureFailureAsync(Task operation)
+    private static RpcMethodDescriptor UnknownOneWayMethod()
     {
-        try
-        {
-            await operation.WaitAsync(PhaseTimeout);
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
+        var contract = GlobalCatalogManifestSource.Instance.CreateSnapshot().SelectMany(static item => item.Contracts)
+            .Single(static item => item.ContractType == typeof(IOneWayInboundDrainService));
+        Ensure(contract.Methods.All(static item => item.MethodId != long.MaxValue), "negative MethodId must really be absent");
+        return contract.Methods.Single(static item => item.Name == nameof(IOneWayInboundDrainService.IgnoreStreamAfterGateAsync))
+            .Facts with { MethodId = long.MaxValue };
+    }
+
+    private readonly struct InputWriter(IAsyncEnumerable<byte[]> items, IRpcCodec<byte[]> codec) : IRpcClientStreamWriter
+    {
+        public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)
+            => new(sink.SendClientStreamAsync(requestId, 1, items, codec, cancellationToken));
     }
 
     private static async IAsyncEnumerable<byte[]> ManyPayloads(
@@ -174,10 +180,6 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
     private sealed class Harness : IAsyncDisposable
     {
-        private static readonly FieldInfo DynamicModuleStateField = typeof(SharpLinkDynamicModule).GetField(
-            "_state", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("cannot find dynamic-module state field");
-
         private readonly CancellationTokenSource _serverCts;
         private readonly Task _serverTask;
 
@@ -218,46 +220,18 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             return new Harness(cts, serverTask, server, client);
         }
 
-        public IDisposable RejectOneWayInboundDrainServiceCalls()
+        internal async Task WaitForPhysicalDrainAsync()
         {
-            var server = (SharpLinkServer)Server;
-            var current = ServerRegistryTestAccessor.Services(server);
-            var target = current.Single(static pair =>
-                pair.Value.ContractType == typeof(IOneWayInboundDrainService));
-
-            var module = (SharpLinkDynamicModule)RuntimeHelpers.GetUninitializedObject(
-                typeof(SharpLinkDynamicModule));
-            DynamicModuleStateField.SetValue(
-                module,
-                (int)SharpLinkDynamicModuleState.Draining);
-            var replacement = ServiceRegistration.CreateSingleton(
-                target.Value.ContractType,
-                target.Value.Stub,
-                new OneWayInboundDrainService(),
-                ownsService: false,
-                module: module);
-            var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            updated[target.Key] = replacement;
-            ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
-            return new RestoreServicesScope(server, current);
-        }
-
-        public IDisposable HideOneWayInboundDrainMethodShape()
-        {
-            var server = (SharpLinkServer)Server;
-            var current = ServerRegistryTestAccessor.Services(server);
-            var target = current.Single(static pair =>
-                pair.Value.ContractType == typeof(IOneWayInboundDrainService));
-
-            var replacement = ServiceRegistration.CreateSingleton(
-                target.Value.ContractType,
-                new UnknownMethodShapeStub(target.Value.Stub.InterfaceHash),
-                new OneWayInboundDrainService(),
-                ownsService: false);
-            var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            updated[target.Key] = replacement;
-            ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
-            return new RestoreServicesScope(server, current);
+            var connection = ((ClientConnection[])typeof(SharpLinkClient).GetField(
+                "_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Client)!).Single();
+            var peer = ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)Server).Values.Single();
+            var flow = ((RpcSessionProtocolState)typeof(RpcSession).GetField(
+                "_protocolState", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection.Session)!).FlowController!;
+            using var timeout = new CancellationTokenSource(PhaseTimeout);
+            while (connection.ActiveCallCount != 0 || connection.CallAdmissionReservationCount != 0 ||
+                   peer.Session.StreamManager.ActiveStreamCount != 0 ||
+                   flow.RetainedSendStreamCount != 0 || flow.SendConnectionCredit != 128)
+                await Task.Delay(1, timeout.Token);
         }
 
         public async ValueTask DisposeAsync()
@@ -269,76 +243,5 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             _serverCts.Dispose();
         }
 
-        private sealed class UnknownMethodShapeStub(long interfaceHash) : IRpcStub
-        {
-            public long InterfaceHash { get; } = interfaceHash;
-
-            public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)
-            {
-                _ = methodHash;
-                descriptor = default;
-                return false;
-            }
-
-            public bool SupportsCancellation(long methodHash)
-            {
-                _ = methodHash;
-                return false;
-            }
-
-            public ValueTask InvokeNoReturnAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                in RpcMethodDescriptor method,
-                long requestId,
-                ReadOnlySequence<byte> args)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeNoReturnCancellableAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                in RpcMethodDescriptor method,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                CancellationToken cancellationToken)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                in RpcMethodDescriptor method,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                IBufferWriter<byte> output)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeCancellableAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                in RpcMethodDescriptor method,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                IBufferWriter<byte> output,
-                CancellationToken cancellationToken)
-                => throw UnexpectedInvocation();
-
-            private static InvalidOperationException UnexpectedInvocation()
-                => new("unresolved method-shape stub must never be invoked");
-        }
-
-        private sealed class RestoreServicesScope(
-            SharpLinkServer server,
-            FrozenDictionary<long, ServiceRegistration> original) : IDisposable
-        {
-            private SharpLinkServer? _server = server;
-
-            public void Dispose()
-            {
-                var currentServer = Interlocked.Exchange(ref _server, null);
-                if (currentServer is null)
-                    return;
-                ServerRegistryTestAccessor.PublishServices(currentServer, original);
-            }
-        }
     }
 }

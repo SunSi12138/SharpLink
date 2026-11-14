@@ -350,3 +350,18 @@ Selected production compatibility boundary:
 - Full Integration attempts have reached264 passing tests before the next old timing assertion,
   but are still incomplete. The passing focused controls above do not turn those failed full
   runs into a complete-suite pass. Raw logs and original failure sources remain retained.
+
+### Canonical OneWay negatives use the frozen binding, not latest-registry mutation
+
+- OneWayEarlyRejectionDrainIntegrationTests now passes3/3. The old fixture replaced latest
+  services/Stub metadata after Bind, which correctly cannot alter the frozen original binding.
+  Removed the fabricated uninitialized Draining module and replace/restore registry helpers.
+- Immediate refusal uses an actual server admission permit held across the real RPC. Unknown
+  methods use a client-issued contract channel and a genuinely absent MethodId, retaining
+  the independent count1 grammar and typed input writer. The corrupt compressed head really
+  invokes the sender provider while receiver request/item decompression and business execution
+  remain zero. Known bounded shape permits drain, not the old unknown-shape Session termination.
+- Each negative sends128 items beyond a128-byte window, then proves same-Session Unary recovery,
+  zero client active/reservation/send-stream owners, zero server routes and full128-byte credit
+  restoration. Conflicting/malicious count fail-close remains covered by the unchanged frozen
+  OneWay84 inventory; successful safe drain is not relabelled as Session termination.
