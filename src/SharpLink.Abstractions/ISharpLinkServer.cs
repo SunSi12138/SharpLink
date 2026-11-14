@@ -4,6 +4,7 @@ namespace SharpLink.Abstractions;
 public interface ISharpLinkServer : ISharpLinkAssemblyRegistry, IAsyncDisposable
 {
     /// <summary>Captures a scalar receipt only if the exact assembly still owns the current registration.</summary>
+    /// <remarks>For a dynamic service, pass its service module assembly, not a separately registered contract assembly.</remarks>
     RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly registeredAssembly, long contractId);
     /// <summary>Gets the lifecycle state of the local server runtime.</summary>
     SharpLinkServerLifecycleState LifecycleState { get; }

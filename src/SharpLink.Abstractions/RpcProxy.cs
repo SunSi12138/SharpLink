@@ -38,7 +38,7 @@ public enum RpcRegistrationRequirement
     ExactRegistration
 }
 
-/// <summary>Identifies one server registration using values only; it conveys no authorization.</summary>
+/// <summary>Identifies one server registration using its contract-owner hash and service publication identity; it conveys no authorization.</summary>
 public readonly record struct RpcRegistrationReceipt(Guid ServerInstanceId, Guid RegistryEpoch,
     long Generation, long ContractId, RpcHash128 RpcAssemblyHash, long RegistrationId);
 

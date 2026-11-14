@@ -358,10 +358,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)
         => GetClientAssemblyRegistry(client).CaptureProxySnapshot().ContainsKey(contractType);
 
-    private static object CreateLocalProxyHandle(object client, Type clientApi, Type contractType)
+    private static object CreateLocalProxyHandle(object client, Type clientApi, Type contractType,
+        RpcProxyOptions? options = null)
     {
         var factory = clientApi.GetMethod(nameof(ISharpLinkClient.CreateProxy))!.MakeGenericMethod(contractType);
-        return factory.Invoke(client, [null]) ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
+        return factory.Invoke(client, [options]) ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
     }
 
     private static object GetHandleService(object handle)

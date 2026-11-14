@@ -380,3 +380,19 @@ Selected production compatibility boundary:
   and Service assemblies: Bind incorrectly compares the Service module's assembly hash while
   Manifest advertises the Contract owner's hash. Fix that cold identity/receipt boundary with
   a separated-owner regression before revising the later queued-retirement expectations.
+
+### Separated Contract/Service identity correction
+
+- Corrected the real cold-path failure: Bind resolves the registered Contract owner's manifest
+  under the existing registry gate, independently of the implementation module. Receipt capture
+  checks the actual dynamic Service module assembly as registration owner, pairs that Service's
+  publication generation/ID with the Contract hash, and rejects a Contract-only assembly claiming
+  Service ownership. Combined Contract+Service groups retain the same behavior.
+- Added two ordinary real-RPC separated-owner counterexamples, default and ExactRegistration
+  receipt. They require genuinely different Contract/Service assembly hashes, zero activation
+  at Bind, correct scalar receipt ownership/hash/generation, wrong-owner precondition rejection,
+  and successful business invocation on the exact prepared receiver. Both pass.
+- Next queued-retirement migration must preserve the new pre-business physical owner, not
+  reinstate the old zero-lease queue assumption: hold retirement while an admitted selection
+  physically owns R1, never retarget queued work to R2, and prove ALC release after that physical
+  exit. No fixture expectation has yet been changed to conceal the preceding HashMismatch.

@@ -11,9 +11,10 @@ internal sealed partial class SharpLinkServer
         lock (_registryGate)
         {
             if (!_services.TryGetValue(contractId, out var registration) || !registration.AcceptsCalls ||
-                !ReferenceEquals(registration.ContractType.Assembly, registeredAssembly))
+                !ReferenceEquals(registration.Module?.Manifest.OwnerAssembly ?? registration.ContractType.Assembly,
+                    registeredAssembly))
                 throw StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch);
-            var manifest = registration.Module?.Manifest ?? FindManifest(registeredAssembly, []);
+            var manifest = FindManifest(registration.ContractType.Assembly, _dynamicModules.Values.ToArray());
             return new(_desiredSessionServerInstanceId, _bindingRegistryEpoch,
                 registration.Module?.BindingPublicationGeneration ?? 0, contractId, manifest.RpcAssemblyHash,
                 registration.StaticBindingRegistrationId);
@@ -54,7 +55,7 @@ internal sealed partial class SharpLinkServer
                 ack = StaticBindingTable.Failure(StaticBindingFailure.Retired, request.ContractId);
             else
             {
-                var manifest = registration.Module?.Manifest ?? FindManifest(registration.ContractType.Assembly, []);
+                var manifest = FindManifest(registration.ContractType.Assembly, _dynamicModules.Values.ToArray());
                 if (request.Hash.IsEmpty || manifest.RpcAssemblyHash != request.Hash)
                     ack = StaticBindingTable.Failure(StaticBindingFailure.HashMismatch, request.ContractId);
                 else if (!request.Scope.MatchesPeer(_desiredSessionServerInstanceId, _bindingRegistryEpoch) ||
