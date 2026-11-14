@@ -1,7 +1,8 @@
 name: Codec Mobile Evidence
 
 # Non-Mono mobile codec evidence.
-# Android CoreCLR targets .NET 10; experimental iOS CoreCLR targets .NET 11 GA.
+# Android CoreCLR targets .NET 10; blocking iOS arm64 CoreCLR targets .NET 11 GA.
+# iOS x64 remains non-blocking until the hosted Intel runner supplies Xcode 27.2.
 
 permissions:
   contents: read
@@ -196,11 +197,11 @@ jobs:
           - id: ios-simulator-x64
             os: macos-26-intel
             rid: iossimulator-x64
-            experimental: false
+            experimental: true
           - id: ios-simulator-arm64
             os: xcode-27
             rid: iossimulator-arm64
-            experimental: true
+            experimental: false
     continue-on-error: ${{ matrix.experimental }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
@@ -267,7 +268,7 @@ jobs:
           done
           xcrun simctl list devices | grep "$udid" | grep '(Booted)'
 
-      - name: Build and run experimental iOS CoreCLR producer
+      - name: Build and run iOS CoreCLR producer
         shell: bash
         run: |
           rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
@@ -289,7 +290,7 @@ jobs:
           cp -R artifacts/codec-compat/ios-coreclr-corpus/. \
             artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}-coreclr/
 
-      - name: Verify desktop and self edges on experimental iOS CoreCLR
+      - name: Verify desktop and self edges on iOS CoreCLR
         shell: bash
         env:
           SHARPLINK_SKIP_BUILTIN_RAW: '1'
@@ -319,7 +320,7 @@ jobs:
           console.log(`Validated iOS CoreCLR cross-platform semantic report with ${report?.results?.length ?? 0} result(s) and no blockers.`);
           NODE
 
-      - name: Upload experimental iOS CoreCLR evidence
+      - name: Upload iOS CoreCLR evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -343,7 +344,38 @@ jobs:
           IOS_RESULT: ${{ needs.ios-coreclr.result }}
         run: |
           echo "Android CoreCLR (.NET 10): $ANDROID_RESULT"
-          echo "iOS CoreCLR (.NET 11 GA; x64 blocking, arm64 experimental): $IOS_RESULT"
+          echo "iOS CoreCLR arm64 (.NET 11 GA; blocking): $IOS_RESULT"
+          echo "iOS CoreCLR x64: non-blocking; restore coverage when an Intel runner supplies Xcode 27.2."
           if [[ "$ANDROID_RESULT" != "success" || "$IOS_RESULT" != "success" ]]; then
             exit 1
           fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download required iOS arm64 GA evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: codec-mobile-evidence-ios-simulator-arm64-coreclr
+          path: artifacts/codec-compat/required-ios-arm64
+
+      - name: Require actual iOS arm64 GA execution
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const root = 'artifacts/codec-compat/required-ios-arm64';
+          const report = JSON.parse(fs.readFileSync(`${root}/ios-coreclr-verification/verification.json`, 'utf8'));
+          const sdk = JSON.parse(fs.readFileSync('eng/net11/global.json', 'utf8')).sdk.version;
+          const consumer = report.consumer;
+          if (consumer?.sdkVersion !== sdk || consumer?.runtimeVersion !== '11.0.0' ||
+              consumer?.runtimeFamily !== 'CoreCLR' || consumer?.platformTag !== 'ios-arm64-simulator-coreclr-net11' ||
+              consumer?.targetFramework !== 'net11.0-ios/iossimulator-arm64') {
+            throw new Error(`Required iOS arm64 GA identity was not executed: ${JSON.stringify(consumer)}`);
+          }
+          const results = report.results ?? [];
+          if (report.schemaVersion !== 1 || results.length === 0 || results.some(item => item.blocking)) {
+            throw new Error('Required iOS arm64 GA verification is missing or has blocking failures.');
+          }
+          console.log(`Required iOS arm64 GA evidence: SDK ${sdk}, runtime ${consumer.runtimeVersion}, ${results.length} results.`);
+          NODE

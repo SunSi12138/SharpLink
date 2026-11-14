@@ -33,8 +33,7 @@ Current CoreCLR evidence includes:
 
 - Browser WebAssembly: wasm32, .NET 11 CoreCLR, executed in real headless Chrome with `UseMonoRuntime=false`;
 - Android x64 emulator: .NET 10 CoreCLR;
-- iOS Simulator x64: .NET 11 CoreCLR;
-- iOS Simulator arm64: .NET 11 CoreCLR, currently an experimental lane;
+- iOS Simulator arm64: .NET 11 GA CoreCLR, currently the blocking iOS lane;
 - .NET 10 baseline/latest servicing compatibility on Linux x64 CoreCLR.
 
 Browser CoreCLR is exercised in both directions against the six desktop CoreCLR identities: all six desktop corpora are consumed in Browser CoreCLR, Browser CoreCLR verifies itself, and all six desktop consumers independently consume the Browser CoreCLR corpus. The Browser manifest must identify `browser-wasm-browser-coreclr-net11`, `runtimeFamily=CoreCLR`, `runtimeFamilySource=build-runtime-selection`, `pointerSize=4`, and `targetFramework=net11.0/browser-wasm`.
@@ -42,7 +41,6 @@ Browser CoreCLR is exercised in both directions against the six desktop CoreCLR 
 The current non-Mono mobile workflow is intentionally an evidence graph rather than an all-to-all mobile matrix:
 
 - Linux x64 desktop CoreCLR -> Android x64 emulator CoreCLR, plus Android CoreCLR self;
-- Linux x64 desktop CoreCLR -> iOS Simulator x64 CoreCLR, plus iOS x64 CoreCLR self;
 - Linux x64 desktop CoreCLR -> iOS Simulator arm64 CoreCLR, plus iOS arm64 CoreCLR self.
 
 There is currently no retained Android <-> iOS, iOS x64 <-> iOS arm64, or mobile -> desktop codec evidence. Those missing edges must not be described as verified compatibility. Simulator/emulator evidence must not be presented as physical-device evidence.
@@ -55,7 +53,9 @@ The explicit Browser CoreCLR and iOS CoreCLR jobs select SDK **11.0.100** from [
 
 These versions are published in the official [.NET 11 GA release notes](https://github.com/dotnet/core/blob/main/release-notes/11.0/11.0.0/11.0.0.md), [release metadata](https://dotnetcli.blob.core.windows.net/dotnet/release-metadata/11.0/releases.json), and [WebAssembly SDK package](https://www.nuget.org/packages/Microsoft.NET.Sdk.WebAssembly.Pack/11.0.0).
 
-The iOS job additionally pins workload set **11.0.100.1**, which supplies `Microsoft.iOS.Sdk.net11.0_27.2` **27.2.11039**. This GA workload requires **Xcode 27.2**; the simulator host adopts the required UIScene lifecycle only for its CoreCLR target. Both `iossimulator-x64` and `iossimulator-arm64` remain published targets. The existing x64 blocking / arm64 experimental evidence policy is unchanged. A runner without the required Xcode cannot establish GA simulator evidence; it must be upgraded rather than bypassing the Xcode check or falling back to a preview workload. See the [iOS GA release](https://github.com/dotnet/macios/releases/tag/dotnet-11.0.1xx-xcode27.2.11039) and [x64 runtime package](https://www.nuget.org/packages/Microsoft.iOS.Runtime.iossimulator-x64.net11.0_27.2/27.2.11039).
+The iOS job additionally pins workload set **11.0.100.1**, which supplies `Microsoft.iOS.Sdk.net11.0_27.2` **27.2.11039**. This GA workload requires **Xcode 27.2**; the simulator host adopts the required UIScene lifecycle only for its CoreCLR target. Both `iossimulator-x64` and `iossimulator-arm64` remain published targets. The blocking iOS lane temporarily uses **arm64 on the `xcode-27` runner**, with the summary requiring its actual GA identity and nonempty verification report. The x64 lane remains visible but non-blocking: [the GA upgrade run](https://github.com/SunSi12138/SharpLink/actions/runs/43606760218/job/132483080832) found only Xcode 26.6 on `macos-26-intel`, so it did not build or execute the GA probe. This is a runner gap, not dropped .NET architecture support. A runner without the required Xcode must be upgraded rather than bypassing the check or falling back to a preview workload. See the [iOS GA release](https://github.com/dotnet/macios/releases/tag/dotnet-11.0.1xx-xcode27.2.11039) and [x64 runtime package](https://www.nuget.org/packages/Microsoft.iOS.Runtime.iossimulator-x64.net11.0_27.2/27.2.11039).
+
+**Restore x64 coverage:** supply an Intel runner with Xcode 27.2 or later, then run the pinned GA producer, Linux-desktop -> x64 consumer, and x64 self checks. Retain a manifest identifying `ios-x64-simulator-coreclr-net11`, SDK 11.0.100, and runtime 11.0.0; require the semantic validation to pass. Then restore the x64 matrix row to `experimental: false` and include its artifact in the blocking summary. Until that change passes CI, current GA acceptance covers arm64 only; earlier x64 preview results remain historical evidence.
 
 For a standalone .NET 11 experiment, run the CLI from `eng/net11` and pass the project path explicitly, so the root .NET 10 SDK selection is not changed. Runtime Async is a separate compiler opt-in in a `net11.0` project:
 
@@ -106,6 +106,7 @@ Platforms, runtime combinations, or producer/consumer edges that have not been e
 - physical Android and iOS devices without retained current-head evidence;
 - Android arm64 device/emulator execution without a reviewed current-head device artifact;
 - Android <-> iOS cross-platform edges;
+- .NET 11 GA iOS Simulator x64, pending the Xcode/runner restoration above;
 - iOS Simulator x64 <-> arm64 cross-architecture edges;
 - mobile producer -> desktop consumer edges;
 - NativeAOT compatibility beyond the existing dedicated smoke coverage;

@@ -74,7 +74,7 @@ jobs:
           retention-days: 30
 
   browser-produce:
-    if: github.event_name == 'pull_request' || inputs.browser_evidence
+    if: inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -119,7 +119,7 @@ jobs:
           retention-days: 30
 
   browser-coreclr-produce:
-    if: github.event_name == 'pull_request' || inputs.browser_evidence
+    if: inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -218,7 +218,7 @@ jobs:
           retention-days: 30
 
   browser-verify:
-    if: github.event_name == 'pull_request' || inputs.browser_evidence
+    if: inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))
     continue-on-error: true
     needs: [produce, browser-produce]
     runs-on: ubuntu-24.04
@@ -296,7 +296,7 @@ jobs:
           retention-days: 30
 
   browser-desktop-verify:
-    if: github.event_name == 'pull_request' || inputs.browser_evidence
+    if: inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))
     continue-on-error: true
     needs: [produce, browser-produce]
     strategy:
@@ -393,7 +393,7 @@ jobs:
           retention-days: 30
 
   browser-coreclr-verify:
-    if: github.event_name == 'pull_request' || inputs.browser_evidence
+    if: inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))
     continue-on-error: true
     needs: [produce, browser-produce, browser-coreclr-produce]
     runs-on: ubuntu-24.04
@@ -472,7 +472,7 @@ jobs:
           retention-days: 30
 
   browser-coreclr-desktop-verify:
-    if: github.event_name == 'pull_request' || inputs.browser_evidence
+    if: inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))
     continue-on-error: true
     needs: [produce, browser-coreclr-produce]
     strategy:
@@ -571,7 +571,7 @@ jobs:
   browser-coreclr-evidence:
     continue-on-error: true
     needs: [browser-coreclr-verify, browser-coreclr-desktop-verify]
-    if: ${{ inputs.browser_evidence && always() }}
+    if: ${{ (inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))) && always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -601,7 +601,7 @@ jobs:
   browser-evidence:
     continue-on-error: true
     needs: [browser-verify, browser-desktop-verify]
-    if: ${{ inputs.browser_evidence && always() }}
+    if: ${{ (inputs.browser_evidence || (github.event_name == 'pull_request' && !contains(toJSON(inputs), 'browser_evidence'))) && always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
