@@ -24,7 +24,7 @@ BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 CORE_FILTER = "/*/*/HostingBuilderRegistrationTests/Repeated*"
 HEALTH_FILTER = "/*/*/HostingBuilderRegistrationTests/PreRegistered*"
 ALL_FILTER = "/*/*/HostingBuilderRegistrationTests/*"
-FULL_COUNT = 2212  # 2194 prior ordinary cases + 18 ColdStop cases; focused controls unchanged.
+FULL_COUNT = 2222  # Current ordinary census; includes paused/red #387, never the five Explicit workers.
 
 
 def digest(path):

@@ -625,3 +625,28 @@ inventory/package/platform acceptance must include this actual public delta befo
 - ADR0003 records receiver/lifetime tradeoffs and genuine cold/Ack costs. Final API/package approval
   remains proposed; historical public-surface approval is not reused for new declarations. Changed
   documentation links resolve. Historical2.0 sections and source-bound reports keep their versions.
+
+### Incremental public API and external package controls
+
+- Both exact dev160d0cd and candidate1a64f67d production Roslyn inventories rebuild all ten
+  projects with complete target coverage. The selected delta is99 added/22 removed/six changed
+  declarations, all in Abstractions; no new inheritable class. The implementer review and exact
+  declaration decisions are recorded in issue-805-binding-api-review.md and the local evidence
+  it names. The actual nine candidate packages and published2.0.3 comparison verify the source
+  commit and unchanged20 SDK ExportedType forwarding targets. Only the Abstractions3.0 API
+  baseline changes. This locks a proposed candidate, not historical or independent release approval.
+- Migrated the closed/unmerged #973 package-only control to the real API6 required resolver
+  and readonly descriptor. Fresh local-only package caches compile the full external Stub and
+  typed contract channel; all ten precise negative cases reject exactly the required resolver,
+  four by-value Stub signatures, missing finite preparation, removed raw/Get path, opaque
+  construction and sealed options. Eleven cases pass against actual1a64f67d packages. Five
+  oracle unit tests reject missing/extra/unrelated errors. The ordinary ABI gate and always-upload
+  release evidence now include this maintained control, not #973's obsolete facts shape.
+- Migrated #974's real historical-generator source replay to API5→API6, preserving separate
+  same-generation positives and exact public RegisterAssembly IncompatibleManifest rejection.
+  Its runtime result is still pending; it is not a retained original historical CI binary.
+- Canonical ordinary Unit census is2222, including the paused/red #387. Three existing full-suite
+  runners now require2222; the lease-race runner additionally injects its original eight cases
+  and requires2230. Their focused counts and historical fixed-source controls do not change.
+  No runner lowers its success criterion or silently excludes #387. Do not run those full arms
+  while that investigation remains paused; the separate2221-case continuation is not full green.
