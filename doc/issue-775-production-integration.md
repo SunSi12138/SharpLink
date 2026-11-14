@@ -311,3 +311,21 @@ Selected production compatibility boundary:
   exactly one persistent decode provider despite a small declared output; Cancel remains
   responsive and all retained/decode/decoded-byte/call resources release. The raw helper reads
   bounded frames and checks exact Ack correlation/identity; it never invents a binding token.
+
+### Post-cold-fix matrix and live admission generations
+
+- cb355d24648d4d2b47ebf2e4015262b2e248afd5 passes all513 frozen controls on
+  each local Windows transport, including the cold absence/stale-failure fixes and Generator
+  ABI correction. All16 exact inventory/source-bound JSON reports verify and are archived in
+  artifacts/775-integration/reports-cb355d24. Original watchdogs, finite budgets and GC controls
+  are unchanged. This remains functional evidence, not a performance result or platform pass.
+- Expanded runtime-disable and runtime-update stream accounting into separate two-way and
+  OneWay controls rather than deleting the pre-admission ownership obligation. Two-way queued
+  calls own only the bounded head/waiter and do zero producer work before RequestAccepted;
+  explicitly queue-enabled OneWay still buffers real input with no per-call Ack. Both retain
+  their captured generation across disable/update, exact physical byte/queue ownership, original
+  kernel/concurrency lineage, one reclaim and reusable connections. The two suites pass4/4 and3/3.
+- Capacity recovery now waits for physical active-call release after the blocker response;
+  the original provider-zero-on-rejection and exactly-one-on-recovery assertions are unchanged.
+  Remaining old two-way pre-Ack spooling tests need similarly explicit migration while retaining
+  the independent OneWay budget/refusal proof. Full Integration/Unit acceptance is not complete.

@@ -104,6 +104,8 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             TestService.ReleaseBlockingAdd();
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(5)) == 3,
                 "capacity owner must complete normally");
+            await WaitUntilAsync(() => harness.Server.ActiveCallCountForDiagnostics == 0,
+                "the physical capacity owner must exit before the recovery call");
 
             var response = await preparedClientBCompressionService.Service
                 .EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -125,9 +127,12 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
 
     [Test]
     [NotInParallel]
-    public async Task PreAdmissionStreamAccountingShouldRemainCorrectAcrossRuntimeDisable()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamAccountingShouldRemainCorrectAcrossRuntimeDisable(bool oneWay)
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
         await using var harness = await RunningHarness.CreateAsync(
             serverRuntimeConfigure: options =>
             {
@@ -138,6 +143,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             admissionConfigure: options =>
             {
                 options.Global.UseConcurrency(1);
+                options.QueueOneWayCalls = true;
                 options.MaxQueuedCalls = 2;
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
@@ -151,6 +157,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             ?? throw new Exception("stream regression requires an initially enabled generation");
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var activeProxy = harness.ClientA.CreateProxy<ITestService>();
         await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var active = activeProxy.Service
@@ -160,12 +167,15 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = preparedClientBCompressionService.Service
-                .UploadBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            queued = InvokeInputAsync(preparedClientBCompressionService.Service, oneWay,
+                TwoStreamItemsThenWaitAsync(producerRelease.Task, producerStarted));
             await WaitUntilAsync(
-                () => harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2 &&
-                      original.Kernel.QueuedBytes > 0,
-                "queued old generation must own both pre-admission stream bytes and admission queue bytes");
+                () => original.Kernel.QueuedCalls == 1 && original.Kernel.QueuedBytes > 0 &&
+                      (!oneWay || harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2),
+                "queued old generation must retain the head and, only for no-Ack OneWay, physical input");
+            Ensure(producerStarted.Task.IsCompleted == oneWay &&
+                   (oneWay || harness.Server.PreAdmissionStreamBytesForDiagnostics == 0),
+                "two-way producer waits for acceptance; OneWay producer retains its no-Ack semantics");
 
             var retainedStreamBytes = harness.Server.PreAdmissionStreamBytesForDiagnostics;
             var retainedAdmissionBytes = original.Kernel.QueuedBytes;
@@ -183,7 +193,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
                 "old active request must complete after runtime disable");
             producerRelease.TrySetResult();
             Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(5)) == StreamItemBytes * 2,
-                "queued old-generation stream must replay and complete after runtime disable");
+                "queued old-generation input must complete after runtime disable");
 
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics == 0 &&
@@ -213,13 +223,23 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
         => Enumerable.Repeat(value, StreamItemBytes).ToArray();
 
     private static async IAsyncEnumerable<byte[]> TwoStreamItemsThenWaitAsync(
-        Task release,
+        Task release, TaskCompletionSource started,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        started.TrySetResult();
         yield return CreateStreamItem(0x61);
         await Task.Yield();
         yield return CreateStreamItem(0x62);
         await release.WaitAsync(cancellationToken);
+    }
+
+    private static async Task<int> InvokeInputAsync(ICompressionService service, bool oneWay,
+        IAsyncEnumerable<byte[]> items)
+    {
+        if (!oneWay)
+            return await service.UploadBytesAsync(items);
+        await service.NotifyStreamBytesAsync(items);
+        return await CompressionService.WaitForOneWayAsync();
     }
 
     private static async Task<Exception?> CaptureFailureAsync(Task task)

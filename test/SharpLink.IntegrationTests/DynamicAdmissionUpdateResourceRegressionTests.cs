@@ -68,6 +68,8 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             TestService.ReleaseBlockingAdd();
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(5)) == 3,
                 "capacity owner must complete normally after Admission update");
+            await WaitUntilAsync(() => harness.Server.ActiveCallCountForDiagnostics == 0,
+                "the physical capacity owner must exit before the recovery call after update");
 
             var response = await preparedClientBCompressionService.Service
                 .EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -85,9 +87,12 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
 
     [Test]
     [NotInParallel]
-    public async Task PreAdmissionStreamAccountingShouldRemainExactAcrossRuntimeUpdate()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamAccountingShouldRemainExactAcrossRuntimeUpdate(bool oneWay)
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
         await using var harness = await RunningHarness.CreateAsync(
             serverRuntimeConfigure: options =>
             {
@@ -108,6 +113,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             ?? throw new Exception("stream update regression requires global concurrency state");
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var activeProxy = harness.ClientA.CreateProxy<ITestService>();
         await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var active = activeProxy.Service
@@ -118,19 +124,23 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = preparedClientBCompressionService.Service
-                .UploadBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            queued = InvokeInputAsync(preparedClientBCompressionService.Service, oneWay,
+                TwoStreamItemsThenWaitAsync(producerRelease.Task, producerStarted));
             await WaitUntilAsync(
-                () => harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2 &&
+                () => (!oneWay || harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2) &&
                       kernel.QueuedCalls == 1 && kernel.QueuedBytes > 0 &&
                       concurrency.WaitingCount == 1,
-                "queued generation N Request must own stream bytes, Admission bytes, and one inner waiter");
+                "generation N retains its head and waiter, plus physical input only for no-Ack OneWay");
+            Ensure(producerStarted.Task.IsCompleted == oneWay &&
+                   (oneWay || harness.Server.PreAdmissionStreamBytesForDiagnostics == 0),
+                "only OneWay can produce input before queued-call acceptance");
 
             var retainedStreamBytes = harness.Server.PreAdmissionStreamBytesForDiagnostics;
             var retainedAdmissionBytes = kernel.QueuedBytes;
             publicServer.UpdateAdmissionControl(options =>
             {
                 options.Global.UseConcurrency(1);
+                options.QueueOneWayCalls = true;
                 options.MaxQueuedCalls = 1;
                 options.MaxQueuedBytes = 32 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(5);
@@ -154,7 +164,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
                 "old active Request must complete after N+1 publication");
             producerRelease.TrySetResult();
             Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(5)) == StreamItemBytes * 2,
-                "queued generation N stream must replay and complete after runtime update");
+                "queued generation N input must complete after runtime update");
 
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics == 0 &&
@@ -194,6 +204,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
     private static void ConfigureInitialQueue(SharpLinkAdmissionControlOptions options)
     {
         options.Global.UseConcurrency(1);
+        options.QueueOneWayCalls = true;
         options.MaxQueuedCalls = 2;
         options.MaxQueuedBytes = 64 * 1024;
         options.MaxQueueDelay = TimeSpan.FromSeconds(10);
@@ -203,13 +214,23 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
         => Enumerable.Repeat(value, StreamItemBytes).ToArray();
 
     private static async IAsyncEnumerable<byte[]> TwoStreamItemsThenWaitAsync(
-        Task release,
+        Task release, TaskCompletionSource started,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        started.TrySetResult();
         yield return CreateStreamItem(0x61);
         await Task.Yield();
         yield return CreateStreamItem(0x62);
         await release.WaitAsync(cancellationToken);
+    }
+
+    private static async Task<int> InvokeInputAsync(ICompressionService service, bool oneWay,
+        IAsyncEnumerable<byte[]> items)
+    {
+        if (!oneWay)
+            return await service.UploadBytesAsync(items);
+        await service.NotifyStreamBytesAsync(items);
+        return await CompressionService.WaitForOneWayAsync();
     }
 
     private static async Task<Exception?> CaptureFailureAsync(Task task)
