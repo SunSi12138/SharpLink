@@ -8,7 +8,7 @@ Regenerate every contract/service assembly with the matching 3.0 SDK. Generated 
 
 For a custom wire representation, use compile-time `[RpcCodec(typeof(MyCodec))]` or a Codec/Adapter policy binding. The former standalone runtime `AddCodec` and `UseCodecResolver` methods have been retired in 3.0. Missing generated metadata fails closed; there is no endpoint resolver fallback.
 
-Generated API 5 requires the exact identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`. API4 binaries, or a different API5 development identity, are rejected; a shared numeric API version alone is insufficient.
+Generated API 6 requires the exact identity `sharplink-3.0-api6-contract-binding-v1`, shared by owner-bound Codec factories, scoped proxy factories and complete Stub method facts. API4/API5 binaries and other ABI identities are rejected before generated construction; the API integer alone is insufficient. Migrate callers using the [contract-channel guide](rpc-channel-3.0-migration.md).
 
 ## Direct codec use outside generated RPC
 
@@ -30,4 +30,4 @@ This change does not make arbitrary .NET reflection or dynamic loading valid in 
 
 The raw-codec capability accepts only the exact factory instance admitted into the receiving owner's active scope. Its target Type and ABI requirement must match metadata snapshotted when the manifest was prepared. Passing `(8, false)` for an arbitrary unmanaged Type, reusing another owner's factory, or substituting a requirement cannot create a raw codec. This is owner-registration validation, not a security boundary against an application that explicitly supplies its own manifest/codec implementation.
 
-The earlier unbound `sharplink-3.0-api5-generated-unsafe-blit-v1` development identity is incompatible and must be regenerated. A combined release with #754 must coordinate a single identity, generator contract and 3.0 public API baseline before publication.
+Both earlier API5 development identities (`sharplink-3.0-api5-generated-unsafe-blit-v1` and `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`) are incompatible. Regenerate the complete contract/service/plugin closure with the API6 SDK; do not mix old bootstrap, Proxy, Stub or Codec artifacts with new ones.

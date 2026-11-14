@@ -590,3 +590,19 @@ inventory/package/platform acceptance must include this actual public delta befo
   unchanged20-name SDK forwarding inventory and exact diff are retained in
   artifacts/775-integration/public-api-c2bae225; no baseline was blindly overwritten. The new
   receipt-result public declarations also require inclusion in final source/package review.
+
+- Subject1dd562a0fa7946dac28a30420aff9a4c39e051f8 passes the complete ordinary binding
+  runner: all16 exact source/inventory reports (513 per transport), cold resolver and exact
+  old-Stub rejection. Evidence: artifacts/775-integration/binding-publication-receipts.
+  Full local Integration now passes502/502, including all three new publication controls;
+  ordinary Unit continuation passes2221/2221 with zero skipped. The ordinary census is2222,
+  with the separately paused/red #387 control still excluded from this continuation, not green.
+  Logs: integration-full-runtime-publication.log and unit-continuation-publication-without-paused-387.log.
+- The already-published c2bae225 Windows NativeAOT binary also passes real separate-process
+  SharedMemory: server Ready/Pass, referenced service, client Pass and clean server exit.
+  Its logs remain in aot-c2bae225 and do not relabel this earlier binary as the new receipt API.
+- README/Quick Start, the complete contract-channel migration and owner-bound Codec migration
+  now use API6/exact identity, retained finite preparation and correct post-replacement ownership.
+  Other live protocol/architecture/3.0 migration documents still need reconciliation; historical
+  evidence is not rewritten into current acceptance. The remote dev ref was rechecked and remains
+  160d0cd9a0550de5bf00c63b6007376c02debc20. No production branch push, hosted run or PR yet.

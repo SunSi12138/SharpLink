@@ -12,7 +12,7 @@ SharpLink 是一个面向 .NET 10 的高性能 RPC 框架。契约、代理、St
 
 ## 安装与 package map
 
-当前 `dev` 的版本线为 `3.0.0`，Generated API 5 要求同版本包及精确 ABI identity；3.0 尚未发布时，请使用源码项目引用或本地打包的 NuGet feed。3.0 包可用后按项目职责安装：
+3.0 源码候选使用 Generated API 6，要求同版本包及精确 ABI identity；3.0 尚未发布时，请使用源码项目引用或本地打包的 NuGet feed。3.0 包可用后按项目职责安装：
 
 | Project role | Install | Why |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ Server 的 canonical lifecycle 是 `StartAsync / WaitForShutdownAsync / StopAsyn
 
 Canonical source: [`samples/QuickStart.Client/Program.cs`](samples/QuickStart.Client/Program.cs)
 
-Client 建连、等待 Ready、获取生成代理并发起一次真实 Unary RPC：
+Client 建连后创建本地契约 handle，准备它实际捕获的连接 binding，再发起一次真实 Unary RPC：
 
 ```csharp
 await using var client = SharpClientBuilder.Create()
@@ -99,8 +99,9 @@ await using var client = SharpClientBuilder.Create()
 await client.ConnectAsync(timeout.Token);
 await client.WaitForReadinessAsync(1, timeout.Token);
 
-var greeting = client.Get<IGreetingService>();
-var reply = await greeting.GreetAsync(
+var greeting = client.CreateProxy<IGreetingService>();
+await greeting.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token);
+var reply = await greeting.Service.GreetAsync(
     new GreetingRequest { Name = "SharpLink" },
     timeout.Token);
 ```
@@ -126,11 +127,11 @@ Client sample 在退出前显式 `StopAsync()`，并继续由 `await using` 做�
 
 | 用户问题 | 简短答案 | 进一步阅读 |
 | --- | --- | --- |
-| timeout/deadline 覆盖什么？ | 一个 RPC logical deadline 从调用创建开始，约束 endpoint admission/reselection、deadline-bearing request emission、response/stream lifetime、retry 与 backoff；generated Unary 的 pending table 满时默认立即本地 `ResourceExhausted`，不会排队等 slot。此前的 `ConnectAsync`、transport dial、handshake、`WaitForReadinessAsync` **不计入这个 RPC deadline**；handshake 有独立 `HandshakeTimeout`。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
-| `ConnectAsync` 成功意味着什么？ | 它完成 topology 自己的 connectivity 边界，不等于所有 endpoint fully ready。启动流量前必须要求 N 个 Ready endpoint 时，显式 `WaitForReadinessAsync(N)`。 | [`doc/resilience.md`](doc/resilience.md) |
+| timeout/deadline 覆盖什么？ | 一个 RPC logical deadline 从调用创建开始，约束 endpoint admission/reselection、deadline-bearing request emission、response/stream lifetime、retry 与 backoff；generated Unary 的 pending table 满时默认立即本地 `ResourceExhausted`，不会排队等 slot。此前的 `ConnectAsync`、transport dial、handshake、`WaitForReadinessAsync` 和显式 `PrepareAsync` **不计入这个 RPC deadline**；handshake 有独立 `HandshakeTimeout`。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
+| `ConnectAsync` 成功意味着什么？ | 它完成 topology 自己的 connectivity 边界，不等于所有 endpoint fully ready。启动流量前必须要求 N 个 Ready endpoint 时，显式 `WaitForReadinessAsync(N)`；连接 Ready 不等于契约已绑定，RPC 前对保留的 handle 执行有限 `PrepareAsync`。 | [`doc/resilience.md`](doc/resilience.md) |
 | `await OneWay` 成功意味着什么？ | 只说明本地发送边界成功：无 deadline 的普通 OneWay 到 SendPump admission；带 deadline 的 OneWay 还观察 transport flush。它不证明 Server 收到、handler 执行或副作用已提交；需要远端成功确认时使用 request/response RPC。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
-| 运行时 multi-cluster mutation 被拒绝怎么判断？ | `AddClusterAsync` / `ReplaceClusterAsync` / `RemoveClusterAsync` 返回各自的 structured result；对预期 control-plane rejection 按 `SharpLinkClusterMutationFailureCode` 分支，不解析异常文本。Add 成功只表示 publication committed，需要立即 RPC 时再 `WaitForReadyAsync(cluster)`；Replace/Remove 的 cleanup 状态与 publication 成败分开报告。 | [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
-| replacement 后旧 proxy 怎样？ | `ReplaceClusterAsync` 前取得的 multi-cluster proxy 固定绑定旧 child，要使用新 child 必须重新 `Get<T>()`；server-side module/service replacement 与 endpoint topology/policy 更新不会要求重取普通 client proxy，但已开始的 call/physical attempt 不会中途迁移。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
+| 运行时 multi-cluster mutation 被拒绝怎么判断？ | `AddClusterAsync` / `ReplaceClusterAsync` / `RemoveClusterAsync` 返回各自的 structured result；对预期 control-plane rejection 按 `SharpLinkClusterMutationFailureCode` 分支，不解析异常文本。Add 成功只表示 publication committed，需要立即 RPC 时在 `WaitForReadyAsync(cluster)` 后创建并 Prepare 对应契约 handle；Replace/Remove 的 cleanup 状态与 publication 成败分开报告。 | [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
+| replacement 后旧 proxy 怎样？ | `ReplaceClusterAsync` 前取得的 multi-cluster proxy 固定绑定旧 child，要使用新 child 必须重新 `CreateProxy<T>()` 并 Prepare；server-side replacement / endpoint 更新可在原 handle 上重新绑定。旧本地契约代次退休则需新 handle；已开始的 call/physical attempt 不会中途迁移。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
 | timeout/disconnect 后能直接 retry？ | 自动 retry 仅适用于 `[Idempotent]` Unary，并共享原 logical deadline；默认只重试 `Unavailable` / `ConnectionClosed`。timeout 或 disconnect **不证明 Server 没执行过请求**，因此只有业务上可安全重复的操作才应声明幂等并允许重试。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/resilience.md`](doc/resilience.md) |
 
 ## Production-shaped template

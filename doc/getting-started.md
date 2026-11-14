@@ -53,11 +53,17 @@ await using var client = SharpClientBuilder.Create()
     .Build();
 
 await client.ConnectAsync();
-var value = await client.Get<ICalculator>().AddAsync(20, 22, CancellationToken.None);
+var calculator = client.CreateProxy<ICalculator>();
+await calculator.PrepareAsync(TimeSpan.FromSeconds(10));
+var value = await calculator.Service.AddAsync(20, 22, CancellationToken.None);
 
 await server.StopAsync(TimeSpan.FromSeconds(30));
 await server.WaitForShutdownAsync();
 ```
+
+`CreateProxy` 只做同步本地构造，不等待远端。`PrepareAsync` 用自己的有限预算等待同一
+handle 的真实 Session binding；没有已绑定目标时，业务调用默认立即以 `Unavailable/NoBoundRoute`
+失败。连接 Ready 或观察到 Manifest 均不能替代 binding，详见 [契约通道迁移](rpc-channel-3.0-migration.md)。
 
 每个 Client 都必须在 Build 前显式选择请求超时策略：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 则明确关闭 Client-wide fallback。没有选择策略时 Build 会失败；方法 `[Timeout]` 和继承的父调用 `TimeBudget` 仍按各自规则生效。
 
@@ -70,7 +76,7 @@ Client 和 Server 都是异步可释放对象。Server 使用 `StartAsync / Wait
 
 ## 分离部署
 
-推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。API 5 生成程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
+推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。API 6 生成程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
 
 - `demo/SeparatedContracts`
 - `demo/SeparatedServer`
