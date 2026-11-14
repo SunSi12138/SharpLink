@@ -684,3 +684,22 @@ inventory/package/platform acceptance must include this actual public delta befo
   supported hosts. It deliberately does not run paused #387 or claim full Unit/release green.
   Delete temp-775-production-validation.yml after consuming its source-bound evidence.
   Performance criteria are not yet frozen and no performance measurement has run.
+
+### First hosted platform consumption
+
+Run43592141330 at0c236531 passes all16 exact binding reports/old-Stub controls and
+Integration502 on Linux x64, Windows x64 and macOS arm64. Its Linux pack job passes
+the nine-package metadata/API/version/ABI/external-SPI gates, actual package RPC,
+and fresh-copy QuickStart/ProductionTemplate builds plus real QuickStart graceful
+RPC/shutdown. The same verified package artifact passes full Trim, partial Trim
+and packaged NativeAOT consumers on all three native hosts.
+
+All three ordinary jobs then fail the same one of295 Generator tests: the metadata
+documentation compiler selected every CreateProxy<IMyService> block, including the
+new independent receipt example. Scope that oracle to the unique Metadata section,
+retaining its Single assertion and actual Abstractions compile. The corrected case
+passes locally. This is a documentation-selection defect, not a product or timing
+failure. The remaining hosted phase runs the corrected Generator suite, the skipped
+load-driver suites and real native process/topology/sidecar/pre-credit gates only;
+it does not rerun already valid binding/Integration/package/platform evidence.
+Production source remains exactly0c236531. No paused #387 execution and no PR yet.

@@ -13,7 +13,10 @@ public partial class RpcAnalyzerTests
     public Task Issue903DocumentedSingleMetadataEntryMustCompileAgainstActualAbstractions()
     {
         var markdown = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "doc-calls-and-streaming.md"));
-        var codeBlock = markdown.Split("```csharp", StringSplitOptions.None)
+        var metadataSections = markdown.ReplaceLineEndings("\n").Split("\n## Metadata\n", StringSplitOptions.None);
+        Ensure(metadataSections.Length == 2, "metadata documentation section must be unique");
+        var metadataSection = metadataSections[1].Split("\n## ", StringSplitOptions.None)[0];
+        var codeBlock = metadataSection.Split("```csharp", StringSplitOptions.None)
             .Skip(1)
             .Select(part => part.Split("```", StringSplitOptions.None)[0])
             .Single(block => block.Contains("CreateProxy<IMyService>", StringComparison.Ordinal));
