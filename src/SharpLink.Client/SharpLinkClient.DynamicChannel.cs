@@ -46,6 +46,18 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         if (!module.TryAcquire(method.HasClientStreams, out var lease))
             return ValueTask.FromException(Draining());
         var combined = Combine(cancellationToken, module.ForcedCancellation);
+#if SHARPLINK_775_STATIC_SLICE
+        if (method.HasClientStreams)
+        {
+            var owner = new SharpLinkClientModuleCallOwner(lease, combined);
+            try
+            {
+                using var scope = SharpLinkClientModuleCallContext.Push(owner);
+                return AwaitOneWayOwnedAsync(inner.InvokeStaticOneWayAsync(site, method, request, requestCodec, streams, metadata, combined.Token), owner);
+            }
+            catch { owner.Dispose(); throw; }
+        }
+#endif
         try
         {
             var call =
@@ -277,6 +289,11 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         finally { lease.Dispose(); producerLifetime.Dispose(); combined.Dispose(); }
 #endif
     }
+
+#if SHARPLINK_775_STATIC_SLICE
+    private static async ValueTask AwaitOneWayOwnedAsync(ValueTask call, SharpLinkClientModuleCallOwner owner)
+    { try { await call.ConfigureAwait(false); } finally { owner.Dispose(); } }
+#endif
 
     private static SharpLinkException Draining() => new(SharpLinkErrorCode.Unavailable, "RPC module is draining");
 

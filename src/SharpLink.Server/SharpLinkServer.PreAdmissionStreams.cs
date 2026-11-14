@@ -238,7 +238,7 @@ internal sealed partial class SharpLinkServer
     private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
     {
 #if SHARPLINK_775_STATIC_SLICE
-        // A raw BindingId is not a ContractId. Streaming remains fail closed in this stage;
+        // A raw BindingId is not a ContractId. OneWay input uses its independent wire count;
         // unknown raw requests must not probe a latest registration or an unprotected Stub.
         return UnresolvedClientStreamCount;
 #else

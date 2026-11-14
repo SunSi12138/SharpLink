@@ -120,6 +120,7 @@ public static class ProtocolV2FrameParser
         (byte)StaticBindingWire.Invalidate => StaticBindingWire.Invalidate,
         (byte)StaticBindingWire.Release => StaticBindingWire.Release,
         (byte)StaticBindingWire.RequestAccepted => StaticBindingWire.RequestAccepted,
+        (byte)StaticBindingWire.OneWayInputRequest => StaticBindingWire.OneWayInputRequest,
 #endif
         (byte)ProtocolV2FrameType.HandshakeRequest => ProtocolV2FrameType.HandshakeRequest,
         (byte)ProtocolV2FrameType.HandshakeResponse => ProtocolV2FrameType.HandshakeResponse,
@@ -194,6 +195,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HealthCheck => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.HealthResponse => ProtocolV2FrameFlags.None,
 #if SHARPLINK_775_STATIC_SLICE
+            StaticBindingWire.OneWayInputRequest => ProtocolV2FrameFlags.OneWay | ProtocolV2FrameFlags.Cancellable |
+                ProtocolV2FrameFlags.HasTimeBudget | ProtocolV2FrameFlags.HasMetadata | ProtocolV2FrameFlags.Compressed,
             StaticBindingWire.Bind or StaticBindingWire.Ack or StaticBindingWire.Invalidate or StaticBindingWire.Release => ProtocolV2FrameFlags.None,
 #endif
             ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
@@ -204,6 +207,10 @@ public static class ProtocolV2FrameParser
         };
         if ((flags & ~allowed) != 0)
             throw Violation($"Frame {type} does not allow flags {flags}.");
+#if SHARPLINK_775_STATIC_SLICE
+        if (type == StaticBindingWire.OneWayInputRequest && (flags & ProtocolV2FrameFlags.OneWay) == 0)
+            throw Violation("OneWay input frames require OneWay flags.");
+#endif
         if ((flags & ProtocolV2FrameFlags.Truncated) != 0 && (flags & ProtocolV2FrameFlags.Error) == 0)
             throw Violation("Truncated is valid only on an error frame.");
         if ((flags & (ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Compressed)) ==
@@ -309,6 +316,10 @@ public static class ProtocolV2FrameParser
                 }
                 break;
 #if SHARPLINK_775_STATIC_SLICE
+            case StaticBindingWire.OneWayInputRequest:
+                _ = StaticBindingWire.ReadOneWayInputCount(payload);
+                ValidateRequestPayload(payload.Slice(1), flags, limits.MaxMetadataBytes);
+                break;
             case StaticBindingWire.RequestAccepted:
                 if (payload.Length != 0) throw StaticBindingWire.Malformed("RequestAccepted must have an empty payload.");
                 break;

@@ -3,7 +3,7 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator
 {
 #if SHARPLINK_775_STATIC_SLICE
-    private const string GeneratedAbiIdentity = "sharplink-experimental-775-stream-admission-v5";
+    private const string GeneratedAbiIdentity = "sharplink-experimental-775-oneway-input-v6";
 #else
     private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
 #endif

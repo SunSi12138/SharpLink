@@ -106,6 +106,18 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
 
+#if SHARPLINK_775_STATIC_SLICE
+                        var oneWayInputCount = 0;
+                        if (header.Type == StaticBindingWire.OneWayInputRequest)
+                        {
+                            // Validate the full compressed envelope, including its extra byte,
+                            // before passing the normal Request grammar to existing dispatch.
+                            oneWayInputCount = StaticBindingWire.ReadOneWayInputCount(payload);
+                            session.ValidateInboundPayloadEnvelope(header.Type, header.Flags, payload);
+                            payload = payload.Slice(1);
+                            header = new ProtocolV2FrameHeader(ProtocolV2FrameType.Request, header.Flags, header.RequestId);
+                        }
+#endif
                         var isStreamProgress = header.Type is
                             ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
                         var streamRequestId = isStreamProgress
@@ -183,7 +195,11 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
+#if SHARPLINK_775_STATIC_SLICE
+                                            oneWayInputCount);
+#else
                                             ResolveRawRequestClientStreamCount(payload));
+#endif
                                     }
                                     else
                                     {
@@ -287,7 +303,11 @@ internal sealed partial class SharpLinkServer
                                             header.Flags,
                                             payload,
                                             requestCancellationMap,
-                                            ct);
+                                            ct
+#if SHARPLINK_775_STATIC_SLICE
+                                            , oneWayInputCount
+#endif
+                                            );
                                         break;
                                     }
                                 case ProtocolV2FrameType.Cancel:
@@ -394,7 +414,11 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken)
+        CancellationToken serverLoopToken
+#if SHARPLINK_775_STATIC_SLICE
+        , int oneWayInputCount
+#endif
+        )
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         try
@@ -408,7 +432,11 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
+#if SHARPLINK_775_STATIC_SLICE
+                        oneWayInputCount);
+#else
                         ResolveRawRequestClientStreamCount(payload));
+#endif
                     return;
                 }
 
@@ -430,7 +458,7 @@ internal sealed partial class SharpLinkServer
             {
 #if SHARPLINK_775_STATIC_SLICE
                 dispatchTask = DispatchBoundRequestAsync(connection, requestId, flags, payload,
-                    requestCancellationMap, serverLoopToken, admissionProgram);
+                    requestCancellationMap, serverLoopToken, admissionProgram, oneWayInputCount);
 #else
                 dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
                     ? DispatchOneWayRpc(

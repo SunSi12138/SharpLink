@@ -272,6 +272,18 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                     }
                 }
+#if SHARPLINK_775_STATIC_SLICE
+                else if (descriptor.HasClientStreams)
+                {
+                    if (request.Arguments.IsEmpty) request = request with { Arguments = ReadOnlySequence<byte>.Empty };
+                    else
+                    {
+                        decodedRequestOwner = _runtimeContext.Buffers.Rent(checked((int)request.Arguments.Length));
+                        foreach (var segment in request.Arguments) decodedRequestOwner.Write(segment.Span);
+                        request = request with { Arguments = new ReadOnlySequence<byte>(decodedRequestOwner.WrittenMemory) };
+                    }
+                }
+#endif
             }
             catch (SharpLinkException exception) when (
                 exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)

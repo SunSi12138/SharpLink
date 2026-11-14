@@ -85,7 +85,7 @@ partial class PendingRequestTable
         lock (call.CompletionGate)
         {
             if (call.Id != id || !ReferenceEquals(slots[(int)(id & _indexMask)], call)) return false;
-            if (!call.RequestPublished || call.StreamAdmission is not { } admission)
+            if (call.Kind == PendingCallKind.OneWayClientStreaming || !call.RequestPublished || call.StreamAdmission is not { } admission)
                 throw StaticBindingWire.Malformed("RequestAccepted does not refer to a published streaming request.");
             if (!call.Deadline.IsExpired(_timeProvider)) { admission.Confirm(); return true; }
         }

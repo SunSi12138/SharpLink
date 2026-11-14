@@ -85,9 +85,11 @@ internal static partial class Program
         Check(duplex.SequenceEqual(new[] { 2, 4 }) && duplexProducer.Starts == 1, "stream accepted generated Duplex completes on real transport");
         Check(f.Stub.Invocations.All(m => f.Contract.Methods.Any(known => known.Facts == m)) && f.Stub.Resolutions == f.Contract.Methods.Count,
             "stream all three generated terminals retain full bound facts without requery");
-        var forbidden = new ProbeProducer();
-        await ExpectCode(() => f.Rpc.Service.FireStreamAsync(forbidden, token).AsTask(), SharpLinkErrorCode.FailedPrecondition, "stream OneWay input remains explicitly fail closed");
-        Check(forbidden.Starts == 0, "stream unsupported OneWay input starts zero producer");
+        var oneWayProducer = new ProbeProducer(); var callsBeforeOneWay = f.Service.Calls;
+        await f.Rpc.Service.FireStreamAsync(oneWayProducer, token);
+        Check(true, "stream generated typed OneWay input completes without RequestAccepted");
+        await UntilAsync(() => f.Service.Calls == callsBeforeOneWay + 2, token);
+        Check(oneWayProducer.Starts == 1, "stream enabled OneWay input starts exactly one producer");
         await f.QuiesceAsync(token);
         Check(f.Connection.ActiveCallCount == 0 && f.Peer.Session.StreamManager.ActiveStreamCount == 0, "stream successful calls reclaim pending physical and route quotas");
     }

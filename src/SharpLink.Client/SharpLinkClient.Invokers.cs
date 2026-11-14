@@ -763,6 +763,11 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
+#if SHARPLINK_775_STATIC_SLICE
+        using var modulePhysicalOwner = SharpLinkClientModuleCallContext.Current?.Retain();
+        PendingStreamAdmission? physicalProducer = null;
+        long routingId = 0;
+#endif
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
@@ -772,7 +777,12 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
+#if SHARPLINK_775_STATIC_SLICE
+            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
+            connection = target.Connection; routingId = unchecked((long)target.Token);
+#else
             connection = GetReadyConnection(method, retrySelection: null, outcome);
+#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -815,10 +825,19 @@ internal sealed partial class SharpLinkClient
         {
             if (connection!.PendingCalls.Contains(requestId))
             {
+#if SHARPLINK_775_STATIC_SLICE
+                physicalProducer = connection.PendingCalls.CaptureStreamAdmission(requestId, producer: true);
+                var streamCancellationToken = physicalProducer.Token;
+#else
                 var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+#endif
                 var emission = SendRpcCall(
                     connection.Session,
+#if SHARPLINK_775_STATIC_SLICE
+                    routingId,
+#else
                     method.ContractId,
+#endif
                     method.MethodId,
                     requestId,
                     flags,
@@ -829,7 +848,11 @@ internal sealed partial class SharpLinkClient
                     observeEmission: control.Deadline.HasValue,
                     // The pending call owns producer cancellation and request publication.
                     cancellationToken: streamCancellationToken,
-                    publicationTable: connection.PendingCalls);
+                    publicationTable: connection.PendingCalls
+#if SHARPLINK_775_STATIC_SLICE
+                    , oneWayInputCount: method.ClientStreamCount
+#endif
+                    );
                 await emission.ConfigureAwait(false);
                 await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
                 connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
@@ -840,6 +863,10 @@ internal sealed partial class SharpLinkClient
             // Preserve the pending owner's terminal arbitration and observe its lease once.
             connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
         }
+
+#if SHARPLINK_775_STATIC_SLICE
+        finally { physicalProducer?.ReleaseProducer(); }
+#endif
 
         // Registration may already have completed and removed the pending entry. Its operation
         // still owns that terminal result and must be consumed exactly once to return it to the pool.

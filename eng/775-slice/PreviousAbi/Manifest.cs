@@ -1,6 +1,6 @@
 using System.Reflection;
 using SharpLink.Abstractions;
-[assembly: SharpLinkGeneratedAssemblyManifest(typeof(PreviousAbi.Manifest), 5, 2, "previous-profile-test", "sharplink-experimental-775-group-receipt-v3")]
+[assembly: SharpLinkGeneratedAssemblyManifest(typeof(PreviousAbi.Manifest), 5, 2, "previous-profile-test", "sharplink-experimental-775-stream-admission-v5")]
 namespace PreviousAbi;
 public sealed class Manifest : ISharpLinkGeneratedAssemblyManifest
 {

@@ -80,6 +80,7 @@ internal static partial class Program
         internal ValueTask<int> Echo() => (ValueTask<int>)Invoke("Echo", _proxy)!;
         internal ValueTask<int> Consume(IAsyncEnumerable<int> input, CancellationToken token) => (ValueTask<int>)Invoke("Consume", _proxy, input, token)!;
         internal ValueTask<int> ConsumeWithHeader(IAsyncEnumerable<int> input, CancellationToken token) => (ValueTask<int>)Invoke("ConsumeWithHeader", _proxy, input, token)!;
+        internal ValueTask FireInput(IAsyncEnumerable<int> input, CancellationToken token) => (ValueTask)Invoke("FireInput", _proxy, input, token)!;
         internal IAsyncEnumerable<int> Produce(CancellationToken token) => (IAsyncEnumerable<int>)Invoke("Produce", _proxy, token)!;
         internal IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> input, CancellationToken token) => (IAsyncEnumerable<int>)Invoke("Duplex", _proxy, input, token)!;
         internal RpcMethodDescriptor Method(string name) => group.Manifest.Contracts.Single(c => c.ContractType.Name == nameof(IHotRpc)).Methods.Single(m => m.Name == name).Facts;

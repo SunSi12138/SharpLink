@@ -26,6 +26,7 @@ public interface IHotRpc : IService
     [NonCancellable] ValueTask<int> EchoAsync(HotPayload value);
     ValueTask<int> ConsumeAsync(IAsyncEnumerable<HotPayload> values, CancellationToken cancellationToken);
     ValueTask<int> ConsumeWithHeaderAsync(HotPayload header, IAsyncEnumerable<HotPayload> values, CancellationToken cancellationToken);
+    [Oneway] ValueTask FireInputAsync(HotPayload header, IAsyncEnumerable<HotPayload> values, CancellationToken cancellationToken);
     IAsyncEnumerable<HotPayload> ProduceAsync(CancellationToken cancellationToken);
     IAsyncEnumerable<HotPayload> DuplexAsync(IAsyncEnumerable<HotPayload> values, CancellationToken cancellationToken);
 #if GROUP_CHANGED_HASH
@@ -68,6 +69,12 @@ public sealed class HotService : IHotRpc, IAsyncDisposable
     }
     public async ValueTask<int> ConsumeWithHeaderAsync(HotPayload header, IAsyncEnumerable<HotPayload> values, CancellationToken cancellationToken)
     { return header.Value + await ConsumeAsync(values, cancellationToken); }
+    public async ValueTask FireInputAsync(HotPayload header, IAsyncEnumerable<HotPayload> values, CancellationToken cancellationToken)
+    {
+        var sum = header.Value;
+        await foreach (var value in values.WithCancellation(cancellationToken)) sum += value.Value;
+        Signals.Observe?.Invoke("oneway-sum-" + sum);
+    }
     public async IAsyncEnumerable<HotPayload> ProduceAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
         try { await Task.Yield(); yield return new HotPayload(Signals.Tag * 100); }
@@ -119,6 +126,8 @@ public static class LocalDriver
         => ((RpcProxy<IHotRpc>)proxy).Service.ConsumeAsync(Input(input, ct), ct);
     public static ValueTask<int> ConsumeWithHeader(object proxy, IAsyncEnumerable<int> input, CancellationToken ct)
         => ((RpcProxy<IHotRpc>)proxy).Service.ConsumeWithHeaderAsync(new HotPayload(7), Input(input, ct), ct);
+    public static ValueTask FireInput(object proxy, IAsyncEnumerable<int> input, CancellationToken ct)
+        => ((RpcProxy<IHotRpc>)proxy).Service.FireInputAsync(new HotPayload(7), Input(input, ct), ct);
     public static IAsyncEnumerable<int> Produce(object proxy, CancellationToken ct)
         => Output(((RpcProxy<IHotRpc>)proxy).Service.ProduceAsync(ct), ct);
     public static IAsyncEnumerable<int> Duplex(object proxy, IAsyncEnumerable<int> input, CancellationToken ct)

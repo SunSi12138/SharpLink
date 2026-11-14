@@ -22,12 +22,17 @@ internal sealed partial class SharpLinkServer
         else await stub.InvokeCancellableAsync(service, bridge, method, requestId, args, output, token).ConfigureAwait(false);
     }
 
-    private static async ValueTask JoinBoundInputStreamsAsync(ValueTask invocation, RpcSession session, long requestId)
+    private static async ValueTask JoinBoundInputStreamsAsync(ValueTask invocation, RpcSession session, long requestId, RpcMethodDescriptor method)
     {
         Exception? failure = null;
         try { await invocation.ConfigureAwait(false); }
         catch (Exception error) { failure = error; }
-        try { await CompleteDynamicRequestStreamsAsync(session, requestId, true).ConfigureAwait(false); }
+        try
+        {
+            if (method.Kind == RpcMethodKind.OneWay)
+                await session.StreamManager.AbandonOneWayInputsAfterDispatchesAsync(requestId, method.ClientStreamCount).ConfigureAwait(false);
+            else await CompleteDynamicRequestStreamsAsync(session, requestId, true).ConfigureAwait(false);
+        }
         catch (Exception error) { failure = CombineTerminalExceptions(failure, error); }
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }

@@ -7,6 +7,7 @@
   <ItemGroup>
     <ProjectReference Include="../GroupPlugin/SharpLink.GroupPlugin.csproj" />
     <Compile Include="../../../test/SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="ManualTimeProvider.cs" />
+    <Compile Include="../../../test/SharpLink.IntegrationTests/TestCompressionProvider.cs" Link="TestCompressionProvider.cs" />
     <ProjectReference Include="../../../src/SharpLink.Client/SharpLink.Client.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Server/SharpLink.Server.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj"

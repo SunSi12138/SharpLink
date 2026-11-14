@@ -39,7 +39,7 @@ internal sealed partial class SharpLinkServer
     private async ValueTask DispatchBoundRequestAsync(ServerConnectionState connection, long requestId,
         ProtocolV2FrameFlags flags, ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> cancellations, CancellationToken loopToken,
-        AdmissionProgram? admission)
+        AdmissionProgram? admission, int oneWayInputCount)
     {
         BoundRequestSelection selection = default;
         var transferred = false;
@@ -50,10 +50,13 @@ internal sealed partial class SharpLinkServer
                 request.MethodHash, flags, out selection);
             if (failure == StaticBindingFailure.UnsupportedShape)
                 throw StaticBindingWire.Malformed("Bound request has a conflicting/streaming shape.");
+            if (failure == StaticBindingFailure.None && (flags & ProtocolV2FrameFlags.OneWay) != 0 &&
+                selection.Method.Descriptor.ClientStreamCount != oneWayInputCount)
+                throw StaticBindingWire.Malformed("OneWay wire input count conflicts with bound facts.");
             if (failure != StaticBindingFailure.None || IsDeadlineExceeded(request.RpcDeadline))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
-                    await TerminateUnresolvableOneWayRequest(connection.Session, requestId).ConfigureAwait(false);
+                    DrainRejectedOneWayStreams(connection.Session, requestId, oneWayInputCount);
                 else
                     await connection.Session.SendRpcErrorWithBackpressureAsync(requestId,
                         IsDeadlineExceeded(request.RpcDeadline)
@@ -66,7 +69,7 @@ internal sealed partial class SharpLinkServer
             transferred = true;
             var work = (flags & ProtocolV2FrameFlags.OneWay) != 0
                 ? DispatchOneWayRpc(connection, requestId, flags, payload, cancellations, loopToken, admission,
-                    bindingSelection: selection, preparedRequest: request)
+                    admittedClientStreamCount: oneWayInputCount, bindingSelection: selection, preparedRequest: request)
                 : DispatchRpcAsync(connection, requestId, flags, payload, cancellations, loopToken, admission,
                     bindingSelection: selection, preparedRequest: request);
             payload = default;

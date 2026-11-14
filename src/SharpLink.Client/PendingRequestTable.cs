@@ -1174,9 +1174,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             call.CancellationToken = cancellationToken;
             call._completionObserver = completionObserver;
 #if SHARPLINK_775_STATIC_SLICE
-            call.StreamAdmission = kind is PendingCallKind.ClientStreaming or PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming
+            call.StreamAdmission = kind is PendingCallKind.ClientStreaming or PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming or PendingCallKind.OneWayClientStreaming
                 ? new PendingStreamAdmission(kind != PendingCallKind.ServerStreaming) : null;
-            call._producerCancellation = kind == PendingCallKind.OneWayClientStreaming ? new CancellationTokenSource() : null;
+            call._producerCancellation = null;
 #else
             call._producerCancellation = kind is
                 PendingCallKind.ClientStreaming or

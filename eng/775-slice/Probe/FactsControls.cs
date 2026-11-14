@@ -132,7 +132,7 @@ internal static partial class Program
             "facts generated duplex bridge preserves original descriptor");
         await f.Stub.Inner.InvokeNoReturnCancellableAsync(f.Service, bridge, f.Method(nameof(IFactsRpc.FireStreamAsync)), 6, ReadOnlySequence<byte>.Empty, token);
         Check(f.Method(nameof(IFactsRpc.FireStreamAsync)).ClientStreamCount == 1 &&
-            f.Method(nameof(IFactsRpc.FireStreamAsync)).SupportsCancellation, "facts OneWay client stream shape is retained without transport enablement");
+            f.Method(nameof(IFactsRpc.FireStreamAsync)).SupportsCancellation, "facts OneWay client stream shape retains complete count and cancellation facts");
         var calls = f.Service.Calls;
         await ExpectCode(() => f.Stub.Inner.InvokeAsync(f.Service, bridge, method with { ContractId = long.MaxValue }, 7,
             ReadOnlySequence<byte>.Empty, output).AsTask(), SharpLinkErrorCode.FailedPrecondition,

@@ -29,7 +29,7 @@
   "facts generated client streaming Stub consumes original complete method",
   "facts generated server streaming bridge receives full original descriptor",
   "facts generated duplex bridge preserves original descriptor",
-  "facts OneWay client stream shape is retained without transport enablement",
+  "facts OneWay client stream shape retains complete count and cancellation facts",
   "facts external Stub rejects foreign resolved contract before business work",
   "facts foreign Stub identity executes zero business work",
   "facts Unary Codec null remains ahead of identity and cancellation",

@@ -344,7 +344,7 @@ internal sealed partial class SharpLinkServer
                 );
 #if SHARPLINK_775_STATIC_SLICE
             if (RequireResolvedMethod(methodDescriptor).HasClientStreams)
-                invocation = JoinBoundInputStreamsAsync(invocation, session, requestId);
+                invocation = JoinBoundInputStreamsAsync(invocation, session, requestId, RequireResolvedMethod(methodDescriptor));
 #endif
             if (!telemetry.IsEnabled)
                 return invocation;

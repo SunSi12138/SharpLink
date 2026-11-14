@@ -31,14 +31,20 @@ internal static partial class Program
 
     public static async Task Main(string[] args)
     {
+        var oneWay = args[0] == "oneway";
         var group = args[0] == "group";
         var receipt = args[0] == "receipt";
         var facts = args[0] == "facts";
         var streams = args[0] == "streams";
         var localModules = args[0] == "local";
-        var transport = group || receipt || facts || streams || localModules ? args[1] : args[0];
-        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(localModules ? 240 : streams ? 180 : group || receipt || facts ? 120 : 60));
-        if (localModules)
+        var transport = group || receipt || facts || streams || localModules || oneWay ? args[1] : args[0];
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(localModules || oneWay ? 240 : streams ? 180 : group || receipt || facts ? 120 : 60));
+        if (oneWay)
+        {
+            try { await RunOneWayAsync(transport, watchdog.Token).WaitAsync(watchdog.Token); }
+            catch (OperationCanceledException) when (watchdog.IsCancellationRequested) { CaptureAlcFailure(); throw; }
+        }
+        else if (localModules)
         {
             try { await RunLocalModulesAsync(transport, watchdog.Token).WaitAsync(watchdog.Token); }
             catch (OperationCanceledException) when (watchdog.IsCancellationRequested) { CaptureAlcFailure(); throw; }
@@ -53,10 +59,10 @@ internal static partial class Program
             await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
             await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         }
-        var report = new { transport, kind = localModules ? "functional-local-module" : streams ? "functional-stream-admission" : facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
+        var report = new { transport, kind = oneWay ? "functional-oneway-input" : localModules ? "functional-local-module" : streams ? "functional-stream-admission" : facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
             source = Environment.GetEnvironmentVariable("GITHUB_SHA"), runtime = Environment.Version.ToString() };
         Directory.CreateDirectory("artifacts/775-slice");
-        await File.WriteAllTextAsync($"artifacts/775-slice/{(localModules ? "local-" : streams ? "streams-" : facts ? "facts-" : receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
+        await File.WriteAllTextAsync($"artifacts/775-slice/{(oneWay ? "oneway-" : localModules ? "local-" : streams ? "streams-" : facts ? "facts-" : receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
         Console.WriteLine("RESULT " + JsonSerializer.Serialize(report));
     }
 

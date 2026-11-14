@@ -63,7 +63,7 @@ internal static class RpcSessionProtocolRules
             RpcSessionProtocolPhase.Ready =>
                 frameType is
 #if SHARPLINK_775_STATIC_SLICE
-                    StaticBindingWire.Bind or StaticBindingWire.Ack or StaticBindingWire.Invalidate or StaticBindingWire.Release or StaticBindingWire.RequestAccepted or
+                    StaticBindingWire.Bind or StaticBindingWire.Ack or StaticBindingWire.Invalidate or StaticBindingWire.Release or StaticBindingWire.RequestAccepted or StaticBindingWire.OneWayInputRequest or
 #endif
                     ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

@@ -41,12 +41,21 @@ internal sealed partial class PreAdmissionStreamDispatcher
 
         // Local abandonment starts disposal before IsDetached becomes visible. A pooled child
         // therefore cannot return/re-rent until this mailbox has performed its final operation.
+#if SHARPLINK_775_STATIC_SLICE
+        Task? physicalDisposal = null;
+        if (work.DisposeChild)
+            physicalDisposal = BeginPhysicalAbandonedDisposal(work.Dispatcher);
+#else
         if (work.DisposeChild)
             BeginAbandonedDispatcherDisposal(work.Dispatcher);
+#endif
 
         TaskCompletionSource? detachedCompletion;
         lock (_gate)
         {
+#if SHARPLINK_775_STATIC_SLICE
+            _physicalChildDisposal = physicalDisposal;
+#endif
             _childDetached = true;
             _childDetachFinalizing = false;
             _childLease = null;
@@ -58,6 +67,17 @@ internal sealed partial class PreAdmissionStreamDispatcher
         detachedCompletion?.TrySetResult();
         work.Lease?.OnDispatchesDrained();
     }
+
+#if SHARPLINK_775_STATIC_SLICE
+    private static Task BeginPhysicalAbandonedDisposal(IStreamDispatcher dispatcher)
+    {
+        // Preserve existing abandonment exception handling, while retaining its physical join.
+        if (dispatcher is not IAsyncDisposable disposable)
+        { BeginAbandonedDispatcherDisposal(dispatcher); return Task.CompletedTask; }
+        try { return ObserveAbandonedDispatcherDisposalAsync(disposable.DisposeAsync()); }
+        catch { return Task.CompletedTask; }
+    }
+#endif
 
     private static void BeginAbandonedDispatcherDisposal(IStreamDispatcher dispatcher)
     {

@@ -26,7 +26,8 @@ internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLo
         Owner.EnsureStaticSliceAvailable();
         if (method.ContractId != ContractId)
             throw StaticBindingWire.Error(StaticBindingFailure.HashMismatch);
-        var expectsInput = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
+        var expectsInput = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming ||
+            kind == RpcMethodKind.OneWay && method.HasClientStreams;
         if (method.Kind != kind || method.HasClientStreams != expectsInput ||
             (expectsInput ? method.ClientStreamCount is < 1 or > 127 : method.ClientStreamCount != 0))
             throw StaticBindingWire.Error(StaticBindingFailure.UnsupportedShape);
