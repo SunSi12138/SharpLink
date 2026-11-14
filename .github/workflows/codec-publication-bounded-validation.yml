@@ -1,0 +1,64 @@
+name: Codec publication active drain baseline
+
+on:
+  push:
+    branches: [codex/fix-codec-publication-reentrancy]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - '.github/workflows/codec-publication-bounded-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  existing-rpc-and-collectible-corpus:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.115
+      - name: Build exact source with audited dependencies
+        run: |
+          New-Item -ItemType Directory -Force artifacts/codec-publication | Out-Null
+          dotnet --info | Tee-Object artifacts/codec-publication/dotnet-info.log
+          dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal 2>&1 | Tee-Object artifacts/codec-publication/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exact active-drain counterexample against unchanged product
+        run: |
+          $log = 'artifacts/codec-publication/active-drain-baseline.log'
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/RuntimeAssemblyIntegrationTests/PublicationMustRejectConsumerWhenProviderBeginsActiveDrain' --maximum-parallel-tests 1 --timeout 120s 2>&1 | Tee-Object $log
+          $code = $LASTEXITCODE
+          $text = (Get-Content $log -Raw) -replace '\x1b\[[0-9;]*m', ''
+          $counts = @{}
+          foreach ($key in @('total', 'failed', 'succeeded', 'skipped')) {
+            $found = [regex]::Matches($text, "\b${key}:\s*(\d+)\b")
+            $counts[$key] = if ($found.Count) { [int]$found[-1].Groups[1].Value } elseif ($key -eq 'failed') { 0 } else { -1 }
+          }
+          $counts | ConvertTo-Json | Set-Content artifacts/codec-publication/baseline-counts.json
+          if ($code -eq 0 -or $counts.total -ne 4 -or $counts.failed -ne 4 -or $counts.succeeded -ne 0 -or $counts.skipped -ne 0 -or !$text.Contains('no new consumer may commit after its exact provider starts draining')) {
+            throw 'The exact four public active-drain counterexamples did not reproduce'
+          }
+          exit 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: codec-publication-${{ runner.os }}-${{ github.sha }}
+          path: |
+            artifacts/codec-publication/
+            test/SharpLink.IntegrationTests/bin/Release/net10.0/TestResults/
+          retention-days: 7
+          if-no-files-found: error
