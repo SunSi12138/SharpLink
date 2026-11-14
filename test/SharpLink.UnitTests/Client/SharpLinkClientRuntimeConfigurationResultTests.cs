@@ -53,6 +53,7 @@ public sealed class SharpLinkClientRuntimeConfigurationResultTests
                 .UseTimeProvider(timeProvider)
                 .UseRequestTimeout(TimeSpan.FromSeconds(10)));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var oldGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);

@@ -186,6 +186,7 @@ public sealed class SharpLinkClientRuntimeCircuitBreakerTests
                 });
             });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var failing = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var failingRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);

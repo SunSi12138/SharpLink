@@ -167,7 +167,10 @@ public sealed class ServiceLifetimeIntegrationTests
         CallLifetimeProbe.ReleaseStream();
         Ensure(await stream.MoveNextAsync(), "active stream resumes");
         Ensure(!await stream.MoveNextAsync(), "active stream completes");
-        await WaitUntilAsync(() => CallLifetimeProbe.Disposed == 1);
+        // The service scope exits before the dispatch finally releases its admission lease.
+        // Observe physical dispatch completion, not merely the application Dispose callback.
+        await WaitUntilAsync(() => CallLifetimeProbe.Disposed == 1 &&
+                                   ServerCallAdmissionDiagnostics.ActiveCallCount(server) == 0);
         _ = await service.GetInstanceIdAsync();
         Ensure(CallLifetimeProbe.Created == 2 && CallLifetimeProbe.Disposed == 2,
             "new call admitted and disposed after recovery");

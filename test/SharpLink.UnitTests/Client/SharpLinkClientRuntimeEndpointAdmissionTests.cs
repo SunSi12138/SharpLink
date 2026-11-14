@@ -18,6 +18,7 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
             transport,
             builder => builder.UseEndpointAdmission(first));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var firstInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var firstRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -54,6 +55,7 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
             transport,
             builder => builder.UseEndpointAdmission(policy));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var oldInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var oldRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -96,6 +98,7 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
                 });
             });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var firstRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);

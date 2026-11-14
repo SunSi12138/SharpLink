@@ -16,6 +16,7 @@ public class SharpLinkClientTimeoutTests
             builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -40,6 +41,7 @@ public class SharpLinkClientTimeoutTests
                 .UseRequestTimeout(TimeSpan.FromSeconds(1)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(80), timeProvider);
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(

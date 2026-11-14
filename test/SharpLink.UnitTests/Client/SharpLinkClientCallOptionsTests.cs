@@ -125,7 +125,8 @@ public class SharpLinkClientCallControlTests
         HasResponsePayload: false,
         HasClientStreams: true,
         HasMethodTimeout: false,
-        MethodTimeout: null);
+        MethodTimeout: null,
+        ClientStreamCount: 1);
 
     private static readonly RpcMethodDescriptor ServerStreamingMethod = new(
         1,

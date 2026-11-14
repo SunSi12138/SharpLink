@@ -15,6 +15,7 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -34,6 +35,7 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(5)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(80));
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
@@ -57,6 +59,7 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(2)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -78,6 +81,7 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         await ClientInvokerTestHelper.InvokeOneWayAsync(client);
         var hasCancel = await transport.Connection.TryWaitForSentPacket(
@@ -106,6 +110,7 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(5)));
 
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var stream = ClientInvokerTestHelper.InvokeServerStreaming(client);
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         var enumerator = stream.GetAsyncEnumerator();

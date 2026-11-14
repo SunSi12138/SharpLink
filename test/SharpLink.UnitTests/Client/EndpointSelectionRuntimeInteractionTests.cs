@@ -27,6 +27,7 @@ public sealed class EndpointSelectionRuntimeInteractionTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var firstAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -65,6 +66,7 @@ public sealed class EndpointSelectionRuntimeInteractionTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = LongRunningTestWorker.RunAsync(
             async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client).ConfigureAwait(false));

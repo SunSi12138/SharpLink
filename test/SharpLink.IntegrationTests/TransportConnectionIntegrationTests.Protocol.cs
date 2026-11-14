@@ -105,17 +105,20 @@ public partial class TransportConnectionIntegrationTests
 
         try
         {
-            var contract = GlobalCatalogManifestSource.Instance.CreateSnapshot()
-                .SelectMany(static manifest => manifest.Contracts)
-                .Single(static descriptor => descriptor.ContractType == typeof(ILegacyHandshakeDispatchProbe));
-            // Prove that exactly this raw request is valid and executes on the current wire generation.
-            await SendCoalescedProbeAsync(ProtocolV2Constants.MinorVersion, reject: false, contract);
+            var manifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(static candidate =>
+                candidate.Contracts.Any(static descriptor => descriptor.ContractType == typeof(ILegacyHandshakeDispatchProbe)));
+            var contract = manifest.Contracts.Single(static descriptor =>
+                descriptor.ContractType == typeof(ILegacyHandshakeDispatchProbe));
+            // Obtain a real Session-local token and prove the bound business head on the current wire.
+            var provenToken = await SendCoalescedProbeAsync(
+                ProtocolV2Constants.MinorVersion, reject: false, contract, manifest.RpcAssemblyHash);
             Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 1,
                 "the current-minor control must execute the probe exactly once");
             LegacyHandshakeDispatchProbe.Reset();
 
             await SendCoalescedProbeAsync(
-                checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)), reject: true, contract);
+                checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)),
+                reject: true, contract, manifest.RpcAssemblyHash, provenToken);
             Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 0,
                 "a rejected handshake must not dispatch its coalesced RPC request");
         }
@@ -148,8 +151,9 @@ public partial class TransportConnectionIntegrationTests
             }
         }
 
-        async Task SendCoalescedProbeAsync(
-            ushort minor, bool reject, SharpLinkGeneratedContractDescriptor contract)
+        async Task<ulong> SendCoalescedProbeAsync(
+            ushort minor, bool reject, SharpLinkGeneratedContractDescriptor contract,
+            RpcHash128 assemblyHash, ulong provenToken = 0)
         {
             var method = contract.Methods.Single();
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -168,15 +172,22 @@ public partial class TransportConnectionIntegrationTests
                     1024 * 1024, 16 * 1024 * 1024, ReadOnlyMemory<byte>.Empty),
                 limits);
             ProtocolV2FrameWriter.EndFrame(frames, token);
-            var request = ProtocolV2FrameWriter.BeginFrame(
-                frames, ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, 1);
-            var prefix = new byte[ProtocolV2Constants.RequestPrefixBytes];
-            BinaryPrimitives.WriteInt64LittleEndian(prefix, contract.ContractId);
-            BinaryPrimitives.WriteInt64LittleEndian(prefix.AsSpan(sizeof(long)), method.MethodId);
-            frames.Write(prefix);
-            ProtocolV2FrameWriter.EndFrame(frames, request);
+            var bind = ProtocolV2FrameWriter.BeginFrame(
+                frames, ProtocolV2FrameType.BindContract, ProtocolV2FrameFlags.None, 1);
+            var bindPayload = new byte[StaticBindingWire.RequestBytes];
+            BinaryPrimitives.WriteInt64LittleEndian(bindPayload, contract.ContractId);
+            BinaryPrimitives.WriteUInt64LittleEndian(bindPayload.AsSpan(8), assemblyHash.High);
+            BinaryPrimitives.WriteUInt64LittleEndian(bindPayload.AsSpan(16), assemblyHash.Low);
+            frames.Write(bindPayload);
+            ProtocolV2FrameWriter.EndFrame(frames, bind);
+            if (reject)
+            {
+                Ensure(provenToken != 0, "legacy negative must reuse the proven business head");
+                WriteBusinessHead(frames, provenToken);
+            }
 
-            // Queue both frames together; correctness must not depend on TCP read boundaries.
+            // Current: Handshake + Bind in one write. Legacy: also append the proven business
+            // head; rejection must precede both Bind and business dispatch, regardless of reads.
             await stream.WriteAsync(frames.WrittenMemory, timeout.Token);
             await stream.FlushAsync(timeout.Token);
             var handshake = await ReadFrameAsync();
@@ -194,16 +205,40 @@ public partial class TransportConnectionIntegrationTests
                 var end = new byte[1];
                 Ensure(await stream.ReadAsync(end, timeout.Token) == 0,
                     "rejected connection must terminate without an RPC response");
+                return 0;
             }
             else
             {
                 Ensure(handshake.Header.Flags == ProtocolV2FrameFlags.None,
                     "current-minor control handshake must succeed");
+                var binding = await ReadFrameAsync();
+                Ensure(binding.Header.Type == ProtocolV2FrameType.BindAck &&
+                       binding.Header.RequestId == 1 && binding.Header.Flags == ProtocolV2FrameFlags.None,
+                    "coalesced cold Bind must return its exact Ack");
+                var ack = StaticBindingWire.ReadAck(new ReadOnlySequence<byte>(binding.Payload));
+                Ensure(ack.Failure == StaticBindingFailure.None && ack.ContractId == contract.ContractId,
+                    "current control must acquire a real compatible binding");
+                using var business = new PooledByteBufferWriter();
+                WriteBusinessHead(business, ack.Token);
+                await stream.WriteAsync(business.WrittenMemory, timeout.Token);
+                await stream.FlushAsync(timeout.Token);
                 var response = await ReadFrameAsync();
                 Ensure(response.Header.Type == ProtocolV2FrameType.Response &&
-                       response.Header.RequestId == 1 &&
+                       response.Header.RequestId == 2 &&
                        (response.Header.Flags & ProtocolV2FrameFlags.Error) == 0,
                     "current-minor control must return a successful RPC response");
+                return ack.Token;
+            }
+
+            void WriteBusinessHead(PooledByteBufferWriter writer, ulong bindingToken)
+            {
+                var request = ProtocolV2FrameWriter.BeginFrame(
+                    writer, ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, 2);
+                var prefix = new byte[ProtocolV2Constants.RequestPrefixBytes];
+                BinaryPrimitives.WriteUInt64LittleEndian(prefix, bindingToken);
+                BinaryPrimitives.WriteInt64LittleEndian(prefix.AsSpan(sizeof(long)), method.MethodId);
+                writer.Write(prefix);
+                ProtocolV2FrameWriter.EndFrame(writer, request);
             }
 
             async Task<(ProtocolV2FrameHeader Header, byte[] Payload)> ReadFrameAsync()

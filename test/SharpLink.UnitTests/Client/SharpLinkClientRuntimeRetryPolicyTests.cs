@@ -16,6 +16,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
             ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero)));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var oldGenerationCall = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var oldFirst = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -50,6 +51,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
             builder.AddInterceptor(interceptor);
         });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         await interceptor.Entered.WaitAsync(TimeSpan.FromSeconds(2));
@@ -87,6 +89,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         });
         client.UpdateRetryPolicy(policy, RetryOptions(2, TimeSpan.Zero));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -135,6 +138,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         });
         client.UpdateRetryPolicy(policy, RetryOptions(2, TimeSpan.Zero));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         using var cancellation = new CancellationTokenSource();
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
@@ -229,6 +233,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         await using var client = ClientBuilderTestHelper.Build(transport);
         client.UpdateRetryPolicy(new ThrowingRetryPolicy(), RetryOptions(2, TimeSpan.Zero));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);

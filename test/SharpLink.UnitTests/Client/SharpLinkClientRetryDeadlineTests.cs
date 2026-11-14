@@ -24,6 +24,7 @@ public sealed class SharpLinkClientRetryDeadlineTests
         try
         {
             await client.ConnectAsync();
+            await ClientInvokerTestHelper.PrepareAsync(client);
             var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
             var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
 

@@ -256,3 +256,29 @@ Selected production compatibility boundary:
   malformed-frame fanout, then full ordinary suites and remaining physical/error combinations.
   Keep existing budgets and stop each focused batch on first failure; no passing count substitutes
   for a remaining required class. #387 investigation remains paused.
+
+### First ordinary end-to-end regressions and test-contract migration
+
+- Real call shapes pass4/4, service lifetimes5/5, static endpoints29/29, dynamic endpoints22/22,
+  and transport/protocol controls42/42 on Windows/runtime10.0.15. The lifetime recovery test
+  initially raced the server finally: application Dispose precedes admission release. It now
+  observes the existing physical active-call diagnostic at zero before checking recovery;
+  no retry or timeout extension was introduced.
+- The raw cross-minor positive control now coalesces Handshake+real Bind, consumes its exact Ack,
+  and sends a proven bound business head. The legacy negative coalesces Handshake+Bind+that head,
+  verifies rejection before either dispatch, and joins teardown before asserting zero invocations.
+  It no longer treats the retired ContractId request prefix as a valid current-wire control.
+- Unit manifest negatives now include prior API5 and future API7, exact old ABI rejection before
+  construction, and API6 metadata consistency. Builder18/18, locator15/15 and selection-generation
+  races3/3 pass. Manual-channel connected fixtures perform finite Prepare explicitly before the
+  invocation; pending capacity controls supply the actual OneWay input count.
+- Cancellation5/5, timeout2/2, pending/admission4/4, retry-outcome reuse1/1, shared retry deadline1/1,
+  runtime admission4/4, runtime retry policy7/7, runtime timeout5/5, structured configuration4/4 and
+  runtime breaker6/6 pass without changing their measured deadlines or policy-capture boundaries.
+- Full Unit attempts are not passes: the first exposed stale API5 assertions; the second missing
+  explicit Prepare in a selection race; the third a missing input count. Each failure is retained.
+  The migrated retry-behavior class passed11 cases but the known HugeBuiltInJitteredRetryDelayShouldRemainCancellable
+  case hit its30-second framework watchdog on Windows. #387 remains open/paused: no investigation,
+  relaxed budget or passing claim. Remaining session-refresh test peers must advertise and bind
+  their real synthetic contract; replacement Ready is not replacement bound Ready, and no old
+  token may be redirected. Full suites, platforms/packages and performance are still incomplete.

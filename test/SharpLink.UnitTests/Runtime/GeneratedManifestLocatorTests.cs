@@ -52,13 +52,14 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments("sharplink-3.0-api5-generated-unsafe-blit-v1")]
-    [Arguments("other-api5-development-identity")]
-    public void UnboundOrDifferentApi5LocatorShouldRejectBeforeConstruction(string identity)
+    [Arguments("sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
+    [Arguments("other-api6-development-identity")]
+    public void UnboundOrDifferentLocatorAbiShouldRejectBeforeConstruction(string identity)
     {
         using var fixture = CreateFixture(locatorAbiIdentity: identity);
         var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest && manifest is null,
-            "an incompatible API5 factory contract must fail before publication");
+            "an incompatible factory ABI must fail before publication");
         Ensure(fixture.State.ConstructorCalls == 0 && fixture.State.ShapeReads == 0,
             "exact ABI identity rejection must precede construction and shape reads");
         Ensure(result.Error!.Message.Contains(identity, StringComparison.Ordinal),
@@ -68,8 +69,9 @@ public sealed class GeneratedManifestLocatorTests
     [Test]
     [Arguments(3, 2)]
     [Arguments(4, 2)]
-    [Arguments(6, 2)]
-    [Arguments(5, 3)]
+    [Arguments(5, 2)]
+    [Arguments(7, 2)]
+    [Arguments(6, 3)]
     public void UnsupportedLocatorVersionShouldRejectBeforeManifestConstruction(
         int locatorApiVersion,
         int locatorProtocolVersion)
@@ -95,8 +97,8 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments(3, 2, CurrentGeneratorVersion)]
-    [Arguments(5, 3, CurrentGeneratorVersion)]
-    [Arguments(5, 2, "phase17-other-generator")]
+    [Arguments(6, 3, CurrentGeneratorVersion)]
+    [Arguments(6, 2, "phase17-other-generator")]
     public void MaterializedMetadataMismatchShouldBeInvalidBeforeShapeValidation(
         int manifestApiVersion,
         int manifestProtocolVersion,

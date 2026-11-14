@@ -22,6 +22,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.DisableRequestTimeout();
         });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var firstRequest = transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -56,6 +57,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var transport = new TestClientTransportFactory();
         await using var client = CreateRetryClient(transport, policy: null, maxAttempts: 3);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var nonIdempotent = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -88,6 +90,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
         });
         await deadlineClient.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(deadlineClient);
 
         var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(deadlineClient).AsTask();
         var deadlineRequest = await deadlineTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -105,6 +108,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         await using var cancellationClient = CreateRetryClient(
             cancellationTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromSeconds(1));
         await cancellationClient.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(cancellationClient);
         using var cancellation = new CancellationTokenSource();
         var cancellationInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
             cancellationClient, cancellationToken: cancellation.Token).AsTask();
@@ -123,6 +127,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var policy = new DelayingRetryPolicy(TimeSpan.MaxValue);
         await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -147,6 +152,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var policy = new DelayingRetryPolicy(TimeSpan.MaxValue);
         await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         using var cancellation = new CancellationTokenSource();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
@@ -186,6 +192,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
                 });
             });
             await client.ConnectAsync();
+            await ClientInvokerTestHelper.PrepareAsync(client);
             while (provider.ActiveTimerCount == 0)
                 await Task.Yield();
             var baselineTimerCount = provider.ActiveTimerCount;
@@ -218,6 +225,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
         });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -244,6 +252,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.UseRetry(invalidPolicy);
         });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -273,6 +282,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var firstAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -304,6 +314,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var request = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -330,6 +341,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
                 builder.UseEndpointAdmission(admission);
             });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var started = Stopwatch.GetTimestamp();
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
@@ -368,6 +380,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var secondRequest = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
