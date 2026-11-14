@@ -168,4 +168,3 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 : Default.Assemblies.FirstOrDefault(a => AssemblyName.ReferenceMatchesDefinition(name, a.GetName()));
     }
 }
-

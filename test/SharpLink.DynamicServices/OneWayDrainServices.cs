@@ -62,4 +62,3 @@ public sealed class OneWayDrainSingletonService : OneWayDrainService, IOneWayDra
 
 [RpcService(Lifetime = SharpLinkServiceLifetime.Call)]
 public sealed class OneWayDrainCallService : OneWayDrainService, IOneWayDrainCall;
-

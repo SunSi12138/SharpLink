@@ -64,4 +64,3 @@ public sealed class DrainItemCodec : IRpcCodec<DrainItem>
     }
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
-

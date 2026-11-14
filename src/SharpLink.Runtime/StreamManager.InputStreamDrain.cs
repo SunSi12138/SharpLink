@@ -75,4 +75,3 @@ internal sealed partial class StreamManager
         }
     }
 }
-

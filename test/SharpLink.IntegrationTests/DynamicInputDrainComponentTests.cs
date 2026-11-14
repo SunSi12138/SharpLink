@@ -117,4 +117,3 @@ public sealed class DynamicInputDrainComponentTests
         private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
-

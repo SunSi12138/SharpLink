@@ -18,4 +18,3 @@ internal sealed partial class SharpLinkServer
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 }
-

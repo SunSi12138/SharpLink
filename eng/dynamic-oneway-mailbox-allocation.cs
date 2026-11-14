@@ -28,4 +28,3 @@ Console.WriteLine(JsonSerializer.Serialize(new
     runtime=Environment.Version.ToString(),
     source=assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
 }));
-
