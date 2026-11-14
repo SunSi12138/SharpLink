@@ -38,7 +38,10 @@ public sealed class SharpLinkClientOneWayShapeTests
         await channel.InvokeOneWayAsync(
             method, in request, RpcEmptyRequestCodec.Instance, in streams,
             metadata: null, cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var sent = await transport.Connection.WaitForSentFrame(hasClientStreams
+            ? ProtocolV2FrameType.OneWayInputRequest : ProtocolV2FrameType.Request);
+        if (hasClientStreams)
+            Ensure(sent.Payload[0] == 1, "OneWay input carries its independent bounded count without an Ack");
 
         Ensure(probe.Calls == (hasClientStreams ? 1 : 0),
             "only the client-stream shape may invoke the producer");

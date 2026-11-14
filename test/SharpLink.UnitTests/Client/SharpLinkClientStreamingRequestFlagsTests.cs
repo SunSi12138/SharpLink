@@ -73,6 +73,9 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
                     method, in request, RpcEmptyRequestCodec.Instance, codec, null, token);
             var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(5));
+            if (kind == RpcMethodKind.ClientStreaming)
+                await transport.Connection.InjectFrameAsync(ProtocolV2FrameType.RequestAccepted,
+                    ProtocolV2FrameFlags.None, sent.Header.RequestId, ReadOnlyMemory<byte>.Empty);
             await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId), 42);
             Ensure(await response.AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42,
                 "the request must still complete with its response");

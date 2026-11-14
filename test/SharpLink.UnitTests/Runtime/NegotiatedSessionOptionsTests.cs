@@ -288,6 +288,7 @@ public class NegotiatedSessionOptionsTests
         };
         var draining = new[]
         {
+            ProtocolV2FrameType.RequestAccepted,
             ProtocolV2FrameType.Ping,
             ProtocolV2FrameType.Pong,
             ProtocolV2FrameType.Response,

@@ -48,7 +48,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             metadata: null,
             cancellationToken: default).AsTask();
 
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.OneWayInputRequest);
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
             "the wire TimeBudget must be the remaining sampled once when the frame is created");
         await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -245,7 +245,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
 
     private static TimeSpan ReadTimeBudget(TestSentFrame sent)
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
+            sent.Payload.AsSpan(1 + ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {

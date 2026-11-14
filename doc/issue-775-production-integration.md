@@ -478,3 +478,32 @@ Selected production compatibility boundary:
   default manifest, request retry, watchdog extension or hidden per-call Prepare was added.
 - Complete Unit acceptance remains open, including the separately paused/red #387 Windows
   jittered-delay Stop regression; completing other tests will not relabel that control as passed.
+
+### Final ordinary Unit migration and rejection ownership
+
+- Discovery is2226 entries including five Explicit process workers, not2226 ordinary tests.
+  The ordinary census is2221. The continuation filter selects exactly2220 ordinary tests and
+  excludes only the paused #387 jittered-delay case; the five process workers retain their
+  original explicit driver/timeout/environment contracts. Counter comparison of the two
+  discovery lists rejects accidental ordinary omissions. This is not a full-suite pass.
+- The first continuation completed2205/2220 and exposed15 failures. Migrated stale API5/wire4
+  expectations, draining RequestAccepted eligibility, explicit fake-peer acceptance before a
+  successful ClientStreaming response, and the count1 OneWayInput frame/budget offset.
+  OneWay remains no-Ack. An emission-time-expired two-way upload now proves zero producer
+  before acceptance and no revival after a late Ack, while preserving its creation-time5s
+  TimeBudget and original deadline. The focused protocol/manifest/phase/flags/OneWay/time-budget
+  classes pass1/13/10/6/2/5/12 respectively.
+- Raw dispatch scope/payload controls now use the harness's installed Session binding token
+  and the current explicit count0 dispatch argument. Their original8-cycle collection limit,
+  raw1MiB payload and caller/request scope isolation remain unchanged; both pass. The table's
+  response-observation race establishes real request publication and per-call acceptance
+  before injecting successful response progress; all30 table controls pass.
+- The backpressured rejection control found a real production regression with admission enabled:
+  rejecting an invalid binding held the captured admission-program use until its error send
+  obtained transport capacity. Release that unused publication and clear raw request state
+  before awaiting the intrinsically owned send. All four admission/deadline cells now pass,
+  still requiring zero request/pending/connection/program owners while intrinsic drain remains
+  pending, and the rejection frame precedes a later normal fence. No assertion was relaxed.
+- A retry fixture timeout still needs the continuation rerun. Its observer now surfaces an early
+  invocation failure instead of hanging on a never-emitted request. A targeted forced-GC probe
+  passed, so no speculative strong cache or production retention change was introduced.

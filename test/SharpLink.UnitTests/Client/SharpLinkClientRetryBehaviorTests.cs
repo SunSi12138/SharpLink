@@ -60,7 +60,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
         await ClientInvokerTestHelper.PrepareAsync(client);
 
         var nonIdempotent = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var firstRequest = transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        if (ReferenceEquals(await Task.WhenAny(firstRequest, nonIdempotent), nonIdempotent))
+            await nonIdempotent;
+        var first = await firstRequest.WaitAsync(TimeSpan.FromSeconds(5));
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
         var nonIdempotentError = await EnsureThrows<SharpLinkException>(nonIdempotent);
         Ensure(nonIdempotentError.Code == SharpLinkErrorCode.Unavailable, "non-idempotent result");
@@ -68,7 +71,9 @@ public sealed class SharpLinkClientRetryBehaviorTests
             ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "non-idempotent no second request");
 
         var idempotent = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var resourceExhausted = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        if (idempotent.IsCompleted) await idempotent;
+        var resourceExhausted = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(5));
         await InjectErrorAsync(transport, resourceExhausted, SharpLinkErrorCode.ResourceExhausted);
         var resourceError = await EnsureThrows<SharpLinkException>(idempotent);
         Ensure(resourceError.Code == SharpLinkErrorCode.ResourceExhausted, "resource exhausted result");

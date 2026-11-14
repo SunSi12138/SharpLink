@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using SharpLink.UnitTests.Client;
 using System.Reflection;
 using System.Diagnostics;
 using System.Linq;
@@ -336,6 +338,12 @@ public partial class PendingRequestTableTests
     [Test]
     public async Task StreamingResponseObservationShouldPrecedeTerminalCompletion()
     {
+        var transport = new TestClientTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(transport);
+        await client.ConnectAsync();
+        var channel = (StaticBindingCallSite)ClientInvokerTestHelper.CreateChannel(client);
+        await channel.PrepareAsync(RaceCoordinationTimeout);
+        var target = channel.Snapshot.Targets[0];
         using var manager = CreateTable(8);
         using var observer = new BlockingStreamingCompletionObserver();
         var requestId = manager.RegisterStream(
@@ -344,6 +352,27 @@ public partial class PendingRequestTableTests
             deadline: default,
             CancellationToken.None,
             observer);
+
+        // Set up the table's actual publication/acceptance boundary before testing response
+        // observation. A successful streaming Response without per-call acceptance is invalid.
+        var session = target.Connection.Session;
+        var writer = session.RentFrameWriter();
+        using (writer.BeginPacketScope(ProtocolV2FrameType.Request, ProtocolV2FrameFlags.None,
+                   unchecked((ulong)requestId)))
+        {
+            var prefix = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+            BinaryPrimitives.WriteUInt64LittleEndian(prefix, target.Token);
+            BinaryPrimitives.WriteInt64LittleEndian(prefix[8..], 3);
+            writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        }
+        var prepared = session.PrepareOutboundFrame(writer, CancellationToken.None);
+        if (!manager.TryPublishRequest(requestId, session, prepared, false, CancellationToken.None,
+                null, out _, out var rejected))
+        {
+            if (rejected is null) session.RuntimeContext.Buffers.Return(prepared);
+            throw new InvalidOperationException("The table fixture could not publish its bound request.", rejected);
+        }
+        Ensure(manager.AcceptStreamRequest(requestId), "the published streaming owner accepts its per-call Ack");
 
         var response = LongRunningTestWorker.Run(() =>
         {

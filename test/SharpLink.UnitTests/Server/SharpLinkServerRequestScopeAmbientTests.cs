@@ -39,10 +39,10 @@ public class SharpLinkServerRequestScopeAmbientTests
         {
             var server = (SharpLinkServer)GetProperty(harnessObject, "Server");
             var connection = (ServerConnectionState)GetProperty(harnessObject, "Connection");
-            var rpcStub = (IRpcStub)stub;
+            var bindingToken = (ulong)DispatchHarnessType.GetField("_bindingToken", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(harnessObject)!;
 
-            var first = Dispatch(server, connection, rpcStub, FirstRequestId);
-            var second = Dispatch(server, connection, rpcStub, SecondRequestId);
+            var first = Dispatch(server, connection, bindingToken, FirstRequestId);
+            var second = Dispatch(server, connection, bindingToken, SecondRequestId);
 
             await Assert.That(first.IsCompleted).IsFalse();
             await Assert.That(second.IsCompleted).IsFalse();
@@ -79,11 +79,11 @@ public class SharpLinkServerRequestScopeAmbientTests
     private static Task Dispatch(
         SharpLinkServer server,
         ServerConnectionState connection,
-        IRpcStub stub,
+        ulong bindingToken,
         long requestId)
     {
         var payload = new byte[sizeof(long) * 2];
-        BinaryPrimitives.WriteInt64LittleEndian(payload, stub.InterfaceHash);
+        BinaryPrimitives.WriteUInt64LittleEndian(payload, bindingToken);
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), 1);
         return (Task)DispatchRequestMethod.Invoke(
             server,
@@ -93,7 +93,8 @@ public class SharpLinkServerRequestScopeAmbientTests
                 ProtocolV2FrameFlags.None,
                 new ReadOnlySequence<byte>(payload),
                 connection.CallCancellations,
-                CancellationToken.None
+                CancellationToken.None,
+                0
             ])!;
     }
 

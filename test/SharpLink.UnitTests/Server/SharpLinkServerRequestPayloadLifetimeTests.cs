@@ -37,7 +37,7 @@ public class SharpLinkServerRequestPayloadLifetimeTests
         {
             var server = (SharpLinkServer)GetProperty(harnessObject, "Server");
             var connection = (ServerConnectionState)GetProperty(harnessObject, "Connection");
-            var (dispatch, backing) = StartPendingDispatch(server, connection, (IRpcStub)stub);
+            var (dispatch, backing) = StartPendingDispatch(server, connection, (ulong)DispatchHarnessType.GetField("_bindingToken", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(harnessObject)!);
 
             await Assert.That(dispatch.IsCompleted).IsFalse();
             await AssertCollectedAsync(
@@ -59,10 +59,10 @@ public class SharpLinkServerRequestPayloadLifetimeTests
     private static (Task Dispatch, WeakReference<byte[]> Backing) StartPendingDispatch(
         SharpLinkServer server,
         ServerConnectionState connection,
-        IRpcStub stub)
+        ulong bindingToken)
     {
         var payload = new byte[1024 * 1024];
-        BinaryPrimitives.WriteInt64LittleEndian(payload, stub.InterfaceHash);
+        BinaryPrimitives.WriteUInt64LittleEndian(payload, bindingToken);
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), 1);
         var backing = new WeakReference<byte[]>(payload);
         var dispatch = (Task)DispatchRequestMethod.Invoke(
@@ -73,7 +73,8 @@ public class SharpLinkServerRequestPayloadLifetimeTests
                 ProtocolV2FrameFlags.None,
                 new ReadOnlySequence<byte>(payload),
                 connection.CallCancellations,
-                CancellationToken.None
+                CancellationToken.None,
+                0
             ])!;
         return (dispatch, backing);
     }

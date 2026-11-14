@@ -10,7 +10,7 @@ public class GeneratedManifestCompatibilityTests
     [Arguments(2)]
     [Arguments(3)]
     [Arguments(4)]
-    [Arguments(6)]
+    [Arguments(5)]
     [Arguments(0)]
     [Arguments(-1)]
     [Arguments(int.MinValue)]
