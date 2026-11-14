@@ -181,8 +181,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             }
             if (callerCancel) callerCancellation.Cancel();
             var receiverCause = await serverCancellationCause.Task.WaitAsync(TerminalBudget());
+            // The same public caller token can complete the PendingCall first, or
+            // wake the response enumerator first. Its await-foreach cleanup then
+            // reports ConsumerAbandoned. Preserve either original wire cause;
+            // neither is a receiver deadline or module-drain selection.
             Ensure(receiverCause.RequestIdMatches && receiverCause.TokenMatches &&
-                (callerCancel ? receiverCause.Reason == "RemoteCancel" && !receiverCause.DeadlineExpired
+                (callerCancel ? receiverCause.Reason is "RemoteCancel" or "ConsumerAbandoned" && !receiverCause.DeadlineExpired
                     : receiverCause.Reason == "DeadlineExceeded" && receiverCause.DeadlineExpired),
                 "receiver must retain the original selected deadline or explicit caller-cancel cause");
             if (tail == "Dispose")

@@ -38,6 +38,9 @@ public sealed class GeneratedOutputSendPhysicalTailTests
             // The real sized-send is already awaiting shared connection credit. Its
             // continuation will serialize through the actual session-owned frame writer.
             session.ApplyWindowUpdate(72, new ProtocolV2WindowUpdate(0, 4));
+            // This setup-only stream has returned its credit, but a WindowUpdate
+            // does not complete an otherwise live send stream.
+            session.CompleteSendStream(72, 0);
             await codec.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             clock.Advance(TimeSpan.FromSeconds(1));
             Exception? terminal = null;
@@ -62,8 +65,14 @@ public sealed class GeneratedOutputSendPhysicalTailTests
             .GetField("_protocolState", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(session)!;
         Ensure(codec.Active == 0 && codec.SnapshotReleases == 1 && stream.DisposeCount == 1 && SourceDisposed(stream.Token),
             "snapshot, physical send and CTS must finish once, including a late cleanup failure");
-        Ensure(state.FlowController!.SendConnectionCredit == 4 && state.FlowController.ActiveSendStreamCount == 0 && session.QueuedSendBytes == 0,
-            "expired physical send must return credit and never publish its prepared data frame");
+        var flow = state.FlowController!;
+        Console.WriteLine($"PHYSICAL_SEND_EXIT credit={flow.SendConnectionCredit}; active={flow.ActiveSendStreamCount}; retained={flow.RetainedSendStreamCount}; queued={session.QueuedSendBytes}");
+        Ensure(flow.SendConnectionCredit == 4,
+            $"expired physical send must return credit exactly once, actual {flow.SendConnectionCredit}");
+        Ensure(flow.ActiveSendStreamCount == 0 && flow.RetainedSendStreamCount == 0,
+            $"both setup and real send streams must retire, active {flow.ActiveSendStreamCount}, retained {flow.RetainedSendStreamCount}");
+        Ensure(session.QueuedSendBytes == 0,
+            $"expired physical send must never publish its prepared data frame, actual queued bytes {session.QueuedSendBytes}");
         await output.Reader.CompleteAsync();
         await input.Writer.CompleteAsync();
     }
