@@ -11,6 +11,21 @@ internal sealed partial class PreAdmissionStreamDispatcher
             _joinPhysicalChildDisposal = true;
     }
 
+    // Phase one changes admission only. Do not request detach, take buffered items,
+    // signal completions or invoke any child/credit callback until every sibling closes.
+    internal void CloseChildAdmission()
+    {
+        lock (_gate)
+        {
+            _localAbandonRequested = true;
+            _discarding = true;
+            _childClosed = true;
+        }
+    }
+
+    internal void CompleteClosedChildAbandon()
+        => Abandon(out _, admissionAlreadyClosed: true);
+
     internal async ValueTask WaitForAbandonedChildAsync()
     {
         Task? detached;

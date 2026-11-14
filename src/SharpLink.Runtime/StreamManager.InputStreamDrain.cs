@@ -21,8 +21,13 @@ internal sealed partial class StreamManager
         internal async ValueTask CompleteAsync()
         {
             Exception? failure = null;
-            // Every child gate closes before the first await. A dispatch that won its
-            // mailbox gate before Abandon remains counted by that same mailbox.
+            // Closing admission invokes no cleanup: even a synchronous Dispose/credit
+            // callback from the first child must find every sibling's business gate closed.
+            first?.CloseChildAdmission();
+            if (remaining is not null)
+                foreach (var child in remaining)
+                    child?.CloseChildAdmission();
+            // Already-admitted dispatches remain counted by their stable mailbox.
             Close(first, ref failure);
             if (remaining is not null)
                 foreach (var child in remaining)
@@ -37,7 +42,7 @@ internal sealed partial class StreamManager
 
         private static void Close(PreAdmissionStreamDispatcher? child, ref Exception? failure)
         {
-            try { child?.Abandon(out _); }
+            try { child?.CompleteClosedChildAbandon(); }
             catch (Exception exception)
             {
                 failure = failure is null ? exception : new AggregateException(failure, exception);

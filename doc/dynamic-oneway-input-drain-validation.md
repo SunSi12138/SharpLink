@@ -110,3 +110,14 @@ result. Hosted verification covers this changed ordering and existing physical-d
 Linux/Windows, plus exact-head canonical CI. Reuse the four unaffected real-RPC/ALC quadrants and allocation evidence;
 do not repeat them for reassurance. The new Unit UID requires an actual census increment2212→2213 (injected-control
 runner2220→2221); fixed historical focused inventories remain unchanged.
+
+The permanent component against unchanged9a4a9f17 products (test-only commitb4fd96b5) fails exactly once:
+first1/second1/drainCompleted=false/routes2; its local console and HTML are retained. After the two-phase repair,
+the identical filtered non-RPC component passes1/1. Phase one does not set detach-request/dispose state or
+invoke external callbacks; it closes live/replay/completion/attachment admission using the existing flags. Phase two
+performs the original Abandon cleanup after all siblings are closed. An independently already-running physical
+operation may still finish concurrently and remains owned; phase one itself does not start its disposal/credit work.
+No mailbox field/layout, snapshot allocation or ordinary non-input completion body changes in this correction;
+the additional short mailbox lock occurs only on captured dynamic input completion. No timing equivalence is claimed.
+Local discovery finds2218 total UIDs, including five existing Explicit process probes that ordinary execution excludes;
+the ordinary canonical inventory is2213. Hosted current-full execution, not raw discovery alone, must confirm that count.
