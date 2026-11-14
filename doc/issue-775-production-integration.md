@@ -457,3 +457,24 @@ Selected production compatibility boundary:
   15 declarations/15 active references with the patched SDK. A first boundary invocation used
   the system SDK path and could not resolve global.json; rerunning with the selected SDK fixes
   only that execution environment, without changing the guard or its graph.
+
+### Refresh binding gaps and complete local Integration
+
+- Full ordinary Windows Integration passes499/499 (zero skipped) in49.48s after the
+  reconnect selector control observes the same receiver's real two-target binding publication.
+  Connection readiness alone cannot establish that a replacement Session has bound this
+  contract. The test waits for that cold publication within its original3s convergence budget;
+  it does not retry business RPCs or borrow the old token. The failed preceding full run remains
+  retained separately as integration-full-runtime-9.log; the pass is integration-full-runtime-10.log.
+- Refresh interaction19/19, review7/7, redirect boundedness13/13 and support snapshot10/10+5/5
+  pass with explicit advertised peer contracts and preparation before tested admission gates.
+  The cut-race review now deliberately holds the replacement Ack: stale source selection fails
+  with structured Unavailable/NoBoundRoute and no request, then the same receiver prepares and
+  succeeds only on the replacement's confirmed Session. This replaces the obsolete expectation
+  that a Ready replacement may transparently use its predecessor's binding.
+- Zero-retiring-budget pre-cut reservations still complete on their original physical source.
+  Forty rolling refreshes retain the one-hop low-level connection redirect and original long-lived
+  stream; final business traffic prepares the newest Session independently. No producer Ack,
+  default manifest, request retry, watchdog extension or hidden per-call Prepare was added.
+- Complete Unit acceptance remains open, including the separately paused/red #387 Windows
+  jittered-delay Stop regression; completing other tests will not relabel that control as passed.

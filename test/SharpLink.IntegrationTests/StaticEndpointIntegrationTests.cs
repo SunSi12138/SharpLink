@@ -162,6 +162,8 @@ public sealed partial class StaticEndpointIntegrationTests
             "both preferred-endpoint candidates readiness");
         var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
         await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var binding = (StaticBindingCallSite)client.CreateContractChannel(client.GetLocalContract<IConnectionBehaviorService>());
+        await WaitUntilAsync(() => Volatile.Read(ref binding.Snapshot).Targets.Length == 2, TimeSpan.FromSeconds(3));
         var service = serviceProxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial preferred endpoint");
 
@@ -191,6 +193,9 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "reconnected endpoint readiness");
+        // Connection readiness does not acknowledge this receiver's contract on the new Session.
+        // Observe the real cold publication, not retries of business RPCs or a predecessor token.
+        await WaitUntilAsync(() => Volatile.Read(ref binding.Snapshot).Targets.Length == 2, TimeSpan.FromSeconds(3));
         Ensure(await service.GetEndpointIdAsync() == "first-reconnected", "reconnected endpoint should rejoin selection");
     }
 

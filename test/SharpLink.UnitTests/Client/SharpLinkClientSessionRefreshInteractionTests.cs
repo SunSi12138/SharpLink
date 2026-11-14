@@ -29,6 +29,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1, BeforeReady);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         using var cancellation = new CancellationTokenSource();
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source ??= connection;
@@ -92,6 +93,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
                 await workerReleased.Task.WaitAsync(Timeout);
             Ensure(factory.Count == (advance ? 3 : 2),
                 "advanced debt triggers another replacement without a new rollout; duplicate or older debt does not");
+            await ClientInvokerTestHelper.PrepareAsync(client);
             await CompleteUnary(client, factory.Get(advance ? 2 : 1));
         }
         finally
@@ -115,6 +117,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 2);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         using var cancellation = new CancellationTokenSource();
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source ??= connection;
@@ -139,6 +142,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
             await GetField<Task>(client, "_connectionPoolSizingReconcileTask").WaitAsync(Timeout);
             Ensure(source.State == ClientConnectionState.Ready && source.Session.IsConnected && !oldCall.IsCompleted,
                 "resizing cannot turn planned source retirement into an early physical drain");
+            await ClientInvokerTestHelper.PrepareAsync(client);
             await CompleteUnary(client, factory.Get(1));
             await factory.Get(0).InjectInt32ResponseAsync(unchecked((long)oldRequest.RequestId));
             Ensure(await oldCall.WaitAsync(Timeout) == 0 && replacement.CanAcceptCalls,
@@ -160,6 +164,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(factory);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         ClientConnection? selected = null;
         client._callAdmissionReservedTestHook = connection =>
         {
@@ -197,6 +202,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var gate = GetGate(GetOwner(client, pool), pool);
         var gateHeld = Signal();
         using var releaseGate = new ManualResetEventSlim();
@@ -238,6 +244,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source = connection;
         var call = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
@@ -293,6 +300,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source = connection;
         await CompleteUnary(client, factory.Get(0));
@@ -405,7 +413,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
             var connection = new TestTransportConnection();
             lock (_gate) _connections.Add(connection);
             await connection.InjectSuccessfulHandshakeAsync(ProtocolV2Capabilities.SessionRefresh,
-                cancellationToken: cancellationToken);
+                contractManifest: ClientInvocationTestManifest.RemoteContracts, cancellationToken: cancellationToken);
             return connection;
         }
         public async ValueTask DisposeAsync()

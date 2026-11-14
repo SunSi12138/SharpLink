@@ -5,9 +5,9 @@ namespace SharpLink.UnitTests.Client;
 
 /// <summary>
 /// Guards the boundedness of the session-refresh redirect graph: a long-lived streaming call can
-/// pin the oldest generation while many rolling refreshes complete, and stale admission from that
-/// pinned source must still resolve to the newest Ready connection instead of walking (or
-/// exhausting) a per-generation chain.
+/// pin the oldest generation while many rolling refreshes complete. Low-level admission from that
+/// pinned source resolves in one hop to the newest Ready connection; contract-bound RPCs prepare
+/// that new Session separately and never follow a redirect with the old Session's token.
 /// </summary>
 [NotInParallel]
 public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
@@ -65,6 +65,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             }))
         };
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         using var cancellation = new CancellationTokenSource();
         ClientConnection? firstSource = null;
         client._callAdmissionReservedTestHook = connection => firstSource = connection;
@@ -86,6 +87,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             ProtocolV2FrameHeader secondRequest = default;
             if (latestSourceHasCall)
             {
+                await ClientInvokerTestHelper.PrepareAsync(client);
                 secondCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
                 secondRequest = await secondTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
                     .WaitAsync(TimeSpan.FromSeconds(5));
@@ -214,6 +216,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
         SharpLinkClient client,
         RepeatedRefreshTransportFactory factory)
     {
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var serverInstanceId = Guid.NewGuid();
         var pinnedAdmission = new TaskCompletionSource<ClientConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -255,6 +258,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
                 TaskCreationOptions.RunContinuationsAsynchronously);
             client._callAdmissionReservedTestHook = connection => latestAdmission.TrySetResult(connection);
             var latestTransport = factory.GetConnection(RefreshGenerations);
+            await ClientInvokerTestHelper.PrepareAsync(client);
             var finalUnary = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
             var latest = await latestAdmission.Task.WaitAsync(TimeSpan.FromSeconds(3));
             Ensure(!ReferenceEquals(latest, pinnedSource),
@@ -359,6 +363,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             {
                 await connection.InjectSuccessfulHandshakeAsync(
                     ProtocolV2Capabilities.SessionRefresh,
+                    contractManifest: ClientInvocationTestManifest.RemoteContracts,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 return connection;
             }

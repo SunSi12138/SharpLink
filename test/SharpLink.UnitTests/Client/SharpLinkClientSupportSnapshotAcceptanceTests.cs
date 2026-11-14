@@ -112,6 +112,7 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
             builder.UseProtocol(options => options.MaxPendingRequestsPerConnection = 2));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var connection = GetSingleFixedConnection(client);
         var metadata = new SharpLinkMetadata(
             new KeyValuePair<string, string>("authorization", metadataSecret));

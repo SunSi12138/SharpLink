@@ -6,7 +6,7 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkClientSessionRefreshReviewTests
 {
     [Test]
-    public async Task FixedEligibilityCutShouldRouteConcurrentUnaryToReplacement()
+    public async Task FixedEligibilityCutMustNotBorrowSourceBindingForReplacement()
     {
         var factory = new ReviewRefreshTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(
@@ -17,52 +17,69 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
                 options.MaxConnections = 1;
             }));
         await client.ConnectAsync();
+        var channel = (StaticBindingCallSite)ClientInvokerTestHelper.CreateChannel(client);
+        await channel.PrepareAsync(TimeSpan.FromSeconds(3));
         var source = SharpLinkClientLifecycleSharedSupport.GetOnlyReadyConnection(client);
-
+        var sourceToken = channel.Snapshot.Targets[0].Token;
         var cutEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var redirected = new TaskCompletionSource<ClientConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseCut = new ManualResetEventSlim(false);
-        using var releaseAdmission = new ManualResetEventSlim(false);
         client._afterSessionRefreshEligibilitySwapTestHook = () =>
         {
             cutEntered.TrySetResult();
             if (!releaseCut.Wait(TimeSpan.FromSeconds(3)))
                 throw new TimeoutException("fixed refresh cut hook was not released");
         };
-        client._callAdmissionReservedTestHook = connection =>
-        {
-            redirected.TrySetResult(connection);
-            if (!releaseAdmission.Wait(TimeSpan.FromSeconds(3)))
-                throw new TimeoutException("fixed replacement admission hook was not released");
-        };
 
+        TestTransportConnection? replacement = null;
         try
         {
             await InjectRefreshAsync(factory.GetConnection(0), Guid.NewGuid(), 2);
             await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
+            replacement = factory.GetConnection(1);
+            replacement.BeforeBindAck = async (_, token) =>
+            {
+                ackEntered.TrySetResult();
+                await releaseAck.Task.WaitAsync(token);
+            };
             factory.ReleaseReplacement();
             await cutEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
-            var replacement = factory.GetConnection(1);
-            var next = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client));
-            var admitted = await redirected.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            Ensure(!ReferenceEquals(admitted, source),
-                "a stale fixed snapshot observed during the eligibility cut must redirect admission to the Ready replacement");
-
+            SharpLinkException? gap = null;
+            try { await ClientInvokerTestHelper.InvokeUnaryAsync(client); }
+            catch (SharpLinkException exception) { gap = exception; }
+            Ensure(gap?.Code == SharpLinkErrorCode.Unavailable &&
+                   gap.DetailCode == StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute).DetailCode,
+                "a source Session token must not authorize a Ready but unbound refresh replacement");
+            Ensure(source.CallAdmissionReservationCount == 0 && source.ActiveCallCount == 0,
+                "rejecting a stale bound selection releases its physical admission ownership");
             releaseCut.Set();
-            releaseAdmission.Set();
+            await ackEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var prepare = channel.PrepareAsync(TimeSpan.FromSeconds(3)).AsTask();
+            Ensure(!prepare.IsCompleted && channel.Snapshot.Targets.Length == 0,
+                "the replacement stays explicitly unbound until its own Ack is accepted");
+            Ensure(!await replacement.TryWaitForSentPacket(ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(50)),
+                "the rejected call must not send the old token to the new Session");
+            releaseAck.TrySetResult();
+            await prepare.WaitAsync(TimeSpan.FromSeconds(3));
+            var target = channel.Snapshot.Targets[0];
+            Ensure(!ReferenceEquals(target.Connection, source) && target.Token != 0 && sourceToken != 0,
+                "the receiver's confirmed target belongs to the replacement Session");
+            var next = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
             var request = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             await replacement.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
             Ensure(await next.WaitAsync(TimeSpan.FromSeconds(2)) == 0,
-                "a unary racing the refresh cut must be admitted by the Ready replacement, not observe false Unavailable");
+                "new work succeeds only after the replacement's own binding is published");
         }
         finally
         {
             releaseCut.Set();
-            releaseAdmission.Set();
+            releaseAck.TrySetResult();
+            factory.ReleaseReplacement();
             client._afterSessionRefreshEligibilitySwapTestHook = null;
-            client._callAdmissionReservedTestHook = null;
+            if (replacement is not null) replacement.BeforeBindAck = null;
         }
     }
 
@@ -232,6 +249,7 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         SharpLinkClient client,
         ReviewRefreshTransportFactory factory)
     {
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var sourceTransport = factory.GetConnection(0);
         var selected = new TaskCompletionSource<ClientConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -302,6 +320,7 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         Ensure(client.ReadyConnectionCount == 1,
             "after replacement publication the refreshed connection should be the sole Ready connection");
 
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var pending = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         _ = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(2));
@@ -400,6 +419,7 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
 
                 await connection.InjectSuccessfulHandshakeAsync(
                     ProtocolV2Capabilities.SessionRefresh,
+                    contractManifest: ClientInvocationTestManifest.RemoteContracts,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 return connection;
             }
