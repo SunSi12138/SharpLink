@@ -103,3 +103,64 @@ wait before the first Ack. Requiring acceptance there was too early. Move only t
 check to the actual receive-loop StreamData boundary; keep pending terminal/deadline gating
 for local consumer progress. No inventory, watchdog, GC budget or assertion is weakened.
 Original ZIPs and both raw logs retained in streams-20261114 before the corrected run.
+
+## Result: accept the bounded stream slice
+
+Corrected subject **e1d6a46ed4a6e3e810221d52e101feeb3180488f** passed
+[run 43549883083](https://github.com/SunSi12138/SharpLink/actions/runs/43549883083).
+
+| Host / .NET 10.0.15 | TCP | SharedMemory | Job |
+|---|---|---|---|
+| Windows x64 | 99 + group67 + receipt49 + revised facts49 + streams64 | same five inventories | 132309635225 |
+| Linux x64 | 99 + group67 + receipt49 + revised facts49 + streams64 | same five inventories | 132309635547 |
+
+All 20 final JSONs pass the exact frozen inventory, uniqueness, count, source, transport
+and report-kind checks, both hosted and offline. Both hosts pass ordinary/profile/plugin
+basic builds, the precise old-Stub CS0535 negative consumer, and wrong-ABI preflight.
+The first subject's 18 completed reports and Linux failure are also retained and checked;
+there was no unchanged retry. The corrected run changes only the misplaced wire-progress
+check and its explanation, not the frozen cases or budgets.
+
+The new evidence establishes:
+
+- Actual generated ClientStreaming, ServerStreaming and Duplex on both transports. Routes
+  are installed before acceptance; held/queued/rejected/expired calls start no producer.
+  A received Ack alone is insufficient: cancellation can still win the start claim.
+  Duplicate and late real Acks cannot revive the completed request.
+- Logical cancellation does not release a physical producer's original CTS. Held
+  MoveNext/async Dispose block Client Stop; physical exit releases the bounded producer
+  count. Stop also joins an in-flight original response Codec and reclaims its stream route.
+- Server stream ownership promotes the already acquired module lease, without reacquiring
+  a retired gate. Same-hash replacement waits for old input decode or output iterator
+  disposal, then asynchronous service disposal. Original Codec output/result is observed;
+  original call/stream counters reach zero and the old ALC collects with client/server live.
+- The retained facts controls and active-source audit establish complete scalar facts and
+  one cold resolver only. Static guard insertion preserves the five-family entry order;
+  existing dynamic local wrapper timing is recorded, not silently normalized.
+
+Private protocol identity is now **Magic 0xBB**, frame **244**, ABI
+`sharplink-experimental-775-stream-admission-v5`. No additional public production declaration
+or generated signature is introduced beyond the prior facts delta: the new acceptance bridge,
+pending owner, frame and test hooks are internal/profile-only. API integer 5 is not a final
+production version allocation. The profile remains nonpackable; ordinary product compilation
+is unchanged (62 changed/shared source files pass exact-token/build-input guards against
+2360a0ca). Keep the executed ordinary Unit result: Linux 2212/2212, Windows 2211/2212 with
+the unresolved #387 Stop failure. It was not rerun or relabeled as passing.
+
+**Next: client-local dynamic generation ownership, not PR/performance acceptance.** Preserve
+its module-wrapper acquire/Codec/cancellation order and invocation-time policy/deadline
+capture; prove both physical stream owners across local retirement before full integration.
+OneWay input remains fail closed; its bounded count/discard grammar and formal capability
+decision remain with #775. Broader cross-Session/malicious-frame and stream-specific
+changed-hash/mapper/authorization/backpressure combinations still belong to final integration;
+the retained changed-hash/ABA and mapper controls are not relabeled as these new combinations.
+Actual package/API inventory, independent #805 signoff, Trim/NativeAOT, final canonical
+regression and valid GitHub-only performance acceptance remain open. No PR/merge or new
+performance run; no paused investigation reopened.
+
+Complete source bundle, both subjects' four original ZIPs/four raw job logs, run metadata,
+38-report inventory, frozen criteria and workflow snapshot are retained at
+`C:/Users/sunsi/Desktop/SharpLink-775-evidence/streams-20261114/`. Development remains in
+`C:/Users/sunsi/Desktop/SharpLink-775-Slice`, branch `codex/775-static-bind-slice`.
+After capture, remove only this stage's temporary CI branch/workflow. The handoff differs
+from the tested subject only in reports and workflow removal; historical runs remain.

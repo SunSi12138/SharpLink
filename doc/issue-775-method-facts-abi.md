@@ -1,5 +1,10 @@
 # #775 complete method facts and receiver ABI
 
+Stage-four historical record. The subsequent [stream admission slice](issue-775-stream-admission.md)
+enables the three stream receivers, replaces five obsolete fail-closed controls explicitly,
+and advances the private Magic/ABI to BB / stream-admission-v5. The results below retain
+their original tested subject and scope.
+
 Base: 7d51a8254ee90711fdad7c7b93296cdc02e37bbb, the accepted private group/receipt slice.
 Production dev remains 160d0cd9a0550de5bf00c63b6007376c02debc20. This is the next #805
 implementation delta, not final package or release approval.
