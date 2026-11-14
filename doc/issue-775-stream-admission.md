@@ -1,5 +1,9 @@
 # #775 per-call stream admission and physical ownership
 
+Stage-five historical record. The subsequent [client-local generation slice](issue-775-client-local-modules.md)
+adds local dynamic owners and repairs a deferred stream-head argument lifetime found by its
+real-transport controls. The original 64 stream controls remain mandatory regressions.
+
 Base:8d2c052c9cdd6d4cf810c36220ec3bedfc549541, accepted facts/receiver ABI slice.
 This stage enables ClientStreaming, ServerStreaming and Duplex on the existing scoped
 receiver. Ordinary no-stream Unary/OneWay keep their existing path. OneWay client streams

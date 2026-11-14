@@ -149,3 +149,50 @@ unexpected mapped server exception even if client cancellation won. The diagnost
 continues to delegate unchanged to DefaultRpcExceptionMapper(false). Original watchdogs,
 GC budget and stop rules stay unchanged. This is a corrective evidence extension, not a
 replacement or weakening of the original72 inventory.
+
+## Result: accept the local-generation slice
+
+Final tested source **8985bc54076c15f7261051d526967b34c7ea787c** passed
+[run 43563783002](https://github.com/SunSi12138/SharpLink/actions/runs/43563783002).
+
+| Host / .NET 10.0.15 | TCP | SharedMemory | Job |
+|---|---|---|---|
+| Linux x64 | 99 + group67 + receipt49 + facts49 + streams64 + local76 | same six exact inventories | 132353041910 |
+| Windows x64 | 99 + group67 + receipt49 + facts49 + streams64 + local76 | same six exact inventories | 132353042017 |
+
+The original 72 local cases are retained exactly, with the four corrective head controls
+frozen before this final subject. All 24 final reports pass exact names, uniqueness, count,
+kind, transport and source checks, hosted and offline. The complete six-subject archive has
+128 reports, each checked against its own committed source inventory (72 only where that
+was the tested inventory). Both final raw logs contain no mapped server errors. The earlier
+control-green 52bcdca3 subject remains unaccepted because its logs expose the decoder fault.
+
+Both hosts pass ordinary/profile/plugin basic builds, exact old-Stub CS0535 negative consumer,
+wrong-ABI preflight, the one-cold-resolver source guard and five admitted-dispatch source
+controls. Ordinary compilation tokens/build inputs remain unchanged across 68 shared/changed
+production files versus 2360a0ca. Ordinary Unit evidence remains Linux 2212/2212 and Windows
+2211/2212 with the unresolved #387 Stop failure; it was not rerun or relabeled as passing.
+Local work was development/basic builds/source and archive checks only. No performance ran.
+
+Accepted evidence covers the original wrapper order, invocation-time policy/deadline and
+first-enumeration acquire; exact local selectors across unrelated publication; local retirement
+before/after Ack; original producer/consumer Codecs and both cancellation sources; independent
+physical owner exits; queued registration retention; honest timeout/Stop drain; seven old ALC
+checks with live client/server and retained scalar channels. The added head preparation uses
+the existing call-state buffer owner, so its physical release follows the original invocation
+and service cleanup rather than Ack or logical cancellation.
+
+**Next: OneWay input's bounded shape/refusal-cleanup slice.** It remains explicitly fail closed
+here. Preserve the existing typed writer capability when selecting its final grammar, then
+complete stream-specific error/authorization/backpressure combinations, multi-Session Picker/
+reconnect, #931/#933/#964 remaining cleanup, final caller/package/API inventory and independent
+#805 review. Canonical regression, Trim/NativeAOT and preregistered GitHub-only performance
+acceptance remain open; no PR/merge, no paused investigation restarted.
+
+Development source remains in `C:/Users/sunsi/Desktop/SharpLink-775-Slice`, branch
+`codex/775-static-bind-slice`. The archive at
+`C:/Users/sunsi/Desktop/SharpLink-775-evidence/local-20261114/` retains the complete source
+bundle, six runs' twelve original ZIPs/twelve raw logs, diagnostic root/stack text (not heaps),
+run metadata, 128-report index, both frozen inventories, original criteria, workflow snapshot,
+issue snapshots and restoration README. Only reports and temporary workflow removal change
+after the tested subject; remove its remote CI branch with an exact-head lease after capture.
