@@ -127,6 +127,12 @@ public sealed class TerminalObserverDrainTests
             await waitingDrain.WaitAsync(TimeSpan.FromSeconds(5));
             var waiterFailure = await Capture(waiter);
             var creditFailure = await Capture(creditWaiter);
+            // The pump owns the intrinsic flush completion, not the async caller wrappers.
+            // Join those wrappers and queued connection cleanup with their existing 5s bounds
+            // before inspecting the externally observable terminal state.
+            var markerFailure = await Capture(marker);
+            var operationFailures = await Task.WhenAll(operations.Select(Capture));
+            var joinedFailure = await Capture(facade.StopAsync().AsTask());
             var snapshot = new
             {
                 faultClock,
@@ -156,10 +162,9 @@ public sealed class TerminalObserverDrainTests
             Ensure(!Active(first) && !Active(later) && !Active(progress) && !Active(normal) && marker.IsCompleted && session.QueuedSendBytes == 0,
                 "all batch, progress, normal and flush owners must converge before salvage");
             Ensure(table.Count == 0 && table.ActiveCount == 0 && operations.All(task => task.IsCompleted), "all pending slots and operations must converge");
-            foreach (var operation in operations)
-                Ensure(ReferenceEquals(await Capture(operation), terminal), "transport cause must reach every operation without invented deadline expiry");
-            Ensure(ReferenceEquals(await Capture(marker), terminal), "flush marker must retain transport cause");
-            var joinedFailure = await Capture(facade.StopAsync().AsTask());
+            foreach (var operationFailure in operationFailures)
+                Ensure(ReferenceEquals(operationFailure, terminal), "transport cause must reach every operation without invented deadline expiry");
+            Ensure(ReferenceEquals(markerFailure, terminal), "flush marker must retain transport cause");
             if (faultClock) Ensure(Contains(joinedFailure, clock.Failure) || Contains(sessionFailure, clock.Failure), "clock failure must remain joined");
             else Ensure(sessionFailure is null && joinedFailure is null && clock.Throws == 0, "already-cleared FailAll prevents later observer clock access");
         }
