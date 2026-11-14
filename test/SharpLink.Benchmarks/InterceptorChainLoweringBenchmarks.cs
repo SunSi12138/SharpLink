@@ -35,9 +35,10 @@ namespace SharpLink.Benchmarks;
 /// </para>
 /// <para>
 /// Scope: this measures the <b>traditional async lowering</b> that ships in the .NET 10 SDK. The
-/// runtime-async comparison axis is populated by the standalone net11 harness (issue #199's
-/// baremetal net11-bench artifact, built with <c>-p:RuntimeAsync=on</c> against the same chain
-/// reproduction); re-run this same matrix once runtime-async ships in a release SDK.
+/// historical runtime-async comparison used issue #199's standalone baremetal net11-bench artifact
+/// and its harness-specific <c>-p:RuntimeAsync=on</c> switch. That artifact is not a current GA run.
+/// For a new comparison, use eng/net11/global.json and the compiler's explicit
+/// <c>Features=runtime-async=on</c> opt-in in the separate net11 project.
 /// </para>
 /// </summary>
 [MemoryDiagnoser]
