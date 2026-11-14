@@ -14,7 +14,7 @@ internal static partial class Program
         : typeof(IHotRpc).Assembly.Location;
     private static void GCheck(bool condition, string prefix, string name)
     {
-        if (!condition && name.Contains("collectible", StringComparison.Ordinal)) CaptureAlcFailure();
+        if (!condition && (name.Contains("collectible", StringComparison.Ordinal) || name.Contains("ALC", StringComparison.Ordinal))) CaptureAlcFailure();
         Check(condition, prefix + " / " + name);
     }
 

@@ -89,3 +89,14 @@ Trim/NativeAOT and preregistered GitHub performance acceptance remain with #775/
 
 Frozen new inventory: **72 exact local-module cases** in
 `eng/775-slice/local-expected-cases.json`, committed before the first hosted subject.
+
+## First hosted subject: stopped on two counterexamples
+
+Source e837e2d460d3cb95ac75e78ecbde085401b3b56a / run43561156674 passes the prior five
+inventories on both hosts/transports. New local TCP stops: Windows old ALC remains after
+the policy/unrelated-publication case; Linux reaches retirement while Ack is held, then
+waits for producer entry until the original240-second watchdog. Both ZIPs/raw logs retained.
+The next subject adds diagnostics: recognize the new ALC case name for failure-only heap
+root capture, and observe early call failure while awaiting producer entry. A watchdog
+failure also captures hosted stacks. Cases/assertions/budgets stay fixed; this is diagnosis,
+not an unchanged retry or acceptance. No other implementation line is expanded.

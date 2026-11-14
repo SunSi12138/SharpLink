@@ -114,7 +114,9 @@ internal static partial class Program
             Check(module.State == SharpLinkDynamicModuleState.Draining && !replacing.IsCompleted, "local producer replacement closes old gate without releasing admitted owners");
             await ExpectCode(() => driver.Unary().AsTask(), SharpLinkErrorCode.Unavailable, "local producer retired generated proxy rejects new calls");
             await ExpectCode(() => channel.PrepareAsync(TimeSpan.FromSeconds(5), token).AsTask(), SharpLinkErrorCode.Unavailable, "local producer old ready channel cannot prepare after local retirement");
-            releaseAck.TrySetResult(); await producer.Entered.Task.WaitAsync(token);
+            releaseAck.TrySetResult();
+            await Task.WhenAny(producer.Entered.Task, call).WaitAsync(token);
+            if (call.IsCompleted) { _ = await call; throw new InvalidOperationException("Client stream completed before producer entry."); }
             var originalCancellation = policy.Cancellation!; caller.Cancel();
             await Expect<OperationCanceledException>(() => call, "local producer logical cancellation returns while physical producer remains held");
             Check(module.RemainingCalls == 1 && module.RemainingStreams == 1 && !originalCancellation.IsDisposed && originalCancellation.Token.IsCancellationRequested,

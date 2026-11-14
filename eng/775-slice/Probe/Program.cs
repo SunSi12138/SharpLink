@@ -38,7 +38,11 @@ internal static partial class Program
         var localModules = args[0] == "local";
         var transport = group || receipt || facts || streams || localModules ? args[1] : args[0];
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(localModules ? 240 : streams ? 180 : group || receipt || facts ? 120 : 60));
-        if (localModules) await RunLocalModulesAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        if (localModules)
+        {
+            try { await RunLocalModulesAsync(transport, watchdog.Token).WaitAsync(watchdog.Token); }
+            catch (OperationCanceledException) when (watchdog.IsCancellationRequested) { CaptureAlcFailure(); throw; }
+        }
         else if (streams) await RunStreamsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         else if (facts) await RunFactsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         else if (receipt) await RunReceiptAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
