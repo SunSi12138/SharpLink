@@ -591,7 +591,6 @@ internal sealed class StreamFlowController
             state.Next = null;
             state.Credit = _streamWindow;
             state.Completed = false;
-            state.AbortException = null;
             state.CreditRefundedByAbort = false;
         }
 
@@ -610,6 +609,7 @@ internal sealed class StreamFlowController
         Debug.Assert(state.Completed);
         Debug.Assert(state.Credit == _streamWindow);
         Debug.Assert(state.Next is null);
+        state.AbortException = null; // Release the completed stream's exception graph before pooling.
         var pooledState = _pooledSendStates;
         if (pooledState is null)
         {
