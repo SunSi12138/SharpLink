@@ -107,7 +107,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 服务端 OneWay 在 admission overload 下还可能按配置直接丢弃；客户端因为没有 response 无法从返回值判断这一结果。
 
-带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；producer 在初始 Request 完成本地 emission 后才启动，pending cancellation/deadline 可以抑制尚未启动的 producer。这里没有逐请求的远端接受确认。
+带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期。无 deadline 时，初始 Request 被本地 SendPump 接收/入队后即可启动 producer；有 deadline 时，还先等待该 Request 的本地 emission/flush。pending cancellation/deadline 可以抑制尚未启动的 producer。这里没有逐请求的远端接受确认。
 
 如果业务必须确认“远端 handler 已成功完成”或“副作用已经提交”，应使用有响应的 RPC，或在应用协议中设计明确 acknowledgement / idempotency mechanism，而不是把 `await OneWay` 当成远端确认。
 

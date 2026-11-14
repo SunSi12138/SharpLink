@@ -28,7 +28,7 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 ## ClientStreaming 与 Duplex
 
-客户端流泵在初始 Request 完成本地 emission 后才启动；pending cancellation/deadline 可以抑制尚未启动的 producer。这不是等待 Server 对该请求的接受确认。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
+客户端流泵在初始 Request 被本地 SendPump 接收/入队后即可启动；有 deadline 时，还先等待该 Request 的本地 emission/flush。pending cancellation/deadline 可以抑制尚未启动的 producer。这不是等待 Server 对该请求的接受确认。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
 
 ## OneWay
 
