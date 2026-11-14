@@ -14,7 +14,9 @@ public class CompressionPersistentDecodeControlPlaneTests
             new TestCompressionProvider(), initiallyReleased: true);
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
-        var service = harness.Client.Get<IPersistentDecodeControlPlaneService>();
+        var serviceProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         using var smallCancellation = new CancellationTokenSource();
         var small = Enumerable.Repeat((byte)0x31, SmallPayloadBytes).ToArray();
@@ -74,7 +76,9 @@ public class CompressionPersistentDecodeControlPlaneTests
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         var workerCount = harness.DecodeWorkerCount;
-        var service = harness.Client.Get<IPersistentDecodeControlPlaneService>();
+        var serviceProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var blockerCancellations = Enumerable.Range(0, workerCount)
             .Select(static _ => new CancellationTokenSource())
             .ToArray();

@@ -11,10 +11,18 @@ public class PreAdmissionStreamBudgetIntegrationTests
     {
         TestService.ResetBlockingAdd();
         await using var harness = await BudgetHarness.CreateAsync();
-        var serviceA = harness.ClientA.Get<ITestService>();
-        var serviceB = harness.ClientB.Get<ITestService>();
-        var uploadAService = harness.ClientA.Get<ICompressionService>();
-        var uploadBService = harness.ClientB.Get<ICompressionService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<ITestService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceB = serviceBProxy.Service;
+        var uploadAServiceProxy = harness.ClientA.CreateProxy<ICompressionService>();
+        await uploadAServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var uploadAService = uploadAServiceProxy.Service;
+        var uploadBServiceProxy = harness.ClientB.CreateProxy<ICompressionService>();
+        await uploadBServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var uploadBService = uploadBServiceProxy.Service;
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
 

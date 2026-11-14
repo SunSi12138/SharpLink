@@ -17,7 +17,9 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         using (harness.RejectOneWayInboundDrainServiceCalls())
         {
@@ -43,7 +45,9 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         using (harness.HideOneWayInboundDrainMethodShape())
         {
@@ -71,7 +75,9 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
             options.Compression.Providers.Add(compression);
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         using (harness.HideOneWayInboundDrainMethodShape())
         {

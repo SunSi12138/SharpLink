@@ -217,7 +217,9 @@ public static class Program
     {
         await client.ConnectAsync();
 
-        var rpc = client.Get<IStreamLoadService>();
+        var rpcProxy = client.CreateProxy<IStreamLoadService>();
+        await rpcProxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+        var rpc = rpcProxy.Service;
         var results = new List<StageResult>();
         foreach (var operation in ResolveOperations(options.Operation))
         {

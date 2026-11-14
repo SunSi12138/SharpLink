@@ -40,7 +40,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var exception = await EnsureThrowsSharpLink(service.PingAsync(1).AsTask(), "throwing custom selector");
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition, "throwing selector error code");
         Ensure(await service.PingAsync(1) == 2, "later RPC should remain healthy");
@@ -75,7 +77,9 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "initial two-endpoint pool readiness");
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var calls = new Task<int>[32];
         for (var index = 0; index < calls.Length; index++)
             calls[index] = service.SlowAsync(100, CancellationToken.None).AsTask();
@@ -150,7 +154,9 @@ public sealed partial class StaticEndpointIntegrationTests
             await roundRobin.ConnectAsync();
             await WaitUntilAsync(() => ((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
             Ensure(((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, "round robin endpoints must both be ready");
-            var service = roundRobin.Get<IConnectionBehaviorService>();
+            var serviceProxy = roundRobin.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             var ids = new[]
             {
                 await service.GetEndpointIdAsync(),
@@ -194,7 +200,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var slow = service.SlowAsync(200, CancellationToken.None).AsTask();
         var completed = await Task.WhenAny(first.Service.SlowCallStarted!.Task, second.Service.SlowCallStarted!.Task);
         var busyId = await ((Task<string>)completed);
@@ -225,7 +233,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var ids = new[]
         {
             await service.GetEndpointIdAsync(),

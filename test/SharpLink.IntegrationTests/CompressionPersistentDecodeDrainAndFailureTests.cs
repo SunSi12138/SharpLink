@@ -15,7 +15,9 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         Ensure(harness.DecodeAccepting, "persistent decode executor must accept work after server start");
 
-        var service = harness.Client.Get<IPersistentDecodeControlPlaneService>();
+        var serviceProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var workerCount = harness.DecodeWorkerCount;
         var cancellations = Enumerable.Range(0, workerCount + 1)
             .Select(static _ => new CancellationTokenSource())

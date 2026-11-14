@@ -70,7 +70,9 @@ public static class Program
         try
         {
             await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
-            var service = client.Get<IExternalSharpPackAotService>();
+            var serviceProxy = client.CreateProxy<IExternalSharpPackAotService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token).ConfigureAwait(false);
+            var service = serviceProxy.Service;
             var payload = new ExternalAotPayload
             {
                 Id = 313,

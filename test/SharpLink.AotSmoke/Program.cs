@@ -216,12 +216,16 @@ public static class Program
         if (health.Status != SharpLinkHealthStatus.Ready)
             throw new Exception($"unexpected health status: {health.Status}");
 
-        var svc = client.Get<IAotService>();
+        var svcProxy = client.CreateProxy<IAotService>();
+        await svcProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        var svc = svcProxy.Service;
         var result = await svc.PingAsync().ConfigureAwait(false);
         if (result != "pong")
             throw new Exception($"unexpected result: {result}");
 
-        var referencedService = client.Get<IReferencedAssemblyService>();
+        var referencedServiceProxy = client.CreateProxy<IReferencedAssemblyService>();
+        await referencedServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        var referencedService = referencedServiceProxy.Service;
         var referencedResult = await referencedService.IdentifyAsync().ConfigureAwait(false);
         if (referencedResult != "internal-referenced-service")
             throw new Exception($"unexpected referenced service result: {referencedResult}");
@@ -327,7 +331,9 @@ public static class Program
         {
             throw new Exception($"unexpected static Client readiness snapshot: {readiness}");
         }
-        if (await client.Get<IAotService>().PingAsync().ConfigureAwait(false) != "pong")
+        var serviceProxy = client.CreateProxy<IAotService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        if (await serviceProxy.Service.PingAsync().ConfigureAwait(false) != "pong")
             throw new Exception("unexpected static Client AOT result");
         Console.WriteLine("STATIC_READINESS_PASS");
     }
@@ -386,11 +392,15 @@ public static class Program
         if (ordersHealth.Status != SharpLinkHealthStatus.Ready || paymentsHealth.Status != SharpLinkHealthStatus.Ready)
             throw new Exception("static multi-cluster health did not reach Ready");
 
-        var orders = client.Get<IAotService>();
+        var ordersProxy = client.CreateProxy<IAotService>();
+        await ordersProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        var orders = ordersProxy.Service;
         if (await orders.PingAsync().ConfigureAwait(false) != "pong")
             throw new Exception("unexpected orders multi-cluster result");
 
-        var payments = client.Get<ISecondAotService>();
+        var paymentsProxy = client.CreateProxy<ISecondAotService>();
+        await paymentsProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        var payments = paymentsProxy.Service;
         if (await payments.MultiplyAsync(21).ConfigureAwait(false) != 42)
             throw new Exception("unexpected payments multi-cluster result");
     }

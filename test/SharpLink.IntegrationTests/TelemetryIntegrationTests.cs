@@ -80,7 +80,9 @@ public class TelemetryIntegrationTests
 
         await using (var harness = await TelemetryHarness.CreateAsync())
         {
-            var service = harness.Client.Get<IInterceptorTestService>();
+            var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             Ensure(await service.DescribeNumberAsync(4) == 5, "telemetry unary result");
 
             var stream = service.FailStreamAsync().GetAsyncEnumerator();

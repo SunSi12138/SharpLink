@@ -89,7 +89,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             expectedReadyConnections,
             shutdown.Token).ConfigureAwait(false);
 
-        var rpc = builtClient.Get<IBenchmarkRpc>();
+        var rpcProxy = builtClient.CreateProxy<IBenchmarkRpc>();
+        await rpcProxy.PrepareAsync(TimeSpan.FromSeconds(10), shutdown.Token).ConfigureAwait(false);
+        var rpc = rpcProxy.Service;
         return new BenchmarkEnvironment(
             rpc, localService, shutdown, serverTask, server, builtClient);
     }
@@ -136,8 +138,10 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         try
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
+            var proxy = client.CreateProxy<IBenchmarkRpc>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10), shutdown.Token).ConfigureAwait(false);
             return new BenchmarkEnvironment(
-                client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client, serverReadProbe);
+                proxy.Service, localService, shutdown, serverTask, server, client, serverReadProbe);
         }
         catch
         {
@@ -153,7 +157,12 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     internal bool HasPendingServerRead => _serverReadProbe?.HasPendingRead ?? false;
     internal ISharpLinkServer Server => _server;
 
-    public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
+    public async ValueTask<TContract> PrepareServiceAsync<TContract>() where TContract : class, IService
+    {
+        var proxy = _client.CreateProxy<TContract>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(10), _shutdown.Token).ConfigureAwait(false);
+        return proxy.Service;
+    }
 
     public async ValueTask DisposeAsync()
     {

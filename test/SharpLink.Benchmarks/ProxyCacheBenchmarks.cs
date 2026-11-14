@@ -11,6 +11,11 @@ using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 
+/// <summary>
+/// Separates API6 cold local factories from retained Service access. These replace the
+/// retired Get-cache rows; dynamic factory rows include reflection and are labelled so.
+/// No RPC or remote Prepare is part of these local-construction measurements.
+/// </summary>
 [MemoryDiagnoser]
 [SimpleJob(
     RunStrategy.Throughput,
@@ -20,12 +25,14 @@ namespace SharpLink.Benchmarks;
 public class ProxyCacheBenchmarks
 {
     private BenchmarkEnvironment _staticEnvironment = null!;
+    private RpcProxy<IBenchmarkRpc> _staticHandle = null!;
     private DynamicProxyCacheTarget _dynamicTarget = null!;
 
     [GlobalSetup]
     public async Task Setup()
     {
         _staticEnvironment = await BenchmarkEnvironment.CreateAsync();
+        _staticHandle = _staticEnvironment.Client.CreateProxy<IBenchmarkRpc>();
         _dynamicTarget = DynamicProxyCacheTarget.Create();
     }
 
@@ -37,16 +44,24 @@ public class ProxyCacheBenchmarks
     }
 
     [Benchmark]
-    public IBenchmarkRpc RepeatedGet_Static() => _staticEnvironment.Get<IBenchmarkRpc>();
+    public RpcProxy<IBenchmarkRpc> CreateProxy_Static() => _staticEnvironment.Client.CreateProxy<IBenchmarkRpc>();
 
     [Benchmark]
-    public object RepeatedGet_Dynamic() => _dynamicTarget.GetProxy();
+    public object CreateProxy_DynamicViaReflection() => _dynamicTarget.CreateProxy();
+
+    [Benchmark]
+    public IBenchmarkRpc RetainedService_Static() => _staticHandle.Service;
+
+    [Benchmark]
+    public object RetainedService_Dynamic() => _dynamicTarget.Service;
 
     private sealed class DynamicProxyCacheTarget : IDisposable
     {
-        private readonly AssemblyLoadContext _loadContext;
-        private readonly ISharpLinkClient _client;
-        private readonly MethodInfo _getMethod;
+        private AssemblyLoadContext _loadContext;
+        private ISharpLinkClient _client;
+        private MethodInfo _factoryMethod;
+        private object _service;
+        private readonly object?[] _factoryArguments = [null];
 
         private DynamicProxyCacheTarget(
             AssemblyLoadContext loadContext,
@@ -55,9 +70,12 @@ public class ProxyCacheBenchmarks
         {
             _loadContext = loadContext;
             _client = client;
-            _getMethod = typeof(ISharpLinkClient)
-                .GetMethod(nameof(ISharpLinkClient.Get))!
+            _factoryMethod = typeof(ISharpLinkClient)
+                .GetMethod(nameof(ISharpLinkClient.CreateProxy))!
                 .MakeGenericMethod(contractType);
+            var handle = CreateProxy();
+            _service = handle.GetType().GetProperty("Service")!.GetValue(handle)
+                ?? throw new InvalidOperationException("Dynamic handle has no retained service.");
         }
 
         public static DynamicProxyCacheTarget Create()
@@ -95,13 +113,20 @@ public class ProxyCacheBenchmarks
             }
         }
 
-        public object GetProxy() => _getMethod.Invoke(_client, null)
+        public object CreateProxy() => _factoryMethod.Invoke(_client, _factoryArguments)
             ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
+
+        public object Service => _service;
 
         public void Dispose()
         {
             _client.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _loadContext.Unload();
+            var context = _loadContext;
+            _client = null!;
+            _factoryMethod = null!;
+            _service = null!;
+            _loadContext = null!;
+            context.Unload();
         }
     }
 }

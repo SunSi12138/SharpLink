@@ -162,7 +162,9 @@ public class EquivalentDuplexWorkloadTests
         try
         {
             await harness.Client.ConnectAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            var rpc = harness.Client.Get<IStreamLoadService>();
+            var proxy = harness.Client.CreateProxy<IStreamLoadService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var rpc = proxy.Service;
             var messages = EquivalentDuplexWorkload.CreateMessages(4096, 8);
             var calls = Enumerable.Range(1, 4)
                 .Select(operationId => EquivalentDuplexWorkload.ExecuteValidatedAsync(

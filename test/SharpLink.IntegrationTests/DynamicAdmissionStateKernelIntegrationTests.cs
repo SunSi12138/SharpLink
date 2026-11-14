@@ -91,7 +91,9 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
             ConfigureQueuedOneWay(options);
             options.QueueOneWayCalls = false;
         });
-        var service = harness.Client.Get<ITestService>();
+        var serviceProxy = harness.Client.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         var hookCount = 0;
 
@@ -260,7 +262,9 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
             options.MaxQueueDelay = TimeSpan.FromSeconds(10);
         });
         var kernel = original.Kernel;
-        var service = harness.Client.Get<ITestService>();
+        var serviceProxy = harness.Client.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? queued = null;
 

@@ -116,7 +116,9 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         try
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
-            var rpc = client.Get<IBenchmarkRpc>();
+            var rpcProxy = client.CreateProxy<IBenchmarkRpc>();
+            await rpcProxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            var rpc = rpcProxy.Service;
             foreach (var payloadBytes in new[] { 0, 256, 4096 })
             {
                 for (var warmup = 0; warmup < 16; warmup++)
@@ -226,7 +228,9 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         PendingMetricScope metricScope)
     {
         const double deadlineSeconds = 0.75;
-        var rpc = client.Get<IPendingProductionSaturationRpc>();
+        var rpcProxy = client.CreateProxy<IPendingProductionSaturationRpc>();
+        await rpcProxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+        var rpc = rpcProxy.Service;
         Require(await rpc.QuickAsync(-1).ConfigureAwait(false) == -1,
             "Feature-heavy saturation session baseline probe returned the wrong result.");
         var sessionBefore = service.LastSessionId;

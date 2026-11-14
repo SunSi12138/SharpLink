@@ -29,7 +29,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         Ensure(await service.PingAsync(41) == 42, "initial static-cluster RPC");
 
         await first.StopAsync();
@@ -156,7 +158,9 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "both preferred-endpoint candidates readiness");
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial preferred endpoint");
 
         var port = first.Port;
@@ -299,7 +303,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await WaitUntilAsync(
             () => ((SharpLinkClient)client).ReadyConnectionCount == endpoints.Count,
             TimeSpan.FromSeconds(3));
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var observed = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < endpoints.Count * 2; index++)
             observed.Add(await service.GetEndpointIdAsync());
@@ -579,7 +585,9 @@ public sealed partial class StaticEndpointIntegrationTests
         var implementation = (SharpLinkClient)client;
         await WaitUntilAsync(() => implementation.ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(implementation.ReadyConnectionCount == 2, "both GoAway endpoints should be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var longUnary = service.SlowAsync(600, CancellationToken.None).AsTask();
         Ensure(await first.Service.SlowUnaryStarted!.Task == "first", "accepted unary should start on first endpoint");
         await using var stream = service.SlowRangeAsync(3, 100, CancellationToken.None).GetAsyncEnumerator();

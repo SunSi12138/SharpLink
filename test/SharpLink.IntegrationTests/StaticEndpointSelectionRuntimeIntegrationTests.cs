@@ -27,7 +27,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(counter.Count == 2, "initial static topology should dial exactly one connection per endpoint");
 
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial selector should route to first endpoint");
 
         client.UpdateEndpointSelector(new PreferEndpointSelector("second"));

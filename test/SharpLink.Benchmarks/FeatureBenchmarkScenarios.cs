@@ -104,7 +104,7 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
 
             if (scenario == ServerFeatureScenario.DynamicServiceActual)
             {
-                var proxy = environment.Get<IDynamicPluginService>();
+                var proxy = await environment.PrepareServiceAsync<IDynamicPluginService>().ConfigureAwait(false);
                 return new FeatureBenchmarkCase(
                     environment,
                     telemetry,

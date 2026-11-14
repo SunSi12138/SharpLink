@@ -38,7 +38,9 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial resolver endpoint");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2,
@@ -309,7 +311,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "two active endpoints before retirement");
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         await using var stream = service.SlowRangeAsync(3, 500, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first stream item");
 
@@ -430,7 +434,9 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic endpoint");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));

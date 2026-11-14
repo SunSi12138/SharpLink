@@ -363,8 +363,13 @@ public static class Program
             if (tailObserverClient is not null)
                 await tailObserverClient.ConnectAsync();
 
-            var rpc = client.Get<ILoadTestService>();
-            var tailObserverRpc = tailObserverClient?.Get<ILoadTestService>();
+            var rpcProxy = client.CreateProxy<ILoadTestService>();
+            await rpcProxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            var rpc = rpcProxy.Service;
+            var tailObserverProxy = tailObserverClient?.CreateProxy<ILoadTestService>();
+            if (tailObserverProxy is not null)
+                await tailObserverProxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            var tailObserverRpc = tailObserverProxy?.Service;
             var retryOneWaySendQueueBackpressure =
                 options.Operation == "oneway" && options.MaxSendQueueBytes.HasValue;
             foreach (var concurrency in options.ConcurrencyConfig)

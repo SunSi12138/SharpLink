@@ -85,8 +85,10 @@ internal static partial class ConcreteCodecDispatchEvidence
         try
         {
             await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
-            var rpc = client.Get<IConcreteCodecEvidenceRpc>();
-            var runtimeContext = ((IRpcChannel)client).RuntimeContext;
+            var rpcProxy = client.CreateProxy<IConcreteCodecEvidenceRpc>();
+            await rpcProxy.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token).ConfigureAwait(false);
+            var rpc = rpcProxy.Service;
+            var runtimeContext = client.RuntimeContext;
             var provider = runtimeContext.Codecs;
 
             var small = new ConcreteCodecSmallPayload

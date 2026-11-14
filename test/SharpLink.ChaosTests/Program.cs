@@ -120,7 +120,9 @@ public static class Program
 
         phase = "ConnectingClient";
         await client.ConnectAsync(duration.Token).ConfigureAwait(false);
-        var service = client.Get<IChaosService>();
+        var serviceProxy = client.CreateProxy<IChaosService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), duration.Token).ConfigureAwait(false);
+        var service = serviceProxy.Service;
         phase = "Warmup";
         await WarmUpAsync(service, duration.Token).ConfigureAwait(false);
         soakStarted = Stopwatch.GetTimestamp();

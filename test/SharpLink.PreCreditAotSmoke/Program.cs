@@ -76,7 +76,9 @@ public static class Program
         try
         {
             await client.ConnectAsync(cancellationToken);
-            var service = client.Get<IPreCreditAotService>();
+            var serviceProxy = client.CreateProxy<IPreCreditAotService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token).ConfigureAwait(false);
+            var service = serviceProxy.Service;
             var enumerator = service.StreamAsync(8).GetAsyncEnumerator(cancellationToken);
             var disposed = false;
             try

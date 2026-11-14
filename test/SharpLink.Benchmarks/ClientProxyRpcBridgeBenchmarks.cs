@@ -68,7 +68,9 @@ public class ClientProxyRpcBridgeBenchmarks
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
         await _client.ConnectAsync(_shutdown.Token);
-        _rpc = _client.Get<IClientBridgeRpc>();
+        var proxy = _client.CreateProxy<IClientBridgeRpc>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(10), _shutdown.Token).ConfigureAwait(false);
+        _rpc = proxy.Service;
         _streamValues = Values(16);
     }
 

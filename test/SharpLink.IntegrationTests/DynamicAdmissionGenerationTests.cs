@@ -33,7 +33,9 @@ public class DynamicAdmissionGenerationTests
                 captureCompleted.TrySetResult();
             };
 
-            var service = harness.ClientA.Get<ITestService>();
+            var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             if (oneWay)
             {
                 await service.NotifyAsync("captured-enabled");
@@ -92,7 +94,9 @@ public class DynamicAdmissionGenerationTests
                 server.PublishAdmissionProgramForTests(replacement);
             };
 
-            var service = harness.ClientA.Get<ITestService>();
+            var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             var failure = await CaptureFailureAsync(service.AddAsync(1, 2).AsTask());
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "request captured from N must not switch to the available N+1 generation");
@@ -143,7 +147,9 @@ public class DynamicAdmissionGenerationTests
                 server.PublishAdmissionProgramForTests(replacement);
             };
 
-            var service = harness.ClientA.Get<ITestService>();
+            var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             if (oneWay)
             {
                 await service.NotifyAsync("captured-disabled");
@@ -194,7 +200,9 @@ public class DynamicAdmissionGenerationTests
             });
         var program = harness.OwnedProgram
             ?? throw new Exception("enabled server must expose its initial admission program");
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? queuedTwoWay = null;
         var hookCount = 0;
@@ -261,7 +269,9 @@ public class DynamicAdmissionGenerationTests
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(1));
         var program = harness.OwnedProgram!;
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1).AsTask();
         try
         {
@@ -291,7 +301,9 @@ public class DynamicAdmissionGenerationTests
             serverRuntimeConfigure: options => options.FlowControl.MaxConcurrentCallsPerServer = 1,
             admissionConfigure: options => options.Global.UseConcurrency(2));
         var program = harness.OwnedProgram!;
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1).AsTask();
         try
         {
@@ -377,7 +389,9 @@ public class DynamicAdmissionGenerationTests
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             });
         var program = harness.OwnedProgram!;
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         using var cancellation = new CancellationTokenSource();
         Task<int>? target = null;

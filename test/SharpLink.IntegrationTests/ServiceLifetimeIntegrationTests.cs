@@ -54,8 +54,12 @@ public sealed class ServiceLifetimeIntegrationTests
         await firstClient.ConnectAsync();
         await secondClient.ConnectAsync();
 
-        var first = firstClient.Get<IConnectionLifetimeProbe>();
-        var second = secondClient.Get<IConnectionLifetimeProbe>();
+        var firstProxy = firstClient.CreateProxy<IConnectionLifetimeProbe>();
+        await firstProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var first = firstProxy.Service;
+        var secondProxy = secondClient.CreateProxy<IConnectionLifetimeProbe>();
+        await secondProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var second = secondProxy.Service;
         var firstId = await first.GetInstanceIdAsync();
         Ensure(await first.GetInstanceIdAsync() == firstId, "one instance is reused on a connection");
         var secondId = await second.GetInstanceIdAsync();
@@ -86,7 +90,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        var service = client.Get<ICallLifetimeProbe>();
+        var serviceProxy = client.CreateProxy<ICallLifetimeProbe>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         var first = await service.GetInstanceIdAsync();
         var second = await service.GetInstanceIdAsync();
@@ -135,7 +141,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        var service = client.Get<ICallLifetimeProbe>();
+        var serviceProxy = client.CreateProxy<ICallLifetimeProbe>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         await using var stream = service.StreamInstanceIdAsync().GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync(), "admitted call-lifetime stream");

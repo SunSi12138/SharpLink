@@ -164,7 +164,9 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial retained topology");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2,
@@ -214,7 +216,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         await using var stream = service.SlowRangeAsync(3, 100, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "initial active stream");
 

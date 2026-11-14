@@ -97,7 +97,9 @@ public sealed class DynamicAdmissionRuntimeControlTests
             admissionConfigure: options => options.Global.UseConcurrency(1));
         var publicServer = (ISharpLinkServer)harness.Server;
         var original = harness.Server.CurrentAdmissionProgramForTests!;
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
 
         try
@@ -145,7 +147,9 @@ public sealed class DynamicAdmissionRuntimeControlTests
             });
         var publicServer = (ISharpLinkServer)harness.Server;
         var original = harness.Server.CurrentAdmissionProgramForTests!;
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? queuedTwoWay = null;
 
@@ -204,7 +208,9 @@ public sealed class DynamicAdmissionRuntimeControlTests
             serverRuntimeConfigure: options => options.FlowControl.MaxConcurrentCallsPerServer = 1,
             admissionConfigure: options => options.Global.UseConcurrency(2));
         var publicServer = (ISharpLinkServer)harness.Server;
-        var service = harness.ClientA.Get<ITestService>();
+        var serviceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
 
         try

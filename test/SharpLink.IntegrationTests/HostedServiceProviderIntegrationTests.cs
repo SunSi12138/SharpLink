@@ -57,7 +57,9 @@ public class HostedServiceProviderIntegrationTests
             await using var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port).UseRequestTimeout(TimeSpan.FromSeconds(10)).Build();
             await client.ConnectAsync();
-            var service = client.Get<IHostedProviderContract>();
+            var serviceProxy = client.CreateProxy<IHostedProviderContract>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             var first = await service.ResolveAsync();
             var second = await service.ResolveAsync();
             Ensure(first.StartsWith(selected.Name + ":", StringComparison.Ordinal) &&

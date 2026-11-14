@@ -14,8 +14,12 @@ public class CompressionPersistentDecodeFairLifecycleTests
         await using var harness = await LifecycleHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceB = serviceBProxy.Service;
         using var cancellation = new CancellationTokenSource();
         var a1 = serviceA.MeasureAsync(CreateLargePayload(0x61), cancellation.Token).AsTask();
         await provider.WaitForStartedCountAsync(1);
@@ -57,8 +61,12 @@ public class CompressionPersistentDecodeFairLifecycleTests
         await using var harness = await LifecycleHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceB = serviceBProxy.Service;
         using var cancellation = new CancellationTokenSource();
         var a1 = serviceA.MeasureAsync(CreateLargePayload(0x71), cancellation.Token).AsTask();
         await provider.WaitForStartedCountAsync(1);

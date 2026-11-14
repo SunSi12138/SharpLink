@@ -18,7 +18,9 @@ public class EnterpriseHostingIntegrationTests
                 static services => new EnterpriseLifetimeService(
                     services.GetRequiredService<LifetimeDependency>()),
                 SharpLinkServiceLifetime.Call));
-        var service = harness.Client.Get<IEnterpriseLifetimeService>();
+        var serviceProxy = harness.Client.CreateProxy<IEnterpriseLifetimeService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         var first = await service.GetValueAsync();
         var second = await service.GetValueAsync();
@@ -86,7 +88,9 @@ public class EnterpriseHostingIntegrationTests
                     services.GetRequiredService<LifetimeDependency>()),
                 SharpLinkServiceLifetime.Call)))
         {
-            var service = transientHarness.Client.Get<IEnterpriseLifetimeService>();
+            var serviceProxy = transientHarness.Client.CreateProxy<IEnterpriseLifetimeService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             _ = await service.GetValueAsync();
             _ = await service.GetValueAsync();
             Ensure(LifetimeServiceState.Created == 2, "two transient instances created");
@@ -99,7 +103,9 @@ public class EnterpriseHostingIntegrationTests
                 static _ => new EnterpriseLifetimeService(new LifetimeDependency(9)),
                 SharpLinkServiceLifetime.Singleton)))
         {
-            var singleton = singletonHarness.Client.Get<IEnterpriseLifetimeService>();
+            var singletonProxy = singletonHarness.Client.CreateProxy<IEnterpriseLifetimeService>();
+            await singletonProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var singleton = singletonProxy.Service;
             var first = await singleton.GetValueAsync();
             var second = await singleton.GetValueAsync();
             Ensure(first == second, "server-owned singleton reused");
@@ -146,7 +152,9 @@ public class EnterpriseHostingIntegrationTests
             .ReplaceService<IUncooperativeLifetimeService>(
                 static _ => new UncooperativeLifetimeService(),
                 SharpLinkServiceLifetime.Singleton));
-        var service = harness.Client.Get<IUncooperativeLifetimeService>();
+        var serviceProxy = harness.Client.CreateProxy<IUncooperativeLifetimeService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         var invocation = service.WaitForReleaseAsync(CancellationToken.None).AsTask();
         await UncooperativeLifetimeService.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(3));

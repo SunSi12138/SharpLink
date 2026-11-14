@@ -45,7 +45,9 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             var staleCall = Task.Run(async () => await service.GetEndpointIdAsync());
             await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -105,7 +107,9 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             await using var stream = service.SlowRangeAsync(3, 80, CancellationToken.None).GetAsyncEnumerator();
             Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first item must be accepted on the original generation");
 

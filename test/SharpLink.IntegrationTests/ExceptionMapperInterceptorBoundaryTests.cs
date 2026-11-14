@@ -8,7 +8,9 @@ public class ExceptionMapperInterceptorBoundaryTests
         var interceptor = new TranslatingServerInterceptor();
         var mapper = new RecordingExceptionMapper();
         await using var harness = await Harness.CreateAsync(interceptor, mapper);
-        var service = harness.Client.Get<IExceptionMappingBoundaryService>();
+        var serviceProxy = harness.Client.CreateProxy<IExceptionMappingBoundaryService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         var unary = await CaptureSharpLinkException(service.FailUnaryAsync().AsTask());
         Ensure(unary is { Code: SharpLinkErrorCode.FailedPrecondition, Message: "interceptor-domain" },

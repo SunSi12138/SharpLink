@@ -193,3 +193,22 @@ Selected production compatibility boundary:
 - Logs for these migrations are artifacts/775-integration/unit-*-identity-wip.log,
   *-demand-wip.log and *-fence-wip.log. Failed logs remain. These focused runs do not imply
   the full ordinary Unit suite, full solution, platforms or performance are accepted.
+
+### Scheduler/lifetime revalidation and downstream caller migration
+
+-23d4a8bde61017180ad696a178fc65b3c09b7a4e passes all25 routing plus488 existing
+  controls on each transport, with all16 exact source-bound reports verified. This includes
+  publication/early-Ack, retirement, physical owners and ALC controls after the scheduler and
+  protected Singleton fixes. Reports for3400cdbf (14), d086cd4c (16) and23d4a8bd (16) are
+  retained under artifacts/775-integration/reports-<source>; each comes from its raw RESULT log.
+- Migrated AOT smoke, Chaos, LoadTest/hold-capacity, StreamLoad and benchmark bootstraps to
+  finite Prepare outside measured RPC loops, retaining startup cancellation where available.
+  These projects compile in the ordinary solution build. Performance has not been run.
+- ProxyCacheBenchmarks retains its class entry point but explicitly replaces retired Get-cache
+  rows with cold CreateProxy and retained Service rows. The dynamic factory row is labelled
+  ViaReflection; no old cache metric or performance result has been relabelled equivalent.
+- Migrated176 connected Integration declaration sites to explicit handle/finite Prepare/Service.
+  Disconnected client-interceptor short-circuit construction stays local and does not Prepare.
+  Dynamic/local-negative cases, inline calls, metadata, fixture fields and raw protocol controls
+  remain explicit migration work. The next solution build reports159 downstream errors, chiefly
+  remaining retired Get callers; this is not a full-build pass or a reduced test inventory.

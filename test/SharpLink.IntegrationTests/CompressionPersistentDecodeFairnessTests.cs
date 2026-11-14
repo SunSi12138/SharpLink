@@ -15,8 +15,12 @@ public class CompressionPersistentDecodeFairnessTests
         await using var harness = await FairHarness.CreateAsync(coordinator);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceB = serviceBProxy.Service;
         var payloadA = Enumerable.Repeat((byte)0x41, LargePayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x42, LargePayloadBytes).ToArray();
         using var cancellation = new CancellationTokenSource();
@@ -60,8 +64,12 @@ public class CompressionPersistentDecodeFairnessTests
         await using var harness = await FairHarness.CreateAsync(coordinator);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var serviceB = serviceBProxy.Service;
         var payloadA = Enumerable.Repeat((byte)0x51, LargePayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x52, LargePayloadBytes).ToArray();
         using var cancellation = new CancellationTokenSource();

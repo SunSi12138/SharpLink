@@ -86,7 +86,9 @@ public partial class IntegrationBehaviorTests
     {
         // Generated Contract Codec bindings are authoritative in 3.0: no endpoint resolver exists.
         await using var harness = await TestHarness.CreateAsync(useSharedMemory: useSharedMemory);
-        var svc = harness.Client.Get<ITestService>();
+        var svcProxy = harness.Client.CreateProxy<ITestService>();
+        await svcProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var svc = svcProxy.Service;
 
         var add = await svc.AddAsync(10, 20);
         Ensure(add == 30, "AddAsync");
@@ -226,7 +228,9 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var payload = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
 
         var unary = await service.EchoBytesAsync(payload);
@@ -283,7 +287,9 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         var small = Enumerable.Repeat((byte)1, 128).ToArray();
         Ensure((await service.EchoBytesAsync(small)).SequenceEqual(small), "small raw fallback");
@@ -307,7 +313,9 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()));
-        var service = harness.Client.Get<ICompressionService>();
+        var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         await EnsureThrowsSharpLinkFast(
             service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
@@ -326,7 +334,9 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         await EnsureThrowsSharpLinkFast(
             service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
@@ -345,7 +355,9 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         await EnsureThrowsSharpLinkFast(
             service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
@@ -364,7 +376,9 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()));
-        var service = harness.Client.Get<ICompressionService>();
+        var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
 
         await EnsureThrowsSharpLinkFast(
             CollectAsync(service.DownloadBytesAsync(100, 4096), CancellationToken.None),

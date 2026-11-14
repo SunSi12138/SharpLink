@@ -41,7 +41,9 @@ public partial class TransportConnectionIntegrationTests
         {
             await client.ConnectAsync(cts.Token);
             Ensure(client.State == SharpLinkConnectionState.Ready, "custom authenticator should connect");
-            var svc = client.Get<IConnectionBehaviorService>();
+            var svcProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await svcProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var svc = svcProxy.Service;
             Ensure(await svc.PingAsync(12) == 13, "custom authenticator ping");
         }
         finally
@@ -359,7 +361,9 @@ public partial class TransportConnectionIntegrationTests
         {
             await client.ConnectAsync(cts.Token);
             Ensure(client.State == SharpLinkConnectionState.Ready, "structured authenticator should connect");
-            var svc = client.Get<IConnectionBehaviorService>();
+            var svcProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await svcProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var svc = svcProxy.Service;
             Ensure(await svc.GetAuthenticationSummaryAsync() == "user-42|admin", "authentication context should flow into service");
             Ensure(
                 await svc.GetAuthenticationDetailsAsync() == $"tenant-a|True|True|{expiresAt:O}",
@@ -410,8 +414,12 @@ public partial class TransportConnectionIntegrationTests
             await Task.WhenAll(
                 firstClient.ConnectAsync(cts.Token).AsTask(),
                 secondClient.ConnectAsync(cts.Token).AsTask());
-            var firstService = firstClient.Get<IConnectionBehaviorService>();
-            var secondService = secondClient.Get<IConnectionBehaviorService>();
+            var firstServiceProxy = firstClient.CreateProxy<IConnectionBehaviorService>();
+            await firstServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var firstService = firstServiceProxy.Service;
+            var secondServiceProxy = secondClient.CreateProxy<IConnectionBehaviorService>();
+            await secondServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var secondService = secondServiceProxy.Service;
             var calls = new Task<string>[200];
             for (var index = 0; index < calls.Length; index += 2)
             {
@@ -485,7 +493,9 @@ public partial class TransportConnectionIntegrationTests
         {
             await client.ConnectAsync(cts.Token);
             Ensure(client.State == SharpLinkConnectionState.Ready, "authorization guard client should connect");
-            var svc = client.Get<IConnectionBehaviorService>();
+            var svcProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await svcProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var svc = svcProxy.Service;
 
             await EnsureThrowsSharpLink(
                 svc.RequireScopeAsync("rpc.write").AsTask(),

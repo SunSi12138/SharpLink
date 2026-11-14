@@ -32,7 +32,9 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
             .Build();
         await client.ConnectAsync();
 
-        var service = client.Get<ICompressionService>();
+        var serviceProxy = client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         var payload = Enumerable.Repeat((byte)0x4a, 8192).ToArray();
         Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload),
             "build-time disabled policies must preserve the raw RPC result");
@@ -74,7 +76,9 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
 
             await client.SetResponseCompressionPreferenceAsync(false).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
             var payload = Enumerable.Repeat((byte)0x35, 8192).ToArray();
-            var service = client.Get<ICompressionService>();
+            var serviceProxy = client.CreateProxy<ICompressionService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var service = serviceProxy.Service;
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload),
                 "the original session must remain usable after preference convergence");
             Ensure(first.Provider.DecompressCount > 0 && first.Provider.CompressCount == 0,

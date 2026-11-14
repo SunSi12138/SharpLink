@@ -31,7 +31,9 @@ public sealed partial class DynamicEndpointIntegrationTests
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
         Ensure(counter.Count == 2, "initial dynamic topology should dial exactly two Ready endpoints");
 
-        var service = client.Get<IConnectionBehaviorService>();
+        var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var service = serviceProxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic selector should route to first");
 
         client.UpdateEndpointSelector(new IdSelector("second"));

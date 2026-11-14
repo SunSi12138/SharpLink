@@ -380,7 +380,9 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
             try
             {
                 await client.ConnectAsync(cancellation.Token).ConfigureAwait(false);
-                var service = client.Get<IExtensionFaultService>();
+                var serviceProxy = client.CreateProxy<IExtensionFaultService>();
+                await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+                var service = serviceProxy.Service;
                 var session = await service.GetSessionIdAsync().ConfigureAwait(false);
                 return new LifecycleHarness(cancellation, serverTask, server, client, session);
             }

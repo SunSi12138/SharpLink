@@ -29,7 +29,9 @@ public sealed class RuntimeMultiClusterIntegrationTests
             child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port));
         await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
 
-        var oldProxy = client.Get<IConnectionBehaviorService>();
+        var oldProxyProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await oldProxyProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var oldProxy = oldProxyProxy.Service;
         Ensure(await oldProxy.GetEndpointIdAsync() == "first",
             "the published runtime route must become usable after its explicit readiness wait");
 
@@ -38,7 +40,9 @@ public sealed class RuntimeMultiClusterIntegrationTests
             child => child.UseTcp(IPAddress.Loopback.ToString(), second.Port),
             TimeSpan.FromSeconds(2));
 
-        var newProxy = client.Get<IConnectionBehaviorService>();
+        var newProxyProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await newProxyProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var newProxy = newProxyProxy.Service;
         Ensure(await newProxy.GetEndpointIdAsync() == "second",
             "a proxy created after replacement must bind to the new child");
         var oldFailure = await CaptureExceptionAsync(oldProxy.GetEndpointIdAsync().AsTask());
@@ -82,7 +86,9 @@ public sealed class RuntimeMultiClusterIntegrationTests
                     options.MaxConnectionsPerEndpoint = 1;
                 }));
         await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
-        var proxy = client.Get<IConnectionBehaviorService>();
+        var proxyProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await proxyProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var proxy = proxyProxy.Service;
         Ensure(await proxy.GetEndpointIdAsync() == "resolver-first",
             "runtime resolver slot must use its initial endpoint");
 
