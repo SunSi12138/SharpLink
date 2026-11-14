@@ -186,7 +186,8 @@ public sealed class SharpLinkServerPublicLifecycleTests
             new RpcSessionGeneratedServerBridge(session),
             new StripedLongMap<ServerCallCancellationState>(RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
         var disconnectHeartbeat = typeof(SharpLinkServer).GetMethod(
             "DisconnectHeartbeatTimedOutConnectionAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)

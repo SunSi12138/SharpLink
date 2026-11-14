@@ -349,6 +349,7 @@ public sealed class ServerCallCapacityRuntimeUpdateTests
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
             timeProvider,
+            new StaticBindingBudget(),
             maxConcurrentCalls);
         Ensure(connection.MarkReady(null), "connection ready");
         return connection;

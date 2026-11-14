@@ -24,23 +24,10 @@ namespace SharpLink.Benchmarks;
 ///   <item><b>Terminal</b>: <see cref="IValueTaskSource"/> (non-generic <see cref="ValueTask"/>,
 ///     exactly the shape produced by <c>_stub.InvokeCancellableAsync → generated bridge</c>).</item>
 /// </list>
-/// The chain bodies are verbatim reproductions of <c>SharpLinkServer.Interceptors.cs</c>
-/// (<c>InvokeAsync</c> 613-631, <c>InvokeNextAsync</c> 633-657, <c>AwaitInterceptorAsync</c> 659-690,
-/// <c>EnsureResponseContinuationInvoked</c> 692-699, <c>ServerInterceptorContinuation</c> 701-735,
-/// <c>ServerContinuationState</c> 737-842, <c>InvokeTerminalTrackedAsync</c> 844-872,
-/// <c>RecordInvocationFailure</c> 879-893, <c>IsCancellationException</c> 875-877) inside a faithful
-/// <c>ServerPipelineFacts</c> value struct (fields 574-585, ctor 587-611) using the real public
-/// <see cref="IRpcStub"/>, <see cref="IRpcGeneratedServerBridge"/>, <see cref="IRpcByteBufferWriter"/>,
-/// <see cref="SharpLinkInvocationStatus"/>, <see cref="SharpLinkErrorCode"/>, and
-/// <see cref="SharpLinkException"/> types. A <b>minimal pass-through interceptor is registered</b> so the
-/// benchmark exercises the same dispatch path production takes (which is reachable only when
-/// <c>_serverInterceptors.Length &gt; 0</c>; with zero interceptors <c>InvokeServiceCoreAsync</c> bypasses
-/// <c>ServerPipelineFacts</c> entirely). The internal-only field type (<c>RpcSession</c>) is modelled as
-/// <c>object</c> (a reference-type field of identical size), and the internal-constructor
-/// <see cref="SharpLinkServerInvocationContext"/> / <see cref="ISharpLinkServerInterceptor"/> /
-/// <see cref="SharpLinkServerInvocationDelegate"/> are reproduced as minimal reference-type stand-ins
-/// (<c>ServerInvocationContext</c> / <c>IServerInterceptor</c> / <c>ServerInvocationDelegate</c>) that
-/// carry only the members the chain uses, preserving the struct field layout. No production source is modified.
+/// The continuation bodies model <c>SharpLinkServer.Interceptors.cs</c>, using the public
+/// API6 readonly <see cref="RpcMethodDescriptor"/> Stub ABI and a pre-resolved synthetic method.
+/// Internal Session/context/interceptor types use reference-type stand-ins. This isolates
+/// continuation lowering; it is not an end-to-end RPC or #775 performance acceptance test.
 /// <para>
 /// Two terminal shapes are compared (plus a bare-source control): a synchronously-completed pooled source
 /// (the hot path where the response lands before the await) and a genuinely suspended source (completes on a
@@ -59,6 +46,8 @@ namespace SharpLink.Benchmarks;
 [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 20)]
 public class ServerInterceptorChainLoweringBenchmarks
 {
+    private static readonly RpcMethodDescriptor SyntheticMethod =
+        new(1, 1, RpcMethodKind.Unary, true, false, false, null) { SupportsCancellation = true };
     private static readonly IServerInterceptor[] Interceptors = [new PassThroughInterceptor()];
 
     private ServerPipelineFacts _syncFacts;
@@ -85,7 +74,7 @@ public class ServerInterceptorChainLoweringBenchmarks
         service: null!,
         session: null!,
         generatedBridge: null!,
-        methodId: 0,
+        method: SyntheticMethod,
         requestId: 0,
         arguments: default,
         output: _output,
@@ -149,12 +138,12 @@ public class ServerInterceptorChainLoweringBenchmarks
     }
 
     // ---------------------------------------------------------------------------------
-    // Verbatim reproduction of the SERVER interceptor chain from SharpLinkServer.Interceptors.cs.
+    // Isolated continuation-chain model, migrated to the API6 pre-resolved facts ABI.
     // ---------------------------------------------------------------------------------
 
     private struct ServerPipelineFacts
     {
-        // SharpLinkServer.Interceptors.cs:574-585 (RpcSession is internal; modelled as object — a
+        // Historical chain reference (before API6):574-585 (RpcSession is internal; modelled as object — a
         // reference-type field of identical size/layout; ISharpLinkServerInterceptor is reproduced
         // as the reference-type IServerInterceptor stand-in).
         private readonly IServerInterceptor[] _interceptors;
@@ -162,7 +151,7 @@ public class ServerInterceptorChainLoweringBenchmarks
         private readonly object _service;
         private readonly object _session;
         private readonly IRpcGeneratedServerBridge _generatedBridge;
-        private readonly long _methodId;
+        private readonly RpcMethodDescriptor _method;
         private readonly long _requestId;
         private readonly ReadOnlySequence<byte> _arguments;
         private readonly IRpcByteBufferWriter? _output;
@@ -170,14 +159,14 @@ public class ServerInterceptorChainLoweringBenchmarks
         private readonly CancellationToken _cancellationToken;
         private long _started;
 
-        // SharpLinkServer.Interceptors.cs:587-611.
+        // Historical chain reference (before API6):587-611.
         public ServerPipelineFacts(
             IServerInterceptor[] interceptors,
             IRpcStub stub,
             object service,
             object session,
             IRpcGeneratedServerBridge generatedBridge,
-            long methodId,
+            RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> arguments,
             IRpcByteBufferWriter? output,
@@ -189,7 +178,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             _service = service;
             _session = session;
             _generatedBridge = generatedBridge;
-            _methodId = methodId;
+            _method = method;
             _requestId = requestId;
             _arguments = arguments;
             _output = output;
@@ -197,7 +186,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             _cancellationToken = cancellationToken;
         }
 
-        // SharpLinkServer.Interceptors.cs:613-631 (verbatim body; context type reproduced because
+        // Historical chain reference (before API6):613-631 (verbatim body; context type reproduced because
         // SharpLinkServerInvocationContext's constructor is internal).
         public async ValueTask InvokeAsync(ServerInvocationContext context)
         {
@@ -219,7 +208,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             }
         }
 
-        // SharpLinkServer.Interceptors.cs:633-657 (verbatim body).
+        // Historical chain reference (before API6):633-657 (verbatim body).
         private ValueTask InvokeNextAsync(int index, ServerInvocationContext context)
         {
             if (index >= _interceptors.Length)
@@ -246,7 +235,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             return continuation.JoinAsync();
         }
 
-        // SharpLinkServer.Interceptors.cs:659-690 (verbatim body).
+        // Historical chain reference (before API6):659-690 (verbatim body).
         private async ValueTask AwaitInterceptorAsync(
             ValueTask invocation,
             ServerInterceptorContinuation continuation)
@@ -280,7 +269,7 @@ public class ServerInterceptorChainLoweringBenchmarks
                 ExceptionDispatchInfo.Capture(invocationException).Throw();
         }
 
-        // SharpLinkServer.Interceptors.cs:692-699 (verbatim body).
+        // Historical chain reference (before API6):692-699 (verbatim body).
         private void EnsureResponseContinuationInvoked(ServerInterceptorContinuation continuation)
         {
             if (_output is not null && !continuation.WasInvoked)
@@ -290,7 +279,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             }
         }
 
-        // SharpLinkServer.Interceptors.cs:701-735 (verbatim body).
+        // Historical chain reference (before API6):701-735 (verbatim body).
         private sealed class ServerInterceptorContinuation(ServerContinuationState state)
         {
             private int _invoked;
@@ -327,7 +316,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             }
         }
 
-        // SharpLinkServer.Interceptors.cs:737-842 (verbatim body).
+        // Historical chain reference (before API6):737-842 (verbatim body).
         private sealed class ServerContinuationState
         {
             private const int MaxRetained = 4096;
@@ -435,7 +424,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             }
         }
 
-        // SharpLinkServer.Interceptors.cs:844-872 (verbatim body; response-bearing path, output non-null).
+        // Historical chain reference (before API6):844-872 (verbatim body; response-bearing path, output non-null).
         private async ValueTask InvokeTerminalTrackedAsync(ServerInvocationContext context)
         {
             try
@@ -443,13 +432,13 @@ public class ServerInterceptorChainLoweringBenchmarks
                 if (_output is null)
                 {
                     await _stub.InvokeNoReturnCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _cancellationToken)
+                        _service, _generatedBridge, _method, _requestId, _arguments, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 else
                 {
                     await _stub.InvokeCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _output, _cancellationToken)
+                        _service, _generatedBridge, _method, _requestId, _arguments, _output, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 if (context.Status == SharpLinkInvocationStatus.Pending)
@@ -466,7 +455,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             }
         }
 
-        // SharpLinkServer.Interceptors.cs:879-893 (verbatim body).
+        // Historical chain reference (before API6):879-893 (verbatim body).
         private static void RecordInvocationFailure(ServerInvocationContext context, Exception exception)
         {
             var cancelled = IsCancellationException(exception);
@@ -481,7 +470,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             context.Exception = exception;
         }
 
-        // SharpLinkServer.Interceptors.cs:875-877 (verbatim body).
+        // Historical chain reference (before API6):875-877 (verbatim body).
         private static bool IsCancellationException(Exception exception)
             => exception is OperationCanceledException or
                SharpLinkException { Code: SharpLinkErrorCode.Cancelled };
@@ -523,28 +512,38 @@ public class ServerInterceptorChainLoweringBenchmarks
     private sealed class CompletedStub : IRpcStub
     {
         public CompletedSource Source { get; } = new();
-        public long InterfaceHash => 0;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
+        public long InterfaceHash => 1;
+        public bool TryResolveMethod(long methodId, out RpcMethodDescriptor method)
+        {
+            method = methodId == 1 ? SyntheticMethod : default;
+            return methodId == 1;
+        }
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args)
             => Source.AsValueTask();
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => Source.AsValueTask();
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => Source.AsValueTask();
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
             => Source.AsValueTask();
     }
 
     private sealed class SuspendedStub : IRpcStub
     {
         public SuspendedSource Source { get; } = new();
-        public long InterfaceHash => 0;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
+        public long InterfaceHash => 1;
+        public bool TryResolveMethod(long methodId, out RpcMethodDescriptor method)
+        {
+            method = methodId == 1 ? SyntheticMethod : default;
+            return methodId == 1;
+        }
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args)
             => Source.AsValueTask();
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => Source.AsValueTask();
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => Source.AsValueTask();
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
             => Source.AsValueTask();
     }
 

@@ -89,8 +89,8 @@ public sealed class ManifestSourceIsolationTests
 
             Ensure(clientSource.CreateSnapshotCount == 1 && serverSource.CreateSnapshotCount == 1,
                 "Client and Server Compile must each query only their own source once");
-            Ensure(client.Get<IContractA>() is ContractAProxy &&
-                   ((IRpcChannel)client).RuntimeContext.Codecs.GetCodec<CodecValueA>() is TestCodec<CodecValueA>,
+            Ensure(client.CreateProxy<IContractA>().Service is ContractAProxy &&
+                   client.RuntimeContext.Codecs.GetCodec<CodecValueA>() is TestCodec<CodecValueA>,
                 "the Client facade and Runtime must both materialize the same combined frozen snapshot");
             Ensure(serverStubFactoryCount == 1,
                 "the Server service plan must materialize once from the same snapshot as its Runtime Codec");
@@ -211,7 +211,7 @@ public sealed class ManifestSourceIsolationTests
             .DisableRequestTimeout()
             .UseTransport(new TrackingClientTransport())
             .Build();
-        Ensure(clientA.Get<IContractA>() is ContractAProxy && clientB.Get<IContractB>() is ContractBProxy,
+        Ensure(clientA.CreateProxy<IContractA>().Service is ContractAProxy && clientB.CreateProxy<IContractB>().Service is ContractBProxy,
             "equal IDs in independent snapshots must not create process-global conflicts");
 
         var conflictingTransport = new TrackingClientTransport();
@@ -517,7 +517,7 @@ public sealed class ManifestSourceIsolationTests
 
         internal static ContractManifest For<TContract>(
             long contractId,
-            Func<IRpcChannel, TContract> proxyFactory)
+            Func<IRpcContractChannel, TContract> proxyFactory)
             where TContract : IService
             => new(new SharpLinkGeneratedContractDescriptor(
                 typeof(TContract),
@@ -555,7 +555,7 @@ public sealed class ManifestSourceIsolationTests
         internal static CompositeManifest ForClient<TCodec>(
             Type contractType,
             long contractId,
-            Func<IRpcChannel, object> proxyFactory)
+            Func<IRpcContractChannel, object> proxyFactory)
             => new(
                 CreateContract(
                     contractType,
@@ -595,7 +595,7 @@ public sealed class ManifestSourceIsolationTests
         private static SharpLinkGeneratedContractDescriptor CreateContract(
             Type contractType,
             long contractId,
-            Func<IRpcChannel, IRpcCodecProvider, object> proxyFactory,
+            Func<IRpcContractChannel, IRpcCodecProvider, object> proxyFactory,
             Func<IRpcCodecProvider, IRpcStub> stubFactory)
             => new(
                 contractType,
@@ -703,31 +703,38 @@ public sealed class ManifestSourceIsolationTests
 
     private sealed class TestStub(long interfaceHash) : IRpcStub
     {
+        // This ownership/manifest fixture declares no invocable methods.
+        public bool TryResolveMethod(long methodId, out RpcMethodDescriptor method)
+        {
+            method = default;
+            return false;
+        }
+
         public long InterfaceHash { get; } = interfaceHash;
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output) => ValueTask.CompletedTask;
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,
@@ -774,13 +781,13 @@ public sealed class ManifestSourceIsolationTests
 
     private interface IContractA : IService;
     private interface IContractB : IService;
-    private sealed class ContractAProxy(IRpcChannel channel) : IContractA
+    private sealed class ContractAProxy(IRpcContractChannel channel) : IContractA
     {
-        internal IRpcChannel Channel { get; } = channel;
+        internal IRpcContractChannel Channel { get; } = channel;
     }
-    private sealed class ContractBProxy(IRpcChannel channel) : IContractB
+    private sealed class ContractBProxy(IRpcContractChannel channel) : IContractB
     {
-        internal IRpcChannel Channel { get; } = channel;
+        internal IRpcContractChannel Channel { get; } = channel;
     }
     private sealed class ContractBService : IContractB;
     private sealed class CodecValueA;

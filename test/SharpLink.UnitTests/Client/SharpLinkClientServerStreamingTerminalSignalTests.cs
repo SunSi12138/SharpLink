@@ -16,6 +16,7 @@ public sealed class SharpLinkClientServerStreamingTerminalSignalTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -25,7 +26,7 @@ public sealed class SharpLinkClientServerStreamingTerminalSignalTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();

@@ -304,6 +304,7 @@ public class SharpLinkServerRequestScopeReviewTests
         private readonly Pipe _input = new();
         private readonly Pipe _output = new();
         private readonly ControlledStub _stub;
+        private readonly ulong _bindingToken;
         private readonly ILogger _serverLogger;
 
         internal DispatchHarness(
@@ -336,12 +337,16 @@ public class SharpLinkServerRequestScopeReviewTests
                 new RpcSessionGeneratedServerBridge(Session),
                 new StripedLongMap<ServerCallCancellationState>(runtimeContext.Concurrency),
                 CancellationToken.None,
-                runtimeContext.TimeProvider);
+                runtimeContext.TimeProvider,
+            new StaticBindingBudget());
             if (!Connection.MarkReady(null))
                 throw new Exception("connection must become ready");
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+            var facts = new RpcMethodDescriptor(stub.InterfaceHash, ControlledStub.MethodHash,
+                stub.Kind, false, false, false, null) { SupportsCancellation = true };
+            _bindingToken = ServerBindingTestFixture.Install(Connection, registration, facts);
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
@@ -373,13 +378,14 @@ public class SharpLinkServerRequestScopeReviewTests
                 flags,
                 CreateRequestPayload(timeBudget),
                 Connection.CallCancellations,
-                serverLoopToken
+                serverLoopToken,
+                0
             ])!;
 
         private ReadOnlySequence<byte> CreateRequestPayload(TimeSpan? timeBudget)
         {
             var request = new byte[sizeof(long) * (timeBudget.HasValue ? 3 : 2)];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
+            BinaryPrimitives.WriteUInt64LittleEndian(request, _bindingToken);
             BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
             if (timeBudget is { } value)
             {
@@ -419,10 +425,11 @@ public class SharpLinkServerRequestScopeReviewTests
         private readonly TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _invocationCount;
 
+        internal RpcMethodKind Kind => kind;
         public long InterfaceHash => 2480;
         internal int InvocationCount => Volatile.Read(ref _invocationCount);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)
         {
             descriptor = new RpcMethodDescriptor(
                 InterfaceHash,
@@ -431,16 +438,16 @@ public class SharpLinkServerRequestScopeReviewTests
                 HasResponsePayload: false,
                 HasClientStreams: false,
                 HasMethodTimeout: false,
-                MethodTimeout: null);
-            return methodHash == MethodHash;
+                MethodTimeout: null) { SupportsCancellation = true };
+            if (methodHash == MethodHash) return true;
+            descriptor = default;
+            return false;
         }
-
-        public bool SupportsCancellation(long methodHash) => true;
 
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args)
             => InvokeCore(CancellationToken.None);
@@ -448,7 +455,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -457,7 +464,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -466,7 +473,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

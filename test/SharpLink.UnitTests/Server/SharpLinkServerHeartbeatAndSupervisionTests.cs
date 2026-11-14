@@ -50,13 +50,15 @@ public partial class SharpLinkServerInvocationTests
             new RpcSessionGeneratedServerBridge(staleSession),
             CreateCallCancellations(runtimeContext),
             CancellationToken.None,
-            provider);
+            provider,
+            new StaticBindingBudget());
         var healthy = new ServerConnectionState(
             healthySession,
             new RpcSessionGeneratedServerBridge(healthySession),
             CreateCallCancellations(runtimeContext),
             CancellationToken.None,
-            provider);
+            provider,
+            new StaticBindingBudget());
         Ensure(stale.MarkReady(null) && healthy.MarkReady(null),
             "both provider-backed heartbeat sessions must begin Ready");
         Ensure(connections.TryAdd(staleSession.Id, stale) &&
@@ -183,7 +185,8 @@ public partial class SharpLinkServerInvocationTests
             new RpcSessionGeneratedServerBridge(unexpectedSession),
             CreateCallCancellations(),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
         connections.TryAdd(unexpected.Session.Id, unexpected);
 
         var expectedTransports = new List<ThrowingTransportConnection>();
@@ -199,7 +202,8 @@ public partial class SharpLinkServerInvocationTests
                 new RpcSessionGeneratedServerBridge(session),
                 CreateCallCancellations(),
                 CancellationToken.None,
-                RpcSessionTestFixture.RuntimeContext.TimeProvider);
+                RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
             connections.TryAdd(connection.Session.Id, connection);
         }
         Ensure(!ReferenceEquals(connections.Values.First(), unexpected),

@@ -322,7 +322,8 @@ public class ServerLifecycleOwnershipCharacterizationTests
             new RpcSessionGeneratedServerBridge(session),
             new StripedLongMap<ServerCallCancellationState>(RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
     }
 
     private static async Task DisconnectConnectionAsync(
@@ -450,12 +451,19 @@ public class ServerLifecycleOwnershipCharacterizationTests
 
     private sealed class StubMarker : IRpcStub
     {
+        // This ownership/manifest fixture declares no invocable methods.
+        public bool TryResolveMethod(long methodId, out RpcMethodDescriptor method)
+        {
+            method = default;
+            return false;
+        }
+
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args)
             => ValueTask.CompletedTask;
@@ -463,7 +471,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -472,7 +480,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -481,7 +489,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

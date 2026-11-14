@@ -110,7 +110,7 @@ public sealed class SharpLinkMultiClusterMutationResultTests : SharpLinkMultiClu
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             "orders",
@@ -120,7 +120,7 @@ public sealed class SharpLinkMultiClusterMutationResultTests : SharpLinkMultiClu
                     static _ => ValueTask.FromResult<ReadOnlyMemory<byte>>(new byte[2])))
                 .UseTransport(candidateTransport),
             TimeSpan.Zero).AsTask());
-        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var retainedProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(failure is SharpLinkException
         {
@@ -143,13 +143,13 @@ public sealed class SharpLinkMultiClusterMutationResultTests : SharpLinkMultiClu
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(invariantCandidate),
             TimeSpan.Zero).AsTask());
-        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var retainedProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(failure is InvalidOperationException exception &&
                exception.Message.Contains("controlled replacement invariant failure", StringComparison.Ordinal),

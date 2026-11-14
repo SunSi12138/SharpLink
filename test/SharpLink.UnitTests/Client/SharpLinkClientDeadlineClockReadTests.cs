@@ -27,7 +27,7 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         await PrepareAsync(client);
 
         var method = UnaryMethod(TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var before = timeProvider.TimestampReadCount;
 
@@ -53,6 +53,7 @@ public sealed class SharpLinkClientDeadlineClockReadTests
     private static async Task PrepareAsync(SharpLinkClient client)
     {
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         await GetOnlyReadyConnection(client).Session.FlushSendQueueAsync();
     }
 

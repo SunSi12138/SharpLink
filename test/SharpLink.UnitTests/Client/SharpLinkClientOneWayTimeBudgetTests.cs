@@ -17,6 +17,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -29,7 +30,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             ClientStreamCount: 1);
         var probe = new ProducerProbe();
         var streams = new ProbeClientStreams(probe);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
@@ -74,6 +75,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -86,7 +88,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             ClientStreamCount: 1);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var streams = new CancellationObservingClientStreams(producerStarted);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         var invocation = channel.InvokeOneWayAsync(
@@ -118,11 +120,12 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var method = CreateClientStreamingOneWayMethod(MethodId: 292);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var streams = new CancellationObservingClientStreams(producerStarted);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var connection = GetOnlyReadyConnection(client);
         var request = default(RpcEmptyRequest);
 
@@ -155,11 +158,12 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var method = CreateClientStreamingOneWayMethod(MethodId: 293);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var streams = new CancellationObservingClientStreams(producerStarted);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         using var cancellation = new CancellationTokenSource();
 
@@ -189,12 +193,13 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var method = CreateClientStreamingOneWayMethod(MethodId: 294);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var producerFailure = new InvalidOperationException("the oneway producer failed");
         var streams = new FaultingClientStreams(producerStarted, producerFailure);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         var invocation = channel.InvokeOneWayAsync(

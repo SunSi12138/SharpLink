@@ -81,7 +81,8 @@ public class ServerConnectionStateTests
             new RpcSessionGeneratedServerBridge(session),
             CreateCallCancellations(),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
         var stream = new ShutdownJoiningDispatcher();
         session.StreamManager.Register(7, 1, stream);
         var streamDispatch = session.StreamManager.DispatchChunkAsync(
@@ -247,7 +248,8 @@ public class ServerConnectionStateTests
             new RpcSessionGeneratedServerBridge(session),
             CreateCallCancellations(),
             serverToken,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
     }
 
     private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations()
@@ -380,16 +382,23 @@ public class ServerConnectionStateTests
 
     private sealed class StubMarker : IRpcStub
     {
+        // This ownership/manifest fixture declares no invocable methods.
+        public bool TryResolveMethod(long methodId, out RpcMethodDescriptor method)
+        {
+            method = default;
+            return false;
+        }
+
         public long InterfaceHash => 1;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => ValueTask.CompletedTask;
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }

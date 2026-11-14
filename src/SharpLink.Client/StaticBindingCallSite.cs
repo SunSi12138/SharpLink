@@ -1,8 +1,9 @@
 namespace SharpLink.Client;
 
 internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLocalContract local, StaticBindingScope scope = default,
-    SharpLinkDynamicModule? localModule = null)
+    SharpLinkDynamicModule? localModule = null, string? contractName = null)
 {
+    internal string ContractName { get; } = contractName ?? local.ContractId.ToString();
     internal SharpLinkDynamicModule? LocalModule { get; } = localModule;
     internal void EnsureLocalRunning()
     {

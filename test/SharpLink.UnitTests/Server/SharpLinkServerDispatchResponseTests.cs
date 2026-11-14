@@ -50,7 +50,7 @@ public partial class SharpLinkServerInvocationTests
                 CancellationToken.None,
                 new SharpLinkCallContextSnapshot(session.Id, authentication: null),
                 false,
-                null
+                new RpcMethodDescriptor(1, 1, RpcMethodKind.Unary, false, false, false, null) { SupportsCancellation = true }
             ])!;
             await invocation;
             throw new Exception("expected leased invocation failure");

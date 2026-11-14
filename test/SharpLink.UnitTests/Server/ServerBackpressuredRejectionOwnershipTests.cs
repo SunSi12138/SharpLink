@@ -32,7 +32,8 @@ public sealed class ServerBackpressuredRejectionOwnershipTests
             new RpcSessionGeneratedServerBridge(fixture.Session),
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
-            TimeProvider.System);
+            TimeProvider.System,
+            new StaticBindingBudget());
         Ensure(connection.MarkReady(null), "connection must be ready for the real request-dispatch path");
         try
         {

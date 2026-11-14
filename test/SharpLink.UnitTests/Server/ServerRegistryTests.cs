@@ -158,7 +158,8 @@ public class ServerRegistryTests
             new RpcSessionGeneratedServerBridge(session),
             new StripedLongMap<ServerCallCancellationState>(RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
     }
 
     private static void Ensure(bool condition, string message)

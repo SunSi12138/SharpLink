@@ -104,10 +104,7 @@ public sealed class SharpLinkMultiClusterStatusQueryTests : SharpLinkMultiCluste
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
-        public TContract Get<TContract>() where TContract : IService
-            => throw new NotSupportedException();
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
             => throw new NotSupportedException();
 
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster)

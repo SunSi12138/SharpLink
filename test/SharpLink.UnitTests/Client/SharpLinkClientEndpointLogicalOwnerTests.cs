@@ -26,6 +26,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
                 builder.UseEndpointAdmission(policy);
             });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var hasClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
         var method = new RpcMethodDescriptor(
@@ -37,7 +38,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 

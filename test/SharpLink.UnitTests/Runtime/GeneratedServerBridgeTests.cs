@@ -129,9 +129,8 @@ public class GeneratedServerBridgeTests
             0,
             Values(1),
             new SignalingIntCodec(serialized),
-            payloadNullable: false,
-            contractId: 101,
-            methodId: 202,
+            method: new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
             CancellationToken.None);
         await serialized.Task.WaitAsync(AsyncOperationTimeout);
 
@@ -175,9 +174,8 @@ public class GeneratedServerBridgeTests
             0,
             Values(1),
             new SizedSignalingIntCodec(serialized),
-            payloadNullable: false,
-            contractId: 101,
-            methodId: 202,
+            method: new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
             CancellationToken.None);
 
         await Task.Yield();
@@ -230,9 +228,8 @@ public class GeneratedServerBridgeTests
             0,
             stream,
             codec ?? session.RuntimeContext.Codecs.GetCodec<int>(),
-            payloadNullable: false,
-            contractId: 101,
-            methodId: 202,
+            method: new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
             CancellationToken.None);
         var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
         await output.Reader.CompleteAsync();
@@ -260,9 +257,8 @@ public class GeneratedServerBridgeTests
                 0,
                 stream,
                 codec ?? session.RuntimeContext.Codecs.GetCodec<int>(),
-                payloadNullable: false,
-                contractId: 101,
-                methodId: 202,
+                method: new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
                 CancellationToken.None);
             throw new Exception("expected outbound pump failure");
         }

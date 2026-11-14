@@ -26,7 +26,7 @@ public sealed class SharpLinkMultiClusterValidationTests : SharpLinkMultiCluster
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = client.Get<IUnroutedContract>();
+            _ = client.CreateProxy<IUnroutedContract>().Service;
             return Task.CompletedTask;
         });
     }

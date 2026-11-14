@@ -43,6 +43,7 @@ public class ServerDecodeResponseBackpressureTests
             callCancellations,
             CancellationToken.None,
             runtimeContext.TimeProvider,
+            new StaticBindingBudget(),
             maxConcurrentCalls: 1);
         Ensure(connection.MarkReady(null), "connection ready");
         typeof(SharpLinkServer).GetField(
@@ -136,6 +137,7 @@ public class ServerDecodeResponseBackpressureTests
             callCancellations,
             CancellationToken.None,
             runtimeContext.TimeProvider,
+            new StaticBindingBudget(),
             maxConcurrentCalls: 1);
         Ensure(connection.MarkReady(null), "connection ready");
         typeof(SharpLinkServer).GetField(

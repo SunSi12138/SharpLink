@@ -266,6 +266,9 @@ public sealed class AdmissionDynamicUpdateMatrixTests
 
     private sealed class UnsupportedServer : ISharpLinkServer
     {
+        public RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly assembly, long contractId)
+            => throw new NotSupportedException();
+
         public SharpLinkServerLifecycleState LifecycleState => default;
 
         public SharpLinkHealthStatus HealthStatus => default;

@@ -21,6 +21,7 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.DisableRequestTimeout());
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         using var cancellation = new CancellationTokenSource();
         var token = hasCallerToken ? cancellation.Token : CancellationToken.None;
         var hasClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
@@ -35,7 +36,7 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
             HasMethodTimeout: hasMethodTimeout,
             MethodTimeout: hasMethodTimeout ? TimeSpan.FromMinutes(1) : null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var codec = channel.RuntimeContext.Codecs.GetCodec<int>();
         var streams = default(EmptyClientStreams);

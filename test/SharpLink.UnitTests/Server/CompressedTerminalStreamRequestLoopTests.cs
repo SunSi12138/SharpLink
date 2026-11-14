@@ -52,7 +52,8 @@ public partial class SharpLinkServerInvocationTests
             compressionBinding: new SharpLinkCompressionProviderBinding(provider.WireProfile, provider));
         var calls = CreateCallCancellations(runtime);
         var connection = new ServerConnectionState(session, new ServerGeneratedBridge(server, session, calls),
-            calls, CancellationToken.None, runtime.TimeProvider);
+            calls, CancellationToken.None, runtime.TimeProvider,
+            new StaticBindingBudget());
         Ensure(connection.MarkReady(null), "compressed terminal test connection must be ready");
         var state = ServerCallCancellationState.Rent(requestId, default, runtime.TimeProvider,
             CancellationToken.None, CancellationToken.None, supportsCooperativeCancellation: true);

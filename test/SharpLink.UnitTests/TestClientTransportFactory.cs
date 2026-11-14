@@ -12,6 +12,7 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
 {
     private static readonly KeyValuePair<long, RpcHash128>[] DefaultContractManifest =
     [
+        new(1, Client.ClientInvocationTestManifest.Hash),
         new(8_101, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL))
     ];
 
@@ -57,6 +58,8 @@ internal sealed class TestTransportConnection : ITransportConnection
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _observeOutputTask;
     private int _disposed;
+    private IReadOnlyDictionary<long, RpcHash128> _advertisedContracts = new Dictionary<long, RpcHash128>();
+    private readonly Dictionary<long, ulong> _bindings = [];
 
     public TestTransportConnection()
     {
@@ -79,6 +82,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         string? compressionProfile = null,
         CancellationToken cancellationToken = default)
     {
+        Volatile.Write(ref _advertisedContracts, (contractManifest ?? []).ToDictionary());
         negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
         var responsePayload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, new ProtocolV2HandshakeResponse(
@@ -232,7 +236,12 @@ internal sealed class TestTransportConnection : ITransportConnection
                     new SharpLinkProtocolOptions(),
                     out var header,
                     out var payload))
-                    _sentPackets.Writer.TryWrite(new TestSentFrame(header, payload.ToArray()));
+                {
+                    var sent = new TestSentFrame(header, payload.ToArray());
+                    _sentPackets.Writer.TryWrite(sent);
+                    if (header.Type == ProtocolV2FrameType.BindContract)
+                        await RespondToBindAsync(sent, cancellationToken);
+                }
                 if (result.IsCompleted)
                     return;
             }
@@ -241,6 +250,25 @@ internal sealed class TestTransportConnection : ITransportConnection
                 _outbound.Reader.AdvanceTo(buffer.Start, buffer.End);
             }
         }
+    }
+
+    private async Task RespondToBindAsync(TestSentFrame sent, CancellationToken token)
+    {
+        var request = StaticBindingWire.ReadRequest(new ReadOnlySequence<byte>(sent.Payload));
+        var advertised = Volatile.Read(ref _advertisedContracts);
+        var failure = !advertised.TryGetValue(request.ContractId, out var hash)
+            ? StaticBindingFailure.Unavailable
+            : hash != request.Hash ? StaticBindingFailure.HashMismatch : StaticBindingFailure.None;
+        var binding = 0UL;
+        if (failure == StaticBindingFailure.None && !_bindings.TryGetValue(request.ContractId, out binding))
+            _bindings.Add(request.ContractId, binding = (1UL << 32) | (uint)(_bindings.Count + 1));
+        var payload = new byte[StaticBindingWire.AckBytes];
+        BinaryPrimitives.WriteInt64LittleEndian(payload, (long)failure);
+        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(8), request.ContractId);
+        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(16), binding);
+        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(24), failure == StaticBindingFailure.None ? 1 : 0);
+        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(32), failure == StaticBindingFailure.None ? 1 : 0);
+        await InjectFrameAsync(ProtocolV2FrameType.BindAck, ProtocolV2FrameFlags.None, sent.Header.RequestId, payload, token);
     }
 
     private static async ValueTask CompleteAsync(PipeWriter writer)

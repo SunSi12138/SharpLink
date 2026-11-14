@@ -86,7 +86,7 @@ public class SharpClientBuilderTests
             .DisableRequestTimeout()
             .Build();
 
-        var runtimeContext = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+        var runtimeContext = (SharpLinkRuntimeContext)client.RuntimeContext;
         Ensure(ReferenceEquals(runtimeContext.TimeProvider, timeProvider),
             "client builder must preserve the configured provider instance");
         await client.DisposeAsync();

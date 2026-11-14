@@ -22,6 +22,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var connection = GetConnection(client);
         await connection.Session.FlushSendQueueAsync();
         using var cancellation = new CancellationTokenSource();
@@ -60,6 +61,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var connection = GetConnection(client);
         await connection.Session.FlushSendQueueAsync();
         using var cancellation = new CancellationTokenSource();
@@ -105,6 +107,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var connection = GetConnection(client);
         using var cancellation = new CancellationTokenSource();
         var producer = new ProducerProbe();
@@ -154,7 +157,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
             ContractId: 1, MethodId: 297, Kind: RpcMethodKind.OneWay,
             HasResponsePayload: false, HasClientStreams: true,
             HasMethodTimeout: true, MethodTimeout: TimeSpan.FromSeconds(5), ClientStreamCount: 1);
-        return ((IRpcChannel)client).InvokeOneWayAsync(
+        return ClientInvokerTestHelper.CreateChannel(client).InvokeOneWayAsync(
             method, in request, RpcEmptyRequestCodec.Instance, in streams, metadata: null, token).AsTask();
     }
 

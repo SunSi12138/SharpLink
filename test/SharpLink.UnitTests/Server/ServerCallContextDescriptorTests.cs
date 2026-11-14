@@ -14,7 +14,7 @@ public partial class SharpLinkServerInvocationTests
         ?? throw new MissingMethodException(nameof(SharpLinkServer), "CreateCallContext");
 
     [Test]
-    public async Task InterceptedCallContextShouldResolveDescriptorExactlyOnce()
+    public async Task InterceptedCallContextShouldConsumeResolvedDescriptorWithoutLookup()
     {
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -45,10 +45,10 @@ public partial class SharpLinkServerInvocationTests
                 IsIdempotent: true,
                 ResponseNullable: true);
             var stub = new CallContextCountingStub(descriptor, found: true);
-            var context = CreateInterceptedContext(server, connection, stub, requestId: 42);
+            var context = CreateInterceptedContext(server, connection, stub, descriptor, requestId: 42);
 
-            Ensure(stub.LookupCount == 1,
-                "interceptor context must reuse the descriptor resolved for stream reservation");
+            Ensure(stub.LookupCount == 0,
+                "interceptor context must consume the complete pre-resolved snapshot without a Stub query");
             Ensure(context.Method == descriptor,
                 "interceptor context must expose the exact previously resolved descriptor");
             Ensure(context.RequestId == 42 && context.ConnectionId == session.Id,
@@ -56,16 +56,18 @@ public partial class SharpLinkServerInvocationTests
             Ensure(context.InterceptorGeneration is not null,
                 "interceptor context must retain its captured generation");
 
-            // An unresolved custom stub still produces the established conservative
-            // Unary descriptor; the refactor must not turn that into a second lookup.
+            // Missing facts are an invalid internal invocation; they cannot fabricate a
+            // Unary descriptor. Unknown wire methods are rejected by the bound front door.
             var missing = new CallContextCountingStub(descriptor, found: false);
-            var fallback = CreateInterceptedContext(server, connection, missing, requestId: 43);
-            Ensure(missing.LookupCount == 1,
-                "missing-descriptor fallback must query the stub exactly once");
-            Ensure(fallback.Method.Kind == RpcMethodKind.Unary &&
-                fallback.Method.ContractId == missing.InterfaceHash &&
-                fallback.Method.MethodId == descriptor.MethodId,
-                "missing-descriptor fallback must preserve method identity and Unary kind");
+            try
+            {
+                _ = CreateInterceptedContext(server, connection, missing, null, requestId: 43);
+                throw new Exception("Missing bound facts must be rejected.");
+            }
+            catch (TargetInvocationException failure) when (failure.InnerException is InvalidOperationException)
+            {
+                Ensure(missing.LookupCount == 0, "missing facts must not trigger a fallback lookup");
+            }
         }
         finally
         {
@@ -110,7 +112,8 @@ public partial class SharpLinkServerInvocationTests
                     44L,
                     default(RpcDeadline),
                     null,
-                    CancellationToken.None
+                    CancellationToken.None,
+                    new RpcMethodDescriptor(81, 17, RpcMethodKind.Unary, true, false, false, null)
                 ]) ?? throw new Exception("CreateCallContext returned null"));
 
             Ensure(stub.LookupCount == 0,
@@ -128,6 +131,7 @@ public partial class SharpLinkServerInvocationTests
         SharpLinkServer server,
         ServerConnectionState connection,
         IRpcStub stub,
+        RpcMethodDescriptor? descriptor,
         long requestId)
         => (SharpLinkServerInvocationContext)(CreateCallContextMethod.Invoke(
             server,
@@ -138,7 +142,8 @@ public partial class SharpLinkServerInvocationTests
                 requestId,
                 default(RpcDeadline),
                 null,
-                CancellationToken.None
+                CancellationToken.None,
+                descriptor
             ]) ?? throw new Exception("CreateCallContext returned null"));
 
     private sealed class CallContextTestInterceptor : ISharpLinkServerInterceptor
@@ -156,7 +161,7 @@ public partial class SharpLinkServerInvocationTests
         internal int LookupCount => Volatile.Read(ref _lookupCount);
         public long InterfaceHash => descriptor.ContractId;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor method)
+        public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor method)
         {
             Interlocked.Increment(ref _lookupCount);
             if (found && methodHash == descriptor.MethodId)
@@ -171,7 +176,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args)
             => ValueTask.CompletedTask;
@@ -179,7 +184,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -188,7 +193,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -197,7 +202,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

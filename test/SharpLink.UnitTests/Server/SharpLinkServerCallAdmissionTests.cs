@@ -317,6 +317,7 @@ public partial class SharpLinkServerInvocationTests
             CreateCallCancellations(),
             CancellationToken.None,
             RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget(),
             afterLocalCallAdmission: () =>
             {
                 localSlotAcquired.Set();

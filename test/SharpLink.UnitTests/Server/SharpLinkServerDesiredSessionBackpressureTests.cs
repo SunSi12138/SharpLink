@@ -46,7 +46,8 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
         bind.Invoke(server, [oldSession, pinned]);
         var connection = new ServerConnectionState(newSession, new RpcSessionGeneratedServerBridge(newSession),
             new StripedLongMap<ServerCallCancellationState>(context.Concurrency),
-            CancellationToken.None, context.TimeProvider);
+            CancellationToken.None, context.TimeProvider,
+            new StaticBindingBudget());
         using var releaseCancellation = new ManualResetEventSlim();
         var cancellationEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var registration = oldSession.LifetimeToken.Register(() =>
@@ -123,7 +124,8 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
             var connection = new ServerConnectionState(
                 session, new RpcSessionGeneratedServerBridge(session),
                 new StripedLongMap<ServerCallCancellationState>(context.Concurrency),
-                CancellationToken.None, clock);
+                CancellationToken.None, clock,
+            new StaticBindingBudget());
             Ensure(connection.MarkReady(null) && registry.TryAdd(session.Id, connection),
                 "test connections enter the active cohort");
             snapshots[session] = pinned;

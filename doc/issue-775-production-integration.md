@@ -83,8 +83,8 @@ Selected production compatibility boundary:
 - Multi-cluster factory now captures a child route once and delegates CreateProxy/options
   to that child's exact local factory; no legacy Get/GetWithMetadata facade is retained.
 - Moved deterministic fixtures to test/SharpLink.BindingTests and gave them an ordinary
-  production friend assembly. Their source inventories remain intact; runtime execution is
-  pending migration/build, not assumed green from the historical profile.
+  production friend assembly. Their source inventories remain intact. Ordinary execution at
+ 3400cdbf and subsequent routing candidate d086cd4c is recorded below.
 - Migrated demo and QuickStart/ProductionTemplate factory use to explicit finite Prepare.
 - System SDK10.0.302 selects vulnerable ILCompiler/runtime10.0.10, causing NU1903 during
   ordinary solution restore. Advisory GHSA-p3jp-9v83-76w9 fixes .NET10 at10.0.14 or later.
@@ -125,3 +125,34 @@ Selected production compatibility boundary:
   reports explicitly label execution=local; source accepts SHARPLINK_TEST_SOURCE instead
   of requiring the GitHub environment variable. Performance A/A criteria are still to
   be frozen before any performance run; no performance conclusion is asserted here.
+
+### Routing result and ordinary Unit ABI migration
+
+- d086cd4cbf943c71adac64296074bfb93dcc3e64 passed all25 new routing controls
+  plus all488 existing controls on each transport locally under runtime10.0.15.
+  All16 reports match exact committed inventories and source; no watchdog or budget
+  was relaxed. Logs are artifacts/775-integration/*-d086cd4c.log. This establishes the
+  bounded routing controls, not complete reconnect/policy/platform/performance acceptance.
+- The ordinary Unit project now compiles with zero warnings/errors. Manual invocation
+  tests use a client-issued local selector and a simulated peer's actual Bind/Ack instead
+  of casting the client to a raw channel or fabricating a default bound identity. Finite
+  Prepare is explicit bootstrap work, outside policy/deadline/clock observation boundaries.
+  Remaining producer/consumer timing expectations must still be exercised and migrated.
+- Unsupported lifecycle-only test doubles implement the required API6 members explicitly.
+  Stub fixtures consume readonly facts, with explicit known-method resolution or no-method
+  rejection. Dynamic invocation tests install/acquire actual Session-local bindings so the
+  original registration remains protected through asynchronous acquisition and cleanup.
+  Generated stream bridge callers pass one complete descriptor instead of three narrow facts.
+- Retired the historical default-profile-equals-dev guard: equality to the old product is
+  no longer the selected production contract, and its previous evidence remains archived.
+  The resource-parity guard now checks six strict ordinary-path controls, permitting only
+  the explicit bound/queued prologue, already-completed admission and whole-frame-vs-head
+  owner differences. The ordinary source still has exactly one cold Bind Stub resolver.
+- Explicit API meaning change: local CreateProxy is independent of remote identity and
+  connectivity; incompatible peers fail finite Prepare without poisoning Session readiness.
+  Handles retain their Service, while separate cold factories may construct distinct services
+  sharing an exact-site cache. Old Get cache/readiness assertions have been migrated to these
+  boundaries, not retained behind a compatibility facade. Hash-mismatch Prepare diagnostics
+  retain the contract name/ID and both exact hashes.
+- Next checks: focused post-Bind dispatch/resource/scope tests, then local factory/manifest,
+  deadline and stream ownership tests. Do not count compilation as runtime acceptance.

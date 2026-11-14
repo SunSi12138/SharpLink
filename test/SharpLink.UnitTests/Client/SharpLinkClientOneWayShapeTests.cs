@@ -13,6 +13,7 @@ public sealed class SharpLinkClientOneWayShapeTests
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport);
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
             "_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!);
         Ensure(connections.Length == 1, "expected one ready connection");
@@ -29,7 +30,7 @@ public sealed class SharpLinkClientOneWayShapeTests
             HasMethodTimeout: false,
             MethodTimeout: null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         // Use the same concrete writer in both cases: the descriptor's method shape,

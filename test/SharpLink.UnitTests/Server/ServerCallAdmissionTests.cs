@@ -107,6 +107,7 @@ public class ServerCallAdmissionTests
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
             TimeProvider.System,
+            new StaticBindingBudget(),
             maxConcurrentCalls: 1);
 
 #if DEBUG
@@ -119,6 +120,7 @@ public class ServerCallAdmissionTests
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
             TimeProvider.System,
+            new StaticBindingBudget(),
             maxConcurrentCalls: 1,
             afterLocalCallAdmission: afterLocalCallAdmission);
 #endif

@@ -247,6 +247,7 @@ public class ServerRequestPermitTests
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
             TimeProvider.System,
+            new StaticBindingBudget(),
             maxConcurrentCalls: 1);
 
     private static void SetServerState(SharpLinkServer server, int state)

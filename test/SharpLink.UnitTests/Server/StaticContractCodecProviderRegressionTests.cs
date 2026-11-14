@@ -153,19 +153,26 @@ public class StaticContractCodecProviderRegressionTests
 
     private sealed class StubMarker(long interfaceHash) : IRpcStub
     {
+        // This ownership/manifest fixture declares no invocable methods.
+        public bool TryResolveMethod(long methodId, out RpcMethodDescriptor method)
+        {
+            method = default;
+            return false;
+        }
+
         public long InterfaceHash => interfaceHash;
 
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
 
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
@@ -173,7 +180,7 @@ public class StaticContractCodecProviderRegressionTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output) => ValueTask.CompletedTask;
@@ -181,7 +188,7 @@ public class StaticContractCodecProviderRegressionTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            in RpcMethodDescriptor method,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

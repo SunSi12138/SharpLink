@@ -58,6 +58,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
             });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var advanced = 0;
         var probeInvocation = new AsyncLocal<bool>();
@@ -107,7 +108,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.AddInterceptor(new BlockingStreamShortCircuitInterceptor());
             });
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -153,6 +154,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.AddInterceptor(new AdvanceThenNextInterceptor(clock));
             });
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var invocation = InvokeUnary(client).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
@@ -167,7 +169,7 @@ public class SharpLinkClientInterceptorDeadlineTests
 
     private static ValueTask<int> InvokeUnary(SharpLinkClient client)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SMethod,

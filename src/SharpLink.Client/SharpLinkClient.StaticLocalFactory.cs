@@ -69,7 +69,8 @@ internal sealed partial class SharpLinkClient
         throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Exact local contract is unavailable.");
     }
 
-    private StaticBindingCallSite AcquireStaticSite(RpcLocalContract local, RpcProxyOptions? options, SharpLinkDynamicModule? module)
+    private StaticBindingCallSite AcquireStaticSite(RpcLocalContract local, RpcProxyOptions? options,
+        SharpLinkDynamicModule? module, string contractName)
     {
         var scope = new StaticBindingScope(options?.Requirement ?? RpcRegistrationRequirement.Compatible, options?.Receipt);
         if (!scope.IsValid || scope.Receipt is { } receipt &&
@@ -85,7 +86,7 @@ internal sealed partial class SharpLinkClient
                     if (!pair.Value.TryGetTarget(out _)) _staticBindingSites.Remove(pair.Key);
                 if (_staticBindingSites.Count == StaticBindingWire.Capacity)
                     throw StaticBindingWire.Error(StaticBindingFailure.Capacity);
-                site = new StaticBindingCallSite(this, local, scope, module);
+                site = new StaticBindingCallSite(this, local, scope, module, contractName);
                 _staticBindingSites[key] = new WeakReference<StaticBindingCallSite>(site);
             }
             site.Constructions++;
@@ -117,7 +118,7 @@ internal sealed partial class SharpLinkClient
     {
         var registration = ResolveStaticLocalContract(local);
         using var protection = AcquireLocalConstruction(registration);
-        var site = AcquireStaticSite(local, options, registration.Module);
+        var site = AcquireStaticSite(local, options, registration.Module, registration.Descriptor.ContractName);
         var published = false;
         try
         {
@@ -133,7 +134,7 @@ internal sealed partial class SharpLinkClient
         var local = GetLocalContract<T>();
         var registration = ResolveStaticLocalContract(local);
         using var protection = AcquireLocalConstruction(registration);
-        var site = AcquireStaticSite(local, options, registration.Module);
+        var site = AcquireStaticSite(local, options, registration.Module, registration.Descriptor.ContractName);
         var published = false;
         try
         {

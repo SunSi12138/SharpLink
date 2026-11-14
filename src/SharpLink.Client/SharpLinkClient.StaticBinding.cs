@@ -98,6 +98,7 @@ internal sealed partial class SharpLinkClient
             var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
             var work = new List<Task<StaticBoundTarget>>();
             var mismatch = false;
+            var observedHashes = new List<string>();
             var receiptMismatch = false;
             foreach (var connection in connections)
                 foreach (var manifest in manifests)
@@ -108,7 +109,12 @@ internal sealed partial class SharpLinkClient
                     else if (site.Scope.Receipt.HasValue ||
                         manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var hash) && hash == site.Hash)
                         work.Add(PrepareStaticTargetAsync(connection, site));
-                    else mismatch = true;
+                    else
+                    {
+                        mismatch = true;
+                        observedHashes.Add(manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var observed)
+                            ? observed.ToString() : "<missing>");
+                    }
                 }
             var targets = await Task.WhenAll(work).ConfigureAwait(false);
             if (BeforeBindingSiteCommitTestHook is { } beforeCommit) await beforeCommit().ConfigureAwait(false);
@@ -131,7 +137,12 @@ internal sealed partial class SharpLinkClient
                 var confirmed = targets.Where(target => target.Connection.StaticBindings.IsConfirmedToken(target.Token)).ToArray();
                 if (confirmed.Length != targets.Length) _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
                 Volatile.Write(ref site.Failure, confirmed.Length == 0 && (mismatch || receiptMismatch)
-                    ? StaticBindingWire.Error(receiptMismatch ? StaticBindingFailure.ReceiptMismatch : StaticBindingFailure.HashMismatch) : null);
+                    ? receiptMismatch ? StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch)
+                        : new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                            (ushort)(60000 + (ushort)StaticBindingFailure.HashMismatch),
+                            $"Contract '{site.ContractName}' ({site.ContractId}) cannot bind assembly hash {site.Hash}; " +
+                            $"Ready peers advertise {string.Join(", ", observedHashes.Distinct())}.")
+                    : null);
                 Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, confirmed));
             }
         }

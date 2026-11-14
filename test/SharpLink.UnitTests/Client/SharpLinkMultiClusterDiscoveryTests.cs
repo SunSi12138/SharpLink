@@ -48,9 +48,9 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             "multi-cluster Compile must capture route then assembly discovery once");
         Ensure(routeSource.CreateSnapshotCount == 1 && manifestSource.CreateSnapshotCount == 1,
             "coordinator Compile must query each discovery source exactly once");
-        var orders = client.Get<IOrdersContract>() as OrdersProxy ??
+        var orders = client.CreateProxy<IOrdersContract>().Service as OrdersProxy ??
             throw new Exception("orders child must materialize its routed proxy");
-        var payments = GetChildChannel(client, "payments");
+        var payments = GetChildClient(client, "payments");
         Ensure(orders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
             "the routed child Runtime must consume the codec from its own frozen manifest closure");
         EnsureCodecIsMissing<OrdersValue>(payments);
@@ -59,7 +59,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             "orders",
             child => child.UseTransport(new TestClientTransportFactory()),
             TimeSpan.FromSeconds(2));
-        var replacementOrders = client.Get<IOrdersContract>() as OrdersProxy ??
+        var replacementOrders = client.CreateProxy<IOrdersContract>().Service as OrdersProxy ??
             throw new Exception("replacement orders child must materialize its routed proxy");
         Ensure(replacementOrders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
             "replacement must compile from the slot's frozen plan snapshot after caller lists are cleared");
@@ -100,7 +100,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
                    prepared.Slot.StaticManifests is { Count: 1 } staticManifests &&
                    ReferenceEquals(staticManifests[0], Manifest.Instance),
                 "the prepared child must own only its routed frozen manifest closure");
-            var proxy = prepared.Slot.Client.Get<IOrdersContract>() as OrdersProxy ??
+            var proxy = prepared.Slot.Client.CreateProxy<IOrdersContract>().Service as OrdersProxy ??
                 throw new Exception("runtime child must materialize its routed proxy");
             Ensure(proxy.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
                 "the runtime child must actually materialize its proxy and Runtime Codec from that closure");
@@ -126,8 +126,8 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        var proxy = client.Get<IOrdersContract>();
-        Ensure(proxy is OrdersProxy, "Get should create the proxy directly from the routed child client");
+        var proxy = client.CreateProxy<IOrdersContract>().Service;
+        Ensure(proxy is OrdersProxy, "the local factory should create the proxy from the captured routed child client");
         await client.ConnectAsync();
 
         Ensure(client.State == SharpLinkMultiClusterState.Ready, "all slots should be ready after shared connect");
@@ -146,28 +146,29 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "a filtered child should build without reading an unrelated manifest snapshot entry");
     }
 
     [Test]
-    public async Task RepeatedGetShouldReturnTheSameStaticProxy()
+    public async Task RepeatedFactoriesShouldShareExactSiteAndHandleServiceAccessShouldNotAllocate()
     {
         await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
-        var first = client.Get<IOrdersContract>();
-        var second = client.Get<IOrdersContract>();
-
-        Ensure(ReferenceEquals(first, second),
-            "repeated Get<T>() within the same static registration generation must return the cached Proxy reference");
+        var first = client.CreateProxy<IOrdersContract>();
+        var second = client.CreateProxy<IOrdersContract>();
+        Ensure(!ReferenceEquals(first.Service, second.Service) &&
+               ReferenceEquals(((OrdersProxy)first.Service).Channel, ((OrdersProxy)second.Service).Channel),
+            "local construction creates independent handles sharing the exact registration/site");
+        var service = first.Service;
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1000; index++)
-            _ = client.Get<IOrdersContract>();
+            Ensure(ReferenceEquals(first.Service, service), "a handle retains its originally constructed service");
         var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
         Ensure(allocatedAfter == allocatedBefore,
-            "steady-state repeated multicluster Get<T>() must not allocate a new Proxy or channel wrapper");
+            "steady-state handle Service access must not allocate or reconstruct a proxy/channel");
     }
 
     [Test]
@@ -180,7 +181,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "unconfigured route manifests must not block a coordinator's configured routes");
     }
 
@@ -205,7 +206,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
                 .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
                 .Build())
             {
-                Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
                     "the configured route must build without retaining unrelated route manifests");
             }
 

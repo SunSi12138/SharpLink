@@ -267,7 +267,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         {
             public long InterfaceHash { get; } = interfaceHash;
 
-            public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+            public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)
             {
                 _ = methodHash;
                 descriptor = default;
@@ -283,7 +283,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeNoReturnAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                in RpcMethodDescriptor method,
                 long requestId,
                 ReadOnlySequence<byte> args)
                 => throw UnexpectedInvocation();
@@ -291,7 +291,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeNoReturnCancellableAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                in RpcMethodDescriptor method,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 CancellationToken cancellationToken)
@@ -300,7 +300,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                in RpcMethodDescriptor method,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 IBufferWriter<byte> output)
@@ -309,7 +309,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeCancellableAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                in RpcMethodDescriptor method,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 IBufferWriter<byte> output,

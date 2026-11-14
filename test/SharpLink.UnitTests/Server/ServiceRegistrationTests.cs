@@ -140,7 +140,7 @@ public partial class ServiceRegistrationTests
     }
 
     [Test]
-    public async Task DynamicServiceDispatchShouldLookupMethodDescriptorOnlyOnce()
+    public async Task DynamicServiceDispatchShouldUseColdBindingFactsThroughAcquisitionAndCleanup()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
@@ -162,26 +162,32 @@ public partial class ServiceRegistrationTests
             new StripedLongMap<ServerCallCancellationState>(
                 RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
         Ensure(connection.MarkReady(null), "test connection ready");
         try
         {
             var successfulStub = new StubMarker(RpcMethodKind.Unary);
             var singleton = ServiceRegistration.CreateSingleton(
                 typeof(object), successfulStub, new object(), ownsService: false, module);
-            await InvokeRegisteredServiceAsync(server, singleton, connection, requestId: 101);
+            var singletonToken = ServerBindingTestFixture.Install(connection, singleton,
+                new(1, 17, RpcMethodKind.Unary, false, false, false, null));
+            await InvokeRegisteredServiceAsync(server, connection, singletonToken, requestId: 101);
+            await InvokeRegisteredServiceAsync(server, connection, singletonToken, requestId: 103);
             Ensure(successfulStub.DescriptorLookups == 1,
-                "successful dynamic singleton invocation must probe its descriptor exactly once");
+                "two dynamic invocations must reuse the single cold binding resolution");
             Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
             await singleton.DisposeAsync();
 
-            var failingStub = new StubMarker();
+            var failingStub = new StubMarker(RpcMethodKind.Unary);
             var call = ServiceRegistration.CreatePerCall(
                 typeof(object), failingStub, new ThrowingScopeFactory("scope cleanup failed"),
                 static _ => throw new InvalidOperationException("activation failed"),
                 disposeService: true, module);
+            var callToken = ServerBindingTestFixture.Install(connection, call,
+                new(1, 17, RpcMethodKind.Unary, false, false, false, null));
             var failure = await CaptureAsync(() =>
-                InvokeRegisteredServiceAsync(server, call, connection, requestId: 102));
+                InvokeRegisteredServiceAsync(server, connection, callToken, requestId: 102));
             Ensure(ContainsMessage(failure, "activation failed"),
                 "failed dynamic call must preserve its activation error");
             Ensure(ContainsMessage(failure, "scope cleanup failed"),
@@ -197,27 +203,36 @@ public partial class ServiceRegistrationTests
         }
     }
 
-    private static ValueTask InvokeRegisteredServiceAsync(
+    private static async ValueTask InvokeRegisteredServiceAsync(
         SharpLinkServer server,
-        ServiceRegistration registration,
         ServerConnectionState connection,
+        ulong token,
         long requestId)
     {
         var method = typeof(SharpLinkServer).GetMethod(
             "InvokeServiceAsync", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
-        return (ValueTask)(method.Invoke(server,
-        [
-            registration,
-            connection,
-            connection.Session,
-            17L,
-            requestId,
-            ReadOnlySequence<byte>.Empty,
-            null,
-            CancellationToken.None,
-            new SharpLinkCallContextSnapshot(connection.Session.Id, authentication: null)
-        ]) ?? throw new InvalidOperationException("server invocation did not return a ValueTask"));
+        var failure = connection.StaticBindings.Acquire(token, 17, ProtocolV2FrameFlags.None, out var selection);
+        if (failure != StaticBindingFailure.None)
+            throw new InvalidOperationException($"Cannot acquire dispatcher fixture binding: {failure}.");
+        try
+        {
+            await (ValueTask)(method.Invoke(server,
+            [
+                selection.Registration,
+                connection,
+                connection.Session,
+                17L,
+                requestId,
+                ReadOnlySequence<byte>.Empty,
+                null,
+                CancellationToken.None,
+                new SharpLinkCallContextSnapshot(connection.Session.Id, authentication: null),
+                selection.Method.Descriptor,
+                selection.Invocation
+            ]) ?? throw new InvalidOperationException("server invocation did not return a ValueTask"));
+        }
+        finally { selection.Dispose(); }
     }
 
     [Test]
@@ -692,10 +707,10 @@ public partial class ServiceRegistrationTests
         private int _descriptorLookups;
         internal int DescriptorLookups => Volatile.Read(ref _descriptorLookups);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)
         {
             Interlocked.Increment(ref _descriptorLookups);
-            if (descriptorKind is not { } kind)
+            if (descriptorKind is not { } kind || methodHash != 17)
             {
                 descriptor = default;
                 return false;
@@ -712,18 +727,18 @@ public partial class ServiceRegistrationTests
 
         public long InterfaceHash => 1;
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }

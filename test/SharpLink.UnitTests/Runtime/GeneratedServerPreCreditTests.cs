@@ -40,9 +40,8 @@ public class GeneratedServerPreCreditTests
                 streamId: 1,
                 new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
                 codec,
-                payloadNullable: false,
-                contractId: 100,
-                methodId: 200,
+                method: new RpcMethodDescriptor(100, 200, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
                 CancellationToken.None).AsTask();
         }
 
@@ -111,18 +110,16 @@ public class GeneratedServerPreCreditTests
             streamId: 1,
             new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
             codec,
-            payloadNullable: false,
-            contractId: 100,
-            methodId: 200,
+            method: new RpcMethodDescriptor(100, 200, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
             invocationCancellation.Token).AsTask();
         var waiter = bridge.PumpOutboundStreamAsync(
             requestId: 50,
             streamId: 2,
             new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
             codec,
-            payloadNullable: false,
-            contractId: 100,
-            methodId: 200,
+            method: new RpcMethodDescriptor(100, 200, RpcMethodKind.ServerStreaming,
+                true, false, false, null, ResponseNullable: false),
             invocationCancellation.Token).AsTask();
 
         Ensure(codec.SerializeCount == 2,

@@ -232,7 +232,8 @@ public class ServerStopOwnershipCharacterizationTests
             new RpcSessionGeneratedServerBridge(session),
             new StripedLongMap<ServerCallCancellationState>(RpcSessionTestFixture.RuntimeContext.Concurrency),
             CancellationToken.None,
-            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            new StaticBindingBudget());
     }
 
     private static string GetServerStateName(SharpLinkServer server)

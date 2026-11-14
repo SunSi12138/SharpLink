@@ -198,6 +198,9 @@ public sealed class SharpLinkServerDesiredSessionReviewTests
 
     private sealed class CustomServer : ISharpLinkServer
     {
+        public RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly assembly, long contractId)
+            => throw new NotSupportedException();
+
         public SharpLinkServerLifecycleState LifecycleState => SharpLinkServerLifecycleState.Created;
         public SharpLinkHealthStatus HealthStatus => SharpLinkHealthStatus.Unhealthy;
         public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;

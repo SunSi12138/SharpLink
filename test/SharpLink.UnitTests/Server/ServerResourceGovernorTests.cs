@@ -226,6 +226,7 @@ public class ServerResourceGovernorTests
             new StripedLongMap<ServerCallCancellationState>(),
             CancellationToken.None,
             TimeProvider.System,
+            new StaticBindingBudget(),
             maxConcurrentCalls);
 
     private static void SetServerState(SharpLinkServer server, int state)

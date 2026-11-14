@@ -7,6 +7,14 @@ namespace SharpLink.UnitTests.Client;
 
 internal static class ClientInvokerTestHelper
 {
+    internal static IRpcContractChannel CreateChannel(ISharpLinkClient client)
+        => client.CreateContractChannel(client.GetLocalContract<ClientInvocationTestManifest.IInvocationTestContract>());
+
+    // Bootstrap explicitly before the measured invocation. Never hide an asynchronous
+    // Prepare inside the call: deadline/policy capture must stay at the call boundary.
+    internal static ValueTask PrepareAsync(ISharpLinkClient client)
+        => CreateChannel(client).PrepareAsync(TimeSpan.FromSeconds(10));
+
     private static readonly RpcMethodDescriptor SUnaryMethod = new(
         1,
         2,
@@ -49,7 +57,7 @@ internal static class ClientInvokerTestHelper
         SharpLinkMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SUnaryMethod,
@@ -65,7 +73,7 @@ internal static class ClientInvokerTestHelper
         SharpLinkMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SIdempotentUnaryMethod,
@@ -78,7 +86,7 @@ internal static class ClientInvokerTestHelper
 
     public static ValueTask InvokeOneWayAsync(SharpLinkClient client)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
         return channel.InvokeOneWayAsync(
@@ -93,7 +101,7 @@ internal static class ClientInvokerTestHelper
         SharpLinkClient client,
         CancellationToken cancellationToken = default)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeServerStreamingAsync(
             SServerStreamingMethod,
