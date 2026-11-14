@@ -43,7 +43,7 @@ Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID
 
 - `Error`：载荷使用二进制错误格式。
 - `Truncated`：错误消息已在 UTF-8 字符边界截断，只能与 `Error` 同时出现。
-- `HasTimeBudget`：Request 路由前缀后包含发送瞬间剩余 RPC lifetime（`TimeSpan.Ticks`，非负 `int64`）；它是 duration，不是 UTC timestamp。
+- `HasTimeBudget`：Request 路由前缀后包含构帧时采样的剩余 RPC lifetime（`TimeSpan.Ticks`，非负 `int64`）；它是 duration，不是 UTC timestamp。SendPump 不会在 emission 时重新扣除序列化、压缩或排队耗时；本地 deadline 与已入队帧的边界见 [公开 RPC 语义](public-rpc-semantics.md#14-timebudget-采样入队与-emission)。
 - `HasMetadata`：TimeBudget 后包含 `varuint length + metadata bytes`；metadata payload 为 `entryCount:varuint`，随后重复 UTF-8 key/value 的 `varuint length + bytes`。
 - `Compressed`：对应载荷已压缩，必须先通过能力协商。
 - `Cancellable`：调用允许远端取消。
