@@ -1,5 +1,8 @@
 # #775 client-local generations and dual physical owners
 
+Historical sixth-stage evidence: its OneWay fail-closed statements describe8985bc54.
+The seventh-stage bounded OneWay input/refusal result is in `issue-775-oneway-input.md`.
+
 Base: `e866e623ee7db7a0b9e0fea1722232b25e8eb441`, the accepted stream-admission handoff.
 Product dev remains `160d0cd9a0550de5bf00c63b6007376c02debc20`. This bounded stage enables
 client-local runtime registrations on the existing nonshipping contract receiver.

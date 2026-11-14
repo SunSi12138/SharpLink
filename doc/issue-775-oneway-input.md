@@ -1,7 +1,7 @@
 # #775 bounded OneWay input and refusal cleanup
 
 Base: `387a04af3fc24ec7518696566645c6112a087b69`, the accepted client-local handoff.
-Product dev is `160d0cd9a0550de5bf00c63b6007376c02debc20` (checked before this subject).
+Product dev is `160d0cd9a0550de5bf00c63b6007376c02debc20` (checked before and after hosted verification).
 This is the seventh bounded, nonshipping development slice, not a production merge or
 full #775/performance acceptance. Paused investigations remain paused.
 
@@ -90,9 +90,10 @@ budget/GC increase, inventory relaxation, local runtime execution or fallback to
 registration. Workflow job limit remains 20 minutes. Every report must match exact names,
 uniqueness, count, kind, transport and tested SHA.
 
-## Result and remaining obligations
+## Status at the first freeze and remaining obligations
 
-Hosted verification has not started at this freeze. Required ordinary Windows Unit Stop
+The first freeze preceded hosted execution; the accepted final result is recorded below.
+The required ordinary Windows Unit Stop
 failure (#387, 2211/2212; Linux 2212/2212) remains unresolved and paused; exact ordinary
 token/build-input parity permits reuse of that evidence, not a passing full-regression claim.
 This slice does not complete production API/package/caller migration, independent #805
@@ -180,3 +181,67 @@ and carry an internal cancellation marker to the read loop. The original cancell
 inner exception; this is not a public exception contract or a new wire frame. The cooperative
 provider controls exercise this path. Keep the same84 names, conditions and budgets for the
 final changed-source subject; do not rerun an unchanged candidate for reassurance.
+
+## Final decision: accept this bounded slice, not full #775
+
+Final tested source: **`d9b66b4bfc9fcd0f48ec34a8f06cb7616833f557`** /
+[run 43569926080](https://github.com/SunSi12138/SharpLink/actions/runs/43569926080).
+.NET10.0.15, Windows/Linux x64, actual TCP and SharedMemory:
+
+| Host | TCP | SharedMemory | Job |
+|---|---|---|---|
+| Linux | 99 + group67 + receipt49 + facts49 + streams64 + local76 + OneWay84 | same seven exact inventories | 132371870423 |
+| Windows | 99 + group67 + receipt49 + facts49 + streams64 + local76 + OneWay84 | same seven exact inventories | 132371870115 |
+
+All28 final JSON reports match the exact committed inventory, uniqueness, count, kind,
+transport and source, hosted and offline. Both raw logs have no LOCAL_SERVER_ERROR.
+The complete five-subject archive contains128 completed reports, each checked against its
+own source's inventory. Original74, corrective82 and corrective84 inventories/criteria are
+retained separately; no old case was removed. The three documented obsolete assertion
+migrations occurred before the first subject. Watchdogs/15-second cuts/ten-GC limits did
+not change. Third/fourth/fifth subjects include the explicit received-deadline proof.
+
+Accepted evidence establishes:
+
+- Independent bounded count, exact known shape validation and unchanged ordinary prefix;
+  generated typed OneWay writer, enqueue-only completion, zero per-call RequestAccepted,
+  and original wrapper/inner guards.
+- Wrong binding/method (plain/compressed) and call-capacity refusal execute zero business
+  Codec/provider. Malformed provider bytes in rejected traffic are never decoded. More than
+  one receive window drains with full credit and route reclamation after peer terminal.
+- Original-byte receive-window abuse and route exhaustion terminate only the offending
+  Session, execute zero wrong Codec/provider and join route/physical cleanup.
+- Early business return abandons the typed child but keeps bounded stable discard. Later
+  compressed items use neither business Codec nor provider. Consumed credit can be flushed
+  below threshold without asserting a peer terminal. Scalar discard routes last until real
+  peer terminal/Session teardown; they do not own the old registration or Codec.
+- Original cancellation/Stop joins noncooperative producer MoveNext and async Dispose.
+  Local forced retirement retains original linked/pending CTS, Codec and module protection
+  through collectible producer cleanup, then returns send credit and removes pooled error
+  roots. The old ALC collects with client/server/scalar channel live.
+- The original server registration/facts/input Codec and nonempty head survive asynchronous
+  interceptors and subsequent reader progress; active Codec and service disposal block group
+  retirement. Counts reach zero and old ALC collects with original client/server/proxy live.
+- Cooperative and noncooperative providers crossing the original server deadline cannot
+  execute a typed item Codec afterward; credits/routes recover and unrelated Unary remains
+  usable. Cancellation is selected before child release, not reconstructed from a removed
+  pooled call state.
+
+Both hosts pass default/profile/plugin builds, exact old-Stub negative consumer and v5-locator
+metadata rejection. Ordinary source tokens/build inputs remain exact across78 changed/shared
+production files versus2360a0ca; one cold resolver and five source controls pass. Ordinary Unit
+result remains Linux2212/2212 and Windows2211/2212 with the unresolved #387 Stop failure,
+not rerun or reclassified. All RPC/runtime/GC execution was GitHub-only; no performance ran.
+
+Next is the broader five-family error/authorization/mapper/backpressure combination, followed
+by multi-Session Picker/reconnect and remaining #931/#933/#964 cleanup. Final caller migration,
+API/package inventory and independent #805 review, canonical CI, Trim/NativeAOT and preregistered
+GitHub-only performance acceptance remain open. No production merge, PR or release approval.
+
+Development source: `C:/Users/sunsi/Desktop/SharpLink-775-Slice`, branch
+`codex/775-static-bind-slice`. Complete source bundle, all five runs' ten ZIPs/ten raw logs,
+root/stack text (not heaps), metadata,128-report index, three frozen inventories/criteria,
+workflow snapshot, issue snapshots and restoration README:
+`C:/Users/sunsi/Desktop/SharpLink-775-evidence/oneway-20261114/`.
+Only reports and removal of the temporary workflow change after the final tested source;
+remove the remote validation branch with an exact d9b66b4b head lease after evidence capture.
