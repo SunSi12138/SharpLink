@@ -523,11 +523,22 @@ public partial class StreamFlowControllerTests
         await controller.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
         var retired = GetSendState(controller, 1, 0);
         var retiredLease = GetPrivateField<long>(retired, "Lease");
+        var blocked = controller.AcquireSendCreditAsync(1, 0, 1, CancellationToken.None);
+        Ensure(!blocked.IsCompleted, "the original stream must have a waiter to reject");
+        var failure = new SharpLinkException(SharpLinkErrorCode.Cancelled, "consumer abandoned");
 
-        controller.CompleteSendStream(1, 0);
+        controller.CompleteSendStream(1, 0, failure);
+        await ExpectSameException(blocked, failure);
+        Ensure(ReferenceEquals(GetPrivateField<object?>(retired, "AbortException"), failure),
+            "the completed tombstone must retain its terminal error until outstanding credit returns");
         controller.ApplyWindowUpdate(1, 0, 4);
         Ensure(GetPrivateField<long>(retired, "Credit") == 4,
             "a pooled send state must hold the full window before being rented again");
+        Ensure(GetPrivateField<object?>(retired, "AbortException") is null,
+            "returning a send state to the idle pool must release its terminal exception before another rent");
+        Ensure(controller.SendConnectionCredit == 4 && controller.RetainedSendStreamCount == 0 &&
+            controller.ActiveSendStreamCount == 0,
+            "pooling must release the stream slot without changing the exact returned connection credit");
         await controller.AcquireSendCreditAsync(2, 0, 4, CancellationToken.None);
 
         var reused = GetSendState(controller, 2, 0);
@@ -546,18 +557,35 @@ public partial class StreamFlowControllerTests
     [Test]
     public async Task SendStatePoolShouldClearOnConnectionCompletion()
     {
-        var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
+        var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 2);
         await controller.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
-        controller.CompleteSendStream(1, 0);
+        await controller.AcquireSendCreditAsync(2, 0, 4, CancellationToken.None);
+        var first = GetSendState(controller, 1, 0);
+        var second = GetSendState(controller, 2, 0);
         controller.ApplyWindowUpdate(1, 0, 4);
-        Ensure(GetPooledSendStateLinkCount(controller) == 1,
-            "a fully released send state should be pooled");
+        controller.ApplyWindowUpdate(2, 0, 4);
+        controller.CompleteSendStream(1, 0,
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "first stream failed"));
+        controller.CompleteSendStream(2, 0,
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "second stream failed"));
+        Ensure(GetPooledSendStateLinkCount(controller) == 2 &&
+            GetPrivateField<int>(controller, "_pooledSendStateOverflowCount") == 1,
+            "fully credited failed streams should fill both the pool head and its overflow link");
+        Ensure(GetPrivateField<object?>(first, "AbortException") is null &&
+            GetPrivateField<object?>(second, "AbortException") is null,
+            "both idle pool nodes must release terminal errors when completion returns them to the pool");
+        Ensure(controller.SendConnectionCredit == 8 && controller.RetainedSendStreamCount == 0 &&
+            controller.ActiveSendStreamCount == 0,
+            "completion must preserve exact credit while releasing both stream slots");
 
         controller.Complete(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "closed"));
         Ensure(GetPrivateField<object?>(controller, "_pooledSendStates") is null,
             "connection completion must clear the send-state pool");
         Ensure(GetPrivateField<int>(controller, "_pooledSendStateOverflowCount") == 0,
             "connection completion must clear the send-state pool counter");
+        Ensure(GetPrivateField<object?>(first, "Next") is null &&
+            GetPrivateField<object?>(second, "Next") is null,
+            "connection completion must unlink every node in the send-state pool");
     }
 
     private static async Task ExpectCancellation(ValueTask pending)
