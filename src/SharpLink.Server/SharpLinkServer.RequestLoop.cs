@@ -194,8 +194,7 @@ internal sealed partial class SharpLinkServer
                             }
                         }
 #if SHARPLINK_775_STATIC_SLICE
-                        catch (OperationCanceledException) when (oneWayCompressedDispatch &&
-                            !TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId, out _))
+                        catch (OneWayInputDecodeTerminalException) when (oneWayCompressedDispatch)
                         {
                             // The mailbox has already returned the accepted bytes. A cooperative
                             // provider observing this call's terminal is not a Session failure.

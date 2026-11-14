@@ -936,11 +936,25 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         {
             decoded = decoder(payload);
         }
+#if SHARPLINK_775_STATIC_SLICE
+        catch (Exception failure)
+#else
         catch
+#endif
         {
 #if SHARPLINK_775_STATIC_SLICE
-            try { if (IsOneWayInput) NotifyBytesConsumed(encodedByteCount); }
-            finally { ReleaseChildDispatch(); }
+            // Claim this cancellation while the active child still prevents call-state
+            // removal. Re-querying the map after ReleaseChildDispatch can see "no state"
+            // and misinterpret a completed call as fresh pre-admission progress.
+            var oneWay = IsOneWayInput;
+            var terminalCancellation = false;
+            try { terminalCancellation = oneWay && failure is OperationCanceledException && !AcceptOneWayDecodedProgress(); }
+            finally
+            {
+                try { if (oneWay) NotifyBytesConsumed(encodedByteCount); }
+                finally { ReleaseChildDispatch(); }
+            }
+            if (terminalCancellation) throw new OneWayInputDecodeTerminalException((OperationCanceledException)failure);
 #else
             ReleaseChildDispatch();
 #endif
@@ -952,10 +966,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
 #if SHARPLINK_775_STATIC_SLICE
             // OneWay may legally produce before its interceptor terminal. Its stable mailbox
             // owns credit before decompression and reclaims progress again after user decode.
-            if (!AcceptOneWayDecodedProgress())
+            if (!ClaimOneWayDecodedProgress(encodedByteCount))
             {
-                try { NotifyBytesConsumed(encodedByteCount); }
-                finally { ReleaseChildDispatch(); }
                 decoded.Dispose();
                 return ValueTask.CompletedTask;
             }

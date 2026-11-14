@@ -166,3 +166,17 @@ collectible stack remains. Wait for actual credit quiescence before the unchange
 live-owner check; this is a physical completion condition, not extra GC or a fixed sleep.
 The scalar discard route remains bounded until peer terminal/Session teardown, independently
 of the old typed registration and Codec. Existing 240s/15s/10-GC budgets stay unchanged.
+
+Fourth subject `0f2fb3b565226c302845ed42fa5b5265fb780e64` /
+[run 43569415979](https://github.com/SunSi12138/SharpLink/actions/runs/43569415979)
+passes all seven inventories in all four cells, including84 OneWay controls, both ALC gates,
+credit quiescence and pooled-exception clearing. Neither host log has a mapped server error.
+
+Final source readback finds one remaining cooperative-decoder error-path race: releasing the
+active child can let the invocation remove its pooled call state before the read-loop catch
+re-queries the map. "No state" normally means pre-admission and could turn an already selected
+call cancellation into a Session failure. Capture that terminal decision BEFORE child release
+and carry an internal cancellation marker to the read loop. The original cancellation is its
+inner exception; this is not a public exception contract or a new wire frame. The cooperative
+provider controls exercise this path. Keep the same84 names, conditions and budgets for the
+final changed-source subject; do not rerun an unchanged candidate for reassurance.

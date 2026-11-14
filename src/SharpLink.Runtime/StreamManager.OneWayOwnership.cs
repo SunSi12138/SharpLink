@@ -1,6 +1,11 @@
 #if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
+// Carries only an already-selected decoder cancellation across physical child release.
+// The read loop must not infer ownership again after the pooled call state can disappear.
+internal sealed class OneWayInputDecodeTerminalException(OperationCanceledException original)
+    : OperationCanceledException("OneWay input decode observed its owning call terminal.", original, original.CancellationToken);
+
 internal sealed partial class StreamManager
 {
     internal bool IsOneWayInputRoute(long requestId, ushort streamId)
@@ -57,6 +62,21 @@ internal sealed partial class PreAdmissionStreamDispatcher
         Func<bool>? check;
         lock (_gate) check = _oneWayProgress;
         return check?.Invoke() ?? true;
+    }
+    private bool ClaimOneWayDecodedProgress(int encodedByteCount)
+    {
+        bool accepted;
+        try { accepted = AcceptOneWayDecodedProgress(); }
+        catch
+        {
+            try { NotifyBytesConsumed(encodedByteCount); }
+            finally { ReleaseChildDispatch(); }
+            throw;
+        }
+        if (accepted) return true;
+        try { NotifyBytesConsumed(encodedByteCount); }
+        finally { ReleaseChildDispatch(); }
+        return false;
     }
     internal async ValueTask AbandonAndJoinPhysicalAsync()
     {
