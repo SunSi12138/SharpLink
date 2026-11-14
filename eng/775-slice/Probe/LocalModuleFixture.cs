@@ -26,7 +26,8 @@ internal static partial class Program
             var probe = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(ISliceRpc).Assembly);
             var loaded = SharpLinkAssemblyManifestLoader.TryLoad(typeof(IHotRpc).Assembly, out var hot);
             if (!loaded.Succeeded) throw new InvalidOperationException(loaded.Error?.Message);
-            var sb = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([probe, hot!]));
+            var sb = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([probe, hot!]))
+                .UseExceptionMapper(new LocalDiagnosticMapper());
             var cb = SharpClientBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([probe]))
                 .UseRequestTimeout().UseTimeProvider(Clock).UseHeartbeat(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2))
                 .UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
@@ -45,6 +46,16 @@ internal static partial class Program
             Client.BeforeBoundStreamRegistrationTestHook = null; Client.BeforeStreamProducerClaimTestHook = null;
             Server.BeforeStreamAcceptanceTestHook = null;
             try { await Client.StopAsync(); } finally { await Server.StopAsync(TimeSpan.FromSeconds(5)); }
+        }
+    }
+
+    private sealed class LocalDiagnosticMapper : IRpcExceptionMapper
+    {
+        private readonly DefaultRpcExceptionMapper _inner = new(false);
+        public SharpLinkException Map(Exception exception, SharpLinkServerInvocationContext context)
+        {
+            Console.WriteLine("LOCAL_SERVER_ERROR " + exception);
+            return _inner.Map(exception, context);
         }
     }
 

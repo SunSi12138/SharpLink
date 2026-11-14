@@ -117,3 +117,10 @@ already-completed await check does not make a future Task completion asynchronou
 that fixture handoff with an explicitly queued default-scheduler continuation whose own
 continuations use RunContinuationsAsynchronously. Keep the exact10-GC/live-owner condition;
 no product fix is inferred from this fixture scheduling counterexample.
+
+Subjectfcdb736f0da07e8d2a9f2704dde3c996482ce587 / run43562718239 passes the unchanged
+policy ALC check on both hosts. The producer early-terminal observation now exposes the
+original timeout's hidden result: server Internal service error before producer entry,
+not a producer that ignores cancellation. Add a fixture mapper that logs the original
+server exception and delegates unchanged to DefaultRpcExceptionMapper(false); preserve
+client-visible mapping and all72 controls to identify the cause before changing production.
