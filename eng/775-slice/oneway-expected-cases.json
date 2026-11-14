@@ -80,5 +80,7 @@
   "oneway noncooperative decode deadline owns original head and provider before typed item Codec",
   "oneway noncooperative decode deadline expiration cannot execute typed Codec while provider is held",
   "oneway noncooperative decode deadline reclaims progress after original provider without wrong Codec",
-  "oneway noncooperative decode deadline reclaims original credit routes and preserves unrelated Session"
+  "oneway noncooperative decode deadline reclaims original credit routes and preserves unrelated Session",
+  "oneway local physical retirement returns sub-threshold credit without closing Session or late stream terminal",
+  "oneway local pooled send states retain no cancellation exception or collectible stack"
 ]

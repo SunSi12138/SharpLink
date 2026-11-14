@@ -231,8 +231,16 @@ internal sealed partial class SharpLinkServer
         long requestId,
         int clientStreamCount)
     {
+#if SHARPLINK_775_STATIC_SLICE
+        if (clientStreamCount != 0)
+        {
+            session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
+            session.FlushOneWayConsumedCredit(requestId, clientStreamCount);
+        }
+#else
         if (clientStreamCount != 0)
             session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
+#endif
     }
 
     private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)

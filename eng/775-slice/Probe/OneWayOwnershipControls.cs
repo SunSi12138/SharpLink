@@ -42,6 +42,11 @@ internal static partial class Program
                 "oneway local final producer exit releases original module CTS and physical quota");
             Check(signals.Count("encode") == 2 && signals.Count("producer-exited") == 1,
                 "oneway local original header and item Codec never execute after physical retirement");
+            var flow = OneWayFixture.Flow(connection.Session);
+            await UntilAsync(() => flow.RetainedSendStreamCount == 0, ct);
+            Check(flow.SendConnectionCredit == connection.Session.RuntimeContext.FlowControl.ConnectionReceiveWindowBytes && connection.Session.IsConnected,
+                "oneway local physical retirement returns sub-threshold credit without closing Session or late stream terminal");
+            Check(OneWayPoolHasNoExceptions(flow), "oneway local pooled send states retain no cancellation exception or collectible stack");
         }
         finally { producer.Release(); cleanup.TrySetResult(); }
         driver.Drop(); return (old.Weak, channel);
@@ -82,6 +87,17 @@ internal static partial class Program
         }
         finally { gateRelease.TrySetResult(); releaseDecode.Set(); signals.ReleaseCleanup.TrySetResult(); f.Server.ReplaceInterceptors([]); }
         await UnregisterAndDropGroupAsync(f, next, ct);
+    }
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool OneWayPoolHasNoExceptions(StreamFlowController flow)
+    {
+        var state = Field<object?>(flow, "_pooledSendStates");
+        while (state is not null)
+        {
+            if (state.GetType().GetField("AbortException")!.GetValue(state) is not null) return false;
+            state = state.GetType().GetField("Next")!.GetValue(state);
+        }
+        return true;
     }
     private sealed class OneWayPassGate(TaskCompletionSource entered, TaskCompletionSource release) : ISharpLinkServerInterceptor
     {

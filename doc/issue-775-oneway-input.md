@@ -142,3 +142,27 @@ had no wire deadline to cross. Correct the fixture with parameterless [Timeout] 
 that the received original deadline exists; do not change the original OneWay fallback
 contract. The full82 inventory and all budgets remain unchanged. Extra count/phase logging
 will distinguish later provider/Codec failures. Both original runs remain unaccepted.
+
+Third subject `79b1d8e0179526786ba3de79ac23547f3ae52676` /
+[run 43568782428](https://github.com/SunSi12138/SharpLink/actions/runs/43568782428)
+passes both provider/deadline controls and the original cancellation/Stop/physical producer
+checks. Its local ALC gate fails. Linux LoaderAllocator root `alc-root-7bdef040ea20.log`
+shows the live Session -> StreamFlowController -> send-state dictionary -> SharpLinkException
+-> original OperationCanceledException -> collectible stack -> LoaderAllocator. This is a
+real framework retention path, not the prior checker-inline-stack problem.
+
+OneWay abandonment consumed a small input but left its WindowUpdate below threshold, while
+logical cancellation correctly suppressed a late StreamComplete. A completed send state
+retained its exception waiting for that credit; even pooling only cleared AbortException on
+next rent. Fix the physical boundary, not the publication guard: flush already-consumed
+OneWay credit after local abandonment WITHOUT marking peer terminal or removing the stable
+discard route, and clear AbortException when a fully credited completed state enters the
+pool. Existing routed/active waiters still own their original error independently. No late
+stream terminal, extra Ack, retry/rebind or connection close is introduced.
+
+Before the fourth subject retain all82 cases and add two (84 total): sub-threshold credit
+returns while the original Session stays connected, and no pooled cancellation exception/
+collectible stack remains. Wait for actual credit quiescence before the unchanged ten-GC
+live-owner check; this is a physical completion condition, not extra GC or a fixed sleep.
+The scalar discard route remains bounded until peer terminal/Session teardown, independently
+of the old typed registration and Codec. Existing 240s/15s/10-GC budgets stay unchanged.
