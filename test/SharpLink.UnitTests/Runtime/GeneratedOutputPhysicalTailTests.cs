@@ -107,4 +107,3 @@ public sealed class GeneratedOutputPhysicalTailTests
         }
     }
 }
-
