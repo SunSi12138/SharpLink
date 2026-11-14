@@ -61,7 +61,7 @@ jobs:
             $log = "artifacts/codec-publication/$name.log"
             dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter $filter --maximum-parallel-tests 1 --timeout 120s 2>&1 | Tee-Object $log
             $code = $LASTEXITCODE
-            $text = (Get-Content $log -Raw) -replace '\[[0-9;]*m', ''
+            $text = (Get-Content $log -Raw) -replace '\x1b\[[0-9;]*m', ''
             $counts = @{}
             foreach ($key in @('total', 'failed', 'succeeded', 'skipped')) {
               $found = [regex]::Matches($text, "\b${key}:\s*(\d+)\b")
