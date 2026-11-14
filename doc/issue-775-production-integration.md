@@ -516,3 +516,19 @@ Selected production compatibility boundary:
   rooting released clients. This is test ownership, not a new product cache or per-call wait.
   The unchanged continuation now passes2220/2220, zero skipped (41.38s); raw prior failures
   remain. The complete2221 ordinary census still includes the paused/red #387 control.
+
+### Package callers and explicit version calibration
+
+- Migrate ordinary PackageReference smoke, referenced-Contract process client and the historical
+  cross-version-named current/current fixture to retained CreateProxy handles and finite10s
+  Prepare on the exact service receiver. Replaced multi-cluster slots get new handles; old
+  receivers are not retargeted. GenerationControl package metadata requires exact API6/protocol2
+  and sharplink-3.0-api6-contract-binding-v1, not merely a nonempty ABI tag.
+- Record the chosen API6 boundary explicitly in release calibration. Published2.0.3 is API4;
+  incompatible unshipped API5 owner-bound artifacts are deliberately superseded, not accepted
+  by integer alone. The guard permits this recorded two-step supersession only when the named
+  intermediate equals published+1 and the candidate equals published+2. It is not a general
+  version-jump exemption. The wire minor/floor advances published4 to5 once. Both new exact
+  ABI-family suffixes are initialv1, not continuation of the old family's suffix. All16 source
+  version declarations verify; this is implementer calibration pending final #805 review.
+- Actual candidate package build/runtime/Trim/NativeAOT remain to be run after this migration.

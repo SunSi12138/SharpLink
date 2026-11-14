@@ -15,7 +15,9 @@ public static class Program
             .UseSharedMemory(args[0])
             .Build();
         await client.ConnectAsync(timeout.Token);
-        var result = await client.Get<IReferencedPackageService>().IdentifyAsync(41);
+        var proxy = client.CreateProxy<IReferencedPackageService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token);
+        var result = await proxy.Service.IdentifyAsync(41);
         if (!string.Equals(result, "package-service:42", StringComparison.Ordinal))
             throw new InvalidOperationException($"Unexpected referenced package service result '{result}'.");
 

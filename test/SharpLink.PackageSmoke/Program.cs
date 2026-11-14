@@ -215,12 +215,16 @@ public static class Program
                 expectedActiveEndpoints: 1,
                 expectedTargetReadyEndpoints: 1);
 
-            var proxy = client.Get<IPackageSmokeService>();
+            var serviceHandle = client.CreateProxy<IPackageSmokeService>();
+            await serviceHandle.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            var proxy = serviceHandle.Service;
             var result = await proxy.AddAsync(20, 22);
             if (result != 42)
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
 
-            var generationControl = client.Get<ISharpLinkGenerationControl>();
+            var generationHandle = client.CreateProxy<ISharpLinkGenerationControl>();
+            await generationHandle.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            var generationControl = generationHandle.Service;
             var peerInventory = await generationControl.GetInventoryAsync(cancellationToken);
             if (peerInventory.EndpointEpoch != "package-smoke-server-epoch" ||
                 peerInventory.Revision != 1 ||
@@ -361,7 +365,9 @@ public static class Program
         if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
             throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
         await client.WaitForReadyAsync("runtime", cancellationToken);
-        if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+        var addedService = client.CreateProxy<IPackageSmokeService>();
+        await addedService.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        if (await addedService.Service.AddAsync(20, 22) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 
         var replacement = await client.ReplaceClusterAsync(
@@ -377,7 +383,9 @@ public static class Program
         {
             throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
         }
-        if (await client.Get<IPackageSmokeService>().AddAsync(19, 23) != 42)
+        var replacedService = client.CreateProxy<IPackageSmokeService>();
+        await replacedService.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        if (await replacedService.Service.AddAsync(19, 23) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
 
         var removal = await client.RemoveClusterAsync(
@@ -447,7 +455,9 @@ public static class Program
                 client.GetReadinessSnapshot(),
                 expectedActiveEndpoints: 2,
                 expectedTargetReadyEndpoints: 2);
-            if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            var service = client.CreateProxy<IPackageSmokeService>();
+            await service.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            if (await service.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
             await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
@@ -467,7 +477,9 @@ public static class Program
                 dynamicClient.GetReadinessSnapshot(),
                 expectedActiveEndpoints: 2,
                 expectedTargetReadyEndpoints: 2);
-            if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            var dynamicService = dynamicClient.CreateProxy<IPackageSmokeService>();
+            await dynamicService.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            if (await dynamicService.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
         finally
@@ -605,8 +617,9 @@ public static class Program
 
         var manifests = contract.Assembly.GetCustomAttributes(typeof(SharpLinkGeneratedAssemblyManifestAttribute), inherit: false);
         if (manifests.Length != 1 || manifests[0] is not SharpLinkGeneratedAssemblyManifestAttribute manifest ||
-            manifest.ApiVersion != 5 || manifest.ProtocolVersion != 2 || string.IsNullOrEmpty(manifest.AbiIdentity))
-            throw new InvalidOperationException("Generation-control package must carry exact generated API 5 metadata.");
+            manifest.ApiVersion != 6 || manifest.ProtocolVersion != 2 ||
+            manifest.AbiIdentity != "sharplink-3.0-api6-contract-binding-v1")
+            throw new InvalidOperationException("Generation-control package must carry exact generated API 6 contract-binding metadata.");
         if (typeof(IService).IsAssignableFrom(typeof(ISharpLinkGenerationProvider)) ||
             typeof(ISharpLinkGenerationProvider).GetCustomAttributes(typeof(RpcContractAttribute), inherit: false).Length != 0)
             throw new InvalidOperationException("Generation provider must remain a local SPI, never a remote contract.");

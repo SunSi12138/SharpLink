@@ -11,18 +11,20 @@
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
       "pattern": "const int Api = (\\d+);",
       "published": 4,
-      "current": 5,
-      "policy": "increment",
-      "reason": "One 3.0 boundary since released 2.0.3/API4: generated UnsafeBlit factories carry owner-local ABI requirements. Exact AbiIdentity also rejects incompatible API5 development artifacts."
+      "current": 6,
+      "policy": "supersede-development",
+      "reason": "3.0 contract-channel/facts/Stub signatures supersede unshipped API5 owner-bound artifacts. API6 plus the exact contract-binding ABI reject all API5 branches before generated construction; released 2.0.3 is API4.",
+      "supersededDevelopment": 5
     },
     {
       "name": "Generator emitted ABI",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
       "pattern": "public int ApiVersion => (\\d+);",
       "published": 4,
-      "current": 5,
-      "policy": "increment",
-      "reason": "One 3.0 boundary since released 2.0.3/API4: generated UnsafeBlit factories carry owner-local ABI requirements. Exact AbiIdentity also rejects incompatible API5 development artifacts."
+      "current": 6,
+      "policy": "supersede-development",
+      "reason": "3.0 contract-channel/facts/Stub signatures supersede unshipped API5 owner-bound artifacts. API6 plus the exact contract-binding ABI reject all API5 branches before generated construction; released 2.0.3 is API4.",
+      "supersededDevelopment": 5
     },
     {
       "name": "Protocol major",
@@ -47,18 +49,18 @@
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinorVersion = (\\d+);",
       "published": 4,
-      "current": 4,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "current": 5,
+      "policy": "increment",
+      "reason": "Contract binding, per-call RequestAccepted and bounded OneWay input use minor5; unbound minor4 peers are rejected before business decoding."
     },
     {
       "name": "Minimum compatible minor",
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinimumCompatibleMinorVersion = (\\d+);",
       "published": 4,
-      "current": 4,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "current": 5,
+      "policy": "increment",
+      "reason": "Contract binding, per-call RequestAccepted and bounded OneWay input use minor5; unbound minor4 peers are rejected before business decoding."
     },
     {
       "name": "Contract Manifest JSON",
@@ -72,20 +74,20 @@
     {
       "name": "Runtime ABI identity",
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
-      "pattern": "AbiIdentity = \"sharplink-3.0-api5-owner-bound-unsafe-blit-v(\\d+)\"",
-      "published": 1,
+      "pattern": "AbiIdentity = \"sharplink-3.0-api6-contract-binding-v(\\d+)\"",
+      "published": null,
       "current": 1,
-      "policy": "unchanged",
-      "reason": "The suffix remains v1 in the distinct 3.0/API5 owner-bound-unsafe-blit ABI family; this does not imply compatibility with any other API5 identity."
+      "policy": "initial",
+      "reason": "Initial v1 of the API6 contract-binding family; the distinct old owner-bound UnsafeBlit family is not wire/generated compatible."
     },
     {
       "name": "Generator ABI identity",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api5-owner-bound-unsafe-blit-v(\\d+)\"",
-      "published": 1,
+      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api6-contract-binding-v(\\d+)\"",
+      "published": null,
       "current": 1,
-      "policy": "unchanged",
-      "reason": "The suffix remains v1 in the distinct 3.0/API5 owner-bound-unsafe-blit ABI family; this does not imply compatibility with any other API5 identity."
+      "policy": "initial",
+      "reason": "Initial v1 of the API6 contract-binding family; the distinct old owner-bound UnsafeBlit family is not wire/generated compatible."
     },
     {
       "name": "Diagnostic snapshot",

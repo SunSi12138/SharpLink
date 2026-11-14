@@ -66,13 +66,14 @@ public static class Program
         try
         {
             await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
-            var result = await client.Get<ICrossVersionService>()
-                .AddAsync(20, 22)
+            var proxy = client.CreateProxy<ICrossVersionService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token).ConfigureAwait(false);
+            var service = proxy.Service;
+            var result = await service.AddAsync(20, 22)
                 .ConfigureAwait(false);
             if (result != 42)
                 throw new InvalidOperationException($"Unexpected current-package process result: {result}.");
 
-            var service = client.Get<ICrossVersionService>();
             var upload = await service.SumAsync(ToAsyncEnumerable([3, 5, 7])).ConfigureAwait(false);
             if (upload != 15)
                 throw new InvalidOperationException($"Unexpected current-package process upload sum: {upload}.");

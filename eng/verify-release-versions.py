@@ -22,6 +22,10 @@ for entry in manifest["versions"]:
     before, after, policy = entry["published"], entry["current"], entry["policy"]
     valid = {
         "increment": before is not None and after == before + 1,
+        # Deliberate rejection of an incompatible, unshipped development ABI, not a
+        # wildcard allowance for arbitrary version jumps or future member approval.
+        "supersede-development": before is not None and
+            entry.get("supersededDevelopment") == before + 1 and after == before + 2,
         "unchanged": before is not None and after == before,
         "initial": before is None and after == 1,
         "floor": before is None and after == observed.get("Protocol minor"),
@@ -29,4 +33,4 @@ for entry in manifest["versions"]:
     if not valid.get(policy, False):
         raise ValueError(f"Invalid release calibration for {entry['name']}: {policy}")
     observed[entry["name"]] = after
-print(f"Verified {len(observed)} version declarations against released {manifest['publishedBaseline']['version']}; no development-only increments.")
+print(f"Verified {len(observed)} version declarations against released {manifest['publishedBaseline']['version']}; explicit unshipped-ABI supersession is recorded.")
