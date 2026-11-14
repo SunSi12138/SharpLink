@@ -31,7 +31,9 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           p = Path('artifacts/dynamic-oneway-drain/baseline')
-          root = ET.parse(p/'junit.xml').getroot()
+          reports = list(p.rglob('junit.xml'))
+          assert len(reports) == 1, reports
+          root = ET.parse(reports[0]).getroot()
           cases = list(root.iter('testcase'))
           failed = [c for c in cases if c.find('failure') is not None]
           assert len(cases) == 6, (len(cases), [c.attrib for c in cases])

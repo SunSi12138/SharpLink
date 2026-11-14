@@ -25,3 +25,11 @@ Baseline/candidate evidence must identify production and fixture commits. Retain
 Exact baseline defect + current candidate original controls/necessary adjacent controls + targeted no new per-call allocation/cost evidence + exact-head CI.
 Independent reviewer and parent own merge. This is not full #775 acceptance.
 
+## First baseline subject
+60a03285 / run43611586246: both generated OneWay subjects reached the exact physical-exit defect marker.
+Both ClientStreaming subjects preserved the expected active protection but the fixture incorrectly re-read
+the already-completed timed-out Unregister operation expecting its immutable result to change. Count0 passed.
+Correct the post-release oracle to wait for the existing module Released state; do not change ReferencesReleased.
+The report collector also needs to locate JUnit beneath the results directory rather than assume a flat path.
+No product changed. Original failures and raw logs remain evidence; this run is not the full baseline gate pass.
+

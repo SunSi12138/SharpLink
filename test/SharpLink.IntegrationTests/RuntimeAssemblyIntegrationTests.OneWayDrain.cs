@@ -65,8 +65,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         {
             // The two-second module grace elapsed while the physical decoder was held.
         }
-        Ensure((await harness.Server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
-            "service releases after physical input exit");
+        // A timed-out retirement keeps its original result; its owned background cleanup
+        // subsequently publishes Released rather than rewriting ReferencesReleased.
+        await WaitUntilAsync(() => module.State == SharpLinkDynamicModuleState.Released);
         Ensure(plugin.GetServiceStaticInt(serviceProbe, "Disposed") == 1, "service disposes exactly once");
         Ensure((int)codec.GetProperty("ActiveDecodes")!.GetValue(null)! == 0, "decoder exited physically");
         Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0, "module counters balance");
