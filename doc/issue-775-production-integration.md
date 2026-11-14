@@ -396,3 +396,22 @@ Selected production compatibility boundary:
   reinstate the old zero-lease queue assumption: hold retirement while an admitted selection
   physically owns R1, never retarget queued work to R2, and prove ALC release after that physical
   exit. No fixture expectation has yet been changed to conceal the preceding HashMismatch.
+
+### CI entry accepted locally; queued work completes on its pre-cut owner
+
+- The new shared CI entry passes at e905e7e89467cbc7b155e20371a9c4c925961586:
+  all16 frozen reports (513 cases per transport), exact five-member old-Stub CS0535 rejection,
+  and the single cold server resolver guard. Raw logs/reports are retained under
+  artifacts/775-integration/binding-ci-entry-owner-fix. Hosted three-platform execution remains
+  pending; the ordinary expanded solution still needs its complete build gate below.
+- Queued retirement's14 shape/replace/unregister controls now pass. A pre-cut bound request
+  holds one original call owner (and the exact stream counter where applicable), keeps graceful
+  retirement pending while admission is held, then completes on R1 without reacquire or forced
+  cancellation. Each shape verifies its actual result/order/notification and R1 activation,
+  with zero R2 activation. The same retained handle explicitly prepares its new binding before
+  later traffic uses R2. The prior zero-lease/mandatory-Unavailable expectation was an old model,
+  not the selected bound-call contract; its failed migration log remains recorded.
+- The collectible queued-Service control also passes: its ALC remains alive while the original
+  queued selection physically owns it, then retires and collects within the unchanged30-cycle
+  GC budget after queue/physical exit. It does not claim collection before ReferencesReleased.
+  Weak queued identity is separate from the outer bound invocation's lifetime protection.

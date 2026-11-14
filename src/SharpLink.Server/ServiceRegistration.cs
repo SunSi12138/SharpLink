@@ -113,7 +113,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal SharpLinkDynamicModule? Module { get; }
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
-    // allocating a weak handle, and the identity never owns the registration's lifetime.
+    // allocating a weak handle; their enclosing bound invocation owns the physical lifetime.
     private readonly WeakReference<ServiceRegistration>? _queuedWeakIdentity;
     internal WeakReference<ServiceRegistration> QueuedWeakIdentity => _queuedWeakIdentity!;
     internal bool HasModule => _hasModule;

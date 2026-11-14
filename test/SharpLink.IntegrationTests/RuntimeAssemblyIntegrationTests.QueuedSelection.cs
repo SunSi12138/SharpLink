@@ -27,7 +27,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-selection-{shape}-{replace}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
+        var handle = CreateLocalProxyHandle(harness.Client, typeof(ISharpLinkClient), plugin.ContractType);
+        await PrepareHandleAsync(handle);
+        var proxy = GetHandleService(handle);
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
@@ -36,37 +38,47 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
         replacementType.GetMethod("Reset")!.Invoke(null, null);
         Task? call = null;
+        Task<SharpLinkAssemblyReplacementResult>? replacing = null;
+        Task<SharpLinkAssemblyUnregisterResult>? unregistering = null;
         try
         {
             call = StartQueuedShape(proxy, plugin.ContractType, shape, CancellationToken.None);
             await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 1);
             var oldModule = GetDynamicModule(server, plugin.ServiceAssembly);
-            Ensure(oldModule.RemainingCalls == 0, "a waiter does not extend module invocation lifetime");
+            Ensure(oldModule.RemainingCalls == 1 && oldModule.RemainingStreams ==
+                   (shape is "client-stream" or "server-stream" or "duplex" or "one-way-stream" ? 1 : 0),
+                "the queued bound selection must retain its original physical call/stream owner");
             if (replace)
             {
-                var result = await server.ReplaceAssemblyAsync(
-                    plugin.ServiceAssembly, replacementAssembly, TimeSpan.Zero);
-                Ensure(result.Succeeded && result.ReferencesReleased,
-                    "compatible same-contract replacement retires the queued selection");
+                replacing = server.ReplaceAssemblyAsync(
+                    plugin.ServiceAssembly, replacementAssembly, TimeSpan.FromSeconds(5)).AsTask();
             }
             else
             {
-                var result = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.Zero);
-                Ensure(result.ReferencesReleased, "unregister retires the queued selection");
+                unregistering = server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(5)).AsTask();
             }
+            await WaitUntilAsync(() => oldModule.State == SharpLinkDynamicModuleState.Draining);
+            Ensure(!(replacing?.IsCompleted ?? unregistering!.IsCompleted) && oldModule.RemainingCalls == 1,
+                "retirement cannot release the original owner while its admission waiter is physically held");
             Ensure(!oldModule.ForcedCancellation.IsCancellationRequested,
-                "ordinary zero-invocation retirement does not cancel all old calls");
+                "the graceful held-selection control must not use forced cancellation");
             holder.Lease!.Dispose();
-            if (shape.StartsWith("one-way", StringComparison.Ordinal))
-                await call.WaitAsync(TimeSpan.FromSeconds(5));
+            await call.WaitAsync(TimeSpan.FromSeconds(5));
+            if (replacing is not null)
+                EnsureReplacementReleased(await replacing.WaitAsync(TimeSpan.FromSeconds(5)), "queued binding replacement");
             else
-                await EnsureQueuedSelectionUnavailableAsync(call);
+                EnsureUnregisterReleased(await unregistering!.WaitAsync(TimeSpan.FromSeconds(5)), "queued binding unregister");
             await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 0 && admission.Kernel.ActivePermits == 0);
-            Ensure(plugin.GetStaticInt("Created") == 0, "retired R1 never enters user code");
+            Ensure(plugin.GetStaticInt("Created") == 1,
+                "the pre-cut bound selection completes on its originally protected R1");
             Ensure((int)replacementType.GetProperty("Created")!.GetValue(null)! == 0,
                 "queued R1 never invokes R2, for any RPC shape");
+            AssertQueuedShapeResult(call, plugin, shape);
+            Ensure(!oldModule.ForcedCancellation.IsCancellationRequested,
+                "the original queued call completes gracefully without reacquire or forced cancellation");
             if (!replace)
                 Ensure(server.RegisterAssembly(replacementAssembly).Succeeded, "replacement probe registers");
+            await PrepareHandleAsync(handle);
             Ensure(await InvokeValueTaskAsync<int>(
                 proxy, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
                 "post-retirement traffic uses R2 on the same connection");
@@ -78,6 +90,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             holder.Lease!.Dispose();
             if (call is not null)
                 await ObserveQueuedTerminalAsync(call);
+            if (replacing is not null)
+                await replacing.WaitAsync(TimeSpan.FromSeconds(5));
+            if (unregistering is not null)
+                await unregistering.WaitAsync(TimeSpan.FromSeconds(5));
             _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
             _ = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
             _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
@@ -147,6 +163,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var retired = await QueueAndRetireCollectibleServiceAsync(
                 server, harness.Client, plugin.ContractType, servicePath, replacementAssembly);
             queued = retired.Queued;
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            Ensure(admission.Kernel.QueuedCalls == 1 && retired.Context.IsAlive && !retired.Retirement.IsCompleted,
+                "the original implementation ALC must stay physically owned while its bound selection is queued");
+            holder.Lease!.Dispose();
+            Ensure(await ((Task<int>)queued).WaitAsync(TimeSpan.FromSeconds(5)) == 2,
+                "the original pre-cut queued call completes on protected R1");
+            EnsureReplacementReleased(await retired.Retirement.WaitAsync(TimeSpan.FromSeconds(5)),
+                "collectible queued replacement");
             for (var attempt = 0; attempt < 30 && retired.Context.IsAlive; attempt++)
             {
                 GC.Collect();
@@ -154,12 +180,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 GC.Collect();
                 await Task.Delay(20);
             }
-            Ensure(admission.Kernel.QueuedCalls == 1,
-                "collectibility is tested while admission still holds the old queued request");
+            Ensure(admission.Kernel.QueuedCalls == 0,
+                "physical admission work must exit before the old implementation can collect");
             Ensure(!retired.Context.IsAlive,
-                "a suspended admission waiter must not root a ReferencesReleased service ALC");
-            holder.Lease!.Dispose();
-            await EnsureQueuedSelectionUnavailableAsync(queued);
+                "the physically exited queued selection must release its old Service ALC");
+            await PrepareHandleAsync(retired.Handle);
             Ensure(await InvokeValueTaskAsync<int>(
                 retired.Proxy, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
                 "collected R1 rejects without consuming R2 or closing the connection");
@@ -177,22 +202,27 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<(WeakReference Context, Task Queued, object Proxy)> QueueAndRetireCollectibleServiceAsync(
+    private static async Task<(WeakReference Context, Task Queued, object Proxy, object Handle,
+        Task<SharpLinkAssemblyReplacementResult> Retirement)> QueueAndRetireCollectibleServiceAsync(
         SharpLinkServer server, ISharpLinkClient client, Type contractType, string servicePath, Assembly replacement)
     {
         var context = new SharedContractServiceLoadContext(contractType.Assembly);
         var assembly = context.LoadFromAssemblyPath(servicePath);
         Ensure(server.RegisterAssembly(assembly).Succeeded, "isolated original service registers");
         await WaitForRemoteContractManifestAsync(client, contractType);
-        var proxy = await CreatePreparedServiceAsync(client, contractType);
+        var handle = CreateLocalProxyHandle(client, typeof(ISharpLinkClient), contractType);
+        await PrepareHandleAsync(handle);
+        var proxy = GetHandleService(handle);
         var queued = InvokeValueTaskAsync<int>(proxy, contractType, "UnaryAsync", 1, CancellationToken.None).AsTask();
         await WaitUntilAsync(() => server.CurrentAdmissionProgramForTests!.Kernel.QueuedCalls == 1);
-        var result = await server.ReplaceAssemblyAsync(assembly, replacement, TimeSpan.Zero);
-        Ensure(result.Succeeded && result.ReferencesReleased,
-            "old implementation references are released while its admission request remains queued");
+        var module = GetDynamicModule(server, assembly);
+        var retirement = server.ReplaceAssemblyAsync(assembly, replacement, TimeSpan.FromSeconds(5)).AsTask();
+        await WaitUntilAsync(() => module.State == SharpLinkDynamicModuleState.Draining);
+        Ensure(module.RemainingCalls == 1 && !retirement.IsCompleted,
+            "queued physical ownership must prevent premature ReferencesReleased");
         var weak = new WeakReference(context, trackResurrection: false);
         context.Unload();
-        return (weak, queued, proxy);
+        return (weak, queued, proxy, handle, retirement);
     }
 
     private static async Task<AdmissionDecision> HoldQueuedAdmissionAsync(SharpLinkServer server)
@@ -224,6 +254,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "one-way-stream" => InvokeValueTaskAsync(proxy, contract, "NotifyStreamAsync", Values(1, 2), cancellation).AsTask(),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
+
+    private static void AssertQueuedShapeResult(Task call, PluginBundle plugin, string shape)
+    {
+        if (shape == "unary")
+            Ensure(((Task<int>)call).Result == 2, "queued original Unary result");
+        else if (shape == "client-stream")
+            Ensure(((Task<int>)call).Result == 3, "queued original ClientStreaming result");
+        else if (shape == "server-stream")
+            Ensure(((Task<int[]>)call).Result.SequenceEqual([0, 1]), "queued original ServerStreaming order");
+        else if (shape == "duplex")
+            Ensure(((Task<int[]>)call).Result.SequenceEqual([2, 4]), "queued original Duplex order");
+        else
+            Ensure(plugin.GetStaticInt("Notifications") == (shape == "one-way-stream" ? 3 : 1),
+                "queued original no-return/OneWay input result");
+    }
 
     private static async Task EnsureQueuedSelectionUnavailableAsync(Task call)
     {

@@ -3,9 +3,10 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     /// <summary>
-    /// Captures identity, not lifetime, for an admission waiter. Dynamic registration roots remain
-    /// owned by the registry until retirement. A waiter must not prevent collectible unload after
-    /// ReferencesReleased, and must never resolve a different generation when it resumes.
+    /// Captures only identity for an admission waiter. The enclosing bound invocation separately
+    /// protects the original registration through the queue and its physical exit, which can delay
+    /// ReferencesReleased. This weak selection must not root the released generation afterward
+    /// or resolve a different generation when it resumes.
     /// </summary>
     internal readonly struct QueuedServiceSelection
     {
