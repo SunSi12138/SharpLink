@@ -218,7 +218,7 @@ internal static partial class Program
             f.Compression.CompleteDecodeAfterCancellation = !cooperative;
             f.Compression.BeforeDecode = () => { entered.TrySetResult(); if (!release.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("OneWay provider deadline cut not released."); };
             producer.Release.TrySetResult(); await entered.Task.WaitAsync(ct);
-            Check(OneWayValueCodec.Decodes - before == 1 && f.Compression.Decodes == 2,
+            Check(f.Service.Deadline.HasValue && OneWayValueCodec.Decodes - before == 1 && f.Compression.Decodes == 2,
                 prefix + " owns original head and provider before typed item Codec");
             f.Clock.Advance(TimeSpan.FromSeconds(5));
             Check(OneWayValueCodec.Decodes - before == 1,
@@ -227,6 +227,7 @@ internal static partial class Program
             // Producer may observe the remote/server deadline only through its original local
             // deadline; all later items are already terminal discard, not another provider call.
             await call.WaitAsync(ct); await f.QuiesceAsync(ct);
+            Console.WriteLine($"ONEWAY_DEADLINE cooperative={cooperative} deadline={f.Service.Deadline.HasValue} codec={OneWayValueCodec.Decodes-before} provider={f.Compression.Decodes} calls={f.Service.Calls} connected={f.Connection.Session.IsConnected}");
             Check(OneWayValueCodec.Decodes - before == 1 && f.Compression.Decodes == 2 && f.Service.Calls == 1,
                 prefix + " reclaims progress after original provider without wrong Codec");
             Check(await f.Rpc.Service.BarrierAsync(ct) == 42 && f.Mapper.Failures.All(e => e is OperationCanceledException),

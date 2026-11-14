@@ -131,3 +131,14 @@ credit/routes reclaimed; unrelated Unary/Session still usable. Providers use the
 RLE fixture; only the deliberately noncooperative test ignores cancellation. Existing
 watchdogs, 15-second synchronous cut and ten-GC limits are unchanged. Extra phase logging
 identifies the original over-window cut; it is not a new acceptance condition.
+
+Second subject `e948550f65135efc8713951da1fa475651a1053f` /
+[run 43568390966](https://github.com/SunSi12138/SharpLink/actions/runs/43568390966)
+passes the original over-window cut on both hosts: provider0/typed Codec0, then physical
+route cleanup. All retained inventories still pass four cells. The added noncooperative
+provider deadline assertion fails: the test only configured a client-wide fallback, which
+OneWay intentionally does not inherit without a declared timeout. The fixture therefore
+had no wire deadline to cross. Correct the fixture with parameterless [Timeout] and assert
+that the received original deadline exists; do not change the original OneWay fallback
+contract. The full82 inventory and all budgets remain unchanged. Extra count/phase logging
+will distinguish later provider/Codec failures. Both original runs remain unaccepted.

@@ -8,7 +8,7 @@ namespace SharpLink.BindingSlice;
 [RpcContract]
 public interface IOneWayInputRpc : IService
 {
-    [Oneway] ValueTask FireAsync(OneWayValue header, IAsyncEnumerable<OneWayValue> values, CancellationToken cancellationToken);
+    [Oneway, Timeout] ValueTask FireAsync(OneWayValue header, IAsyncEnumerable<OneWayValue> values, CancellationToken cancellationToken);
     ValueTask<int> BarrierAsync(CancellationToken cancellationToken);
     ValueTask HoldAsync(CancellationToken cancellationToken);
 }
@@ -33,12 +33,14 @@ public sealed class OneWayValueCodec : IRpcCodec<OneWayValue>
 public sealed class OneWayInputService : IOneWayInputRpc
 {
     internal int Calls, Sum;
+    internal RpcDeadline Deadline;
     internal bool ReturnEarly, HoldBusiness;
     internal readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal readonly TaskCompletionSource Finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public async ValueTask FireAsync(OneWayValue header, IAsyncEnumerable<OneWayValue> values, CancellationToken cancellationToken)
     {
+        Deadline = SharpLinkCallContext.Current!.LocalRpcDeadline;
         Interlocked.Increment(ref Calls); Sum = header.Value; Entered.TrySetResult();
         if (HoldBusiness) await Release.Task.WaitAsync(cancellationToken);
         if (!ReturnEarly) await foreach (var value in values.WithCancellation(cancellationToken)) Sum += value.Value;
