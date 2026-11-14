@@ -58,13 +58,17 @@ internal sealed partial class StreamManager
                     return default;
                 var first = _byStreamId.TryGetValue(1, out var entry)
                     ? entry.Dispatcher as PreAdmissionStreamDispatcher : null;
+                first?.RequirePhysicalChildJoin();
                 PreAdmissionStreamDispatcher?[]? remaining = null;
                 if (count > 1)
                 {
                     remaining = new PreAdmissionStreamDispatcher?[count - 1];
                     for (var id = 2; id <= count; id++)
                         if (_byStreamId.TryGetValue((ushort)id, out entry))
+                        {
                             remaining[id - 2] = entry.Dispatcher as PreAdmissionStreamDispatcher;
+                            remaining[id - 2]?.RequirePhysicalChildJoin();
+                        }
                 }
                 return new InputStreamDrain(first, remaining);
             }

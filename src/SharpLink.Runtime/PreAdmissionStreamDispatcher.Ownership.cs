@@ -3,13 +3,20 @@ namespace SharpLink.Runtime;
 internal sealed partial class PreAdmissionStreamDispatcher
 {
     private Task? _physicalChildDisposal;
+    private bool _joinPhysicalChildDisposal;
+
+    internal void RequirePhysicalChildJoin()
+    {
+        lock (_gate)
+            _joinPhysicalChildDisposal = true;
+    }
 
     internal async ValueTask WaitForAbandonedChildAsync()
     {
         Task? detached;
         lock (_gate)
         {
-            detached = _childDetached || (!_attachmentInProgress &&
+            detached = (_childDetached && !_childDetachFinalizing) || (!_attachmentInProgress &&
                 _dispatcher is null && !_childDetachFinalizing)
                 ? null
                 : (_childDetachedCompletion ??= new TaskCompletionSource(
@@ -74,17 +81,25 @@ internal sealed partial class PreAdmissionStreamDispatcher
         TaskCompletionSource? detachedCompletion;
         lock (_gate)
         {
-            _physicalChildDisposal = disposal;
+            // Existing unjoined callers retain their prior observation-only lifetime.
+            // Only a captured invocation owns this task beyond child detachment.
+            _physicalChildDisposal = _joinPhysicalChildDisposal ? disposal : null;
             _childDetached = true;
-            _childDetachFinalizing = false;
             _childLease = null;
             _disposeChildOnDetach = false;
-            detachedCompletion = _childDetachedCompletion;
-            _childDetachedCompletion = null;
         }
 
-        detachedCompletion?.TrySetResult();
-        work.Lease?.OnDispatchesDrained();
+        try { work.Lease?.OnDispatchesDrained(); }
+        finally
+        {
+            lock (_gate)
+            {
+                _childDetachFinalizing = false;
+                detachedCompletion = _childDetachedCompletion;
+                _childDetachedCompletion = null;
+            }
+            detachedCompletion?.TrySetResult();
+        }
     }
 
     private static Task? BeginAbandonedDispatcherDisposal(IStreamDispatcher dispatcher)

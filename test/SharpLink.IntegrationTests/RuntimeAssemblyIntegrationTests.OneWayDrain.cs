@@ -30,7 +30,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private static async Task VerifyDynamicInputDrainAsync(string lifetime, string method, string terminal)
     {
-        await using var harness = await DynamicHarness.CreateAsync();
+        await using var harness = await DynamicHarness.CreateAsync(
+            sharedMemory: Environment.GetEnvironmentVariable("SHARPLINK_DRAIN_TRANSPORT") == "sharedmemory");
         var weak = await ExerciseDynamicInputDrainAsync(harness, lifetime, method, terminal)
             .ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         for (var attempt = 0; attempt < 10 && weak.IsAlive; attempt++)

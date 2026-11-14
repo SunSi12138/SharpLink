@@ -10,10 +10,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        transport: [tcp, sharedmemory]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
-      SHARPLINK_DRAIN_RESULTS: artifacts/dynamic-oneway-drain/cases
+      SHARPLINK_DRAIN_RESULTS: ${{ github.workspace }}/artifacts/dynamic-oneway-drain/cases
+      SHARPLINK_DRAIN_TRANSPORT: ${{ matrix.transport }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/setup-dotnet
@@ -62,10 +64,39 @@ jobs:
           assert len(list(p.rglob('*report.html'))) == 3
           (p/'result.json').write_text(json.dumps({'source':os.environ['GITHUB_SHA'],'rpcCases':12,'components':5,'alc':'active client/server'},indent=2))
           PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: matrix.transport == 'tcp'
+        with:
+          ref: 0acc813a1a520a0d7e2b3b8e66ef8f8a535575ca
+          path: artifacts/drain-cost-baseline
+      - name: Measure bounded mailbox state increment
+        if: matrix.transport == 'tcp'
+        shell: bash
+        run: |
+          dotnet build artifacts/drain-cost-baseline/src/SharpLink.Runtime/SharpLink.Runtime.csproj -c Release -v minimal
+          mkdir -p artifacts/drain-cost-probe
+          cp eng/dynamic-oneway-mailbox-allocation.cs artifacts/drain-cost-probe/Program.cs
+          cat > artifacts/drain-cost-probe/CostProbe.csproj <<'XML'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><IsPackable>false</IsPackable></PropertyGroup></Project>
+          XML
+          dotnet build artifacts/drain-cost-probe/CostProbe.csproj -c Release -v minimal
+          dotnet run --project artifacts/drain-cost-probe/CostProbe.csproj -c Release --no-build -- "$GITHUB_WORKSPACE/artifacts/drain-cost-baseline/src/SharpLink.Runtime/bin/Release/net10.0" > artifacts/dynamic-oneway-drain/mailbox-baseline.json
+          dotnet run --project artifacts/drain-cost-probe/CostProbe.csproj -c Release --no-build -- "$GITHUB_WORKSPACE/src/SharpLink.Runtime/bin/Release/net10.0" > artifacts/dynamic-oneway-drain/mailbox-candidate.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('artifacts/dynamic-oneway-drain')
+          a=json.loads((p/'mailbox-baseline.json').read_text(encoding='utf-8-sig'))
+          b=json.loads((p/'mailbox-candidate.json').read_text(encoding='utf-8-sig'))
+          assert a['iterations']==b['iterations']==32768 and a['runtime']==b['runtime']
+          delta=b['bytesPerMailboxWithCommonReflection']-a['bytesPerMailboxWithCommonReflection']
+          assert 0 <= delta <= 16, (a,b,delta)
+          print('MAILBOX_STATE_BYTES_DELTA',delta)
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: dynamic-oneway-drain-${{ runner.os }}
+          name: dynamic-oneway-drain-${{ runner.os }}-${{ matrix.transport }}
           path: artifacts/dynamic-oneway-drain
           retention-days: 30
 

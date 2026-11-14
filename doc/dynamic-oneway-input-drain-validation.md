@@ -45,4 +45,12 @@ late scalar discard credit/peer terminal and zero allocations in65536 warmed sin
 Both Linux and Windows run the identical frozen12+5 inventory. No timing speedup is claimed.
 Capture is a value snapshot, inline for one input; only multiple inputs require a bounded reference array.
 Ordinary Unary/non-input OneWay retains its original completion owner; no new per-call heap owner is introduced there.
+The refined subject also waits until the mailbox lease-detach callback has returned, not merely until logical IsDetached is visible.
+Only explicitly captured dynamic input invocations retain the disposal Task; unrelated legacy mailboxes keep observation-only cleanup.
+The same12+5 controls now run Linux/Windows × TCP/SharedMemory. JSON paths are absolute to survive TUnit's working-directory change.
+The prior9bb5b8c5/run43613254914 passed12+5 actual assertions on both hosts, including active-runtime ALC,
+but collector JSON paths were relative and empty at the workspace root. Its wrapper failures remain; no full collection pass is claimed.
+Before the refined run, freeze a separate allocation-only probe:32768 mailboxes after4096 warmups in each arm,
+same host/runtime, identical reflection constructor driver; the retained Task+flag field delta must be0–16 B/mailbox.
+This is bounded per-input-stream state, not a Unary allocation, an extra per-call owner object or a timing equivalence claim.
 
