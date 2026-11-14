@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
@@ -15,4 +14,3 @@ internal sealed partial class SharpLinkServer
         => session.StreamManager.ConfigureOneWayInputProgress(requestId, count,
             () => TryAcceptInboundStreamProgress(cancellations, requestId, out _));
 }
-#endif

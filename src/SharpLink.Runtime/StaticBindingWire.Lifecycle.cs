@@ -1,10 +1,9 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 internal static partial class StaticBindingWire
 {
-    internal const ProtocolV2FrameType Invalidate = (ProtocolV2FrameType)242;
-    internal const ProtocolV2FrameType Release = (ProtocolV2FrameType)243;
+    internal const ProtocolV2FrameType Invalidate = ProtocolV2FrameType.BindingInvalidated;
+    internal const ProtocolV2FrameType Release = ProtocolV2FrameType.BindingRelease;
 
     internal static ulong[] ReadInvalidation(ReadOnlySequence<byte> payload)
     {
@@ -67,5 +66,4 @@ internal static partial class StaticBindingWire
         return session.SendPacketWithBackpressureAsync(writer, cancellationToken);
     }
 }
-#endif
 

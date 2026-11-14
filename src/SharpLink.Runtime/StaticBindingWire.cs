@@ -1,11 +1,10 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
-// Private, bounded experimental control protocol. These are not ordinary RPC methods.
+// Bounded Session-local contract binding control protocol. These are not ordinary RPC methods.
 internal static partial class StaticBindingWire
 {
-    internal const ProtocolV2FrameType Bind = (ProtocolV2FrameType)240;
-    internal const ProtocolV2FrameType Ack = (ProtocolV2FrameType)241;
+    internal const ProtocolV2FrameType Bind = ProtocolV2FrameType.BindContract;
+    internal const ProtocolV2FrameType Ack = ProtocolV2FrameType.BindAck;
     internal const int RequestBytes = 40;
     internal const int ReceiptRequestBytes = 112;
     internal const int AckBytes = 40;
@@ -20,7 +19,7 @@ internal static partial class StaticBindingWire
             StaticBindingFailure.NoBoundRoute or StaticBindingFailure.Unavailable or StaticBindingFailure.Retired => SharpLinkErrorCode.Unavailable,
             StaticBindingFailure.UnknownMethod => SharpLinkErrorCode.Unimplemented,
             _ => SharpLinkErrorCode.FailedPrecondition
-        }, (ushort)(60000 + (ushort)failure), $"Static binding prototype: {failure}.");
+        }, (ushort)(60000 + (ushort)failure), $"Contract binding rejected: {failure}.");
 
     internal static SharpLinkProtocolViolationException Malformed(string message)
         => new(ProtocolViolationReason.MalformedFrame, message);
@@ -136,4 +135,3 @@ internal readonly record struct StaticBindingRequest(long ContractId, RpcHash128
 
 internal readonly record struct StaticBindingAck(
     StaticBindingFailure Failure, long ContractId, ulong Token, long RegistrationId, long Generation);
-#endif

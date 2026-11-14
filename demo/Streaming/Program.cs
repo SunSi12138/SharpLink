@@ -19,7 +19,9 @@ try
 {
     await DemoTcp.EnsureConnectedAsync(client, cts.Token, "Failed to connect streaming demo client.");
 
-    var streamService = client.Get<IStreamingService>();
+    var streamServiceProxy = client.CreateProxy<IStreamingService>();
+    await streamServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10), cts.Token);
+    var streamService = streamServiceProxy.Service;
 
     var uploadSum = await streamService.UploadNumbers(DemoStream.ToAsyncEnumerable([1, 2, 3, 4, 5], cancellationToken: cts.Token));
     Console.WriteLine($"1) Client->Server stream sum = {uploadSum}");

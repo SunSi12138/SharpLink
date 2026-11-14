@@ -191,11 +191,9 @@ internal static class SharpLinkAssemblyManifestLoader
 
 internal sealed class SharpLinkDynamicModule
 {
-#if SHARPLINK_775_STATIC_SLICE
     internal long BindingPublicationGeneration { get; set; }
     internal int BindingReleaseStarted;
     internal TaskCompletionSource BindingPhysicalReleased { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-#endif
     private readonly PaddedCounter[] _callCounters;
     private readonly PaddedCounter[] _streamCounters;
     private readonly int _stripeMask;
@@ -348,10 +346,8 @@ internal sealed class SharpLinkDynamicModule
         }
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     // Promotes the existing pre-cut owner; it is not another acquire on a retired gate.
     internal void PromoteBoundStream(int stripe) => Interlocked.Increment(ref _streamCounters[stripe].Value);
-#endif
 
     private static int Sum(PaddedCounter[] counters)
     {
@@ -383,14 +379,12 @@ internal readonly struct SharpLinkDynamicModuleLease : IDisposable
     }
 
     internal bool IsAcquired => _module is not null;
-#if SHARPLINK_775_STATIC_SLICE
     internal SharpLinkDynamicModuleLease PromoteToStream()
     {
         if (_module is null || _stream) return this;
         _module.PromoteBoundStream(_stripe);
         return new(_module, _stripe, true);
     }
-#endif
 
     public void Dispose() => _module?.Release(_stripe, _stream);
 }

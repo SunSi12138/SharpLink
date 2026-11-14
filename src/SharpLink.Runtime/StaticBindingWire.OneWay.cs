@@ -1,10 +1,9 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 internal static partial class StaticBindingWire
 {
     // Only this frame carries an independent OneWay input shape. Ordinary Request is unchanged.
-    internal const ProtocolV2FrameType OneWayInputRequest = (ProtocolV2FrameType)245;
+    internal const ProtocolV2FrameType OneWayInputRequest = ProtocolV2FrameType.OneWayInputRequest;
     internal static int ReadOneWayInputCount(in ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
@@ -13,4 +12,3 @@ internal static partial class StaticBindingWire
         return count;
     }
 }
-#endif

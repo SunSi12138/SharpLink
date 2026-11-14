@@ -44,9 +44,7 @@ internal sealed class ClientConnection :
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
-#if SHARPLINK_775_STATIC_SLICE
         StaticBindings = new StaticBindingClientState(session, client.BindingBudget);
-#endif
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
         ArgumentNullException.ThrowIfNull(runtimeContext);
         _timeProvider = runtimeContext.TimeProvider;
@@ -62,9 +60,7 @@ internal sealed class ClientConnection :
     }
 
     public RpcSession Session { get; }
-#if SHARPLINK_775_STATIC_SLICE
     internal StaticBindingClientState StaticBindings { get; }
-#endif
     public PendingRequestTable PendingCalls { get; }
     public string? EndpointId { get; }
     public long EndpointGeneration { get; }
@@ -79,9 +75,7 @@ internal sealed class ClientConnection :
 
     public int ActiveCallCount
         => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount)
-#if SHARPLINK_775_STATIC_SLICE
             + PendingCalls.PhysicalStreamProducers
-#endif
             ;
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
@@ -607,31 +601,17 @@ internal sealed class ClientConnection :
 
     public ValueTask DisposeAsync()
     {
-#if SHARPLINK_775_STATIC_SLICE
         var bindingDrain = StaticBindings.CloseAsync();
-#endif
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
-#if SHARPLINK_775_STATIC_SLICE
             return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain, PendingCalls.StreamProducerDrain);
-#else
-            return Session.DisposeAsync();
-#endif
 
         Fail(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Client connection is disposed."));
-#if !SHARPLINK_775_STATIC_SLICE
-        _cancellation.Dispose();
-#endif
         PendingCalls.Dispose();
-#if SHARPLINK_775_STATIC_SLICE
         return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain, PendingCalls.StreamProducerDrain);
-#else
-        return Session.DisposeAsync();
-#endif
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     private async ValueTask JoinBindingDrainAsync(ValueTask sessionDisposal, Task bindingDrain, Task producerDrain)
     {
         try { await sessionDisposal.ConfigureAwait(false); }
@@ -641,7 +621,6 @@ internal sealed class ClientConnection :
             finally { await producerDrain.ConfigureAwait(false); _cancellation.Dispose(); }
         }
     }
-#endif
 
     private void ReleaseAuxiliaryActiveCall()
     {

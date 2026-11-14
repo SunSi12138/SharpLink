@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 using SharpLink.Abstractions;
 using SharpLink.Sdk;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 [RpcContract]
 public interface IOneWayInputRpc : IService

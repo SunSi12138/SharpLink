@@ -46,11 +46,10 @@ await using var client = SharpClientBuilder.Create()
         tlsHandshakeTimeout: TimeSpan.FromSeconds(5))
     .Build();
 
+var greeting = client.CreateProxy<IGreetingService>();
 await client.ConnectAsync(startupTimeout.Token);
-await client.WaitForReadinessAsync(1, startupTimeout.Token);
-
-var greeting = client.Get<IGreetingService>();
-var reply = await greeting.GreetAsync(
+await greeting.PrepareAsync(TimeSpan.FromSeconds(10), startupTimeout.Token);
+var reply = await greeting.Service.GreetAsync(
     new GreetingRequest { Name = "production" },
     CancellationToken.None);
 Console.WriteLine(reply.Message);

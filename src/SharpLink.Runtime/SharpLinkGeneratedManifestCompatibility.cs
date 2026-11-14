@@ -215,14 +215,12 @@ internal static class SharpLinkGeneratedManifestCompatibility
                         method.MethodId,
                         incomingFingerprint: method.Fingerprint);
                 }
-#if SHARPLINK_775_STATIC_SLICE
                 if (!ResolvedMethodValidation.IsValid(method.Facts, contract.ContractId, method.MethodId) ||
                     method.Facts.Kind != method.Kind || method.Facts.SupportsCancellation != method.SupportsCancellation)
                     return Error(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                         "Generated method facts disagree with the manifest identity or shape.", diagnosticAssembly,
                         "Method", contract.ContractName, contract.ContractId, method.Name, method.MethodId,
                         incomingFingerprint: method.Fingerprint);
-#endif
             }
         }
 

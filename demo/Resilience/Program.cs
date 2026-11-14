@@ -48,7 +48,9 @@ var client = SharpClientBuilder.Create()
 try
 {
     await client.ConnectAsync(app.Token);
-    var service = client.Get<IResilienceService>();
+    var serviceProxy = client.CreateProxy<IResilienceService>();
+    await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), app.Token);
+    var service = serviceProxy.Service;
     var nodes = new HashSet<string>(StringComparer.Ordinal);
     for (var request = 0; request < 12; request++)
         nodes.Add(await service.GetNodeAsync(request, app.Token));

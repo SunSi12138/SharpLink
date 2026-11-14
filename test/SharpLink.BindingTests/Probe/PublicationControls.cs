@@ -2,7 +2,7 @@ using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {

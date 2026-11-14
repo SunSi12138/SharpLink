@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using SharpLink.Abstractions;
 using SharpLink.Sdk;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 [RpcContract]
 public interface IFactsRpc : IService

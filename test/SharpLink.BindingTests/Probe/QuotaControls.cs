@@ -3,7 +3,7 @@ using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Server;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {

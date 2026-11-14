@@ -5,12 +5,12 @@ using SharpLink.GroupPlugin;
 using SharpLink.Runtime;
 using SharpLink.Server;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {
     private static string GroupPath(bool changed = false) => changed
-        ? Path.GetFullPath("eng/775-slice/GroupPluginChanged/bin/Release/net10.0/SharpLink.GroupPlugin.dll")
+        ? Path.GetFullPath("test/SharpLink.BindingTests/GroupPluginChanged/bin/Release/net10.0/SharpLink.GroupPlugin.dll")
         : typeof(IHotRpc).Assembly.Location;
     private static void GCheck(bool condition, string prefix, string name)
     {

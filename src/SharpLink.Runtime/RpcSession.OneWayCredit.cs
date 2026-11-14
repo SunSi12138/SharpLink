@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
@@ -30,4 +29,3 @@ internal sealed partial class StreamFlowController
         }
     }
 }
-#endif

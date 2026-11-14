@@ -9,7 +9,7 @@ using SharpLink.Runtime;
 using SharpLink.Client;
 using SharpLink.Server;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {
@@ -171,7 +171,7 @@ internal static partial class Program
         var context = new AssemblyLoadContext("775-previous-ABI", isCollectible: true);
         try
         {
-            var assembly = context.LoadFromAssemblyPath(Path.GetFullPath("eng/775-slice/PreviousAbi/bin/Release/net10.0/SharpLink.PreviousAbi.dll"));
+            var assembly = context.LoadFromAssemblyPath(Path.GetFullPath("test/SharpLink.BindingTests/PreviousAbi/bin/Release/net10.0/SharpLink.PreviousAbi.dll"));
             var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
             Check(!result.Succeeded && result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest && manifest is null,
                 "facts previous ABI locator fails metadata preflight");

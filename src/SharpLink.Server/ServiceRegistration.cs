@@ -77,10 +77,8 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     private readonly Lock? _singletonGate;
     private readonly bool _hasModule;
     private int _disposed;
-#if SHARPLINK_775_STATIC_SLICE
     private static long s_nextStaticBindingRegistrationId;
     internal long StaticBindingRegistrationId { get; } = Interlocked.Increment(ref s_nextStaticBindingRegistrationId);
-#endif
 
     private ServiceRegistration(
         Type contractType,
@@ -120,7 +118,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal WeakReference<ServiceRegistration> QueuedWeakIdentity => _queuedWeakIdentity!;
     internal bool HasModule => _hasModule;
     internal CancellationToken ModuleCancellation => _hasModule ? Module!.ForcedCancellation : CancellationToken.None;
-#if SHARPLINK_775_STATIC_SLICE
     internal ValueTask<ServiceLease> AcquireBoundAsync(BoundInvocation protection, ServerConnectionState connection,
         IRpcGeneratedServerBridge bridge, long requestId)
     {
@@ -134,7 +131,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             return connection.AcquireServiceAsync(this, default, bridge, requestId);
         return AcquirePerCallAsync(default, bridge, requestId);
     }
-#endif
     internal bool AcceptsCalls => !_hasModule || Module!.State == SharpLinkDynamicModuleState.Running;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

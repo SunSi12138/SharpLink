@@ -1,8 +1,7 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 internal static partial class StaticBindingWire
 {
-    internal const ProtocolV2FrameType RequestAccepted = (ProtocolV2FrameType)244;
+    internal const ProtocolV2FrameType RequestAccepted = ProtocolV2FrameType.RequestAccepted;
     internal static IRpcByteBufferWriter CreateRequestAccepted(RpcSession session, long requestId)
     {
         var writer = session.RentFrameWriter();
@@ -10,4 +9,3 @@ internal static partial class StaticBindingWire
         catch { session.RuntimeContext.Buffers.Return(writer); throw; }
     }
 }
-#endif

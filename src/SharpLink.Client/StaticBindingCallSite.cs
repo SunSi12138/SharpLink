@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLocalContract local, StaticBindingScope scope = default,
@@ -36,4 +35,3 @@ internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLo
 
 // A token is never separated from the physical connection that issued it.
 internal readonly record struct StaticBoundTarget(ClientConnection Connection, ulong Token);
-#endif

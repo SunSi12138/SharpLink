@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 // Shared by all physical Sessions of one client/server. Operation counts also bound
@@ -36,5 +35,4 @@ internal sealed class StaticBindingBudget
         }
     }
 }
-#endif
 

@@ -4,11 +4,7 @@ namespace SharpLink.Runtime;
 /// Coordinates negotiated byte credits for every stream and for the owning connection.
 /// The uncontended path is allocation-free; waiters are allocated only after credit is exhausted.
 /// </summary>
-#if SHARPLINK_775_STATIC_SLICE
 internal sealed partial class StreamFlowController
-#else
-internal sealed class StreamFlowController
-#endif
 {
     private const int MaxPendingSendStateWaiters = 1;
     private const int MaxPooledReceiveStates = 128;
@@ -614,11 +610,9 @@ internal sealed class StreamFlowController
         Debug.Assert(state.Completed);
         Debug.Assert(state.Credit == _streamWindow);
         Debug.Assert(state.Next is null);
-#if SHARPLINK_775_STATIC_SLICE
         // No routed state/producer can observe this pooled generation. Waiter completions
         // own their original exception independently; the pool must not retain its stack/ALC.
         state.AbortException = null;
-#endif
         var pooledState = _pooledSendStates;
         if (pooledState is null)
         {

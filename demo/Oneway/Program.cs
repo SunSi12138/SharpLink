@@ -14,7 +14,9 @@ try
 {
     await DemoTcp.EnsureConnectedAsync(client, cts.Token, "Failed to connect to SharpLink server.");
 
-    var service = client.Get<IOnewayService>();
+    var serviceProxy = client.CreateProxy<IOnewayService>();
+    await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), cts.Token);
+    var service = serviceProxy.Service;
     await service.FireAndForget("hello from oneway demo");
     Console.WriteLine("[Client] Oneway method sent.");
 

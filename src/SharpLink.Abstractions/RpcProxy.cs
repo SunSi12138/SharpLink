@@ -1,9 +1,8 @@
-#if SHARPLINK_775_STATIC_SLICE
 using System;
 
 namespace SharpLink.Abstractions;
 
-/// <summary>Identifies one client-issued, immutable local registration in the nonshipping slice.</summary>
+/// <summary>Identifies one client-issued, immutable local registration.</summary>
 public sealed class RpcLocalContract
 {
     internal RpcLocalContract(Guid issuer, long generation, long contractId, RpcHash128 hash)
@@ -15,7 +14,7 @@ public sealed class RpcLocalContract
     internal RpcHash128 Hash { get; }
 }
 
-/// <summary>Captures the fixed metadata for a locally created nonshipping proxy.</summary>
+/// <summary>Captures the fixed metadata for a locally created proxy.</summary>
 public sealed class RpcProxyOptions
 {
     /// <summary>Gets or initializes the immutable metadata attached to calls.</summary>
@@ -28,7 +27,7 @@ public sealed class RpcProxyOptions
     public RpcRegistrationRequirement Requirement { get; init; }
 }
 
-/// <summary>Defines the cold binding constraint in the nonshipping profile.</summary>
+/// <summary>Defines the cold binding constraint.</summary>
 public enum RpcRegistrationRequirement
 {
     /// <summary>Requires contract/hash compatibility and, with a receipt, the same server/epoch.</summary>
@@ -58,4 +57,3 @@ public sealed class RpcProxy<TContract> where TContract : IService
     public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
         => _channel.PrepareAsync(timeout, cancellationToken);
 }
-#endif

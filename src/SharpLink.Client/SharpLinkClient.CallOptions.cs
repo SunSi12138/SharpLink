@@ -212,8 +212,6 @@ internal sealed partial class SharpLinkClient
         TimeProvider? TimeProvider = null,
         ClientRetryGeneration? RetryGeneration = null)
     {
-#if SHARPLINK_775_STATIC_SLICE
         internal StaticBindingCallSite? BindingSite { get; init; }
-#endif
     }
 }

@@ -7,7 +7,7 @@ using SharpLink.Client;
 using SharpLink.GroupPlugin;
 using SharpLink.Runtime;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {
@@ -91,7 +91,7 @@ internal static partial class Program
         var next = new LoadedGroup(GroupPath(true), 2, nextSignals);
         var last = new LoadedGroup(GroupPath(true), 3, new GroupSignals());
         var local = new LoadedGroup(GroupPath(true), 0, new GroupSignals());
-        var unrelated = new LoadedGroup(Path.GetFullPath("eng/775-slice/GroupPluginUnrelated/bin/Release/net10.0/SharpLink.GroupPluginUnrelated.dll"), 4, new GroupSignals());
+        var unrelated = new LoadedGroup(Path.GetFullPath("test/SharpLink.BindingTests/GroupPluginUnrelated/bin/Release/net10.0/SharpLink.GroupPluginUnrelated.dll"), 4, new GroupSignals());
         if (!f.Server.RegisterAssembly(old.Assembly).Succeeded) throw new InvalidOperationException("Register failed.");
         var control = f.Client.CreateProxy<ISliceRpc>();
         await f.ConnectAsync(token); await control.PrepareAsync(TimeSpan.FromSeconds(5), token);

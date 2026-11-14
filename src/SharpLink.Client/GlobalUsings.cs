@@ -26,6 +26,3 @@ global using System.IO;
 global using System.IO.Pipelines;
 global using System.Threading.Channels;
 
-#if SHARPLINK_775_STATIC_SLICE
-global using IRpcChannel = SharpLink.Abstractions.IRpcContractChannel;
-#endif

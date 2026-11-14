@@ -231,36 +231,18 @@ internal sealed partial class SharpLinkServer
         long requestId,
         int clientStreamCount)
     {
-#if SHARPLINK_775_STATIC_SLICE
         if (clientStreamCount != 0)
         {
             session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
             session.FlushOneWayConsumedCredit(requestId, clientStreamCount);
         }
-#else
-        if (clientStreamCount != 0)
-            session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
-#endif
     }
 
     private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
     {
-#if SHARPLINK_775_STATIC_SLICE
         // A raw BindingId is not a ContractId. OneWay input uses its independent wire count;
         // unknown raw requests must not probe a latest registration or an unprotected Stub.
         return UnresolvedClientStreamCount;
-#else
-        var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long contractId) ||
-            !reader.TryReadLittleEndian(out long methodId) ||
-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
-            !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
-        {
-            return UnresolvedClientStreamCount;
-        }
-
-        return descriptor.ClientStreamCount;
-#endif
     }
 
     private static void CompleteFailedRequestStreams(
@@ -286,10 +268,8 @@ internal sealed partial class SharpLinkServer
 internal sealed class ServerRetainedAdmissionPayload : IDisposable
 {
     internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
-#if SHARPLINK_775_STATIC_SLICE
     internal StaticBindingMethod? SliceMethod { get; set; }
     internal BoundRequestSelection SliceSelection { get; set; }
-#endif
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     internal void CaptureSelectedService(ServiceRegistration service)
@@ -387,10 +367,8 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     private void ReleaseCore()
     {
         SelectedService = default;
-#if SHARPLINK_775_STATIC_SLICE
         SliceSelection = default;
         SliceMethod = null;
-#endif
         try
         {
             _pool.Return(_owner);

@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 using System.Reflection;
 
 namespace SharpLink.Server;
@@ -93,5 +92,4 @@ internal sealed partial class SharpLinkServer
         catch (Exception failure) { module.BindingPhysicalReleased.TrySetException(failure); throw; }
     }
 }
-#endif
 

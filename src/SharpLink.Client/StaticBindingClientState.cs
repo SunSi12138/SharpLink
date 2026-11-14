@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 // One owner per physical Session. Cancellation by a waiter never cancels a shared Bind.
@@ -214,4 +213,3 @@ internal sealed class StaticBindingClientState(RpcSession session, StaticBinding
 }
 
 internal enum StaticBindingPublicationPhase { BeforeSend, Enqueued }
-#endif

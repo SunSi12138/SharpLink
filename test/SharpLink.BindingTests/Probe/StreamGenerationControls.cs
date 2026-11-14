@@ -3,7 +3,7 @@ using SharpLink.Abstractions;
 using SharpLink.GroupPlugin;
 using SharpLink.Runtime;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {

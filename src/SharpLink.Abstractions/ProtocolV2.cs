@@ -4,11 +4,7 @@ namespace SharpLink.Abstractions;
 public static class ProtocolV2Constants
 {
     /// <summary>Protocol v2 frame magic.</summary>
-#if SHARPLINK_775_STATIC_SLICE
-    public const byte Magic = 0xBC; // Private experiment, NOT an allocated production protocol version.
-#else
     public const byte Magic = 0x89;
-#endif
 
     /// <summary>Fixed frame header size in bytes.</summary>
     public const int HeaderBytes = 15;
@@ -17,10 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    public const ushort MinorVersion = 5;
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    public const ushort MinimumCompatibleMinorVersion = 5;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -59,7 +55,19 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
     ResponseCompressionPreferenceAck = 15,
     /// <summary>Requests blue-green replacement of this healthy physical session.</summary>
-    SessionRefreshRequested = 16
+    SessionRefreshRequested = 16,
+    /// <summary>Binds a complete local contract identity to this physical Session.</summary>
+    BindContract = 17,
+    /// <summary>Confirms or rejects a bounded Session-local contract binding operation.</summary>
+    BindAck = 18,
+    /// <summary>Invalidates retired binding tokens on this Session.</summary>
+    BindingInvalidated = 19,
+    /// <summary>Releases unused binding tokens without reusing their complete identity.</summary>
+    BindingRelease = 20,
+    /// <summary>Accepts one non-OneWay streaming call after its resources and terminal pipeline are ready.</summary>
+    RequestAccepted = 21,
+    /// <summary>Starts a OneWay call with an independent bounded input-stream count.</summary>
+    OneWayInputRequest = 22
 }
 
 /// <summary>Protocol v2 frame flags.</summary>

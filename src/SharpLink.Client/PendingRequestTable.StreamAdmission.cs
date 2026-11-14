@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 // Owned by the existing pending generation. A physical producer holds one additional
@@ -116,4 +115,3 @@ partial class PendingRequestTable
         return false;
     }
 }
-#endif

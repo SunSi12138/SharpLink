@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -36,4 +35,3 @@ internal sealed partial class SharpLinkClient
         finally { producerLease.Dispose(); admission.ReleaseProducer(); }
     }
 }
-#endif

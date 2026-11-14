@@ -124,12 +124,7 @@ public partial class RpcGenerator
         var methodTimeout = method.TimeoutTicks is { } ticks
             ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
             : "null";
-#if SHARPLINK_775_STATIC_SLICE
         sb.AppendLine($"    private static readonly RpcMethodDescriptor {GetProxyMemberFieldName(model, $"__method_{suffix}")} = {MethodFactsExpression(model.Hash, method)};");
-#else
-        sb.AppendLine(
-            $"    private static readonly RpcMethodDescriptor {GetProxyMemberFieldName(model, $"__method_{suffix}")} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
-#endif
 
         if (GetPayloadParameters(method).Length != 0)
             sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))} {GetProxyMemberFieldName(model, $"__requestCodec_{suffix}")};");

@@ -27,12 +27,8 @@ internal sealed partial class SharpLinkServer
                 service.Key,
                 manifest.RpcAssemblyHash);
         }
-#if SHARPLINK_775_STATIC_SLICE
         return new ProtocolV2ContractManifest(_registryGeneration, entries)
             { ServerInstanceId = _desiredSessionServerInstanceId, RegistryEpoch = _bindingRegistryEpoch };
-#else
-        return new ProtocolV2ContractManifest(_registryGeneration, entries);
-#endif
     }
 
     private void ScheduleContractManifestPublish()

@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -222,4 +221,3 @@ internal sealed partial class SharpLinkClient
         throw StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute);
     }
 }
-#endif

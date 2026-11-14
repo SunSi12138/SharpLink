@@ -106,7 +106,6 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
 
-#if SHARPLINK_775_STATIC_SLICE
                         var oneWayInputCount = 0;
                         if (header.Type == StaticBindingWire.OneWayInputRequest)
                         {
@@ -117,7 +116,6 @@ internal sealed partial class SharpLinkServer
                             payload = payload.Slice(1);
                             header = new ProtocolV2FrameHeader(ProtocolV2FrameType.Request, header.Flags, header.RequestId);
                         }
-#endif
                         var isStreamProgress = header.Type is
                             ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
                         var streamRequestId = isStreamProgress
@@ -137,23 +135,15 @@ internal sealed partial class SharpLinkServer
                         }
 
                         IRpcByteBufferWriter? decodedOwner = null;
-#if SHARPLINK_775_STATIC_SLICE
                         var oneWayCompressedDispatch = false;
-#endif
                         try
                         {
-#if SHARPLINK_775_STATIC_SLICE
                             oneWayCompressedDispatch = header.Type == ProtocolV2FrameType.StreamData &&
                                 (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
                                 session.StreamManager.IsOneWayInputRoute(streamRequestId, RpcSession.ReadCompressedStreamId(payload));
-#endif
                             if (header.Type == ProtocolV2FrameType.StreamData &&
                                 (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
-#if SHARPLINK_775_STATIC_SLICE
                                 (!hasOwningStreamCallState || oneWayCompressedDispatch))
-#else
-                                !hasOwningStreamCallState)
-#endif
                             {
                                 // Only a genuinely pre-admission stream may use the manager's
                                 // compressed buffering path. Once an owning call state exists,
@@ -193,14 +183,12 @@ internal sealed partial class SharpLinkServer
                                     header.Type, header.Flags, payload, ct, out decodedOwner);
                             }
                         }
-#if SHARPLINK_775_STATIC_SLICE
                         catch (OneWayInputDecodeTerminalException) when (oneWayCompressedDispatch)
                         {
                             // The mailbox has already returned the accepted bytes. A cooperative
                             // provider observing this call's terminal is not a Session failure.
                             continue;
                         }
-#endif
                         catch (SharpLinkException exception) when (
                             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
                         {
@@ -215,11 +203,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-#if SHARPLINK_775_STATIC_SLICE
                                             oneWayInputCount);
-#else
-                                            ResolveRawRequestClientStreamCount(payload));
-#endif
                                     }
                                     else
                                     {
@@ -241,9 +225,7 @@ internal sealed partial class SharpLinkServer
                                             failedRequestId,
                                             out _))
                                     {
-#if SHARPLINK_775_STATIC_SLICE
                                         if (!oneWayCompressedDispatch)
-#endif
                                         await DrainTerminalStreamProgressAsync(
                                             session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
                                             .ConfigureAwait(false);
@@ -290,7 +272,6 @@ internal sealed partial class SharpLinkServer
                         {
                             switch (header.Type)
                             {
-#if SHARPLINK_775_STATIC_SLICE
                                 case StaticBindingWire.Release:
                                     var releasedToken = StaticBindingWire.ReadRelease(payload);
                                     connection.StaticBindings.Release(releasedToken);
@@ -299,7 +280,6 @@ internal sealed partial class SharpLinkServer
                                 case StaticBindingWire.Bind:
                                     await BindStaticContractAsync(connection, header.RequestId, payload).ConfigureAwait(false);
                                     break;
-#endif
                                 case ProtocolV2FrameType.Ping:
                                     DebugLogClientHeartbeatReceived(_logger);
                                     await session.SendPongWithBackpressureAsync(
@@ -327,9 +307,7 @@ internal sealed partial class SharpLinkServer
                                             payload,
                                             requestCancellationMap,
                                             ct
-#if SHARPLINK_775_STATIC_SLICE
                                             , oneWayInputCount
-#endif
                                             );
                                         break;
                                     }
@@ -438,9 +416,7 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken
-#if SHARPLINK_775_STATIC_SLICE
         , int oneWayInputCount
-#endif
         )
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
@@ -455,11 +431,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-#if SHARPLINK_775_STATIC_SLICE
                         oneWayInputCount);
-#else
-                        ResolveRawRequestClientStreamCount(payload));
-#endif
                     return;
                 }
 
@@ -479,28 +451,8 @@ internal sealed partial class SharpLinkServer
             ValueTask dispatchTask;
             try
             {
-#if SHARPLINK_775_STATIC_SLICE
                 dispatchTask = DispatchBoundRequestAsync(connection, requestId, flags, payload,
                     requestCancellationMap, serverLoopToken, admissionProgram, oneWayInputCount);
-#else
-                dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
-                    ? DispatchOneWayRpc(
-                        connection,
-                        requestId,
-                        flags,
-                        payload,
-                        requestCancellationMap,
-                        serverLoopToken,
-                        admissionProgram)
-                    : DispatchRpcAsync(
-                        connection,
-                        requestId,
-                        flags,
-                        payload,
-                        requestCancellationMap,
-                        serverLoopToken,
-                        admissionProgram);
-#endif
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)

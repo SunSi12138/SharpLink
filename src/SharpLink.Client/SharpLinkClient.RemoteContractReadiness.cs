@@ -92,8 +92,6 @@ internal sealed partial class SharpLinkClient
     {
         Interlocked.Exchange(ref _remoteContractChanged,
             new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
-#if SHARPLINK_775_STATIC_SLICE
         PulseStaticBindingDemands();
-#endif
     }
 }

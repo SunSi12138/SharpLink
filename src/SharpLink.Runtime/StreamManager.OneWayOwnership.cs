@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 // Carries only an already-selected decoder cancellation across physical child release.
@@ -98,4 +97,3 @@ internal sealed partial class PreAdmissionStreamDispatcher
         if (disposal is not null) await disposal.ConfigureAwait(false);
     }
 }
-#endif

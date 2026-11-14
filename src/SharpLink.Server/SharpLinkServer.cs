@@ -176,9 +176,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken
-#if SHARPLINK_775_STATIC_SLICE
         , RpcMethodDescriptor? resolvedMethod = null
-#endif
         )
     {
         var session = connection.Session;
@@ -186,22 +184,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         if (interceptors.Count == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
-#if SHARPLINK_775_STATIC_SLICE
         var method = resolvedMethod ?? throw new InvalidOperationException("Resolved binding facts are required.");
-#else
-        var method = GetMethodDescriptor(stub, methodId);
-#endif
-#if !SHARPLINK_775_STATIC_SLICE
-        if (method.Kind != RpcMethodKind.OneWay)
-        {
-            ReservePreInvocationRequestStreams(
-                session,
-                method.ClientStreamCount,
-                requestId,
-                cancellationToken);
-        }
-
-#endif
         return CreateServerInvocationContext(
             session,
             method,
@@ -239,23 +222,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             interceptors);
     }
 
-#if !SHARPLINK_775_STATIC_SLICE
-    private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)
-    {
-        if (!stub.TryGetMethodDescriptor(methodId, out var method))
-        {
-            method = new RpcMethodDescriptor(
-                stub.InterfaceHash,
-                methodId,
-                RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-        }
-        return method;
-    }
-#endif
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
         => _callAdmission.TryAcquireCall(connection);

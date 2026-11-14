@@ -5,7 +5,7 @@ using SharpLink.GroupPlugin;
 using SharpLink.Runtime;
 using SharpLink.Server;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 internal static partial class Program
 {
     [MethodImpl(MethodImplOptions.NoInlining)]

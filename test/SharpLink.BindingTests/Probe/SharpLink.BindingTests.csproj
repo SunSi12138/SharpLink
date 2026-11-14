@@ -13,8 +13,4 @@
     <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
-  <Target Name="RequireNonshippingProfile" BeforeTargets="BeforeBuild"
-          Condition="'$(SharpLink775StaticSlice)' != 'true'">
-    <Error Text="This nonshipping probe requires -p:SharpLink775StaticSlice=true." />
-  </Target>
 </Project>

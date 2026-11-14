@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 using System.Reflection;
 
 namespace SharpLink.Client;
@@ -167,4 +166,3 @@ internal sealed partial class SharpLinkClient
         SignalStaticBindingChange();
     }
 }
-#endif

@@ -25,12 +25,6 @@ public interface IRpcGeneratedServerBridge
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
-#if SHARPLINK_775_STATIC_SLICE
         RpcMethodDescriptor method,
-#else
-        bool payloadNullable,
-        long contractId,
-        long methodId,
-#endif
         CancellationToken cancellationToken);
 }

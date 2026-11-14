@@ -1,9 +1,6 @@
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient :
-    #if !SHARPLINK_775_STATIC_SLICE
-    IRpcChannel,
-    #endif
     ISharpLinkClient,
     IDynamicAssemblyRegistrationInspector,
     ISharpLinkClientDrainInspector,
@@ -101,9 +98,7 @@ internal sealed partial class SharpLinkClient :
             _proxies,
             () => State,
             TrackFrameworkTask);
-#if SHARPLINK_775_STATIC_SLICE
         _assemblyRegistry.LocalModuleRetired = RetireLocalBindingSites;
-#endif
 
         // Builder has already selected and materialized exactly one tagged topology. Creating the
         // Client-owned cluster object here does not enumerate endpoints, invoke a transport factory,

@@ -4,7 +4,7 @@ using SharpLink.Client;
 using SharpLink.GroupPlugin;
 using SharpLink.Runtime;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {
@@ -82,7 +82,7 @@ internal static partial class Program
             "local policy ServerStreaming uses invocation-time interceptor generation");
         Check((await ReadAllAsync(duplex, token)).SequenceEqual(new[] { 12, 14 }) && first.Calls == 2 && next.Calls == 0,
             "local policy Duplex uses invocation-time interceptor generation");
-        var unrelated = new LoadedGroup(Path.GetFullPath("eng/775-slice/GroupPluginUnrelated/bin/Release/net10.0/SharpLink.GroupPluginUnrelated.dll"), 4, new GroupSignals());
+        var unrelated = new LoadedGroup(Path.GetFullPath("test/SharpLink.BindingTests/GroupPluginUnrelated/bin/Release/net10.0/SharpLink.GroupPluginUnrelated.dll"), 4, new GroupSignals());
         Check(RegisterLocal(f, unrelated), "local policy independent module publication succeeds");
         var retained = driver.Local(f.Client);
         Check(retained.Generation == local.Generation && retained.Hash == local.Hash, "local policy unrelated publication preserves exact local registration generation");

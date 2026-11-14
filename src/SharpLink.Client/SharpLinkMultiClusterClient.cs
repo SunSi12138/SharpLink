@@ -118,35 +118,16 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
 
     public ValueTask DisposeAsync() => StopAsync();
 
-    public TContract Get<TContract>() where TContract : IService
+    public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
     {
         var state = State;
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
 
+        // Capture the coordinator route only at the local factory boundary. The child handle
+        // freezes its own registration/Codec/site; neither Service nor Prepare re-routes here.
         if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
-            #if SHARPLINK_775_STATIC_SLICE
-            throw new NotSupportedException("Multi-cluster routing is outside the nonshipping static slice.");
-#else
-            return route.Slot.Client.Get<TContract>();
-#endif
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
-    }
-
-    public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-    {
-        ArgumentNullException.ThrowIfNull(metadata);
-        var state = State;
-        if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
-            throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
-
-        if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
-            #if SHARPLINK_775_STATIC_SLICE
-            throw new NotSupportedException("Multi-cluster routing is outside the nonshipping static slice.");
-#else
-            return route.Slot.Client.GetWithMetadata<TContract>(metadata);
-#endif
+            return route.Slot.Client.CreateProxy<TContract>(options);
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
     }

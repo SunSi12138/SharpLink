@@ -36,10 +36,8 @@ internal sealed class ProtocolV2ContractManifest
 
     internal long Generation { get; }
 
-#if SHARPLINK_775_STATIC_SLICE
     internal Guid ServerInstanceId { get; init; }
     internal Guid RegistryEpoch { get; init; }
-#endif
 
     internal FrozenDictionary<long, RpcHash128> Contracts { get; }
 

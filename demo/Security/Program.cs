@@ -32,7 +32,9 @@ var client = DemoTcp.CreateClient(port, builder => builder.UseAuthenticator(
 try
 {
     await DemoTcp.EnsureConnectedAsync(client, app.Token);
-    var identity = await client.Get<ISecureService>().WhoAmIAsync(app.Token);
+    var identityProxy = client.CreateProxy<ISecureService>();
+    await identityProxy.PrepareAsync(TimeSpan.FromSeconds(10), app.Token);
+    var identity = await identityProxy.Service.WhoAmIAsync(app.Token);
     Console.WriteLine(identity);
 }
 finally

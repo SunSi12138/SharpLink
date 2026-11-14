@@ -9,7 +9,7 @@ using SharpLink.Sdk;
 using SharpLink.IntegrationTests;
 using SharpLink.UnitTests.Runtime;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 internal static partial class Program
 {
     private sealed class OneWayCompression : ISharpLinkCompressionProvider

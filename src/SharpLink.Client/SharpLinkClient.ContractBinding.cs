@@ -21,10 +21,8 @@ internal sealed partial class SharpLinkClient
             PruneDisconnectedRemoteContractManifestsLocked();
             if (_remoteContractManifests.TryGetValue(session, out var current))
             {
-#if SHARPLINK_775_STATIC_SLICE
                 if (manifest.ServerInstanceId != current.ServerInstanceId || manifest.RegistryEpoch != current.RegistryEpoch)
                     throw StaticBindingWire.Malformed("Server/epoch identity changed within a physical Session.");
-#endif
                 if (manifest.Generation < current.Generation)
                     return;
                 _remoteContractManifests[session] = manifest;
@@ -39,9 +37,7 @@ internal sealed partial class SharpLinkClient
             var index = 0;
             foreach (var pair in _remoteContractManifests)
                 snapshot[index++] = new RemoteContractManifestBinding(pair.Key, pair.Value);
-#if SHARPLINK_775_STATIC_SLICE
             PruneIncompatibleBindingRoutes(session, manifest);
-#endif
             Volatile.Write(ref _remoteContractManifestSnapshot, snapshot);
         }
         PulseRemoteContractWaiters();
@@ -50,12 +46,7 @@ internal sealed partial class SharpLinkClient
         // for a session validates every proxy that already escaped to user code before that
         // connection is published as callable. Later manifest refreshes intentionally do not
         // rebind or invalidate held proxy references; later Get<T>() calls validate the refresh.
-#if SHARPLINK_775_STATIC_SLICE
         _ = isInitial;
-#else
-        if (isInitial)
-            ValidateAcquiredContractAssemblies();
-#endif
     }
 
     private void PruneDisconnectedRemoteContractManifestsLocked()

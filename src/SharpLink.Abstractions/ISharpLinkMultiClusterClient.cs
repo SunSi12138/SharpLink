@@ -126,11 +126,10 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Stops every cluster slot and releases coordinator-owned state.</summary>
     ValueTask StopAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
-    TContract Get<TContract>() where TContract : IService;
-
-    /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
-    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+    /// <summary>Locally creates a service and exact-site preparation handle using one captured cluster route.</summary>
+    /// <param name="options">Immutable metadata and registration requirements for this proxy.</param>
+    /// <typeparam name="TContract">The generated contract routed to one cluster.</typeparam>
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService;
 
     /// <summary>Attempts to capture the current status values for a configured cluster slot.</summary>
     /// <remarks>

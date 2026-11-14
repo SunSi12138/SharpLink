@@ -12,6 +12,3 @@ global using System.Collections.Concurrent;
 
 global using SharpLink.Sdk;
 
-#if SHARPLINK_775_STATIC_SLICE
-global using IRpcChannel = SharpLink.Abstractions.IRpcContractChannel;
-#endif

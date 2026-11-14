@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 // The entire immutable constraint participates in cold site and coalescing keys.
@@ -19,4 +18,3 @@ internal readonly record struct StaticBindingScope(
            (Requirement == RpcRegistrationRequirement.Compatible || generation >= receipt.Generation) &&
            (Requirement != RpcRegistrationRequirement.ExactRegistration || registration == receipt.RegistrationId);
 }
-#endif

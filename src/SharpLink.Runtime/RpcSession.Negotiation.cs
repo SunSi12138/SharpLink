@@ -51,11 +51,7 @@ internal sealed partial class RpcSession
         if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType) ||
             (allowRequestWhileDraining &&
              phase == RpcSessionProtocolPhase.Draining &&
-#if SHARPLINK_775_STATIC_SLICE
              (frameType == ProtocolV2FrameType.Request || frameType == StaticBindingWire.OneWayInputRequest)))
-#else
-             frameType == ProtocolV2FrameType.Request))
-#endif
         {
             return;
         }
@@ -164,11 +160,7 @@ internal sealed partial class RpcSession
     {
         if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType))
             return;
-#if SHARPLINK_775_STATIC_SLICE
         if (phase == RpcSessionProtocolPhase.Draining && (frameType == ProtocolV2FrameType.Request || frameType == StaticBindingWire.OneWayInputRequest))
-#else
-        if (phase == RpcSessionProtocolPhase.Draining && frameType == ProtocolV2FrameType.Request)
-#endif
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,

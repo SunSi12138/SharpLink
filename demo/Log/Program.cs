@@ -33,13 +33,17 @@ try
 {
     Console.WriteLine("1) silent client: framework logs are disabled by default.");
     await DemoTcp.EnsureConnectedAsync(silentClient, appCts.Token, "Silent client failed to connect.");
-    var silentService = silentClient.Get<ILogService>();
+    var silentServiceProxy = silentClient.CreateProxy<ILogService>();
+    await silentServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10), appCts.Token);
+    var silentService = silentServiceProxy.Service;
     var pongSilent = await silentService.PingAsync();
     Console.WriteLine($"silent call result: {pongSilent}");
 
     Console.WriteLine("2) logged client: framework logs enabled via UseLoggerFactory.");
     await DemoTcp.EnsureConnectedAsync(loggedClient, appCts.Token, "Logged client failed to connect.");
-    var loggedService = loggedClient.Get<ILogService>();
+    var loggedServiceProxy = loggedClient.CreateProxy<ILogService>();
+    await loggedServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10), appCts.Token);
+    var loggedService = loggedServiceProxy.Service;
     var pongLogged = await loggedService.PingAsync();
     Console.WriteLine($"logged call result: {pongLogged}");
 

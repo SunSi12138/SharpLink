@@ -25,11 +25,9 @@ internal sealed partial class SharpLinkServer
 
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
-#if SHARPLINK_775_STATIC_SLICE
             var boundMethod = retainedAdmissionPayload?.SliceMethod ?? throw new InvalidOperationException("Missing captured binding facts.");
             var bindingSelection = retainedAdmissionPayload!.SliceSelection;
             request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
-#endif
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -68,11 +66,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-#if SHARPLINK_775_STATIC_SLICE
             if (!serviceInfo.AcceptsCalls && request.BoundCall is null)
-#else
-            if (!serviceInfo.AcceptsCalls)
-#endif
             {
                 ValueTask responseSend;
                 try
@@ -184,9 +178,7 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
-#if SHARPLINK_775_STATIC_SLICE
                         request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
-#endif
                     }
                     else
                     {

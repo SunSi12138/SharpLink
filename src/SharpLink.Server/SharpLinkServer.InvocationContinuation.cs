@@ -99,11 +99,7 @@ internal sealed partial class SharpLinkServer
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
 
-#if SHARPLINK_775_STATIC_SLICE
                 request.BoundMethod!.SupportsCancellation;
-#else
-                serviceInfo.Stub.SupportsCancellation(request.MethodHash);
-#endif
         callState ??= CreateTrackedCallState(
             connection,
             requestId,
@@ -123,19 +119,15 @@ internal sealed partial class SharpLinkServer
         var invokeToken = supportsCooperativeCancellation
             ? callState!.InvocationToken
             : serverLoopToken;
-#if SHARPLINK_775_STATIC_SLICE
         ReservePreInvocationRequestStreams(session, request.BoundMethod!.Descriptor.ClientStreamCount,
             requestId, invokeToken, retainUntilLocalCompletion: true);
-#endif
 
         if (!hasReturnPayload)
         {
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
                 request.RpcDeadline, request.Metadata, invokeToken
-#if SHARPLINK_775_STATIC_SLICE
                 , request.BoundMethod!.Descriptor
-#endif
                 );
             try
             {
@@ -143,9 +135,7 @@ internal sealed partial class SharpLinkServer
                 var invokeTask = InvokeServiceAsync(
                     serviceInfo, connection, session, request.MethodHash, requestId,
                     request.Arguments, output: null, invokeToken, callContext
-#if SHARPLINK_775_STATIC_SLICE
                     , request.BoundMethod!.Descriptor, request.BoundCall
-#endif
                     );
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
@@ -160,12 +150,7 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         connection,
                         callContext,
-#if SHARPLINK_775_STATIC_SLICE
                         request.BoundMethod!.Descriptor,
-#else
-                        serviceInfo.Stub,
-                        request.MethodHash,
-#endif
                         invokeToken,
                         requestOwner);
                 }
@@ -232,12 +217,7 @@ internal sealed partial class SharpLinkServer
                             exception,
                             callContext,
                             session,
-#if SHARPLINK_775_STATIC_SLICE
                             request.BoundMethod!.Descriptor,
-#else
-                            serviceInfo.Stub,
-                            request.MethodHash,
-#endif
                             requestId,
                             invokeToken),
                         connection.ConnectionToken);
@@ -264,9 +244,7 @@ internal sealed partial class SharpLinkServer
         var responseCallContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
             request.RpcDeadline, request.Metadata, invokeToken
-#if SHARPLINK_775_STATIC_SLICE
                 , request.BoundMethod!.Descriptor
-#endif
                 );
         try
         {
@@ -274,9 +252,7 @@ internal sealed partial class SharpLinkServer
             var invokeTask = InvokeServiceAsync(
                 serviceInfo, connection, session, request.MethodHash, requestId,
                 request.Arguments, writer, invokeToken, responseCallContext
-#if SHARPLINK_775_STATIC_SLICE
                     , request.BoundMethod!.Descriptor, request.BoundCall
-#endif
                     );
             if (!invokeTask.IsCompletedSuccessfully)
             {
@@ -293,12 +269,7 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap,
                     connection,
                     responseCallContext,
-#if SHARPLINK_775_STATIC_SLICE
                     request.BoundMethod!.Descriptor,
-#else
-                    serviceInfo.Stub,
-                    request.MethodHash,
-#endif
                     invokeToken,
                     requestOwner);
             }
@@ -392,12 +363,7 @@ internal sealed partial class SharpLinkServer
                         exception,
                         responseCallContext,
                         session,
-#if SHARPLINK_775_STATIC_SLICE
                         request.BoundMethod!.Descriptor,
-#else
-                        serviceInfo.Stub,
-                        request.MethodHash,
-#endif
                         requestId,
                         invokeToken),
                     connection.ConnectionToken);

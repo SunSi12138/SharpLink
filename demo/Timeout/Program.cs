@@ -14,7 +14,9 @@ try
 {
     await DemoTcp.EnsureConnectedAsync(client, appCts.Token, "Failed to connect timeout demo client.");
 
-    var service = client.Get<ITimeoutService>();
+    var serviceProxy = client.CreateProxy<ITimeoutService>();
+    await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), appCts.Token);
+    var service = serviceProxy.Service;
 
     try
     {

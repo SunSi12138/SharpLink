@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {

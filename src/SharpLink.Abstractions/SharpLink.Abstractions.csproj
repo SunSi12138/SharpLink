@@ -2,7 +2,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="SharpLink.Runtime" />
   </ItemGroup>
-  <ItemGroup Condition="'$(SharpLink775StaticSlice)' == 'true'">
-    <InternalsVisibleTo Include="SharpLink.BindingSlice" />
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpLink.BindingTests" />
   </ItemGroup>
 </Project>

@@ -13,9 +13,7 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null
-#if SHARPLINK_775_STATIC_SLICE
         , BoundRequestSelection bindingSelection = default, ServerRequestEnvelope preparedRequest = default
-#endif
         )
     {
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
@@ -24,12 +22,7 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
-#if SHARPLINK_775_STATIC_SLICE
             var request = preparedRequest;
-#else
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
-#endif
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -49,27 +42,17 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-#if SHARPLINK_775_STATIC_SLICE
             var serviceInfo = bindingSelection.Registration;
             var boundMethod = bindingSelection.Method;
             var bindingFailure = StaticBindingFailure.None;
             if (serviceInfo is null)
-#else
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
-#endif
             {
                 ValueTask responseSend;
                 try
                 {
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
-#if SHARPLINK_775_STATIC_SLICE
                         StaticBindingWire.Error(bindingFailure),
-#else
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
-#endif
                         connection.ConnectionToken);
                 }
                 finally
@@ -79,14 +62,8 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-#if SHARPLINK_775_STATIC_SLICE
             request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
-#endif
-#if SHARPLINK_775_STATIC_SLICE
             if (!serviceInfo.AcceptsCalls && request.BoundCall is null)
-#else
-            if (!serviceInfo.AcceptsCalls)
-#endif
             {
                 ValueTask responseSend;
                 try
@@ -117,11 +94,7 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
-#if SHARPLINK_775_STATIC_SLICE
                 var descriptor = request.BoundMethod!.Descriptor;
-#else
-                var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
-#endif
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
@@ -175,10 +148,8 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         descriptor.ClientStreamCount,
                         admittedCallState);
-#if SHARPLINK_775_STATIC_SLICE
                     queuedRetainedPayload!.SliceMethod = boundMethod;
                     queuedRetainedPayload!.SliceSelection = bindingSelection;
-#endif
                     return AwaitRpcAdmissionAsync(
                         admissionTask,
                         queuedRetainedPayload!,
@@ -306,9 +277,7 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
-#if SHARPLINK_775_STATIC_SLICE
                         request = request with { BoundMethod = boundMethod, BoundCall = bindingSelection.Invocation };
-#endif
                     }
                     else
                     {
@@ -327,7 +296,6 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                     }
                 }
-#if SHARPLINK_775_STATIC_SLICE
                 else if (request.BoundMethod!.Descriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
                 {
                     // Per-call acceptance can suspend before generated business decoding.
@@ -342,7 +310,6 @@ internal sealed partial class SharpLinkServer
                         request = request with { Arguments = new ReadOnlySequence<byte>(decodedRequestOwner.WrittenMemory) };
                     }
                 }
-#endif
             }
             catch (SharpLinkException exception) when (
                 exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
@@ -420,12 +387,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-#if SHARPLINK_775_STATIC_SLICE
         RpcMethodDescriptor resolvedMethod,
-#else
-        IRpcStub stub,
-        long methodId,
-#endif
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -478,12 +440,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-#if SHARPLINK_775_STATIC_SLICE
                         resolvedMethod,
-#else
-                        stub,
-                        methodId,
-#endif
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -515,12 +472,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-#if SHARPLINK_775_STATIC_SLICE
         RpcMethodDescriptor resolvedMethod,
-#else
-        IRpcStub stub,
-        long methodId,
-#endif
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -592,12 +544,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-#if SHARPLINK_775_STATIC_SLICE
                         resolvedMethod,
-#else
-                        stub,
-                        methodId,
-#endif
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);

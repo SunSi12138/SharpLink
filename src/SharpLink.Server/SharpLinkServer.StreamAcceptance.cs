@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
@@ -37,4 +36,3 @@ internal sealed partial class SharpLinkServer
         if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 }
-#endif

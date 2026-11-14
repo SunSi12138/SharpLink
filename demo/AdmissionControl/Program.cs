@@ -12,7 +12,9 @@ var client = DemoTcp.CreateClient(port);
 try
 {
     await DemoTcp.EnsureConnectedAsync(client, app.Token);
-    var service = client.Get<IAdmissionService>();
+    var serviceProxy = client.CreateProxy<IAdmissionService>();
+    await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10), app.Token);
+    var service = serviceProxy.Service;
     var admitted = service.HoldAsync(400, app.Token).AsTask();
     await AdmissionService.Started.Task.WaitAsync(app.Token);
 

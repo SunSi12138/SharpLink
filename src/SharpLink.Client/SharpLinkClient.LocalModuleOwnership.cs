@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 // One linked source is shared by the original call and its independent physical producer.
@@ -43,4 +42,3 @@ internal static class SharpLinkClientModuleCallContext
     internal readonly struct Scope(SharpLinkClientModuleCallOwner? previous) : IDisposable
     { public void Dispose() => Owner.Value = previous; }
 }
-#endif

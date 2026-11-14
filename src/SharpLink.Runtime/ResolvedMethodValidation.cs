@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Runtime;
 
 // Cold validation only. Dispatch consumes a value already validated under registration ownership.
@@ -21,4 +20,3 @@ internal static class ResolvedMethodValidation
         };
     }
 }
-#endif

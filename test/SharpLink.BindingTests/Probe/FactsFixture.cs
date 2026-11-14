@@ -8,7 +8,7 @@ using SharpLink.Runtime;
 using SharpLink.Server;
 using SharpLink.Sdk;
 
-namespace SharpLink.BindingSlice;
+namespace SharpLink.BindingTests;
 
 internal static partial class Program
 {

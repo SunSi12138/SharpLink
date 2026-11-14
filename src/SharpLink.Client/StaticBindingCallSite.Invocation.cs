@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Client;
 
 internal sealed partial class StaticBindingCallSite : IRpcContractChannel
@@ -35,4 +34,3 @@ internal sealed partial class StaticBindingCallSite : IRpcContractChannel
         where TStreams : struct, IRpcClientStreamWriter
         => Owner.InvokeStaticDuplexStreamingAsync(this, method, request, requestCodec, responseCodec, streams, metadata, cancellationToken);
 }
-#endif

@@ -2,28 +2,20 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-#if SHARPLINK_775_STATIC_SLICE
     internal ValueTask<TResponse> InvokeStaticUnaryAsync<TRequest, TResponse>(
         StaticBindingCallSite bindingSite,
-#else
-    public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
-#endif
         RpcMethodDescriptor method, in TRequest request, IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
-#if SHARPLINK_775_STATIC_SLICE
         bindingSite.Validate(method, RpcMethodKind.Unary);
-#endif
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: true, interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         control = control with { BindingSite = bindingSite };
-#endif
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -43,12 +35,8 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     internal ValueTask InvokeStaticOneWayAsync<TRequest, TStreams>(
         StaticBindingCallSite bindingSite,
-#else
-    public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
-#endif
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -58,16 +46,12 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
-#if SHARPLINK_775_STATIC_SLICE
         bindingSite.Validate(method, RpcMethodKind.OneWay);
-#endif
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         control = control with { BindingSite = bindingSite };
-#endif
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -87,12 +71,8 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     internal ValueTask<TResponse> InvokeStaticClientStreamingAsync<TRequest, TResponse, TStreams>(
         StaticBindingCallSite bindingSite,
-#else
-    public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(
-#endif
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -104,16 +84,12 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
-#if SHARPLINK_775_STATIC_SLICE
         bindingSite.Validate(method, RpcMethodKind.ClientStreaming);
-#endif
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         control = control with { BindingSite = bindingSite };
-#endif
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -133,12 +109,8 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     internal IAsyncEnumerable<TResponse> InvokeStaticServerStreamingAsync<TRequest, TResponse>(
         StaticBindingCallSite bindingSite,
-#else
-    public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(
-#endif
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -149,9 +121,7 @@ internal sealed partial class SharpLinkClient
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         control = control with { BindingSite = bindingSite };
-#endif
         return InvokeServerStreamingResolved(
             method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
@@ -168,9 +138,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         ArgumentNullException.ThrowIfNull(interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         (control.BindingSite ?? throw StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute)).Validate(method, RpcMethodKind.ServerStreaming);
-#endif
         EnsureLogicalCallProgress(control);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -200,26 +168,16 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
-#if SHARPLINK_775_STATIC_SLICE
         var registrationLease = dispatcher.RetainForRegistration();
         var registrationOwner = SharpLinkClientModuleCallContext.Current?.Retain();
         try { _ = TrackBoundStreamWork(() => StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken, registrationLease, registrationOwner), "ServerStreamingInvoker"); }
         catch (Exception error)
         { dispatcher.Complete(error); dispatcher.ReleaseRegistrationRetention(registrationLease); registrationOwner?.Dispose(); }
-#else
-        TrackFrameworkTask(
-            StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken),
-            "ServerStreamingInvoker");
-#endif
         return dispatcher;
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     internal IAsyncEnumerable<TResponse> InvokeStaticDuplexStreamingAsync<TRequest, TResponse, TStreams>(
         StaticBindingCallSite bindingSite,
-#else
-    public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(
-#endif
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -232,9 +190,7 @@ internal sealed partial class SharpLinkClient
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         control = control with { BindingSite = bindingSite };
-#endif
         return InvokeDuplexStreamingResolved(
             method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
     }
@@ -253,9 +209,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         ArgumentNullException.ThrowIfNull(interceptors);
-#if SHARPLINK_775_STATIC_SLICE
         (control.BindingSite ?? throw StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute)).Validate(method, RpcMethodKind.DuplexStreaming);
-#endif
         EnsureLogicalCallProgress(control);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -414,7 +368,6 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
-#if SHARPLINK_775_STATIC_SLICE
         var registrationLease = dispatcher.RetainForRegistration();
         var registrationOwner = SharpLinkClientModuleCallContext.Current?.Retain();
         SharpLinkClientStreamPhysicalLease producerLease = default;
@@ -427,11 +380,6 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception error)
         { dispatcher.Complete(error); dispatcher.ReleaseRegistrationRetention(registrationLease); producerLease.Dispose(); registrationOwner?.Dispose(); }
-#else
-        TrackFrameworkTask(
-            StartDuplexStreamingInvokerAsync(dispatcher, method, request, requestCodec, streams, control, cancellationToken),
-            "DuplexStreamingInvoker");
-#endif
         return dispatcher;
     }
 
@@ -446,9 +394,7 @@ internal sealed partial class SharpLinkClient
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
-#if SHARPLINK_775_STATIC_SLICE
         long routingId = 0;
-#endif
         ClientConnection? connection = null;
         var reservationOwned = false;
         try
@@ -456,13 +402,9 @@ internal sealed partial class SharpLinkClient
             // Connection selection is the first step that can block, so the pre-registration
             // checkpoint below is the first place a fresh sample carries new information. A sample
             // here would only repeat the stage-local validation the call control already did.
-#if SHARPLINK_775_STATIC_SLICE
             var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
             connection = target.Connection;
             routingId = unchecked((long)target.Token);
-#else
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
-#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             var operation = connection.PendingCalls.Rent(
@@ -477,11 +419,7 @@ internal sealed partial class SharpLinkClient
             reservationOwned = false;
             return StartUnaryCall(
                 connection,
-#if SHARPLINK_775_STATIC_SLICE
                 routingId,
-#else
-                method.ContractId,
-#endif
                 method.MethodId,
                 requestId,
                 method.HasResponsePayload,
@@ -624,21 +562,15 @@ internal sealed partial class SharpLinkClient
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
 
-#if SHARPLINK_775_STATIC_SLICE
         long routingId = 0;
-#endif
         ClientConnection? connection = null;
         var reservationOwned = false;
         try
         {
             EnsureLogicalCallProgress(control);
-#if SHARPLINK_775_STATIC_SLICE
             var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
             connection = target.Connection;
             routingId = unchecked((long)target.Token);
-#else
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
-#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -710,11 +642,7 @@ internal sealed partial class SharpLinkClient
             {
                 var emission = SendRpcCall(
                     connection.Session,
-#if SHARPLINK_775_STATIC_SLICE
                     routingId,
-#else
-                    method.ContractId,
-#endif
                     method.MethodId,
                     requestId,
                     flags,
@@ -763,11 +691,9 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-#if SHARPLINK_775_STATIC_SLICE
         using var modulePhysicalOwner = SharpLinkClientModuleCallContext.Current?.Retain();
         PendingStreamAdmission? physicalProducer = null;
         long routingId = 0;
-#endif
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
@@ -777,12 +703,8 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-#if SHARPLINK_775_STATIC_SLICE
             var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
             connection = target.Connection; routingId = unchecked((long)target.Token);
-#else
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
-#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -825,19 +747,11 @@ internal sealed partial class SharpLinkClient
         {
             if (connection!.PendingCalls.Contains(requestId))
             {
-#if SHARPLINK_775_STATIC_SLICE
                 physicalProducer = connection.PendingCalls.CaptureStreamAdmission(requestId, producer: true);
                 var streamCancellationToken = physicalProducer.Token;
-#else
-                var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
-#endif
                 var emission = SendRpcCall(
                     connection.Session,
-#if SHARPLINK_775_STATIC_SLICE
                     routingId,
-#else
-                    method.ContractId,
-#endif
                     method.MethodId,
                     requestId,
                     flags,
@@ -849,9 +763,7 @@ internal sealed partial class SharpLinkClient
                     // The pending call owns producer cancellation and request publication.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls
-#if SHARPLINK_775_STATIC_SLICE
                     , oneWayInputCount: method.ClientStreamCount
-#endif
                     );
                 await emission.ConfigureAwait(false);
                 await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
@@ -864,9 +776,7 @@ internal sealed partial class SharpLinkClient
             connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
         }
 
-#if SHARPLINK_775_STATIC_SLICE
         finally { physicalProducer?.ReleaseProducer(); }
-#endif
 
         // Registration may already have completed and removed the pending entry. Its operation
         // still owns that terminal result and must be consumed exactly once to return it to the pool.
@@ -889,21 +799,15 @@ internal sealed partial class SharpLinkClient
             SharpLinkTelemetry.RecordClientAttempt();
         ClientConnection? connection = null;
         var reservationOwned = false;
-#if SHARPLINK_775_STATIC_SLICE
         long routingId = 0;
         PendingStreamAdmission? streamAdmission = null;
-#endif
         long requestId;
         RpcRequestOperation<TResponse> operation;
         try
         {
             EnsureLogicalCallProgress(control);
-#if SHARPLINK_775_STATIC_SLICE
             var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
             connection = target.Connection; routingId = unchecked((long)target.Token);
-#else
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
-#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             operation = connection.PendingCalls.Rent(
@@ -928,30 +832,17 @@ internal sealed partial class SharpLinkClient
         var flags = method.HasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
             : ProtocolV2FrameFlags.Cancellable;
-#if !SHARPLINK_775_STATIC_SLICE
-        var streamCancellationToken = connection!.PendingCalls.GetProducerCancellationToken(requestId);
-#endif
-#if SHARPLINK_775_STATIC_SLICE
         SharpLinkClientStreamPhysicalLease producerLease = default;
-#else
-        SharpLinkDynamicModuleLease producerLease = default;
-#endif
         try
         {
             if (connection.PendingCalls.Contains(requestId))
             {
-#if SHARPLINK_775_STATIC_SLICE
                 streamAdmission = connection.PendingCalls.CaptureStreamAdmission(requestId, producer: true);
                 var streamCancellationToken = streamAdmission.Token;
-#endif
                 producerLease = moduleProducerLifetime?.TakeLease() ?? default;
                 await SendRpcCall(
                     connection.Session,
-#if SHARPLINK_775_STATIC_SLICE
                     routingId,
-#else
-                    method.ContractId,
-#endif
                     method.MethodId,
                     requestId,
                     flags,
@@ -965,15 +856,9 @@ internal sealed partial class SharpLinkClient
                     // cancels when it reaches a terminal reason.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
-#if SHARPLINK_775_STATIC_SLICE
                 var capturedAdmission = streamAdmission!; var capturedLease = producerLease;
                 _ = TrackBoundStreamWork(() => RunAcceptedClientStreamsAsync(connection, streams, requestId, capturedAdmission, capturedLease), "ClientStreamingProducer");
                 streamAdmission = null; producerLease = default;
-#else
-                var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
-                producerLease = default;
-                TrackFrameworkTask(producerTask, "ClientStreamingProducer");
-#endif
             }
         }
         catch (Exception exception)
@@ -983,9 +868,7 @@ internal sealed partial class SharpLinkClient
         finally
         {
             producerLease.Dispose();
-#if SHARPLINK_775_STATIC_SLICE
             streamAdmission?.ReleaseProducer();
-#endif
         }
 
         return await operation.AsValueTask().ConfigureAwait(false);
@@ -1020,21 +903,14 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         ResolvedCallControl control,
         CancellationToken cancellationToken
-#if SHARPLINK_775_STATIC_SLICE
         , long registrationLease, SharpLinkClientModuleCallOwner? registrationOwner
-#endif
         )
     {
-#if !SHARPLINK_775_STATIC_SLICE
-        var registrationLease = dispatcher.RetainForRegistration();
-#endif
         ClientConnection? connection = null;
         var requestId = 0L;
         try
         {
-#if SHARPLINK_775_STATIC_SLICE
             if (BeforeBoundStreamRegistrationTestHook is { } registrationHook) await registrationHook("ServerStreamingInvoker").ConfigureAwait(false);
-#endif
             var registration = await PrepareGeneratedServerStreamAsync(
                 dispatcher,
                 PendingCallKind.ServerStreaming,
@@ -1048,11 +924,7 @@ internal sealed partial class SharpLinkClient
             {
                 await SendRpcCall(
                     connection.Session,
-#if SHARPLINK_775_STATIC_SLICE
                     registration.BindingToken,
-#else
-                    method.ContractId,
-#endif
                     method.MethodId,
                     requestId,
                     ProtocolV2FrameFlags.Cancellable,
@@ -1075,9 +947,7 @@ internal sealed partial class SharpLinkClient
         }
         finally
         {
-#if SHARPLINK_775_STATIC_SLICE
             registrationOwner?.Dispose();
-#endif
             dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
@@ -1090,29 +960,16 @@ internal sealed partial class SharpLinkClient
         TStreams streams,
         ResolvedCallControl control,
         CancellationToken cancellationToken
-#if SHARPLINK_775_STATIC_SLICE
         , long registrationLease, SharpLinkClientStreamPhysicalLease producerLease, SharpLinkClientModuleCallOwner? registrationOwner
-#endif
         )
         where TStreams : struct, IRpcClientStreamWriter
     {
-#if !SHARPLINK_775_STATIC_SLICE
-        var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
-        SharpLinkDynamicModuleLease producerLease = default;
-#endif
-#if !SHARPLINK_775_STATIC_SLICE
-        var registrationLease = dispatcher.RetainForRegistration();
-#endif
         ClientConnection? connection = null;
         var requestId = 0L;
-#if SHARPLINK_775_STATIC_SLICE
         PendingStreamAdmission? streamAdmission = null;
-#endif
         try
         {
-#if SHARPLINK_775_STATIC_SLICE
             if (BeforeBoundStreamRegistrationTestHook is { } registrationHook) await registrationHook("DuplexStreamingInvoker").ConfigureAwait(false);
-#endif
             var registration = await PrepareGeneratedServerStreamAsync(
                 dispatcher,
                 PendingCallKind.DuplexStreaming,
@@ -1121,22 +978,11 @@ internal sealed partial class SharpLinkClient
                 cancellationToken).ConfigureAwait(false);
             connection = registration.Connection;
             requestId = registration.RequestId;
-#if SHARPLINK_775_STATIC_SLICE
             streamAdmission = connection.PendingCalls.CaptureStreamAdmission(requestId, producer: true);
             var streamCancellationToken = streamAdmission.Token;
-#else
-            var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
-#endif
-#if !SHARPLINK_775_STATIC_SLICE
-            producerLease = moduleProducerLifetime?.TakeLease() ?? default;
-#endif
             await SendRpcCall(
                 connection.Session,
-#if SHARPLINK_775_STATIC_SLICE
                 registration.BindingToken,
-#else
-                method.ContractId,
-#endif
                 method.MethodId,
                 requestId,
                 ProtocolV2FrameFlags.Cancellable,
@@ -1150,7 +996,6 @@ internal sealed partial class SharpLinkClient
                 // to release the producer side from a stalled transport write.
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
-#if SHARPLINK_775_STATIC_SLICE
             registrationOwner?.Dispose(); registrationOwner = null;
             if (await streamAdmission.Acceptance.ConfigureAwait(false))
             {
@@ -1158,9 +1003,6 @@ internal sealed partial class SharpLinkClient
                 if (connection.PendingCalls.TryStartStreamProducer(requestId, streamAdmission))
                     await streams.WriteAsync(connection, requestId, streamAdmission.Token).ConfigureAwait(false);
             }
-#else
-            await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
-#endif
         }
         catch (Exception exception)
         {
@@ -1169,10 +1011,8 @@ internal sealed partial class SharpLinkClient
         finally
         {
             producerLease.Dispose();
-#if SHARPLINK_775_STATIC_SLICE
             registrationOwner?.Dispose();
             streamAdmission?.ReleaseProducer();
-#endif
             dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
@@ -1197,12 +1037,8 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-#if SHARPLINK_775_STATIC_SLICE
             var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
             connection = target.Connection;
-#else
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
-#endif
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             requestId = connection.PendingCalls.RegisterStream(
@@ -1220,11 +1056,7 @@ internal sealed partial class SharpLinkClient
             }
             dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
             connection.Session.StreamManager.Register(requestId, 0, dispatcher);
-#if SHARPLINK_775_STATIC_SLICE
             return ValueTask.FromResult(new StreamCallRegistration(connection, requestId, terminalSignal, unchecked((long)target.Token)));
-#else
-            return ValueTask.FromResult(new StreamCallRegistration(connection, requestId, terminalSignal));
-#endif
         }
         catch (Exception exception)
         {
@@ -1265,8 +1097,6 @@ internal sealed partial class SharpLinkClient
         ClientConnection Connection,
         long RequestId,
         PendingCallTerminalSignal? TerminalSignal
-#if SHARPLINK_775_STATIC_SLICE
         , long BindingToken
-#endif
         );
 }

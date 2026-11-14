@@ -285,20 +285,16 @@ internal sealed partial class RpcSession
             return sizeof(ushort);
         }
         if (type != ProtocolV2FrameType.Request
-#if SHARPLINK_775_STATIC_SLICE
             && type != StaticBindingWire.OneWayInputRequest
-#endif
             )
             return -1;
 
         var reader = new SequenceReader<byte>(payload);
-#if SHARPLINK_775_STATIC_SLICE
         if (type == StaticBindingWire.OneWayInputRequest)
         {
             _ = StaticBindingWire.ReadOneWayInputCount(payload);
             reader.Advance(1);
         }
-#endif
         if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
             throw ProtocolV2FrameParser.Violation("Request routing prefix is truncated.");
         reader.Advance(ProtocolV2Constants.RequestPrefixBytes);

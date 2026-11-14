@@ -2,16 +2,8 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-#if SHARPLINK_775_STATIC_SLICE
-    private const string GeneratedAbiIdentity = "sharplink-experimental-775-oneway-input-v6";
-#else
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
-#endif
-#if SHARPLINK_775_STATIC_SLICE
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api6-contract-binding-v1";
     private const string GeneratedChannelType = "IRpcContractChannel";
-#else
-    private const string GeneratedChannelType = "IRpcChannel";
-#endif
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -64,7 +56,7 @@ public partial class RpcGenerator
         }
         if (!codecs.IsDefaultOrEmpty)
             sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 5, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 6, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
@@ -83,7 +75,7 @@ public partial class RpcGenerator
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
         sb.AppendLine("    /// <inheritdoc />");
-        sb.AppendLine("    public int ApiVersion => 5;");
+        sb.AppendLine("    public int ApiVersion => 6;");
         sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public int ProtocolVersion => 2;");
         sb.AppendLine("    /// <inheritdoc />");
@@ -210,11 +202,7 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
-#if SHARPLINK_775_STATIC_SLICE
                 sb.AppendLine($"                    \"{method.Fingerprint}\") {{ Facts = {MethodFactsExpression(contract.Hash, method)} }},");
-#else
-                sb.AppendLine($"                    \"{method.Fingerprint}\"),");
-#endif
             }
             sb.AppendLine("            }),");
             sb.AppendLine($"            static (channel, codecs) => __CreateProxy_{GetContractArtifactIdentity(contract)}(channel, codecs),");

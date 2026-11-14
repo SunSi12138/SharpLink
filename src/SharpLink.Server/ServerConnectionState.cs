@@ -39,9 +39,7 @@ internal sealed class ServerConnectionState
         StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
         TimeProvider timeProvider,
-#if SHARPLINK_775_STATIC_SLICE
         StaticBindingBudget bindingBudget,
-#endif
         int maxConcurrentCalls = 1024
 #if DEBUG
         , Action? afterLocalCallAdmission = null
@@ -52,9 +50,7 @@ internal sealed class ServerConnectionState
         GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
         CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
-#if SHARPLINK_775_STATIC_SLICE
         StaticBindings = new StaticBindingTable(bindingBudget);
-#endif
         DeadlineScheduler = new ServerCallDeadlineScheduler(
             CallCancellations,
             maxConcurrentCalls,
@@ -67,9 +63,7 @@ internal sealed class ServerConnectionState
     }
 
     internal RpcSession Session { get; }
-#if SHARPLINK_775_STATIC_SLICE
     internal StaticBindingTable StaticBindings { get; }
-#endif
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
@@ -339,9 +333,7 @@ internal sealed class ServerConnectionState
         if (Interlocked.Exchange(ref _closeStarted, 1) != 0)
             return new ValueTask(_sessionCompleted.Task);
 
-#if SHARPLINK_775_STATIC_SLICE
         StaticBindings.Close();
-#endif
         return new ValueTask(CloseCoreAsync());
     }
 

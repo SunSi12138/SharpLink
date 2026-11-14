@@ -11,34 +11,7 @@ internal sealed partial class SharpLinkServer
     {
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-#if SHARPLINK_775_STATIC_SLICE
         return UnregisterBoundAssemblyAsync(assembly, gracefulTimeout, cancellationToken);
-#else
-        Task<SharpLinkAssemblyUnregisterResult> operation;
-        lock (_registryGate)
-        {
-            if (_unregisterOperations.TryGetValue(assembly, out operation!))
-                return WaitForUnregisterAsync(operation, cancellationToken);
-            if (!_dynamicModules.TryGetValue(assembly, out var module))
-            {
-                return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult
-                {
-                    ReferencesReleased = false
-                });
-            }
-            EnsureNoDynamicDependants(module);
-            var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            operation = completion.Task;
-            _unregisterOperations.Add(assembly, operation);
-            _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
-            TrackFrameworkTask(
-                operation,
-                "DynamicAssemblyUnregister",
-                TaskObservationMode.ExternallyObserved);
-        }
-        return WaitForUnregisterAsync(operation, cancellationToken);
-#endif
     }
 
     private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
@@ -89,7 +62,6 @@ internal sealed partial class SharpLinkServer
         TimeSpan gracefulTimeout,
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
     {
-#if SHARPLINK_775_STATIC_SLICE
         SharpLinkAssemblyUnregisterResult result = default;
         Exception? failure = null;
         try { result = await UnregisterCoreAsync(assembly, module, gracefulTimeout).ConfigureAwait(false); }
@@ -98,22 +70,6 @@ internal sealed partial class SharpLinkServer
         lock (_registryGate) _unregisterOperations.Remove(assembly);
         if (failure is not null) completion.TrySetException(failure);
         else completion.TrySetResult(result);
-#else
-        try
-        {
-            completion.TrySetResult(await UnregisterCoreAsync(
-                assembly, module, gracefulTimeout).ConfigureAwait(false));
-        }
-        catch (Exception exception)
-        {
-            completion.TrySetException(exception);
-        }
-        finally
-        {
-            lock (_registryGate)
-                _unregisterOperations.Remove(assembly);
-        }
-#endif
     }
 
     private async Task CompleteTimedOutUnregisterAsync(
@@ -125,11 +81,7 @@ internal sealed partial class SharpLinkServer
         await ReleaseModuleAsync(assembly, module).ConfigureAwait(false);
     }
 
-#if SHARPLINK_775_STATIC_SLICE
     private async Task ReleaseBoundModuleCoreAsync(Assembly assembly, SharpLinkDynamicModule module)
-#else
-    private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
-#endif
     {
         ServiceRegistration[] removedServices;
         RpcGeneratedManifestRegistration codecRegistration;

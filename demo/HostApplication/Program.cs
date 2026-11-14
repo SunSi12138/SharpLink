@@ -49,7 +49,9 @@ public sealed class HostRpcDemoService(
 
 
         logger.LogInformation("Host RPC demo starting.");
-        var hello = client.Get<IHelloService>();
+        var helloProxy = client.CreateProxy<IHelloService>();
+        await helloProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        var hello = helloProxy.Service;
         var result = await hello.Echo("HostApplication");
         logger.LogInformation("RPC result: {Result}", result);
 

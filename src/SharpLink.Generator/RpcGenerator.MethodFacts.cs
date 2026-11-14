@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Generator;
 
 public partial class RpcGenerator
@@ -15,4 +14,3 @@ public partial class RpcGenerator
             $"{{ SupportsCancellation = {Flag(cancellation)} }}";
     }
 }
-#endif

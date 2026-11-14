@@ -135,9 +135,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
-#if SHARPLINK_775_STATIC_SLICE
         state._streamAccepted = false;
-#endif
         state._admissionProgramUse = null;
         state._admissionLease = null;
         state._payloadPool = null;
@@ -269,7 +267,6 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public bool TryAcceptStreamData()
         => TryClaimStreamProgress(signalCancellation: true, out _);
-#if SHARPLINK_775_STATIC_SLICE
     private bool _streamAccepted;
     internal bool StreamAccepted => Volatile.Read(ref _streamAccepted);
     internal bool TryPublishStreamAcceptance(Func<bool> publish)
@@ -283,7 +280,6 @@ internal sealed class ServerCallCancellationState : IDisposable
             return true;
         }
     }
-#endif
 
     /// <summary>
     /// Claims the same stream-progress terminal boundary without invoking application cancellation

@@ -28,7 +28,6 @@ public readonly record struct RpcMethodDescriptor
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
     private const byte HasMethodTimeoutValueFlag = 1 << 5;
-#if SHARPLINK_775_STATIC_SLICE
     private const byte SupportsCancellationFlag = 1 << 6;
     /// <summary>Gets whether generated invocation consumes a token or owns a cancellable stream.</summary>
     public bool SupportsCancellation
@@ -36,7 +35,6 @@ public readonly record struct RpcMethodDescriptor
         get => (_flags & SupportsCancellationFlag) != 0;
         init => _flags = SetFlag(_flags, SupportsCancellationFlag, value);
     }
-#endif
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>
@@ -274,16 +272,10 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
 }
 
 /// <summary>Client channel consumed by generated proxies.</summary>
-#if SHARPLINK_775_STATIC_SLICE
 public interface IRpcContractChannel
-#else
-public interface IRpcChannel
-#endif
 {
-#if SHARPLINK_775_STATIC_SLICE
     /// <summary>Waits within one finite original budget for this exact receiver.</summary>
     ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
-#endif
     /// <summary>Gets the runtime context owned by this channel.</summary>
     IRpcRuntimeContext RuntimeContext { get; }
 

@@ -42,33 +42,8 @@ internal sealed partial class SharpLinkServer
 
             try
             {
-#if SHARPLINK_775_STATIC_SLICE
                 await InvokeBoundStubAsync(stub, service, generatedBridge, context.Method, context.RequestId,
                     context.InterceptorArguments, output, context.CancellationToken).ConfigureAwait(false);
-#else
-                if (output is null)
-                {
-                    await stub.InvokeNoReturnCancellableAsync(
-
-#if SHARPLINK_775_STATIC_SLICE
-                        service, generatedBridge, context.Method, context.RequestId,
-#else
-                        service, generatedBridge, context.InterceptorMethodId, context.RequestId,
-#endif
-                        context.InterceptorArguments, context.CancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await stub.InvokeCancellableAsync(
-
-#if SHARPLINK_775_STATIC_SLICE
-                        service, generatedBridge, context.Method, context.RequestId,
-#else
-                        service, generatedBridge, context.InterceptorMethodId, context.RequestId,
-#endif
-                        context.InterceptorArguments, output, context.CancellationToken).ConfigureAwait(false);
-                }
-#endif
                 if (context.Status == SharpLinkInvocationStatus.Pending)
                     context.Status = SharpLinkInvocationStatus.Succeeded;
             }

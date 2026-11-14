@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Server;
 
 // Static selections allocate nothing. Dynamic selections own one pre-business module
@@ -87,5 +86,4 @@ internal sealed partial class SharpLinkServer
         }
     }
 }
-#endif
 

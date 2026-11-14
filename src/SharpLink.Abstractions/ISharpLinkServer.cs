@@ -3,10 +3,8 @@ namespace SharpLink.Abstractions;
 /// <summary>Owns a SharpLink listener, its local runtime, and all sessions accepted from it.</summary>
 public interface ISharpLinkServer : ISharpLinkAssemblyRegistry, IAsyncDisposable
 {
-#if SHARPLINK_775_STATIC_SLICE
     /// <summary>Captures a scalar receipt only if the exact assembly still owns the current registration.</summary>
     RpcRegistrationReceipt GetRegistrationReceipt(System.Reflection.Assembly registeredAssembly, long contractId);
-#endif
     /// <summary>Gets the lifecycle state of the local server runtime.</summary>
     SharpLinkServerLifecycleState LifecycleState { get; }
 

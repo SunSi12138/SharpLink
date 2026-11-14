@@ -62,9 +62,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.HandshakeResponse,
             RpcSessionProtocolPhase.Ready =>
                 frameType is
-#if SHARPLINK_775_STATIC_SLICE
                     StaticBindingWire.Bind or StaticBindingWire.Ack or StaticBindingWire.Invalidate or StaticBindingWire.Release or StaticBindingWire.RequestAccepted or StaticBindingWire.OneWayInputRequest or
-#endif
                     ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
                     ProtocolV2FrameType.Request or
@@ -82,9 +80,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.SessionRefreshRequested,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
-#if SHARPLINK_775_STATIC_SLICE
                     StaticBindingWire.RequestAccepted or
-#endif
                     ProtocolV2FrameType.Pong or
                     ProtocolV2FrameType.Response or
                     ProtocolV2FrameType.Cancel or

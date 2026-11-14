@@ -23,7 +23,7 @@
       <InternalsVisibleTo Include="SharpLink.Server" />
     </ItemGroup>
 
-  <ItemGroup Condition="'$(SharpLink775StaticSlice)' == 'true'">
-    <InternalsVisibleTo Include="SharpLink.BindingSlice" />
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpLink.BindingTests" />
   </ItemGroup>
 </Project>

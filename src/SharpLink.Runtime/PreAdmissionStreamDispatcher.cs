@@ -936,13 +936,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         {
             decoded = decoder(payload);
         }
-#if SHARPLINK_775_STATIC_SLICE
         catch (Exception failure)
-#else
-        catch
-#endif
         {
-#if SHARPLINK_775_STATIC_SLICE
             // Claim this cancellation while the active child still prevents call-state
             // removal. Re-querying the map after ReleaseChildDispatch can see "no state"
             // and misinterpret a completed call as fresh pre-admission progress.
@@ -955,15 +950,11 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                 finally { ReleaseChildDispatch(); }
             }
             if (terminalCancellation) throw new OneWayInputDecodeTerminalException((OperationCanceledException)failure);
-#else
-            ReleaseChildDispatch();
-#endif
             throw;
         }
 
         try
         {
-#if SHARPLINK_775_STATIC_SLICE
             // OneWay may legally produce before its interceptor terminal. Its stable mailbox
             // owns credit before decompression and reclaims progress again after user decode.
             if (!ClaimOneWayDecodedProgress(encodedByteCount))
@@ -971,7 +962,6 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                 decoded.Dispose();
                 return ValueTask.CompletedTask;
             }
-#endif
             var dispatch = DispatchAttachedAcquired(dispatcher, decoded.Payload, encodedByteCount);
             if (dispatch.IsCompletedSuccessfully)
             {

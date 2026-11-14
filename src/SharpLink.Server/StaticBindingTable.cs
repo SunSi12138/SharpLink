@@ -1,4 +1,3 @@
-#if SHARPLINK_775_STATIC_SLICE
 namespace SharpLink.Server;
 
 internal sealed record StaticBindingMethod
@@ -165,4 +164,3 @@ internal sealed class StaticBindingTable(StaticBindingBudget ownerBudget)
         internal StaticBindingBudget.Lease Lease { get; } = lease;
     }
 }
-#endif
