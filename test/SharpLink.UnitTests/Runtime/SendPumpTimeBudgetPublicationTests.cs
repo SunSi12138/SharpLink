@@ -18,7 +18,7 @@ public class SendPumpTimeBudgetPublicationTests
         var clock = new ManualTimeProvider();
         var input = new Pipe();
         var output = new Pipe();
-        var advancingWriter = new AdvancingPipeWriter(output.Writer, clock);
+        var advancingWriter = new ControlledPipeWriter(output.Writer, clock);
         using var context = new SharpLinkRuntimeContextBuilder()
             .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
@@ -107,10 +107,12 @@ public class SendPumpTimeBudgetPublicationTests
         using var context = new SharpLinkRuntimeContextBuilder()
             .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
+        var controlledWriter = new ControlledPipeWriter(output.Writer, clock);
+        controlledWriter.HoldNextFlush();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "time-budget-no-local-expiry",
             input.Reader,
-            output.Writer,
+            controlledWriter,
             RpcSessionTestFixture.ClientOptions(context));
         var observer = new RecordingFailureObserver();
         var owners = new List<PooledByteBufferWriter>();
@@ -124,11 +126,31 @@ public class SendPumpTimeBudgetPublicationTests
             owners.Add(CreateRequestFrame(1, expiredBudget));
             owners.Add(CreateRequestFrame(2, null));
             owners.Add(CreateRequestFrame(3, freshBudget));
+            // One shared deadline covers staged arrival, the complete read and physical pump cleanup.
+            var expectedBytes = owners.Sum(static owner => owner.WrittenCount);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             session.SendPacket(owners[0], observer);
+            var publication = ReadAllAsync(output.Reader, expectedBytes, firstRead, deadline.Token);
+            await firstRead.Task.WaitAsync(deadline.Token);
+            await controlledWriter.FlushPublished.WaitAsync(deadline.Token);
+            Ensure(session.QueuedSendBytes > 0,
+                "readable bytes precede the pump's frame-owner and reservation return");
+            Console.WriteLine($"firstReadCompleted={publication.IsCompleted}; queuedWhileFlushHeld={session.QueuedSendBytes}; expectedBytes={expectedBytes}");
             session.SendPacket(owners[1]);
             session.SendPacket(owners[2]);
-
-            var bytes = await ReadAllAsync(output.Reader).WaitAsync(TimeSpan.FromSeconds(2));
+            // Data visibility is not an owner-return fence. The existing empty flush marker
+            // completes only after all preceding frame owners and reservations were returned.
+            var released = session.FlushSendQueueAsync(deadline.Token).AsTask();
+            controlledWriter.ReleaseFlush();
+            await Task.WhenAll(publication, released).WaitAsync(deadline.Token);
+            var bytes = await publication;
+            if (output.Reader.TryRead(out var trailing))
+            {
+                var trailingBytes = trailing.Buffer.Length;
+                output.Reader.AdvanceTo(trailing.Buffer.End);
+                Ensure(trailingBytes == 0, "the completed publication must not leave extra frame bytes unread");
+            }
             var requestIds = new List<long>();
             var offset = 0;
             var bounds = new List<long?>();
@@ -158,19 +180,25 @@ public class SendPumpTimeBudgetPublicationTests
         }
         finally
         {
+            controlledWriter.ReleaseFlush();
             await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
             await input.Writer.CompleteAsync();
         }
     }
 
-    private static async Task<byte[]> ReadAllAsync(PipeReader reader)
+    private static async Task<byte[]> ReadAllAsync(
+        PipeReader reader, int expectedBytes, TaskCompletionSource firstRead, CancellationToken cancellationToken)
     {
-        var buffer = new MemoryStream();
-        while (buffer.Length == 0)
+        using var buffer = new MemoryStream();
+        while (buffer.Length < expectedBytes)
         {
-            var read = await reader.ReadAsync().AsTask();
+            var read = await reader.ReadAsync(cancellationToken);
             buffer.Write(read.Buffer.ToArray());
             reader.AdvanceTo(read.Buffer.End);
+            firstRead.TrySetResult();
+            if (read.IsCompleted && buffer.Length < expectedBytes)
+                throw new EndOfStreamException("The transport completed before all queued frames arrived.");
         }
         return buffer.ToArray();
     }
@@ -215,12 +243,19 @@ public class SendPumpTimeBudgetPublicationTests
             throw new Exception(message);
     }
 
-    private sealed class AdvancingPipeWriter(
+    private sealed class ControlledPipeWriter(
         PipeWriter inner,
         ManualTimeProvider clock) : PipeWriter
     {
         private long _advanceTicks;
         private int _armed;
+        private int _holdFlush;
+        private readonly TaskCompletionSource _flushPublished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFlush = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task FlushPublished => _flushPublished.Task;
+        internal void HoldNextFlush() => Volatile.Write(ref _holdFlush, 1);
+        internal void ReleaseFlush() => _releaseFlush.TrySetResult();
 
         internal void AdvanceClockOnNextBufferRequest(TimeSpan delay)
         {
@@ -237,9 +272,17 @@ public class SendPumpTimeBudgetPublicationTests
         public override ValueTask CompleteAsync(Exception? exception = null)
             => inner.CompleteAsync(exception);
 
-        public override ValueTask<FlushResult> FlushAsync(
+        public override async ValueTask<FlushResult> FlushAsync(
             CancellationToken cancellationToken = default)
-            => inner.FlushAsync(cancellationToken);
+        {
+            var result = await inner.FlushAsync(cancellationToken);
+            if (Interlocked.Exchange(ref _holdFlush, 0) != 0)
+            {
+                _flushPublished.TrySetResult();
+                await _releaseFlush.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
 
         public override Memory<byte> GetMemory(int sizeHint = 0)
         {
