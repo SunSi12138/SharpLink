@@ -44,7 +44,14 @@ public sealed class TerminalObserverDrainTests
         var disconnected = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         session.OnDisconnected += error =>
         {
-            if (queuedDisconnectCleanup) queueCleanup(connection, "TerminalObserverComponentCleanup", error);
+            if (queuedDisconnectCleanup)
+            {
+                // Task.Run captures this context in the real framework scheduler. A JIT-inlined
+                // FailAll frame is not a reliable latch identity; stack text is diagnostic only.
+                clock.QueuedCleanupScope.Value = true;
+                try { queueCleanup(connection, "TerminalObserverComponentCleanup", error); }
+                finally { clock.QueuedCleanupScope.Value = false; }
+            }
             disconnected.TrySetResult(error!);
         };
         var owners = new List<IRpcByteBufferWriter>();
@@ -63,7 +70,7 @@ public sealed class TerminalObserverDrainTests
             clock.Trace.Enqueue($"metric gate entered thread={Environment.CurrentManagedThreadId}");
             if (faultClock && queuedDisconnectCleanup)
             {
-                if (!clock.FailAllAttempted.Wait(TimeSpan.FromSeconds(5))) gateFailure = new Exception("queued FailAll did not reach the real clock");
+                if (!clock.QueuedCleanupClockAttempted.Wait(TimeSpan.FromSeconds(5))) gateFailure = new Exception("queued FailAll did not reach the real clock");
             }
             else if (!faultClock)
             {
@@ -164,7 +171,7 @@ public sealed class TerminalObserverDrainTests
                 queuedDisconnectCleanup,
                 metricClaimed,
                 clock.Throws,
-                failAllAttempted = clock.FailAllAttempted.IsSet,
+                queuedCleanupClockAttempted = clock.QueuedCleanupClockAttempted.IsSet,
                 trace = clock.Trace.ToArray()
             }));
             metricScope.Value = false;
@@ -318,7 +325,8 @@ public sealed class TerminalObserverDrainTests
         public int Throws;
         public long Offset;
         public Exception Failure { get; } = new InvalidOperationException("terminal cleanup timestamp failure");
-        public ManualResetEventSlim FailAllAttempted { get; } = new();
+        public AsyncLocal<bool> QueuedCleanupScope { get; } = new();
+        public ManualResetEventSlim QueuedCleanupClockAttempted { get; } = new();
         public ConcurrentQueue<string> Trace { get; } = new();
         public override long GetTimestamp()
         {
@@ -327,8 +335,8 @@ public sealed class TerminalObserverDrainTests
                 var stack = new StackTrace().ToString();
                 var route = stack.Contains("FailAllPendingRequests", StringComparison.Ordinal) ? "FailAll" :
                     stack.Contains("OnRequestEmissionFailure", StringComparison.Ordinal) ? "emission" : "other";
-                Trace.Enqueue($"clock {route} throw thread={Environment.CurrentManagedThreadId}");
-                if (route == "FailAll") FailAllAttempted.Set();
+                Trace.Enqueue($"clock {route} throw queuedCleanup={QueuedCleanupScope.Value} thread={Environment.CurrentManagedThreadId}");
+                if (QueuedCleanupScope.Value) QueuedCleanupClockAttempted.Set();
                 Interlocked.Increment(ref Throws); throw Failure;
             }
             return Stopwatch.GetTimestamp() + Offset;

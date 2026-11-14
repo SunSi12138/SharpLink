@@ -41,8 +41,11 @@ public sealed class TerminalObserverDrainIntegrationTests
         {
             if (!metricScope.Value || bytes >= 0 || Volatile.Read(ref observe) == 0 || Interlocked.Exchange(ref negativeSeen, 1) != 0)
                 return;
-            if (faultClock && !clock.FailAllAttempted.Wait(TimeSpan.FromSeconds(5)))
-                callbackFailure = new Exception("real public disconnect did not reach queued FailAll before the pump observer");
+            // Observe the real queued cleanup's published entry state, not a method name in
+            // StackTrace (optimized frames may be absent). The component control separately
+            // fixes the more precise FailAll clock-read-before-emission schedule.
+            if (faultClock && !SpinWait.SpinUntil(() => connection?.State == ClientConnectionState.Closed, TimeSpan.FromSeconds(5)))
+                callbackFailure = new Exception("real public disconnect did not start queued connection cleanup before the pump observer");
         });
         listener.Start();
         try
