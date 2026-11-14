@@ -24,7 +24,7 @@ BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 CORE_FILTER = "/*/*/HostingBuilderRegistrationTests/Repeated*"
 HEALTH_FILTER = "/*/*/HostingBuilderRegistrationTests/PreRegistered*"
 ALL_FILTER = "/*/*/HostingBuilderRegistrationTests/*"
-FULL_COUNT = 2231  # 2222 prior cases + 9 output-tail ownership cases; focused controls unchanged.
+FULL_COUNT = 2233  # 2222 prior cases + 11 output-tail ownership cases; focused controls unchanged.
 
 
 def digest(path):

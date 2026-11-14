@@ -132,46 +132,27 @@ internal sealed partial class RpcSession
                     }
                 }
 
-                try
-                {
-                    ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
-                    SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
-                }
-                catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.DeadlineExceeded)
-                {
-                    // Only framework publication checks select this deadline branch.
-                    // A business exception carrying the same code is not a timer claim.
-                    deadlineWon = true;
-                    throw;
-                }
+                ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider, ref deadlineWon);
+                SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider, ref deadlineWon);
             }
             finally
             {
                 TryCancelGeneratedLifetime(lifetimeCancellation);
-                if (hasPhysicalTail)
+                if (hasPhysicalTail || deadlineWon)
                 {
                     // Compiler iterators reject DisposeAsync during an in-flight MoveNext.
                     // The cold owner invokes it once, only after the prior work really exits.
+                    // Even EOF can select the deadline with no pending work: hand off before
+                    // entering a potentially blocking synchronous DisposeAsync prefix.
+                    if (!hasPhysicalTail)
+                    {
+                        stream = RetainGeneratedPhysicalWork(stream, Task.CompletedTask);
+                        hasPhysicalTail = true;
+                    }
                     deferDisposal = true;
                 }
                 else
-                {
-                    try
-                    {
-                        var dispose = enumerator.DisposeAsync();
-                        if (deadlineWon && !dispose.IsCompletedSuccessfully)
-                        {
-                            stream = RetainGeneratedPhysicalWork(stream, dispose.AsTask());
-                            hasPhysicalTail = true;
-                        }
-                        else
-                            await dispose.ConfigureAwait(false);
-                    }
-                    catch when (deadlineWon)
-                    {
-                        // A disposal fault cannot replace the selected framework deadline.
-                    }
-                }
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
             }
         }
         finally
@@ -209,7 +190,8 @@ internal sealed partial class RpcSession
         long requestId,
         ushort streamId,
         RpcDeadline deadline,
-        TimeProvider? deadlineTimeProvider)
+        TimeProvider? deadlineTimeProvider,
+        ref bool deadlineWon)
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -228,7 +210,7 @@ internal sealed partial class RpcSession
             // The enqueue is the publication commit. Re-check after frame construction so clean
             // EOF cannot publish after the frozen RPC deadline merely because the pump checked
             // before building the terminal frame.
-            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider, ref deadlineWon);
             ownsWriter = false;
             try
             {
@@ -243,6 +225,18 @@ internal sealed partial class RpcSession
         {
             if (ownsWriter)
                 RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    private static void ThrowIfGeneratedStreamDeadlineExpired(
+        RpcDeadline deadline,
+        TimeProvider? timeProvider,
+        ref bool deadlineWon)
+    {
+        if (timeProvider is not null && deadline.IsExpired(timeProvider))
+        {
+            deadlineWon = true;
+            throw CreateGeneratedStreamDeadlineExceededException();
         }
     }
 

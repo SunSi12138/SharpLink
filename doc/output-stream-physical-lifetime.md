@@ -16,6 +16,8 @@ Only after the chain has registered both its pending work and any deferred dispo
 does the pump seal it and transfer its original linked CTS. Completion observes late
 faults and disposes that same CTS once, after the entire chain exits. A cold asynchronous
 handoff prevents synchronous user disposal from blocking the logical pump/read loop.
+This also covers a deadline selected at clean EOF, with no unfinished MoveNext/send:
+the handoff happens before calling user disposal, not after it returns a ValueTask.
 
 This ordering also supports compiler-generated async iterators: their DisposeAsync
 rejects an in-flight MoveNext before entering iterator cleanup. Microsoft documents
@@ -90,6 +92,9 @@ and2s unregister grace. They require original module1call/1stream, undisposed or
 service and CTS while held, then physical exit and actual old-module retirement before
 zero/once assertions. They also cover per-call ownership, late service-disposal failure,
 caller cancellation, same-Session progress, bounded Stop, and collectible unload.
+Caller cancellation preserves the actual original remote cause: the pending-call
+callback can select `RemoteCancel`, or the response enumerator's cancellation and
+cleanup can select `ConsumerAbandoned`. Neither is treated as a receiver deadline.
 
 The permanent gates remove a historical probe dependency on concurrent disposal:
 held MoveNext now requires Dispose not yet entered; for held Dispose, receiver
