@@ -95,7 +95,10 @@ internal static partial class Program
     private static async Task LocalAlcAsync(string transport, string name, Func<LocalModuleFixture, CancellationToken, Task<(WeakReference Weak, IRpcContractChannel? Channel)>> body, CancellationToken token)
     {
         await using var f = new LocalModuleFixture(transport);
-        var result = await body(f, token);
+        // The case can finish inline on a collectible consumer's final MoveNext stack.
+        // Observe from a queued continuation, after that completion frame can unwind;
+        // otherwise the checker itself is executing inside the ALC it tries to unload.
+        var result = await body(f, token).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         GCheck(Collected(result.Weak), name, "old ALC collects with client server and scalar channel live");
         GC.KeepAlive(result.Channel); GC.KeepAlive(f.Client); GC.KeepAlive(f.Server);
     }

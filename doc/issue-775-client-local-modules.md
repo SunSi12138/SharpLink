@@ -100,3 +100,12 @@ The next subject adds diagnostics: recognize the new ALC case name for failure-o
 root capture, and observe early call failure while awaiting producer entry. A watchdog
 failure also captures hosted stacks. Cases/assertions/budgets stay fixed; this is diagnosis,
 not an unchanged retry or acceptance. No other implementation line is expanded.
+
+Diagnostic subject30b9edb997d43079f261a21d0e4d370f4bd39158 / run43561787138 fails the
+same policy ALC check on both hosts, with root/stack text retained. The Windows stack
+shows LocalAlcAsync's collector invoked inline by LocalPolicyAsync.SetResult, itself still
+inside collectible LocalDriver.Output and module/dispatcher generic MoveNext completions.
+The checker is running on the very consumer frame whose unload it tests. Add an explicit
+ForceYielding await boundary before collection; no extra GC iterations, sleep, service stop,
+case removal or budget change. The diagnostic subject does not reach the producer case,
+so its first-run timeout remains unresolved pending that case's early-terminal observation.
