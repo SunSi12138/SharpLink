@@ -35,7 +35,7 @@ Timeout 来源按以下规则组合：
 - client interceptor 继续执行之前的 progress check；
 - endpoint selection / endpoint admission 以及 admission 返回的 retry-after 等待；
 - 选择等待型 pending-slot API 时的 slot wait；
-- deadline-bearing request 的 SendPump emission；
+- deadline-bearing request 的本地 emission/flush 等待；
 - Unary response wait；
 - 有 deadline 的 stream lifetime / producer progress；
 - retry decision、backoff/jitter 和后续所有 attempts。
@@ -43,7 +43,7 @@ Timeout 来源按以下规则组合：
 两个容易误读的本地容量边界：
 
 - 标准 generated Unary 当前使用有界 pending table 的**立即租用**。pending capacity 已满时会本地 `ResourceExhausted(PendingRequestCapacity)`，并不会默认排队等 slot。只有明确选择 wait-for-slot 的内部/扩展路径才存在 pending-slot wait；这种 wait 仍受同一个 deadline 约束。
-- Request 进入 session send queue 也不是一个隐含的无限等待点。标准 request enqueue 在 send queue 满时会本地 `ResourceExhausted(SendQueueCapacity)`；如果 deadline-bearing Request 已经成功入队，它的实际 emission/flush 仍必须在原 deadline 内完成。
+- Request 进入 session send queue 也不是一个隐含的无限等待点。标准 request enqueue 在 send queue 满时会本地 `ResourceExhausted(SendQueueCapacity)`；deadline-bearing 调用对 emission/flush 的等待受原 deadline 约束，但已经入队的 Request 不会因此从物理队列撤回。
 
 服务端收到带 TimeBudget 的请求后，admission queue 也受该调用 budget/cancellation 约束。Client 自己的绝对 deadline 同时继续运行，所以网络发送、传输和响应等待不会因为跨进程 TimeBudget 重新开始而延长 caller 的总预算。
 
@@ -60,9 +60,13 @@ RPC deadline 只在 RPC logical call 创建时出现。因此下面这些**此�
 
 应用当然可以用同一个外部 `CancellationToken` 或更高层 orchestrator 同时限制“启动 + readiness + RPC”的总时间，但那是应用级 budget，不会把 SharpLink 的 RPC deadline 改造成 connect timeout。
 
-### 1.4 emission 时的 TimeBudget
+### 1.4 TimeBudget 采样、入队与 emission
 
-Request 不会在逻辑调用刚创建时把一个静态 timeout 数字永久写进 wire。deadline-bearing Request 保留本地绝对 deadline，SendPump 在 transport emission 的最后边界重新计算剩余时间，然后写入 `TimeBudget` 并 flush。若在 emission 前预算已经耗尽，请求本地失败为 `DeadlineExceeded`，不会把过期 Request 发布到 transport。
+构造 Request 帧时从原 logical deadline 采样剩余 `TimeBudget`。帧准备完成后，pending publication gate 在入队前再次检查同一个绝对 deadline；没有 pending entry 的普通 OneWay 也在入队前检查。若 deadline 在此时已到期，Request 不得入队，也不会为这个未发布的 Request 发送 Cancel。
+
+SendPump 按已接收的帧原样发送，不在 transport emission 重采样或改写 `TimeBudget`。因此，序列化、压缩和本地排队耗时不会再从已经写入帧的 budget 中扣除；Server 收到后按该 duration 建立自己的本地 deadline，Client 的原 deadline 则独立继续运行。
+
+已经成功入队的 Request 可能在调用本地到期后仍到达对端。调用的 deadline 负责本地终态和取消，deadline-bearing 调用对 emission/flush 的等待也受原 deadline 约束；取消等待不等于撤回已入队字节，也不能证明 Server 未执行。
 
 ### 1.5 terminal precedence
 
@@ -92,7 +96,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 当前本地成功边界分两种：
 
 - **普通、无 deadline 的非 streaming OneWay**：调用成功表示 Request 已被本地 `RpcSession` 的 SendPump 接收/入队。若本地 send queue 满，会立即得到本地 `ResourceExhausted`。返回成功时数据可能尚未完成 transport flush。
-- **带 deadline 的 OneWay**：为了保证过期 Request 不被发布，客户端会观察该 Request 所在 batch 的 emission；只有 `PipeWriter.FlushAsync` 成功后该发送阶段才成功。若 deadline 在 emission 前耗尽，则本地 `DeadlineExceeded`。
+- **带 deadline 的 OneWay**：客户端会观察该 Request 所在 batch 的本地 emission；只有 `PipeWriter.FlushAsync` 成功后该发送阶段才成功，等待受原 deadline 约束。deadline 获胜时本地以 `DeadlineExceeded` 结束，但已入队的 Request 仍可能继续发出，随后发送的 Cancel 不保证阻止远端执行。
 
 这两种成功都**不表示**：
 
@@ -103,7 +107,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 服务端 OneWay 在 admission overload 下还可能按配置直接丢弃；客户端因为没有 response 无法从返回值判断这一结果。
 
-带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；其初始 Request 必须先通过 emission deadline 检查，producer 才会启动。这仍然不是远端业务确认。
+带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；producer 在初始 Request 完成本地 emission 后才启动，pending cancellation/deadline 可以抑制尚未启动的 producer。这里没有逐请求的远端接受确认。
 
 如果业务必须确认“远端 handler 已成功完成”或“副作用已经提交”，应使用有响应的 RPC，或在应用协议中设计明确 acknowledgement / idempotency mechanism，而不是把 `await OneWay` 当成远端确认。
 
@@ -199,7 +203,7 @@ Client `StopAsync` 是不同语义：它停止 reconnect、拒绝新调用、失
 | Semantic | Evidence |
 | --- | --- |
 | logical deadline 不重置、stream deadline | `test/SharpLink.UnitTests/Client/SharpLinkClientLogicalDeadlineTests.cs`, `ClientStreamProducerDeadlineTests.cs` |
-| TimeBudget 在 emission 边界采样、过期 request 不发送 | `SharpLinkClientTimeBudgetTests.cs`, `SharpLinkClientTrackedEmissionDeadlineTests.cs`, `SharpLinkClientOneWayTimeBudgetTests.cs` |
+| TimeBudget 在构帧时采样、入队前拒绝已到期 Request、入队后 deadline 结束本地等待而不撤回帧 | `SharpLinkClientTimeBudgetTests.cs`, `SharpLinkClientDeadlinePublicationTests.cs`, `SharpLinkClientTimedUnaryEmissionTests.cs`, `SharpLinkClientOneWayTimeBudgetTests.cs` |
 | timeout/cancellation | `SharpLinkClientCallOptionsTests.cs`, `SharpLinkClientTimeoutTests.cs`, `SharpLinkClientCancellationTests.cs` |
 | connect / readiness snapshot / wait | `SharpLinkClientLifecycleStartStopTests.cs`, `SharpLinkClientReadinessStateTests.cs`, `SharpLinkClientReadinessWaitTests.cs`, `SharpLinkClientReadinessPublicationTests.cs` |
 | retry eligibility、endpoint reselection、deadline | `SharpLinkClientRetryBehaviorTests.cs`, `SharpLinkClientRetryDeadlineTests.cs`, `SharpLinkClientRuntimeRetryPolicyTests.cs` |

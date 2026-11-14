@@ -4,7 +4,7 @@
 
 Client 不再隐式选择请求超时 fallback。每个 `SharpClientBuilder` 必须在 Build 前显式三选一：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 Client-wide fallback；保持未指定状态会使 Build 失败。这个 Client-wide fallback 只自动应用于普通 Unary 调用；OneWay、ClientStreaming、ServerStreaming 和 Duplex 不自动继承它。流式/OneWay 调用若要携带本地 `TimeBudget`，应使用方法 `[Timeout]`，或继承已有父调用 lifetime。方法 `[Timeout]` 是方法级策略，会覆盖 Client fallback；例如 Client custom fallback 为 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。无参数 `[Timeout]` 继续表示使用 Client fallback，因此 Client 选择 `DisableRequestTimeout()` 时不能凭空产生一个 fallback。
 
-Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock 的 `RpcDeadline`。请求真正发出前再计算剩余 `TimeBudget` 并写入 wire；Server 收到后用自己的 monotonic clock 解析新的本地 `RpcDeadline`。因此 Client/Server 不依赖墙钟同步，wire 也不再传播绝对 UTC deadline。
+Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock 的 `RpcDeadline`。构造 Request 帧时采样剩余 `TimeBudget` 并写入 wire，帧准备完成后在入队前检查原 deadline；SendPump 不会在实际 emission 时重采样或改写 budget。Server 收到后用自己的 monotonic clock 解析新的本地 `RpcDeadline`，不依赖墙钟同步。Client 的原 deadline 独立约束本地等待；到期不等于撤回已入队的 Request，它仍可能到达 Server。详见 [TimeBudget 采样、入队与 emission](public-rpc-semantics.md#14-timebudget-采样入队与-emission)。
 
 当服务处理一个已有上游 `TimeBudget` 的 RPC 并继续发起下游 RPC 时，上游剩余 lifetime 是真正的上限：先选择下游方法/Client 的本地 timeout policy，再用父调用的剩余 `TimeBudget` 做 cap。中间 hop 不会重启原始 timeout。到期错误为 `DeadlineExceeded`，调用方显式取消为 `Cancelled`。Client Activity 使用低基数 `rpc.sharplink.lifetime_source` 标识实际 lifetime 来源：`method_timeout`、`client_recommended_timeout`、`client_custom_timeout` 或 `inherited_time_budget`。`demo/Timeout` 和 `demo/Cancel` 展示两种终止路径。
 
@@ -28,11 +28,13 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 ## ClientStreaming 与 Duplex
 
-生成代理在请求被接受后启动客户端流泵。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
+客户端流泵在初始 Request 完成本地 emission 后才启动；pending cancellation/deadline 可以抑制尚未启动的 producer。这不是等待 Server 对该请求的接受确认。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
 
 ## OneWay
 
-OneWay 成功表示请求已进入本地发送/服务端接收流程，不包含业务结果。服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察。
+普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还等待本地 emission/flush，等待受原 deadline 约束。带 client stream 的 OneWay 还需完成本地 producer 生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
+
+服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察；需要远端结果确认时使用有响应的 RPC。
 
 ## `[NonCancellable]`
 
