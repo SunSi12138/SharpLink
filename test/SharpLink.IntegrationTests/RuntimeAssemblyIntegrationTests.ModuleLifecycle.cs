@@ -524,25 +524,32 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             callerCancellation.Token).AsTask();
         await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
 
-        var timedOut = await harness.Server.UnregisterAssemblyAsync(
-            plugin.ServiceAssembly,
-            TimeSpan.FromMilliseconds(20));
-        Ensure(!timedOut.ReferencesReleased, "ignored cancellation keeps framework references");
-        Ensure(timedOut.RemainingCalls == 1, "one call remains after drain timeout");
-
         try
         {
-            _ = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None);
-            throw new Exception("assert failed: draining route must reject new work");
+            var timedOut = await harness.Server.UnregisterAssemblyAsync(
+                plugin.ServiceAssembly,
+                TimeSpan.FromMilliseconds(20));
+            Ensure(!timedOut.ReferencesReleased, "ignored cancellation keeps framework references");
+            Ensure(timedOut.RemainingCalls == 1, "one call remains after drain timeout");
+
+            try
+            {
+                _ = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None);
+                throw new Exception("assert failed: draining route must reject new work");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "draining server route error code");
+                Ensure(exception.DetailCode == StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute).DetailCode ||
+                       exception.DetailCode == StaticBindingWire.Error(StaticBindingFailure.Retired).DetailCode,
+                    "new work must report the structured unbound/retired binding, not re-enter the draining service");
+            }
         }
-        catch (SharpLinkException exception)
+        finally
         {
-            Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "draining server route error code");
-            Ensure(exception.Message.Contains("module is draining", StringComparison.Ordinal),
-                "draining server route diagnostic");
+            plugin.ReleaseBlock();
         }
 
-        plugin.ReleaseBlock();
         try
         {
             _ = await blocked.WaitAsync(TimeSpan.FromSeconds(3));

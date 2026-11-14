@@ -424,3 +424,12 @@ Selected production compatibility boundary:
   its own module cancellation. Both pass. Compressed queued controls2/2 preserve zero decode/
   activation after forced replacement and exactly one decode for live R1. Queue cancellation5/5
   passes, retaining explicit OneWay disconnect cleanup after local no-Ack send completion.
+
+- LoadTest.Tests77/77 and StreamLoadTest.Tests21/21 pass their full ordinary suites. These are
+  harness/configuration regressions, not performance measurements.
+- The RuntimeAssembly class's first remaining failure was an obsolete draining diagnostic on
+  a new call; its assertion threw before releasing an intentionally noncooperative handler, so
+  teardown masked it with a server fault. The test now always releases that handler in finally,
+  and requires structured Unavailable/NoBoundRoute or Retired for new work. The original20ms
+  drain timeout, one surviving physical call and eventual service disposal proof are unchanged;
+  that focused control passes. Already-admitted call cancellation diagnostics remain separate.
