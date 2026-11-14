@@ -125,7 +125,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         // The outer bound dispatch already owns the module protection. Never re-acquire
         // after retirement, or activate a different registration while resuming a queue.
-        if (_rootProvider is not null)
+        if (Lifetime == SharpLinkServiceLifetime.Singleton)
             return ValueTask.FromResult(new ServiceLease(GetOrCreateSingleton(bridge, requestId)));
         if (Lifetime == SharpLinkServiceLifetime.Connection)
             return connection.AcquireServiceAsync(this, default, bridge, requestId);

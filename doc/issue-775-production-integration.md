@@ -156,3 +156,15 @@ Selected production compatibility boundary:
   retain the contract name/ID and both exact hashes.
 - Next checks: focused post-Bind dispatch/resource/scope tests, then local factory/manifest,
   deadline and stream ownership tests. Do not count compilation as runtime acceptance.
+
+### First focused runtime finding
+
+- At74ef4d89, post-Bind SharpLinkServerInvocationTests passed27/27. ServiceRegistrationTests
+  passed24/25 and exposed a real production defect: AcquireBoundAsync tested root-provider
+  presence instead of Singleton lifetime, so an instance-backed dynamic singleton fell into
+  per-call scope activation and failed with Service scope factory is unavailable. Historical
+  group fixtures used factory-backed singletons, so their passing evidence remains valid.
+- Corrected the lifetime branch rather than changing the failing fixture to a factory. Expanded
+  the same deterministic regression to instance Singleton, factory Singleton, Connection and
+  Call lifetimes, with exact activation counts across two invocations and one cold resolution.
+  The original failed source/log is retained; no budget or failure expectation was relaxed.

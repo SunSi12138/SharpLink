@@ -140,7 +140,12 @@ public partial class ServiceRegistrationTests
     }
 
     [Test]
-    public async Task DynamicServiceDispatchShouldUseColdBindingFactsThroughAcquisitionAndCleanup()
+    [Arguments(SharpLinkServiceLifetime.Singleton, false)]
+    [Arguments(SharpLinkServiceLifetime.Singleton, true)]
+    [Arguments(SharpLinkServiceLifetime.Connection, true)]
+    [Arguments(SharpLinkServiceLifetime.Call, true)]
+    public async Task DynamicServiceDispatchShouldUseColdBindingFactsThroughAcquisitionAndCleanup(
+        SharpLinkServiceLifetime lifetime, bool useFactory)
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
@@ -167,17 +172,32 @@ public partial class ServiceRegistrationTests
         Ensure(connection.MarkReady(null), "test connection ready");
         try
         {
+            using var provider = new ServiceCollection().BuildServiceProvider();
+            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+            var activations = 0;
+            object Factory(IServiceProvider _) { activations++; return new object(); }
             var successfulStub = new StubMarker(RpcMethodKind.Unary);
-            var singleton = ServiceRegistration.CreateSingleton(
-                typeof(object), successfulStub, new object(), ownsService: false, module);
-            var singletonToken = ServerBindingTestFixture.Install(connection, singleton,
+            var successful = lifetime switch
+            {
+                SharpLinkServiceLifetime.Singleton when !useFactory => ServiceRegistration.CreateSingleton(
+                    typeof(object), successfulStub, new object(), ownsService: false, module),
+                SharpLinkServiceLifetime.Singleton => ServiceRegistration.CreateSingletonFactory(
+                    typeof(object), successfulStub, provider, Factory, ownsService: false, module),
+                SharpLinkServiceLifetime.Connection => ServiceRegistration.CreateConnection(
+                    typeof(object), successfulStub, scopeFactory, Factory, disposeService: false, module),
+                _ => ServiceRegistration.CreatePerCall(
+                    typeof(object), successfulStub, scopeFactory, Factory, disposeService: false, module)
+            };
+            var singletonToken = ServerBindingTestFixture.Install(connection, successful,
                 new(1, 17, RpcMethodKind.Unary, false, false, false, null));
             await InvokeRegisteredServiceAsync(server, connection, singletonToken, requestId: 101);
             await InvokeRegisteredServiceAsync(server, connection, singletonToken, requestId: 103);
             Ensure(successfulStub.DescriptorLookups == 1,
                 "two dynamic invocations must reuse the single cold binding resolution");
+            Ensure(activations == (!useFactory ? 0 : lifetime == SharpLinkServiceLifetime.Call ? 2 : 1),
+                "bound dispatch must preserve instance/factory/connection/call activation lifetime");
             Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
-            await singleton.DisposeAsync();
+            await successful.DisposeAsync();
 
             var failingStub = new StubMarker(RpcMethodKind.Unary);
             var call = ServiceRegistration.CreatePerCall(
