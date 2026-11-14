@@ -9,7 +9,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private readonly Lock _registrationGate = new();
     private readonly HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
     private readonly Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> _manifestCodecProviders = [];
-    // Adoption and publication invalidate a candidate; unrelated retirement does not.
+    // Adoption, publication and starting a module drain invalidate a candidate.
+    // Completed unrelated manifest cleanup alone does not.
     private long _publicationRevision;
     private int _disposed;
 
@@ -184,6 +185,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             // Registry owners rebuild through their existing generation/retry loop.
             return false;
         }
+    }
+
+    internal void InvalidateGeneratedCodecPublication()
+    {
+        lock (_registrationGate)
+            _publicationRevision++;
     }
 
     private static void ValidateReferencedCodecDependencies(

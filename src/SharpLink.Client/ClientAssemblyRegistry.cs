@@ -423,6 +423,12 @@ internal sealed partial class ClientAssemblyRegistry
             if (!_dynamicModules.TryGetValue(assembly, out var module))
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
             EnsureNoDynamicDependants(module);
+            if (module.TryBeginDraining())
+            {
+                // Reentrant metadata must not admit dependants while this live owner drains.
+                _generation++;
+                _runtimeContext.InvalidateGeneratedCodecPublication();
+            }
             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;
