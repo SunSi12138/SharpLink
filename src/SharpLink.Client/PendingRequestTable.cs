@@ -313,6 +313,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool Dispatch(long id, ref ReadOnlySequence<byte> payload)
     {
+#if SHARPLINK_775_STATIC_SLICE
+        RequireStreamAcceptance(id);
+#endif
         var slots = Volatile.Read(ref _slots);
         if (slots is null)
             return false;
@@ -400,6 +403,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool TryAcceptStreamData(long id)
     {
+#if SHARPLINK_775_STATIC_SLICE
+        RequireStreamAcceptance(id);
+#endif
         var slots = Volatile.Read(ref _slots);
         if (slots is null)
             return false;
@@ -551,6 +557,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         FailAllPendingRequests(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Pending request table is disposed."));
+#if SHARPLINK_775_STATIC_SLICE
+        SealStreamProducerDrain();
+#endif
 
         if (Volatile.Read(ref _waiterCount) == 0)
             DisposeSlotAvailable();
@@ -1108,6 +1117,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         private IPendingCallCompletionObserver? _completionObserver;
         private int _registered;
         private bool _requestPublished;
+#if SHARPLINK_775_STATIC_SLICE
+        internal PendingStreamAdmission? StreamAdmission;
+#endif
 
         public object CompletionGate { get; } = new();
 
@@ -1118,7 +1130,11 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         public RpcDeadline Deadline { get; private set; }
         public CancellationToken CancellationToken { get; private set; }
         public CancellationToken ProducerCancellationToken
+#if SHARPLINK_775_STATIC_SLICE
+            => StreamAdmission?.Token ?? _producerCancellation?.Token ?? CancellationToken.None;
+#else
             => _producerCancellation?.Token ?? CancellationToken.None;
+#endif
         public IPendingCallCompletionObserver? CompletionObserver => _completionObserver;
 
         /// <summary>
@@ -1160,12 +1176,18 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             call.Deadline = deadline;
             call.CancellationToken = cancellationToken;
             call._completionObserver = completionObserver;
+#if SHARPLINK_775_STATIC_SLICE
+            call.StreamAdmission = kind is PendingCallKind.ClientStreaming or PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming
+                ? new PendingStreamAdmission(kind != PendingCallKind.ServerStreaming) : null;
+            call._producerCancellation = kind == PendingCallKind.OneWayClientStreaming ? new CancellationTokenSource() : null;
+#else
             call._producerCancellation = kind is
                 PendingCallKind.ClientStreaming or
                 PendingCallKind.DuplexStreaming or
                 PendingCallKind.OneWayClientStreaming
                 ? new CancellationTokenSource()
                 : null;
+#endif
             call._cancellationRegistration = cancellationToken.CanBeCanceled
                 ? cancellationToken.UnsafeRegister(static state =>
                 {
@@ -1191,6 +1213,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         public Exception? CancelProducer(PendingCallCompletionReason reason)
         {
+#if SHARPLINK_775_STATIC_SLICE
+            if (Interlocked.Exchange(ref StreamAdmission, null) is { } admission) return admission.Complete();
+#endif
             var producerCancellation = _producerCancellation;
             if (producerCancellation is null)
                 return null;
@@ -1225,6 +1250,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         public void ReturnUnused()
         {
+#if SHARPLINK_775_STATIC_SLICE
+            Interlocked.Exchange(ref StreamAdmission, null)?.Complete();
+#endif
             _cancellationRegistration.Dispose();
             _producerCancellation?.Dispose();
             _producerCancellation = null;

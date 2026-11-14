@@ -5,7 +5,7 @@ public static class ProtocolV2Constants
 {
     /// <summary>Protocol v2 frame magic.</summary>
 #if SHARPLINK_775_STATIC_SLICE
-    public const byte Magic = 0xBA; // Private experiment, NOT an allocated production protocol version.
+    public const byte Magic = 0xBB; // Private experiment, NOT an allocated production protocol version.
 #else
     public const byte Magic = 0x89;
 #endif

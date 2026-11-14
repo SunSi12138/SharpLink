@@ -78,7 +78,11 @@ internal sealed class ClientConnection :
            Session.CanAcceptCalls;
 
     public int ActiveCallCount
-        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
+        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount)
+#if SHARPLINK_775_STATIC_SLICE
+            + PendingCalls.PhysicalStreamProducers
+#endif
+            ;
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
 
@@ -608,7 +612,7 @@ internal sealed class ClientConnection :
 #endif
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
 #if SHARPLINK_775_STATIC_SLICE
-            return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain);
+            return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain, PendingCalls.StreamProducerDrain);
 #else
             return Session.DisposeAsync();
 #endif
@@ -616,20 +620,26 @@ internal sealed class ClientConnection :
         Fail(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Client connection is disposed."));
+#if !SHARPLINK_775_STATIC_SLICE
         _cancellation.Dispose();
+#endif
         PendingCalls.Dispose();
 #if SHARPLINK_775_STATIC_SLICE
-        return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain);
+        return JoinBindingDrainAsync(Session.DisposeAsync(), bindingDrain, PendingCalls.StreamProducerDrain);
 #else
         return Session.DisposeAsync();
 #endif
     }
 
 #if SHARPLINK_775_STATIC_SLICE
-    private static async ValueTask JoinBindingDrainAsync(ValueTask sessionDisposal, Task bindingDrain)
+    private async ValueTask JoinBindingDrainAsync(ValueTask sessionDisposal, Task bindingDrain, Task producerDrain)
     {
         try { await sessionDisposal.ConfigureAwait(false); }
-        finally { await bindingDrain.ConfigureAwait(false); }
+        finally
+        {
+            try { await bindingDrain.ConfigureAwait(false); }
+            finally { await producerDrain.ConfigureAwait(false); _cancellation.Dispose(); }
+        }
     }
 #endif
 

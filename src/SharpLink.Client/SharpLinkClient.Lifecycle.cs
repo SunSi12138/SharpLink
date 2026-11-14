@@ -602,6 +602,10 @@ internal sealed partial class SharpLinkClient
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                                 break;
 #if SHARPLINK_775_STATIC_SLICE
+                            case StaticBindingWire.RequestAccepted:
+                                connection.PendingCalls.AcceptStreamRequest(unchecked((long)header.RequestId));
+                                connection.PendingCalls.StreamAcceptanceObservedTestHook?.Invoke(unchecked((long)header.RequestId));
+                                break;
                             case StaticBindingWire.Invalidate:
                                 var retiredTokens = StaticBindingWire.ReadInvalidation(payload);
                                 connection.StaticBindings.Invalidate(retiredTokens);

@@ -106,10 +106,6 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
 
-#if SHARPLINK_775_STATIC_SLICE
-                        if (header.Type is ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete)
-                            throw StaticBindingWire.Malformed("Streaming is outside the static binding prototype.");
-#endif
                         var isStreamProgress = header.Type is
                             ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
                         var streamRequestId = isStreamProgress

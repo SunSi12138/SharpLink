@@ -10,6 +10,36 @@ internal sealed class ServerGeneratedBridge(
     StripedLongMap<ServerCallCancellationState> callCancellations) : IRpcGeneratedServerBridge
 {
     private readonly RpcSessionGeneratedServerBridge _protocolBridge = new(session);
+#if SHARPLINK_775_STATIC_SLICE
+    internal async ValueTask AcceptBoundRequestAsync(long requestId, RpcMethodDescriptor method, CancellationToken token)
+    {
+        if (!callCancellations.TryCapture(requestId, static (id, state) => state.CaptureLease(id), out var lease) || !lease.TryAcquire())
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "Streaming call ownership is unavailable.");
+        try
+        {
+            if (server.BeforeStreamAcceptanceTestHook is { } hook) await hook(requestId, method, token).ConfigureAwait(false);
+            EnsureUserCodeEntry(requestId);
+            var writer = StaticBindingWire.CreateRequestAccepted(session, requestId);
+            var owned = true;
+            try
+            {
+                var accepted = lease.State.TryPublishStreamAcceptance(() =>
+                {
+                    owned = false;
+                    if (!session.TryEnqueuePreparedFrame(writer, false, token, null, out _, out var rejection)) throw rejection!;
+                    return true;
+                });
+                if (!accepted)
+                {
+                    _ = lease.State.TryAcceptStreamData();
+                    throw ServerCallTerminationMapper.CreateServerCancellationException(lease.State.Reason, lease.State.Deadline.IsExpired(session.RuntimeContext.TimeProvider));
+                }
+            }
+            finally { if (owned) session.RuntimeContext.Buffers.Return(writer); }
+        }
+        finally { lease.ReleaseUse(); }
+    }
+#endif
 
     public void EnsureUserCodeEntry(long requestId)
     {

@@ -21,17 +21,18 @@ internal sealed partial class StaticBindingCallSite : IRpcContractChannel
     public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
         in TStreams streams, SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
-        where TStreams : struct, IRpcClientStreamWriter => ValueTask.FromException<TResponse>(Unsupported());
+        where TStreams : struct, IRpcClientStreamWriter
+        => Owner.InvokeStaticClientStreamingAsync(this, method, request, requestCodec, responseCodec, streams, metadata, cancellationToken);
 
     public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata, CancellationToken cancellationToken = default) => throw Unsupported();
+        SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+        => Owner.InvokeStaticServerStreamingAsync(this, method, request, requestCodec, responseCodec, metadata, cancellationToken);
 
     public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
         in TStreams streams, SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
-        where TStreams : struct, IRpcClientStreamWriter => throw Unsupported();
-
-    private static SharpLinkException Unsupported() => StaticBindingWire.Error(StaticBindingFailure.UnsupportedShape);
+        where TStreams : struct, IRpcClientStreamWriter
+        => Owner.InvokeStaticDuplexStreamingAsync(this, method, request, requestCodec, responseCodec, streams, metadata, cancellationToken);
 }
 #endif

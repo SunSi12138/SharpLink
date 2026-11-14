@@ -123,6 +123,10 @@ internal sealed partial class SharpLinkServer
         var invokeToken = supportsCooperativeCancellation
             ? callState!.InvocationToken
             : serverLoopToken;
+#if SHARPLINK_775_STATIC_SLICE
+        ReservePreInvocationRequestStreams(session, request.BoundMethod!.Descriptor.ClientStreamCount,
+            requestId, invokeToken, retainUntilLocalCompletion: true);
+#endif
 
         if (!hasReturnPayload)
         {

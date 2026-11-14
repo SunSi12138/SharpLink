@@ -342,6 +342,10 @@ internal sealed partial class SharpLinkServer
                 , RequireResolvedMethod(methodDescriptor)
 #endif
                 );
+#if SHARPLINK_775_STATIC_SLICE
+            if (RequireResolvedMethod(methodDescriptor).HasClientStreams)
+                invocation = JoinBoundInputStreamsAsync(invocation, session, requestId);
+#endif
             if (!telemetry.IsEnabled)
                 return invocation;
             if (invocation.IsCompletedSuccessfully)
@@ -459,6 +463,9 @@ internal sealed partial class SharpLinkServer
         var interceptors = (context as SharpLinkServerInvocationContext)?.InterceptorGeneration as ServerInterceptorGeneration;
         if (interceptors is null || interceptors.Count == 0)
         {
+#if SHARPLINK_775_STATIC_SLICE
+            return InvokeBoundStubAsync(stub, service, generatedBridge, resolvedMethod, requestId, arguments, output, cancellationToken);
+#else
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
 
@@ -473,6 +480,7 @@ internal sealed partial class SharpLinkServer
                     service, generatedBridge, resolvedMethod, requestId, arguments, output, cancellationToken);
 #else
                     service, generatedBridge, methodId, requestId, arguments, output, cancellationToken);
+#endif
 #endif
         }
 

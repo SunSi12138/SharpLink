@@ -191,6 +191,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 #else
         var method = GetMethodDescriptor(stub, methodId);
 #endif
+#if !SHARPLINK_775_STATIC_SLICE
         if (method.Kind != RpcMethodKind.OneWay)
         {
             ReservePreInvocationRequestStreams(
@@ -200,6 +201,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
                 cancellationToken);
         }
 
+#endif
         return CreateServerInvocationContext(
             session,
             method,

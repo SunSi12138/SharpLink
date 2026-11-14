@@ -119,6 +119,7 @@ public static class ProtocolV2FrameParser
         (byte)StaticBindingWire.Ack => StaticBindingWire.Ack,
         (byte)StaticBindingWire.Invalidate => StaticBindingWire.Invalidate,
         (byte)StaticBindingWire.Release => StaticBindingWire.Release,
+        (byte)StaticBindingWire.RequestAccepted => StaticBindingWire.RequestAccepted,
 #endif
         (byte)ProtocolV2FrameType.HandshakeRequest => ProtocolV2FrameType.HandshakeRequest,
         (byte)ProtocolV2FrameType.HandshakeResponse => ProtocolV2FrameType.HandshakeResponse,
@@ -308,6 +309,9 @@ public static class ProtocolV2FrameParser
                 }
                 break;
 #if SHARPLINK_775_STATIC_SLICE
+            case StaticBindingWire.RequestAccepted:
+                if (payload.Length != 0) throw StaticBindingWire.Malformed("RequestAccepted must have an empty payload.");
+                break;
             case StaticBindingWire.Bind:
                 _ = StaticBindingWire.ReadRequest(payload);
                 break;

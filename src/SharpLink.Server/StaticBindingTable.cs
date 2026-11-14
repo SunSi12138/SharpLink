@@ -11,10 +11,10 @@ internal sealed record StaticBindingMethod
     internal StaticBindingMethod(RpcMethodDescriptor descriptor)
     {
         Descriptor = descriptor;
-        RequiredRequestFlags = descriptor.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay) ||
-            descriptor.HasClientStreams || descriptor.ClientStreamCount != 0 ? -1 :
+        RequiredRequestFlags = descriptor.Kind == RpcMethodKind.OneWay && descriptor.HasClientStreams ? -1 :
             (int)((descriptor.Kind == RpcMethodKind.OneWay ? ProtocolV2FrameFlags.OneWay : 0) |
-                (descriptor.HasResponsePayload ? ProtocolV2FrameFlags.HasReturn : 0));
+                (descriptor.HasResponsePayload && descriptor.Kind is not (RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+                    ? ProtocolV2FrameFlags.HasReturn : 0));
     }
 }
 
@@ -91,6 +91,8 @@ internal sealed class StaticBindingTable(StaticBindingBudget ownerBudget)
             if (!value.Methods.TryGetValue(methodId, out var method)) return StaticBindingFailure.UnknownMethod;
             if ((int)(flags & StaticBindingMethod.ShapeMask) != method.RequiredRequestFlags)
                 return StaticBindingFailure.UnsupportedShape;
+            if (method.Descriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+                protection = protection.PromoteToStream();
             selection = new BoundRequestSelection(value.Registration, method, protection);
             transferred = true;
             return StaticBindingFailure.None;

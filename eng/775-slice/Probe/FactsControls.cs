@@ -154,16 +154,16 @@ internal static partial class Program
         var oneWay = f.Method(nameof(IFactsRpc.FireAsync)); var writer = new ForbiddenStreamWriter(); var starts = ForbiddenStreamWriter.Starts;
         await Expect<ArgumentNullException>(() => site.InvokeOneWayAsync(oneWay with { ContractId = long.MaxValue }, default(RpcEmptyRequest),
             null!, writer, null, canceled.Token).AsTask(), "facts OneWay Codec null remains ahead of identity and cancellation");
-        var pending = site.InvokeClientStreamingAsync(f.Method(nameof(IFactsRpc.ConsumeAsync)), default(RpcEmptyRequest),
-            null!, intCodec, writer, null, canceled.Token);
-        Check(pending.IsCompleted && !pending.IsCompletedSuccessfully, "facts unsupported ClientStreaming remains asynchronous fault at invocation");
-        await ExpectCode(() => pending.AsTask(), SharpLinkErrorCode.FailedPrecondition,
-            "facts unsupported ClientStreaming preserves fail closed priority");
-        await ExpectCode(() => { site.InvokeServerStreamingAsync(f.Method(nameof(IFactsRpc.ProduceAsync)), default(RpcEmptyRequest), null!, intCodec, null, canceled.Token); return Task.CompletedTask; },
-            SharpLinkErrorCode.FailedPrecondition, "facts unsupported ServerStreaming rejects before enumeration");
-        await ExpectCode(() => { site.InvokeDuplexStreamingAsync(f.Method(nameof(IFactsRpc.DuplexAsync)), default(RpcEmptyRequest), null!, intCodec, writer, null, canceled.Token); return Task.CompletedTask; },
-            SharpLinkErrorCode.FailedPrecondition, "facts unsupported Duplex rejects before enumeration");
-        Check(ForbiddenStreamWriter.Starts == starts, "facts unsupported streaming starts no producer");
+        await Expect<ArgumentNullException>(() => site.InvokeClientStreamingAsync(f.Method(nameof(IFactsRpc.ConsumeAsync)), default(RpcEmptyRequest),
+            null!, intCodec, writer, null, canceled.Token).AsTask(), "facts ClientStreaming Codec null precedes identity and cancellation");
+        await ExpectCode(() => site.InvokeClientStreamingAsync(f.Method(nameof(IFactsRpc.ConsumeAsync)) with { ContractId = long.MaxValue }, default(RpcEmptyRequest),
+            RpcEmptyRequestCodec.Instance, intCodec, writer, null, canceled.Token).AsTask(), SharpLinkErrorCode.FailedPrecondition,
+            "facts ClientStreaming scoped identity precedes cancellation");
+        await Expect<ArgumentNullException>(() => { site.InvokeServerStreamingAsync(f.Method(nameof(IFactsRpc.ProduceAsync)), default(RpcEmptyRequest), null!, intCodec, null, canceled.Token); return Task.CompletedTask; },
+            "facts ServerStreaming Codec null remains at resolved invocation");
+        await Expect<ArgumentNullException>(() => { site.InvokeDuplexStreamingAsync(f.Method(nameof(IFactsRpc.DuplexAsync)), default(RpcEmptyRequest), null!, intCodec, writer, null, canceled.Token); return Task.CompletedTask; },
+            "facts Duplex Codec null remains at resolved invocation");
+        Check(ForbiddenStreamWriter.Starts == starts, "facts rejected streaming guards start no producer");
     }
 
     private static void WrongFactsAbiPreflight()
