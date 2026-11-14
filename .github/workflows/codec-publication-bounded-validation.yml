@@ -40,10 +40,10 @@ jobs:
       - name: Exact thirteen unchanged RPC and collectible controls
         run: |
           $cases = @(
-            @('RuntimeAssemblyDependencyIdentityIntegrationTests', 'SameFullNameReferencedCodecDependencyShouldRequireExactGenerationOnClientAndServer'),
-            @('RuntimeAssemblyDependencyIdentityIntegrationTests', 'ReferencedCodecDependenciesShouldShutdownDependantsBeforeProvidersOnClientAndServer'),
-            @('RuntimeAssemblyDependencyIdentityIntegrationTests', 'SameFullNameDeclaredModuleDependencyShouldRequireExactBoundGenerationOnClientAndServer'),
-            @('RuntimeAssemblyDrainingReferencedDependencyRegressionTests', 'ReferencedCodecDependencyShouldRequireRunningProviderOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'SameFullNameReferencedCodecDependencyShouldRequireExactGenerationOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'ReferencedCodecDependenciesShouldShutdownDependantsBeforeProvidersOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'SameFullNameDeclaredModuleDependencyShouldRequireExactBoundGenerationOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'ReferencedCodecDependencyShouldRequireRunningProviderOnClientAndServer'),
             @('RuntimeAssemblyIntegrationTests', 'RuntimeAssembliesShouldRegisterTransactionallyAndSupportEveryCallShape'),
             @('RuntimeAssemblyIntegrationTests', 'ReplacementShouldRejectContractGenerationWhileDependentServiceRemainsRegistered'),
             @('RuntimeAssemblyIntegrationTests', 'ReplacementShouldProceedAfterDependentServiceIsRemoved'),
