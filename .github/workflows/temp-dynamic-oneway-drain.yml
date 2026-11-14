@@ -1,0 +1,50 @@
+name: Temporary dynamic OneWay drain proof
+on:
+  push:
+    branches: ['validation/dynamic-oneway-drain-baseline-20261114']
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build genuine dynamic fixtures
+        run: dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+      - name: Public-path baseline control
+        shell: bash
+        run: |
+          mkdir -p artifacts/dynamic-oneway-drain/baseline
+          set +e
+          dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build -- \
+            --treenode-filter '/*/*/RuntimeAssemblyIntegrationTests/DynamicInputDrainShouldHoldServiceUntilPhysicalDecodeExits' \
+            --maximum-parallel-tests 1 --timeout 60s \
+            --results-directory artifacts/dynamic-oneway-drain/baseline \
+            --junit-output-path artifacts/dynamic-oneway-drain/baseline/junit.xml \
+            > artifacts/dynamic-oneway-drain/baseline/run.log 2>&1
+          result=$?
+          cat artifacts/dynamic-oneway-drain/baseline/run.log
+          echo "$result" > artifacts/dynamic-oneway-drain/baseline/exit-code.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          p = Path('artifacts/dynamic-oneway-drain/baseline')
+          root = ET.parse(p/'junit.xml').getroot()
+          cases = list(root.iter('testcase'))
+          failed = [c for c in cases if c.find('failure') is not None]
+          assert len(cases) == 6, (len(cases), [c.attrib for c in cases])
+          assert len(failed) == 2, [(c.attrib, ET.tostring(c).decode()) for c in failed]
+          assert all('DYNAMIC_ONEWAY_PHYSICAL_EXIT_V1' in ET.tostring(c).decode() for c in failed)
+          assert all('NotifyStreamAsync' in str(c.attrib) for c in failed)
+          assert not any(c.find('skipped') is not None or c.find('error') is not None for c in cases)
+          print('BASELINE_CAUSAL_CONTROL_PASS: two exact OneWay defects, four positive/nonstream controls.')
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: dynamic-oneway-drain-baseline
+          path: artifacts/dynamic-oneway-drain
+          retention-days: 30
+
