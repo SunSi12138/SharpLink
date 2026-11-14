@@ -47,19 +47,20 @@ public sealed class TerminalObserverDrainIntegrationTests
             await client.ConnectAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             var proxy = client.Get<ITerminalObserverDrainProbe>();
             Ensure(await proxy.EchoAsync(41).AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42, "healthy generated TCP RPC prerequisite");
+            var output = transport.Output!;
             // Observation only: the connection was created by public Connect/handshake. No private
             // construction, callback installation, pending registration or completion is used here.
             connection = ((ClientConnection[])typeof(SharpLinkClient).GetField("_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(client)!)[0];
-            transport.Output!.Arm();
+            output.Arm();
             operations.Add(proxy.EchoAsync(1).AsTask());
-            await transport.Output.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await output.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             operations.Add(proxy.EchoAsync(2).AsTask());
             operations.Add(proxy.EchoAsync(3).AsTask());
             Ensure(connection.PendingCalls.Count == 3, "three public unary calls must be registered before the fault");
             Volatile.Write(ref observe, 1);
             clock.Armed = faultClock;
-            transport.Output.Release();
+            output.Release();
             await clock.OrDisconnected(connection).WaitAsync(TimeSpan.FromSeconds(5));
             var sessionFailure = await Capture(connection.Session.DisposeAsync().AsTask());
             // Generated telemetry/invocation wrappers finish asynchronously after the operation
@@ -93,7 +94,7 @@ public sealed class TerminalObserverDrainIntegrationTests
             Ensure(countBeforeSalvage == 0 && activeBeforeSalvage == 0 && completedBeforeSalvage == 3 && bytesBeforeSalvage == 0,
                 "disconnect must retire all public pending operations and queued physical frames before salvage");
             Ensure(operationCauses.All(error => error is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } closed &&
-                ReferenceEquals(closed.InnerException, transport.Output.Failure)), "original output failure must remain every operation's cause");
+                ReferenceEquals(closed.InnerException, output.Failure)), "original output failure must remain every operation's cause");
             if (faultClock)
                 Ensure(Contains(sessionFailure, clock.Failure) || Contains(stopFailure, clock.Failure), "joined cleanup must expose the original clock failure");
             else
