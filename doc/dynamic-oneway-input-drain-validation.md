@@ -33,3 +33,16 @@ Correct the post-release oracle to wait for the existing module Released state; 
 The report collector also needs to locate JUnit beneath the results directory rather than assume a flat path.
 No product changed. Original failures and raw logs remain evidence; this run is not the full baseline gate pass.
 
+The corrected test-only9ab3aea8/run43611786361 has precisely two original OneWay marker failures and four passing controls.
+The wrapper still failed only because no JUnit exporter was installed. Reuse its actual console/HTML inventory;
+do not rerun unchanged RPC to repair a collector. Candidate uses exact summaries plus twelve source-bound case JSONs and real HTML reports.
+
+## Candidate inventory frozen before execution
+Keep the original six controls and add six OneWay singleton/call terminal cases: throw, cancel and compatible service Replace.
+Each case must collect the retired plugin within ten full GC/finalizer attempts while client/server remain active.
+Five separate non-RPC component cases cover one/two input gates, captured-child teardown, held physical asynchronous disposal,
+late scalar discard credit/peer terminal and zero allocations in65536 warmed single-stream captures.
+Both Linux and Windows run the identical frozen12+5 inventory. No timing speedup is claimed.
+Capture is a value snapshot, inline for one input; only multiple inputs require a bounded reference array.
+Ordinary Unary/non-input OneWay retains its original completion owner; no new per-call heap owner is introduced there.
+

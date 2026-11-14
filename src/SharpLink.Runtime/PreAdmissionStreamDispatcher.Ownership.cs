@@ -2,6 +2,33 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class PreAdmissionStreamDispatcher
 {
+    private Task? _physicalChildDisposal;
+
+    internal async ValueTask WaitForAbandonedChildAsync()
+    {
+        Task? detached;
+        lock (_gate)
+        {
+            detached = _childDetached || (!_attachmentInProgress &&
+                _dispatcher is null && !_childDetachFinalizing)
+                ? null
+                : (_childDetachedCompletion ??= new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        }
+        if (detached is not null)
+            await detached.ConfigureAwait(false);
+        Task? disposal;
+        lock (_gate)
+            disposal = _physicalChildDisposal;
+        if (disposal is not null)
+        {
+            await disposal.ConfigureAwait(false);
+            lock (_gate)
+                if (ReferenceEquals(_physicalChildDisposal, disposal))
+                    _physicalChildDisposal = null;
+        }
+    }
+
     private void ReleaseChildDispatch()
     {
         TaskCompletionSource? dispatchesDrained = null;
@@ -41,12 +68,13 @@ internal sealed partial class PreAdmissionStreamDispatcher
 
         // Local abandonment starts disposal before IsDetached becomes visible. A pooled child
         // therefore cannot return/re-rent until this mailbox has performed its final operation.
-        if (work.DisposeChild)
-            BeginAbandonedDispatcherDisposal(work.Dispatcher);
+        var disposal = work.DisposeChild
+            ? BeginAbandonedDispatcherDisposal(work.Dispatcher) : null;
 
         TaskCompletionSource? detachedCompletion;
         lock (_gate)
         {
+            _physicalChildDisposal = disposal;
             _childDetached = true;
             _childDetachFinalizing = false;
             _childLease = null;
@@ -59,7 +87,7 @@ internal sealed partial class PreAdmissionStreamDispatcher
         work.Lease?.OnDispatchesDrained();
     }
 
-    private static void BeginAbandonedDispatcherDisposal(IStreamDispatcher dispatcher)
+    private static Task? BeginAbandonedDispatcherDisposal(IStreamDispatcher dispatcher)
     {
         if (dispatcher is not IAsyncDisposable asyncDisposable)
         {
@@ -69,7 +97,7 @@ internal sealed partial class PreAdmissionStreamDispatcher
                     "The inbound stream consumer completed before peer terminal."));
             }
             catch { }
-            return;
+            return null;
         }
 
         try
@@ -78,11 +106,11 @@ internal sealed partial class PreAdmissionStreamDispatcher
             if (disposal.IsCompletedSuccessfully)
             {
                 disposal.GetAwaiter().GetResult();
-                return;
+                return null;
             }
-            _ = ObserveAbandonedDispatcherDisposalAsync(disposal);
+            return ObserveAbandonedDispatcherDisposalAsync(disposal);
         }
-        catch { }
+        catch { return null; }
     }
 
     private static async Task ObserveAbandonedDispatcherDisposalAsync(ValueTask disposal)

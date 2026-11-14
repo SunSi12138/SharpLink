@@ -11,12 +11,14 @@ public abstract class OneWayDrainService : IAsyncDisposable
     public static Task HandlerEntered => _handlerEntered.Task;
     public static Task HandlerTask => Volatile.Read(ref _handlerTask);
     public static int Disposed => Volatile.Read(ref _disposed);
+    public static string Outcome { get; set; } = "success";
     public static void Reset()
     {
         _handlerEntered = NewSignal();
         _handlerRelease = NewSignal();
         _handlerTask = Task.CompletedTask;
         Volatile.Write(ref _disposed, 0);
+        Outcome = "success";
     }
     public static void ReleaseHandler() => _handlerRelease.TrySetResult();
     public ValueTask NotifyStreamAsync(IAsyncEnumerable<DrainItem> values, CancellationToken cancellationToken)
@@ -37,6 +39,10 @@ public abstract class OneWayDrainService : IAsyncDisposable
     {
         _handlerEntered.TrySetResult();
         await DrainItemCodec.DecodeEntered.ConfigureAwait(false);
+        if (Outcome == "throw")
+            throw new InvalidOperationException("DYNAMIC_INPUT_HANDLER_FAILURE");
+        if (Outcome == "cancel")
+            throw new OperationCanceledException("DYNAMIC_INPUT_HANDLER_CANCELLED");
     }
     private static async Task AwaitReleaseAsync()
     {
