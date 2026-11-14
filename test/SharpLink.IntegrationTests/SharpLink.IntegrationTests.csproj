@@ -34,4 +34,8 @@
     <TestingPlatformBuilderHook Remove="83B7B6C3-DC9C-4F30-8323-A3E1EBA7F65B" />
     <TestingPlatformBuilderHook Remove="2006B3F7-93D2-4D9C-9C69-F41A1F21C9C7" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\SharpLink.UnitTests\Runtime\ManualTimeProvider.cs" Link="Runtime\ManualTimeProvider.cs" />
+  </ItemGroup>
 </Project>
