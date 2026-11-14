@@ -61,7 +61,7 @@ The two TCP jobs fail only afterward in the allocation tool's wrong BufferWriter
 Correct that tool to Runtime; do not repeat the four valid functional subjects. Product source remains unchanged.
 The subsequent temporary run performs only that allocation line plus the previously unrun ordinary512-case Integration
 suite on Linux and Windows.512 is the actual discovered495 existing +12 RPC +5 component UID inventory.
-The normal Unit census remains2212, so its fixed-old regression counts must not be edited.
+At this refined subject, the normal Unit census remains2212; the later review-ordering case below adds one ordinary UID.
 
 ## Final evidence and cost
 
@@ -121,3 +121,14 @@ No mailbox field/layout, snapshot allocation or ordinary non-input completion bo
 the additional short mailbox lock occurs only on captured dynamic input completion. No timing equivalence is claimed.
 Local discovery finds2218 total UIDs, including five existing Explicit process probes that ordinary execution excludes;
 the ordinary canonical inventory is2213. Hosted current-full execution, not raw discovery alone, must confirm that count.
+
+[Hosted ordering subject2bb0a7bf](https://github.com/SunSi12138/SharpLink/actions/runs/43616176746) passes the
+new exact ordering1/1 and retained physical/scalar/capture controls5/5 on Linux and Windows, zero failures/skips.
+While the real first cleanup callback is held, both show first1/second0/drainCompleted=false/routes2; warmed capture
+still allocates0 bytes. The two jobs remain failed because their collector counted Detailed output's raw JSON and
+its indented echo as two cases. Do not rerun product tests to repair this reporting error: the two downloaded ZIPs
+(14121802674/14121757840) were read back using the unique unindented JSON row, actual1/5 summaries and two
+HTML reports each. The offline exact-inventory readback is retained with the original wrappers/artifacts.
+The independent reviewer's original real-child probe also passes on2bb0a7bf with the same held state; after release
+it preserves routes2 and peer terminal reclaims them to0. Later workflow removal/documentation changes preserve
+these product statements. Exact-head formal CI is still required; the earlier9a4a9f17 green checks do not satisfy it.
