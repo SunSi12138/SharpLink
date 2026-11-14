@@ -74,6 +74,8 @@ test_projects:
   aot_smoke: test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj
   benchmarks: test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
   chaos_tests: test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj
+  codec_publication_drain_provider: test/SharpLink.CodecPublicationDrainProvider/SharpLink.CodecPublicationDrainProvider.csproj
+  codec_publication_drain_consumer: test/SharpLink.CodecPublicationDrainConsumer/SharpLink.CodecPublicationDrainConsumer.csproj
   codec_publication_probe: test/SharpLink.CodecPublicationProbe/SharpLink.CodecPublicationProbe.csproj
   referenced_codec_provider: test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj
   referenced_codec_consumer: test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj
@@ -182,6 +184,37 @@ allowed_references:
     to: [generator]
     mode: analyzer
     classification: allowed
+
+  - from: codec_publication_drain_provider
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+  - from: codec_publication_drain_provider
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+  - from: codec_publication_drain_consumer
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+  - from: codec_publication_drain_consumer
+    target_scope: test
+    to: [codec_publication_drain_provider]
+    mode: assembly
+    classification: intentional_test_infrastructure
+  - from: integration_tests
+    target_scope: test
+    to: [codec_publication_drain_consumer]
+    mode: build_only
+    classification: intentional_test_infrastructure
+  - from: integration_tests
+    target_scope: test
+    to: [codec_publication_probe]
+    mode: assembly
+    classification: intentional_test_infrastructure
 
   # Public metadata callback fixture and its exact referenced-Codec provider/consumer.
   - from: codec_publication_probe

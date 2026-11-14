@@ -24,6 +24,12 @@ internal sealed partial class SharpLinkServer
                 });
             }
             EnsureNoDynamicDependants(module);
+            if (module.TryBeginDraining())
+            {
+                // Keep active RPC codecs alive, but invalidate admission candidates now.
+                _registryGeneration++;
+                _runtimeContext.InvalidateGeneratedCodecPublication();
+            }
             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;

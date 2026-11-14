@@ -1,4 +1,4 @@
-name: Codec publication active drain baseline
+name: Codec publication bounded validation
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
@@ -37,22 +37,45 @@ jobs:
           dotnet --info | Tee-Object artifacts/codec-publication/dotnet-info.log
           dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal 2>&1 | Tee-Object artifacts/codec-publication/build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Exact active-drain counterexample against unchanged product
+      - name: Exact unchanged corpus plus public active-drain regression
         run: |
-          $log = 'artifacts/codec-publication/active-drain-baseline.log'
-          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/RuntimeAssemblyIntegrationTests/PublicationMustRejectConsumerWhenProviderBeginsActiveDrain' --maximum-parallel-tests 1 --timeout 120s 2>&1 | Tee-Object $log
-          $code = $LASTEXITCODE
-          $text = (Get-Content $log -Raw) -replace '\x1b\[[0-9;]*m', ''
-          $counts = @{}
-          foreach ($key in @('total', 'failed', 'succeeded', 'skipped')) {
-            $found = [regex]::Matches($text, "\b${key}:\s*(\d+)\b")
-            $counts[$key] = if ($found.Count) { [int]$found[-1].Groups[1].Value } elseif ($key -eq 'failed') { 0 } else { -1 }
+          $cases = @(
+            @('RuntimeAssemblyIntegrationTests', 'SameFullNameReferencedCodecDependencyShouldRequireExactGenerationOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'ReferencedCodecDependenciesShouldShutdownDependantsBeforeProvidersOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'SameFullNameDeclaredModuleDependencyShouldRequireExactBoundGenerationOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'ReferencedCodecDependencyShouldRequireRunningProviderOnClientAndServer'),
+            @('RuntimeAssemblyIntegrationTests', 'RuntimeAssembliesShouldRegisterTransactionallyAndSupportEveryCallShape'),
+            @('RuntimeAssemblyIntegrationTests', 'ReplacementShouldRejectContractGenerationWhileDependentServiceRemainsRegistered'),
+            @('RuntimeAssemblyIntegrationTests', 'ReplacementShouldProceedAfterDependentServiceIsRemoved'),
+            @('RuntimeAssemblyIntegrationTests', 'ReplacementValidationFailureShouldLeaveTheOldSnapshotServing'),
+            @('RuntimeAssemblyIntegrationTests', 'ConcurrentRegistrationShouldPublishExactlyOneCompleteSnapshot'),
+            @('RuntimeAssemblyIntegrationTests', 'CollectibleContextShouldUnloadAfterFrameworkReferencesAreReleased'),
+            @('RuntimeAssemblyIntegrationTests', 'RejectedApi4DynamicRegistrationShouldReleaseItsCollectibleContext'),
+            @('RuntimeAssemblyIntegrationTests', 'DisposalFailuresShouldNotSkipRemainingModuleCleanup'),
+            @('RuntimeAssemblyIntegrationTests', 'ModuleUnregisterShouldJoinRetiredConnectionServiceCleanup'),
+            @('RuntimeAssemblyIntegrationTests', 'PublicationMustRejectConsumerWhenProviderBeginsActiveDrain')
+          )
+          $results = @()
+          foreach ($case in $cases) {
+            $name = $case[1]
+            $expected = if ($name -eq 'PublicationMustRejectConsumerWhenProviderBeginsActiveDrain') { 4 } else { 1 }
+            $filter = "/*/*/$($case[0])/$name"
+            $log = "artifacts/codec-publication/$name.log"
+            dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter $filter --maximum-parallel-tests 1 --timeout 120s 2>&1 | Tee-Object $log
+            $code = $LASTEXITCODE
+            $text = (Get-Content $log -Raw) -replace '\x1b\[[0-9;]*m', ''
+            $counts = @{}
+            foreach ($key in @('total', 'failed', 'succeeded', 'skipped')) {
+              $found = [regex]::Matches($text, "\b${key}:\s*(\d+)\b")
+              $counts[$key] = if ($found.Count) { [int]$found[-1].Groups[1].Value } elseif ($key -eq 'failed') { 0 } else { -1 }
+            }
+            $results += @{ name = $name; exitCode = $code; counts = $counts }
+            $results | ConvertTo-Json -Depth 6 | Set-Content artifacts/codec-publication/results.json
+            if ($code -ne 0 -or $counts.total -ne $expected -or $counts.failed -ne 0 -or $counts.succeeded -ne $expected -or $counts.skipped -ne 0) {
+              throw "Exact frozen control failed: $name / $($counts | ConvertTo-Json -Compress)"
+            }
           }
-          $counts | ConvertTo-Json | Set-Content artifacts/codec-publication/baseline-counts.json
-          if ($code -eq 0 -or $counts.total -ne 4 -or $counts.failed -ne 4 -or $counts.succeeded -ne 0 -or $counts.skipped -ne 0 -or !$text.Contains('no new consumer may commit after its exact provider starts draining')) {
-            throw 'The exact four public active-drain counterexamples did not reproduce'
-          }
-          exit 0
+          if ($results.Count -ne 14) { throw 'Incomplete frozen corpus' }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
