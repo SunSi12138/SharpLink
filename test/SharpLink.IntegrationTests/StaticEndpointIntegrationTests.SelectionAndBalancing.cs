@@ -18,7 +18,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         try
         {
-            _ = await client.Get<IConnectionBehaviorService>().PingAsync(1);
+            var preparedRpc1 = client.CreateProxy<IConnectionBehaviorService>();
+            await preparedRpc1.PrepareAsync(TimeSpan.FromSeconds(10));
+            _ = await preparedRpc1.Service.PingAsync(1);
             throw new Exception("invalid selector should fail the current call");
         }
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.FailedPrecondition)
@@ -127,8 +129,10 @@ public sealed partial class StaticEndpointIntegrationTests
         await west.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(2));
 
+        var preparedRpc2 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc2.PrepareAsync(TimeSpan.FromSeconds(10));
         var exception = await EnsureThrowsSharpLink(
-            client.Get<IConnectionBehaviorService>().PingAsync(1).AsTask(),
+            preparedRpc2.Service.PingAsync(1).AsTask(),
             "selector must reject the only non-matching static endpoint");
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
             "a strict static selector must not be bypassed for one candidate");
@@ -175,7 +179,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await custom.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)custom).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)custom).ReadyConnectionCount == 2, "custom selector endpoints must both be ready");
-        Ensure(await custom.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "west", "custom selector attributes");
+        var preparedRpc3 = custom.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc3.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc3.Service.GetEndpointIdAsync() == "west", "custom selector attributes");
     }
 
     [Test]

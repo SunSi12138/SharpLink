@@ -21,7 +21,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("queued-replacement-original");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var server = (SharpLinkServer)harness.Server;
         harness.Server.EnableAdmissionControl(options =>
         {

@@ -216,8 +216,10 @@ public partial class IntegrationBehaviorTests
     public async Task NonCancellableOperationCanceledExceptionShouldNotBeMisreportedAsDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();
+        var preparedClientTestService = harness.Client.CreateProxy<ITestService>();
+        await preparedClientTestService.PrepareAsync(TimeSpan.FromSeconds(10));
         await EnsureThrowsSharpLinkFast(
-            harness.Client.Get<ITestService>().ThrowCancellationAsync().AsTask(),
+            preparedClientTestService.Service.ThrowCancellationAsync().AsTask(),
             "non-cancellable service cancellation classification",
             SharpLinkErrorCode.Cancelled);
     }
@@ -336,10 +338,14 @@ public partial class IntegrationBehaviorTests
     public async Task CallerSelectedMetadataShouldVaryPerInvocation()
     {
         await using var harness = await TestHarness.CreateAsync();
-        var tenantA = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "a")));
-        var tenantB = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "b")));
+        var tenantAProxy = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions { Metadata = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "a")) });
+        await tenantAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var tenantA = tenantAProxy.Service;
+        var tenantBProxy = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions { Metadata = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "b")) });
+        await tenantBProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var tenantB = tenantBProxy.Service;
 
         var results = await Task.WhenAll(
             tenantA.DescribeCallAsync(1, CancellationToken.None).AsTask(),

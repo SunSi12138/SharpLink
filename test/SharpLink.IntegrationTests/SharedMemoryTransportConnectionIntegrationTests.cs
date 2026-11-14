@@ -463,11 +463,13 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     public async Task SharedMemoryHeartbeatShouldKeepAnIdleConnectionReady()
     {
         await using var harness = await SharedMemoryHarness.CreateAsync();
+        var preparedClientConnectionBehaviorService = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await preparedClientConnectionBehaviorService.PrepareAsync(TimeSpan.FromSeconds(10));
         await Task.Delay(TimeSpan.FromSeconds(2));
 
         Ensure(harness.Client.State == SharpLinkConnectionState.Ready,
             "shared-memory idle heartbeat connection state");
-        Ensure(await harness.Client.Get<IConnectionBehaviorService>().PingAsync(50) == 51,
+        Ensure(await preparedClientConnectionBehaviorService.Service.PingAsync(50) == 51,
             "shared-memory ping after idle heartbeat interval");
     }
 

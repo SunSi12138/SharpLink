@@ -90,16 +90,20 @@ public class PreAdmissionStreamBudgetIntegrationTests
     {
         TestService.ResetBlockingAdd();
         await using var harness = await BudgetHarness.CreateAsync();
+        var preparedClientBCompressionService = harness.ClientB.CreateProxy<ICompressionService>();
+        await preparedClientBCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var active = harness.ClientA.Get<ITestService>()
+        var activeProxy = harness.ClientA.CreateProxy<ITestService>();
+        await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var active = activeProxy.Service
             .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
         Task<int>? queued = null;
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = harness.ClientB.Get<ICompressionService>()
+            queued = preparedClientBCompressionService.Service
                 .UploadBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > ItemBytes * 2 &&

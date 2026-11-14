@@ -141,7 +141,11 @@ public partial class IntegrationBehaviorTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(2);
             }));
-        var active = harness.Client.Get<ITestService>()
+        var preparedCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
+        var activeProxy = harness.Client.CreateProxy<ITestService>();
+        await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var active = activeProxy.Service
             .SlowAddWithoutTimeoutAsync(1, 1).AsTask();
         await Task.Delay(75);
         var payloads = new[]
@@ -150,7 +154,7 @@ public partial class IntegrationBehaviorTests
             Enumerable.Repeat((byte)0x22, 512).ToArray()
         };
         var duplex = CollectAsync(
-            harness.Client.Get<ICompressionService>().DuplexBytesAsync(
+            preparedCompressionService.Service.DuplexBytesAsync(
                 ToAsyncEnumerable(payloads, CancellationToken.None)),
             CancellationToken.None);
 
@@ -159,7 +163,7 @@ public partial class IntegrationBehaviorTests
         var received = await duplex.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(received.Count == 2 && received[0].SequenceEqual(payloads[0]) &&
             received[1].SequenceEqual(payloads[1]), "queued duplex preserves both directions");
-        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await activeProxy.Service.AddAsync(20, 22) == 42,
             "duplex releases admission permit");
     }
 
@@ -179,19 +183,23 @@ public partial class IntegrationBehaviorTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(2);
             }));
+        var uploadProxy = harness.Client.CreateProxy<ICompressionService>();
+        await uploadProxy.PrepareAsync(TimeSpan.FromSeconds(10));
 
-        var active = harness.Client.Get<ITestService>()
+        var activeProxy = harness.Client.CreateProxy<ITestService>();
+        await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var active = activeProxy.Service
             .SlowAddWithoutTimeoutAsync(20, 22).AsTask();
         await Task.Delay(75);
         var item = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
-        var upload = harness.Client.Get<ICompressionService>().UploadBytesAsync(
+        var upload = uploadProxy.Service.UploadBytesAsync(
             ToAsyncEnumerable([item, item, item], CancellationToken.None)).AsTask();
 
         Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 42,
             "active call before compressed stream");
         Ensure(await upload.WaitAsync(TimeSpan.FromSeconds(2)) == item.Length * 3,
             "queued compressed request and stream items");
-        Ensure((await harness.Client.Get<ICompressionService>().EchoBytesAsync([1, 2, 3]))
+        Ensure((await uploadProxy.Service.EchoBytesAsync([1, 2, 3]))
             .SequenceEqual(new byte[] { 1, 2, 3 }), "combined overload connection recovery");
     }
 
@@ -248,6 +256,8 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
             builder.UseAdmissionControl(options =>
                 options.AddContract<ITestService>(rule => rule.UseConcurrency(1))));
+        var preparedCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
         var testServiceProxy = harness.Client.CreateProxy<ITestService>();
         await testServiceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var testService = testServiceProxy.Service;
@@ -258,7 +268,7 @@ public partial class IntegrationBehaviorTests
             testService.AddAsync(1, 1).AsTask(),
             "contract concurrency rejection",
             SharpLinkErrorCode.ResourceExhausted);
-        var other = await harness.Client.Get<ICompressionService>().EchoBytesAsync([7, 8, 9]);
+        var other = await preparedCompressionService.Service.EchoBytesAsync([7, 8, 9]);
         Ensure(other.SequenceEqual(new byte[] { 7, 8, 9 }), "other contract remains admitted");
         Ensure(await active == 21, "contract permit owner completes");
     }
@@ -514,7 +524,11 @@ public partial class IntegrationBehaviorTests
                 options.MaxQueueDelay = TimeSpan.FromSeconds(2);
                 options.QueueOneWayCalls = true;
             }));
-        var active = harness.Client.Get<ITestService>()
+        var preparedCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
+        var activeProxy = harness.Client.CreateProxy<ITestService>();
+        await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var active = activeProxy.Service
             .SlowAddWithoutTimeoutAsync(4, 5).AsTask();
         await Task.Delay(75);
         var payloads = new[]
@@ -523,14 +537,14 @@ public partial class IntegrationBehaviorTests
             Enumerable.Repeat((byte)0x32, 256).ToArray()
         };
 
-        await harness.Client.Get<ICompressionService>().NotifyStreamBytesAsync(
+        await preparedCompressionService.Service.NotifyStreamBytesAsync(
             ToAsyncEnumerable(payloads, CancellationToken.None));
 
         Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 9,
             "queued OneWay client-stream permit owner");
         Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(2)) == 384,
             "queued OneWay client-stream items preserved");
-        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await activeProxy.Service.AddAsync(20, 22) == 42,
             "queued OneWay client-stream connection recovery");
     }
 
@@ -547,13 +561,17 @@ public partial class IntegrationBehaviorTests
             },
             serverConfigure: builder => builder.UseAdmissionControl(options =>
                 options.Global.UseConcurrency(1)));
-        var active = harness.Client.Get<ITestService>()
+        var preparedCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
+        var activeProxy = harness.Client.CreateProxy<ITestService>();
+        await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var active = activeProxy.Service
             .SlowAddWithoutTimeoutAsync(6, 7).AsTask();
         await Task.Delay(75);
         var payloads = Enumerable.Range(0, 256)
             .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
 
-        await harness.Client.Get<ICompressionService>()
+        await preparedCompressionService.Service
             .NotifyStreamBytesAsync(ToAsyncEnumerable(payloads, CancellationToken.None))
             .AsTask()
             .WaitAsync(TimeSpan.FromSeconds(2));
@@ -563,7 +581,7 @@ public partial class IntegrationBehaviorTests
         await Task.Delay(100);
         Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
             "rejected OneWay stream service must not execute");
-        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await activeProxy.Service.AddAsync(20, 22) == 42,
             "rejected OneWay stream connection recovery");
     }
 
@@ -630,14 +648,18 @@ public partial class IntegrationBehaviorTests
                 options.MaxQueueDelay = TimeSpan.FromSeconds(2);
                 options.QueueOneWayCalls = true;
             }));
-        var permitOwner = harness.Client.Get<ITestService>()
+        var permitOwnerProxy = harness.Client.CreateProxy<ITestService>();
+        await permitOwnerProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var permitOwner = permitOwnerProxy.Service
             .BlockingAddAsync(9, 10, CancellationToken.None).AsTask();
         try
         {
             await TestService.WaitForBlockingAddStartedAsync();
             var payloads = Enumerable.Range(0, 256)
                 .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
-            var failedOneWay = harness.Client.Get<ICompressionService>()
+            var failedOneWayProxy = harness.Client.CreateProxy<ICompressionService>();
+            await failedOneWayProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var failedOneWay = failedOneWayProxy.Service
                 .NotifyStreamWithHeaderAsync(
                     Enumerable.Repeat((byte)0x41, 4096).ToArray(),
                     ToAsyncEnumerable(payloads, CancellationToken.None))
@@ -656,7 +678,7 @@ public partial class IntegrationBehaviorTests
             await Task.Delay(100);
             Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
                 "failed compressed OneWay request must not execute the service");
-            Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await permitOwnerProxy.Service.AddAsync(20, 22) == 42,
                 "compressed OneWay decode failure connection recovery");
         }
         finally
@@ -681,10 +703,14 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var preparedCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
+        var preparedTestService = harness.Client.CreateProxy<ITestService>();
+        await preparedTestService.PrepareAsync(TimeSpan.FromSeconds(10));
         var payloads = Enumerable.Range(0, 256)
             .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
 
-        await harness.Client.Get<ICompressionService>()
+        await preparedCompressionService.Service
             .NotifyStreamWithHeaderAsync(
                 Enumerable.Repeat((byte)0x41, 4096).ToArray(),
                 ToAsyncEnumerable(payloads, CancellationToken.None))
@@ -694,7 +720,7 @@ public partial class IntegrationBehaviorTests
         await Task.Delay(100);
         Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
             "failed compressed OneWay request must not execute without admission");
-        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await preparedTestService.Service.AddAsync(20, 22) == 42,
             "non-admission compressed OneWay failure connection recovery");
     }
 

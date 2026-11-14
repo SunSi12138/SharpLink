@@ -27,7 +27,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-selection-{shape}-{replace}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
@@ -99,7 +99,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-cancel-{shape}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
@@ -184,7 +184,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var assembly = context.LoadFromAssemblyPath(servicePath);
         Ensure(server.RegisterAssembly(assembly).Succeeded, "isolated original service registers");
         await WaitForRemoteContractManifestAsync(client, contractType);
-        var proxy = GetProxy(client, contractType);
+        var proxy = await CreatePreparedServiceAsync(client, contractType);
         var queued = InvokeValueTaskAsync<int>(proxy, contractType, "UnaryAsync", 1, CancellationToken.None).AsTask();
         await WaitUntilAsync(() => server.CurrentAdmissionProgramForTests!.Kernel.QueuedCalls == 1);
         var result = await server.ReplaceAssemblyAsync(assembly, replacement, TimeSpan.Zero);

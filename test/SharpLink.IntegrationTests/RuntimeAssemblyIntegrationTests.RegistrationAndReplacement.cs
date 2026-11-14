@@ -43,7 +43,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("dynamic-cancelled-unregister-waits");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
             plugin.ContractType,
@@ -82,7 +82,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(serverRegistration.Succeeded,
             "server background drain removes the cancelled waiter's old registration");
         await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
-        object? reRegisteredProxy = GetProxy(harness.Client, plugin.ContractType);
+        object? reRegisteredProxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         Ensure(await InvokeValueTaskAsync<int>(
                 reRegisteredProxy,
                 plugin.ContractType,
@@ -117,7 +117,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("dynamic-shared-unregister");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
             plugin.ContractType,
@@ -160,7 +160,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var oldPlugin = PluginBundle.Load("replace-dependency-old");
         using var newPlugin = PluginBundle.Load("replace-dependency-new");
         await RegisterAllAsync(harness, oldPlugin);
-        object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
+        object? oldProxy = await CreatePreparedServiceAsync(harness.Client, oldPlugin.ContractType);
 
         Ensure(string.Equals(
                 oldPlugin.ContractAssembly.FullName,
@@ -222,7 +222,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "client Contract replacement without dependants remains supported");
         // Local replacement does not acknowledge the asynchronous server manifest notification.
         await WaitForRemoteContractManifestAsync(harness.Client, newPlugin.ContractType);
-        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
+        object? newProxy = await CreatePreparedServiceAsync(harness.Client, newPlugin.ContractType);
         Ensure(await InvokeValueTaskAsync<int>(
                 newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
             "safe-order replacement publishes a usable new Contract/service generation");
@@ -246,7 +246,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("replace-validation");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
 
         var result = await harness.Client.ReplaceAssemblyAsync(
             plugin.ContractAssembly,

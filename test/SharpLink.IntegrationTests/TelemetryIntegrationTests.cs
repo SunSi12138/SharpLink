@@ -24,7 +24,9 @@ public class TelemetryIntegrationTests
         ActivitySource.AddActivityListener(activityListener);
 
         await using var harness = await TelemetryHarness.CreateAsync();
-        await using (var stream = harness.Client.Get<IInterceptorTestService>()
+        var preparedClientInterceptorTestService = harness.Client.CreateProxy<IInterceptorTestService>();
+        await preparedClientInterceptorTestService.PrepareAsync(TimeSpan.FromSeconds(10));
+        await using (var stream = preparedClientInterceptorTestService.Service
                          .FailStreamAsync()
                          .GetAsyncEnumerator())
         {

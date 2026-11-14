@@ -214,7 +214,8 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
 
         public ISharpLinkServer Server { get; }
         public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
+        private readonly RpcProxy<IInterceptorTestService> _proxy;
+        public IInterceptorTestService Service => _proxy.Service;
 
         private OverlapHarness(
             CancellationTokenSource serverCts,
@@ -226,7 +227,7 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IInterceptorTestService>();
+            _proxy = client.CreateProxy<IInterceptorTestService>();
         }
 
         public static async Task<OverlapHarness> CreateAsync()
@@ -244,7 +245,18 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                 .Build();
             await client.ConnectAsync(cts.Token);
-            return new OverlapHarness(cts, serverTask, server, client);
+            var harness = new OverlapHarness(cts, serverTask, server, client);
+            try
+            {
+                await harness._proxy.PrepareAsync(TimeSpan.FromSeconds(10), cts.Token);
+                return harness;
+            }
+            catch (Exception failure)
+            {
+                try { await harness.DisposeAsync(); }
+                catch (Exception cleanup) { throw new AggregateException(failure, cleanup); }
+                throw;
+            }
         }
 
         public async ValueTask DisposeAsync()

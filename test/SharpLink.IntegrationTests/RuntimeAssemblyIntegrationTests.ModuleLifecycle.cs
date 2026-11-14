@@ -78,7 +78,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "duplicate diagnostics contain ALC identity");
 
         await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var unary = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 7, CancellationToken.None);
         Ensure(unary == 8, "dynamic unary");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
@@ -162,7 +162,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("dynamic-dormant-streams");
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var serverStream = InvokeStream(
             proxy, plugin.ContractType, "ServerStreamAsync", 1, CancellationToken.None);
         var duplexStream = InvokeStream(
@@ -195,7 +195,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var clientModule = GetDynamicModule(harness.Client, plugin.ContractAssembly);
         var serverModule = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
         await using (var enumerator = InvokeStream(
@@ -260,7 +260,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await RegisterAllAsync(harness, plugin);
         plugin.ResetServiceState();
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var producerRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
@@ -323,8 +323,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         const string secondServiceName = "SharpLink.DynamicPlugin.SecondThrowingDisposalService";
         var firstContract = plugin.GetContractType(firstContractName);
         var secondContract = plugin.GetContractType(secondContractName);
-        object? firstProxy = GetProxy(harness.Client, firstContract);
-        object? secondProxy = GetProxy(harness.Client, secondContract);
+        object? firstProxy = await CreatePreparedServiceAsync(harness.Client, firstContract);
+        object? secondProxy = await CreatePreparedServiceAsync(harness.Client, secondContract);
         plugin.InvokeServiceStatic(firstServiceName, "Reset");
         plugin.InvokeServiceStatic(secondServiceName, "Reset");
         Ensure(await InvokeValueTaskAsync<int>(
@@ -379,9 +379,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         const string secondServiceName = "SharpLink.DynamicPlugin.SecondThrowingDisposalService";
         var firstContract = plugin.GetContractType(firstContractName);
         var secondContract = plugin.GetContractType(secondContractName);
-        object? firstProxy = GetProxy(harness.Client, firstContract);
-        object? secondProxy = GetProxy(harness.Client, secondContract);
-        var staticProxy = harness.Client.Get<IShutdownCleanupProbe>();
+        object? firstProxy = await CreatePreparedServiceAsync(harness.Client, firstContract);
+        object? secondProxy = await CreatePreparedServiceAsync(harness.Client, secondContract);
+        var staticHandle = harness.Client.CreateProxy<IShutdownCleanupProbe>();
+        await staticHandle.PrepareAsync(TimeSpan.FromSeconds(10));
+        var staticProxy = staticHandle.Service;
         plugin.InvokeServiceStatic(firstServiceName, "Reset");
         plugin.InvokeServiceStatic(secondServiceName, "Reset");
 
@@ -430,7 +432,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         const string contractName = "SharpLink.DynamicPlugin.IFlakyConnectionService";
         const string serviceName = "SharpLink.DynamicPlugin.FlakyConnectionService";
         var contract = plugin.GetContractType(contractName);
-        object? proxy = GetProxy(harness.Client, contract);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, contract);
         plugin.InvokeServiceStatic(serviceName, "Reset");
 
         try
@@ -473,7 +475,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         const string contractName = "SharpLink.DynamicPlugin.IRetiredConnectionService";
         const string serviceName = "SharpLink.DynamicPlugin.RetiredConnectionService";
         var contract = plugin.GetContractType(contractName);
-        object? proxy = GetProxy(harness.Client, contract);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, contract);
         plugin.InvokeServiceStatic(serviceName, "Reset");
         Ensure(await InvokeValueTaskAsync<int>(
             proxy, contract, "TouchAsync", 2, CancellationToken.None) == 42,
@@ -513,7 +515,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         using var callerCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
@@ -568,7 +570,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
             plugin.ContractType,
@@ -620,7 +622,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
             plugin.ContractType,

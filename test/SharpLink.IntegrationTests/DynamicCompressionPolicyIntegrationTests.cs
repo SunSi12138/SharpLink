@@ -61,7 +61,9 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             await connect.WaitAsync(TimeSpan.FromSeconds(5));
 
             var payload = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
-            var response = await client.Get<ICompressionService>().EchoBytesAsync(payload);
+            var proxy = client.CreateProxy<ICompressionService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var response = await proxy.Service.EchoBytesAsync(payload);
             Ensure(response.SequenceEqual(payload), $"{topology}: response payload");
             Ensure(servers.All(static server => server.Provider.CompressCount == 0),
                 $"{topology}: a preference published in the handshake/Ready gap must disable every newly Ready server response");

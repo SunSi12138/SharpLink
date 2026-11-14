@@ -94,7 +94,7 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
             ClientInterceptors = [interceptor],
             SkipInitialSessionProbe = true
         });
-        interceptor.Client = harness.Client;
+        interceptor.Service = harness.Service;
 
         interceptor.ReentryEnabled = false;
         var sessionBefore = await harness.Service.GetSessionIdAsync().ConfigureAwait(false);
@@ -224,7 +224,7 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
         private int _reentryEnabled = 1;
         private int _nestedResult;
 
-        internal ISharpLinkClient? Client { get; set; }
+        internal IExtensionFaultService? Service { get; set; }
         internal int Entries => Volatile.Read(ref _entries);
         internal int NestedCalls => Volatile.Read(ref _nestedCalls);
         internal int NestedResult => Volatile.Read(ref _nestedResult);
@@ -244,8 +244,8 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
                 _depth.Value = 1;
                 try
                 {
-                    var client = Client ?? throw new InvalidOperationException("reentrant client not initialized");
-                    var nested = await client.Get<IExtensionFaultService>()
+                    var service = Service ?? throw new InvalidOperationException("reentrant service not initialized");
+                    var nested = await service
                         .EchoAsync(1)
                         .ConfigureAwait(false);
                     Volatile.Write(ref _nestedResult, nested);
@@ -333,14 +333,16 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
             Task serverTask,
             ISharpLinkServer server,
             ISharpLinkClient client,
+            IExtensionFaultService service,
+            IExtensionDeadlineFaultService deadlineService,
             string initialSession)
         {
             _serverCancellation = serverCancellation;
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IExtensionFaultService>();
-            DeadlineService = client.Get<IExtensionDeadlineFaultService>();
+            Service = service;
+            DeadlineService = deadlineService;
             _initialSession = initialSession;
         }
 
@@ -384,7 +386,10 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
                 await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
                 var service = serviceProxy.Service;
                 var session = await service.GetSessionIdAsync().ConfigureAwait(false);
-                return new LifecycleHarness(cancellation, serverTask, server, client, session);
+                var deadlineProxy = client.CreateProxy<IExtensionDeadlineFaultService>();
+                await deadlineProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellation.Token);
+                return new LifecycleHarness(cancellation, serverTask, server, client,
+                    serviceProxy.Service, deadlineProxy.Service, session);
             }
             catch
             {

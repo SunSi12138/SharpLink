@@ -232,3 +232,27 @@ Selected production compatibility boundary:
 - Corrected our earlier unregister test migration: absence is a cancellable finite wait, not
   immediate FailedPrecondition. The observation is still not a lease. Removed the unused old
   Get-time remote validation helpers rather than keeping a second validation mode.
+
+### Ordinary solution build completed; runtime acceptance continues
+
+- The ordinary Release solution now builds with zero warnings/errors under SDK10.0.115
+  (solution-caller-migration-15.log,7.87s). This includes Integration, Unit, demos, samples,
+  managed AOT smoke callers, benchmarks and load tools; it is a build result, not AOT/runtime
+  or performance acceptance. Non-solution package/external fixtures and generated test-source
+  strings still require their actual consumer gates.
+- Inline Integration callers now retain explicit prepared handles outside tested RPC,
+  interceptor, admission and metric boundaries. Disconnected short circuits remain local.
+  Metadata uses RpcProxyOptions. Reflection-based dynamic consumers prepare the exact returned
+  opaque handle before retrieving Service; coordinator consumers do not prepare a future route.
+- New harness failures unwind their owned resources. Reentrant interceptor tests retain an
+  already-prepared Service rather than doing cold work within the interceptor callback.
+  Filtered remote services remain locally constructible; an unbound default call fails with
+  Unavailable/NoBoundRoute before serialization, replacing the old Get-time rejection assertion.
+- The malformed-frame simulated peer now processes bounded Bind/Ack and observes both actual
+  bound business heads before injecting its oversized header; no fixed150ms startup race.
+  Its handshake has nonempty server/epoch IDs. Other raw legacy/coalesced protocol controls
+  still need runtime review against the new wire contract, as do state-only dynamic fakes.
+- Next runtime order: real five-family call shapes, service lifetimes, selector policy/reconnect,
+  malformed-frame fanout, then full ordinary suites and remaining physical/error combinations.
+  Keep existing budgets and stop each focused batch on first failure; no passing count substitutes
+  for a remaining required class. #387 investigation remains paused.

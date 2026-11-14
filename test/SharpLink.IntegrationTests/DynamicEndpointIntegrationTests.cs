@@ -129,7 +129,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             "repeated ConnectAsync must wait for recovery instead of replaying the initial dial failure");
         await recovery.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(factory.ConnectCount >= 2, "same accepted topology must reconnect after the first dial fails");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered",
+        var preparedRpc1 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc1.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc1.Service.GetEndpointIdAsync() == "recovered",
             "same-version dynamic topology recovers after its reconnect worker succeeds");
     }
 
@@ -331,7 +333,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));
 
             await initial.WaitAsync(TimeSpan.FromSeconds(3));
-            Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "replacement",
+            var preparedRpc2 = client.CreateProxy<IConnectionBehaviorService>();
+            await preparedRpc2.PrepareAsync(TimeSpan.FromSeconds(10));
+            Ensure(await preparedRpc2.Service.GetEndpointIdAsync() == "replacement",
                 "initial ConnectAsync must observe a ready replacement instead of waiting for a retired dial");
         }
         finally
@@ -482,8 +486,12 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "first", "initial last-good topology");
-        await WaitUntilAsync(async () => await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered",
+        var preparedRpc3 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc3.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc3.Service.GetEndpointIdAsync() == "first", "initial last-good topology");
+        var preparedRpc4 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc4.PrepareAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(async () => await preparedRpc4.Service.GetEndpointIdAsync() == "recovered",
             TimeSpan.FromSeconds(4));
         Ensure(resolver.ResolveCount >= 3, "watch end should retry Resolve after one resolver failure");
     }
@@ -508,7 +516,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "dns", "DNS discovery RPC");
+        var preparedRpc5 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc5.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc5.Service.GetEndpointIdAsync() == "dns", "DNS discovery RPC");
     }
 
     private static SharpLinkEndpoint Endpoint(string id, int port, string zone) => new()

@@ -630,7 +630,36 @@ public partial class TransportConnectionIntegrationTests
             await stream.WriteAsync(handshake.WrittenMemory);
             await stream.FlushAsync();
 
-            await Task.Delay(150);
+            // Join real Bind/Ack and both published business heads before the malicious
+            // header, rather than racing cold preparation against a fixed delay.
+            var incoming = new byte[8192];
+            var retained = 0;
+            var requests = 0;
+            using var readDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (requests < 2)
+            {
+                var read = await stream.ReadAsync(incoming.AsMemory(retained), readDeadline.Token);
+                Ensure(read != 0, "client closed before both pending requests were published");
+                var sequence = new ReadOnlySequence<byte>(incoming.AsMemory(0, retained + read));
+                while (ProtocolV2FrameParser.TryReadFrame(ref sequence, new SharpLinkProtocolOptions(),
+                    out var header, out var payload))
+                {
+                    if (header.Type == ProtocolV2FrameType.BindContract)
+                    {
+                        using var ack = new PooledByteBufferWriter();
+                        ContractManifestTestHelper.WriteBindAck(ack, header.RequestId, payload, typeof(ITestService));
+                        await stream.WriteAsync(ack.WrittenMemory, readDeadline.Token);
+                        await stream.FlushAsync(readDeadline.Token);
+                    }
+                    else if (header.Type == ProtocolV2FrameType.Request)
+                    {
+                        ContractManifestTestHelper.EnsureBoundPrefix(payload);
+                        requests++;
+                    }
+                }
+                retained = checked((int)sequence.Length);
+                sequence.CopyTo(incoming);
+            }
 
             var maliciousHeader = new byte[ProtocolV2Constants.HeaderBytes];
             maliciousHeader[0] = ProtocolV2Constants.Magic;
@@ -654,7 +683,9 @@ public partial class TransportConnectionIntegrationTests
         {
             await client.ConnectAsync();
             Ensure(client.State == SharpLinkConnectionState.Ready, "fake server handshake");
-            var svc = client.Get<ITestService>();
+            var proxy = client.CreateProxy<ITestService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var svc = proxy.Service;
 
             var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
             var streamTask = CollectAsync(

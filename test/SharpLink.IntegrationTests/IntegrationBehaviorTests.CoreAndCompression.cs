@@ -126,6 +126,8 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var preparedClientTestService = harness.Client.CreateProxy<ITestService>();
+        await preparedClientTestService.PrepareAsync(TimeSpan.FromSeconds(10));
 
         var source = new Person
         {
@@ -133,7 +135,7 @@ public partial class IntegrationBehaviorTests
             Age = 7,
             Tags = [new string('b', 4096)]
         };
-        var response = await harness.Client.Get<ITestService>().EchoAsync(source);
+        var response = await preparedClientTestService.Service.EchoAsync(source);
 
         Ensure(response.Name == source.Name + "-r", "compressed unary response");
         Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
@@ -150,9 +152,11 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var preparedClientCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedClientCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
 
         var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
-        var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
+        var response = await preparedClientCompressionService.Service.EchoBytesAsync(payload);
 
         Ensure(response.SequenceEqual(payload), "different local encode-only tuning");
         Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
@@ -181,8 +185,10 @@ public partial class IntegrationBehaviorTests
                 options.Compression.Providers.Add(serverPreferred);
                 options.Compression.Providers.Add(serverAlternate);
             });
+        var preparedClientCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedClientCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
 
-        var result = await harness.Client.Get<ICompressionService>()
+        var result = await preparedClientCompressionService.Service
             .EchoBytesAsync(Enumerable.Repeat((byte)3, 4096).ToArray());
         Ensure(result.Length == 4096, "provider preference call");
         Ensure(clientPreferred.CompressCount > 0 && serverPreferred.DecompressCount > 0,
@@ -204,8 +210,10 @@ public partial class IntegrationBehaviorTests
             serverRuntimeConfigure: oneSided
                 ? null
                 : options => options.Compression.Providers.Add(serverProvider));
+        var preparedClientTestService = harness.Client.CreateProxy<ITestService>();
+        await preparedClientTestService.PrepareAsync(TimeSpan.FromSeconds(10));
 
-        var result = await harness.Client.Get<ITestService>().EchoAsync(new Person
+        var result = await preparedClientTestService.Service.EchoAsync(new Person
         {
             Name = new string('x', 4096),
             Age = 1,
@@ -268,9 +276,11 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var preparedClientCompressionService = harness.Client.CreateProxy<ICompressionService>();
+        await preparedClientCompressionService.PrepareAsync(TimeSpan.FromSeconds(10));
         var payload = Enumerable.Repeat((byte)0x4a, 4096).ToArray();
 
-        var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
+        var response = await preparedClientCompressionService.Service.EchoBytesAsync(payload);
 
         Ensure(response.SequenceEqual(payload), "public TryCompress=false raw fallback");
         Ensure(clientProvider.CompressCount > 0 && serverProvider.CompressCount > 0,

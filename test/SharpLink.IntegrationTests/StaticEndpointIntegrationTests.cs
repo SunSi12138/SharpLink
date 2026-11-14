@@ -62,7 +62,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "available",
+        var preparedRpc1 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc1.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc1.Service.GetEndpointIdAsync() == "available",
             "a healthy endpoint should connect when another is unavailable");
     }
 
@@ -214,7 +216,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(4) == 5, "named-pipe static-cluster RPC");
+        var preparedRpc2 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc2.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc2.Service.PingAsync(4) == 5, "named-pipe static-cluster RPC");
     }
 
     [Test]
@@ -235,7 +239,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(6) == 7, "shared-memory static-cluster RPC");
+        var preparedRpc3 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc3.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc3.Service.PingAsync(6) == 7, "shared-memory static-cluster RPC");
     }
 
     [Test]
@@ -258,7 +264,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(10) == 11, "UDS static-cluster RPC");
+        var preparedRpc4 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc4.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc4.Service.PingAsync(10) == 11, "UDS static-cluster RPC");
     }
 
     [Test]
@@ -490,7 +498,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
         Ensure(delayedFailure.ConnectCount >= 2,
             "failed initial sibling must be retried to restore the configured minimum ready count");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() is "first" or "recovered",
+        var preparedRpc5 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc5.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc5.Service.GetEndpointIdAsync() is "first" or "recovered",
             "recovered static endpoint topology should remain usable");
     }
 

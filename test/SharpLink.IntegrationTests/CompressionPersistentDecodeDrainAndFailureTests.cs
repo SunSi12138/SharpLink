@@ -110,7 +110,9 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
-        var call = harness.Client.Get<IPersistentDecodeControlPlaneService>()
+        var callProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+        await callProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var call = callProxy.Service
             .MeasureAsync(CreateLargePayload(0xA1), cancellation.Token)
             .AsTask();
 

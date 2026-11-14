@@ -196,7 +196,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "A/C replacement topology");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        var preparedRpc1 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc1.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc1.Service.GetEndpointIdAsync() == "third",
             "the replacement topology must route to the new C endpoint generation");
 
         var lastAccepted = client.GetReadinessSnapshot();
@@ -207,7 +209,9 @@ public sealed partial class DynamicEndpointIntegrationTests
         ]));
         Ensure(client.GetReadinessSnapshot() == lastAccepted,
             "a stale resolver snapshot must leave readiness facts unchanged");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        var preparedRpc2 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc2.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc2.Service.GetEndpointIdAsync() == "third",
             "a stale resolver snapshot must not restore the retired B endpoint");
 
         await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(6,
@@ -219,7 +223,9 @@ public sealed partial class DynamicEndpointIntegrationTests
         ]));
         Ensure(client.GetReadinessSnapshot() == lastAccepted,
             "a rejected resolver snapshot must leave readiness facts unchanged");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        var preparedRpc3 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc3.PrepareAsync(TimeSpan.FromSeconds(10));
+        Ensure(await preparedRpc3.Service.GetEndpointIdAsync() == "third",
             "a rejected resolver snapshot must retain the last accepted topology");
     }
 
@@ -272,7 +278,9 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "empty-to-two endpoint recovery");
-        var endpointId = await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync();
+        var preparedRpc4 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc4.PrepareAsync(TimeSpan.FromSeconds(10));
+        var endpointId = await preparedRpc4.Service.GetEndpointIdAsync();
         Ensure(endpointId is "first" or "second", "topology recovery RPC");
     }
 
@@ -353,8 +361,10 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        var preparedRpc5 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc5.PrepareAsync(TimeSpan.FromSeconds(10));
         var call = Task.Run(async () =>
-            await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync());
+            await preparedRpc5.Service.GetEndpointIdAsync());
         await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
         try
@@ -404,8 +414,10 @@ public sealed partial class DynamicEndpointIntegrationTests
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("east", east.Port, "east")]));
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
 
+        var preparedRpc6 = client.CreateProxy<IConnectionBehaviorService>();
+        await preparedRpc6.PrepareAsync(TimeSpan.FromSeconds(10));
         var exception = await CaptureSharpLinkException(
-            client.Get<IConnectionBehaviorService>().GetEndpointIdAsync().AsTask());
+            preparedRpc6.Service.GetEndpointIdAsync().AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
             "a strict dynamic selector must not be bypassed for one candidate");
     }

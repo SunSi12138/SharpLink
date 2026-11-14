@@ -16,7 +16,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        _ = await client.Get<IBlockingConnectionCleanupProbe>().ActivateAsync();
+        var clientProbe = client.CreateProxy<IBlockingConnectionCleanupProbe>();
+        await clientProbe.PrepareAsync(TimeSpan.FromSeconds(10), serverCancellation.Token);
+        _ = await clientProbe.Service.ActivateAsync();
 
         var stop = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
         await BlockingConnectionCleanupProbe.DisposeStarted.WaitAsync(TimeSpan.FromSeconds(2));
@@ -190,16 +192,18 @@ public sealed class ServiceLifetimeIntegrationTests
         var firstServerTask = firstServer.RunUntilStoppedAsync(firstCancellation.Token).AsTask();
         await using var firstClient = CreateClient(firstPort);
         await firstClient.ConnectAsync();
-        _ = await firstClient.Get<ICallLifetimeProbe>().GetInstanceIdAsync();
+        var firstClientProbe = firstClient.CreateProxy<ICallLifetimeProbe>();
+        await firstClientProbe.PrepareAsync(TimeSpan.FromSeconds(10), firstCancellation.Token);
+        _ = await firstClientProbe.Service.GetInstanceIdAsync();
         try
         {
-            _ = await firstClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+            _ = await firstClient.CreateProxy<IConnectionLifetimeProbe>().Service.GetInstanceIdAsync();
             throw new Exception("assert failed: disabled automatic registration must hide non-enabled services");
         }
         catch (SharpLinkException exception)
         {
-            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
-                "filtered service contract acquisition");
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable,
+                "a locally constructible but remotely unbound filtered service must fail before payload serialization");
         }
         await firstClient.StopAsync();
         await firstServer.StopAsync(TimeSpan.FromSeconds(2));
@@ -214,7 +218,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var secondServerTask = secondServer.RunUntilStoppedAsync(secondCancellation.Token).AsTask();
         await using var secondClient = CreateClient(secondPort);
         await secondClient.ConnectAsync();
-        _ = await secondClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+        var secondClientProbe = secondClient.CreateProxy<IConnectionLifetimeProbe>();
+        await secondClientProbe.PrepareAsync(TimeSpan.FromSeconds(10), secondCancellation.Token);
+        _ = await secondClientProbe.Service.GetInstanceIdAsync();
         await secondClient.StopAsync();
         await secondServer.StopAsync(TimeSpan.FromSeconds(2));
         await secondCancellation.CancelAsync();

@@ -80,7 +80,9 @@ public class ClientStreamingResultStressTests
         try
         {
             var payload = Enumerable.Repeat((byte)0x41, 4096).ToArray();
-            var call = harness.Client.Get<ICompressionService>()
+            var callProxy = harness.Client.CreateProxy<ICompressionService>();
+            await callProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var call = callProxy.Service
                 .UploadBytesAsync(SinglePayload(payload)).AsTask();
 
             await gate.Entered.WaitAsync(PhaseTimeout);
@@ -145,7 +147,9 @@ public class ClientStreamingResultStressTests
             const int activeItemCount = 16;
             const int activeItemSize = 512;
             const int queuedItemSize = 64;
-            var call = harness.Client.Get<ICompressionService>()
+            var callProxy = harness.Client.CreateProxy<ICompressionService>();
+            await callProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var call = callProxy.Service
                 .UploadBytesAsync(GatedPayloads(
                     queuedItemSize,
                     activeItemCount,
@@ -336,7 +340,8 @@ public class ClientStreamingResultStressTests
 
         public ISharpLinkServer Server { get; }
         public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
+        private readonly RpcProxy<IInterceptorTestService> _proxy;
+        public IInterceptorTestService Service => _proxy.Service;
 
         private Harness(
             CancellationTokenSource serverCts,
@@ -348,7 +353,7 @@ public class ClientStreamingResultStressTests
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IInterceptorTestService>();
+            _proxy = client.CreateProxy<IInterceptorTestService>();
         }
 
         public static async Task<Harness> CreateAsync(
@@ -377,7 +382,18 @@ public class ClientStreamingResultStressTests
 
             var client = clientBuilder.Build();
             await client.ConnectAsync(cts.Token);
-            return new Harness(cts, serverTask, server, client);
+            var harness = new Harness(cts, serverTask, server, client);
+            try
+            {
+                await harness._proxy.PrepareAsync(TimeSpan.FromSeconds(10), cts.Token);
+                return harness;
+            }
+            catch (Exception failure)
+            {
+                try { await harness.DisposeAsync(); }
+                catch (Exception cleanup) { throw new AggregateException(failure, cleanup); }
+                throw;
+            }
         }
 
         private static SharpLinkCompressionSendPolicy CreateCompressionPolicy()

@@ -31,7 +31,9 @@ public class ServerInterceptorDeadlineReentryTests
         try
         {
             await client.ConnectAsync(serverCancellation.Token);
-            var call = client.Get<IInterceptorTestService>()
+            var callProxy = client.CreateProxy<IInterceptorTestService>();
+            await callProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            var call = callProxy.Service
                 .DescribeNumberAsync(41)
                 .AsTask();
 

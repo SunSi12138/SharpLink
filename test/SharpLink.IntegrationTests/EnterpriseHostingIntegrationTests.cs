@@ -58,7 +58,9 @@ public class EnterpriseHostingIntegrationTests
                     services.GetRequiredService<LifetimeDependency>()),
                 SharpLinkServiceLifetime.Call)))
         {
-            _ = await harness.Client.Get<IEnterpriseLifetimeService>().GetValueAsync();
+            var proxy = harness.Client.CreateProxy<IEnterpriseLifetimeService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            _ = await proxy.Service.GetValueAsync();
             Ensure(LifetimeServiceState.Disposed == 1, "factory scoped service disposed");
         }
 
@@ -67,7 +69,9 @@ public class EnterpriseHostingIntegrationTests
         await using (var harness = await EnterpriseHarness.CreateAsync(builder =>
             builder.ReplaceService<IEnterpriseLifetimeService>(instance)))
         {
-            _ = await harness.Client.Get<IEnterpriseLifetimeService>().GetValueAsync();
+            var proxy = harness.Client.CreateProxy<IEnterpriseLifetimeService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            _ = await proxy.Service.GetValueAsync();
         }
         Ensure(LifetimeServiceState.Disposed == 0, "caller-owned singleton is not disposed");
         await instance.DisposeAsync();
@@ -124,7 +128,9 @@ public class EnterpriseHostingIntegrationTests
         var health = await harness.Client.CheckHealthAsync();
         Ensure(health.Status == SharpLinkHealthStatus.Ready, "remote health ready");
 
-        var stream = harness.Client.Get<IEnterpriseLifetimeService>().StreamAsync().GetAsyncEnumerator();
+        var streamProxy = harness.Client.CreateProxy<IEnterpriseLifetimeService>();
+        await streamProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var stream = streamProxy.Service.StreamAsync().GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync(), "active stream started");
         await LifetimeServiceState.WaitForStreamBlockedAsync().WaitAsync(TimeSpan.FromSeconds(3));
         var stopTask = harness.Server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();

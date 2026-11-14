@@ -22,10 +22,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => _items.Add((name, value as WeakReference ?? new WeakReference(value, trackResurrection: false)));
     }
 
-    private static object? GetMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)
-        => typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.Get))!
-            .MakeGenericMethod(contractType)
-            .Invoke(client, null);
+    private static object CreateLocalMultiClusterService(ISharpLinkMultiClusterClient client, Type contractType)
+        => GetHandleService(CreateLocalProxyHandle(client, typeof(ISharpLinkMultiClusterClient), contractType));
 
     private sealed class PluginBundle : IDisposable
     {

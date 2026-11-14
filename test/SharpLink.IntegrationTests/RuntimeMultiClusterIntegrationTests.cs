@@ -52,7 +52,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
         var removal = await client.RemoveClusterAsync("runtime", TimeSpan.FromSeconds(2));
         Ensure(removal is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
             "a completed child stop must be reported as a graceful removal");
-        var missingRoute = CaptureException(() => client.Get<IConnectionBehaviorService>());
+        var missingRoute = CaptureException(() => client.CreateProxy<IConnectionBehaviorService>());
         Ensure(missingRoute is InvalidOperationException,
             "new proxy creation must fail immediately after the slot is removed");
     }

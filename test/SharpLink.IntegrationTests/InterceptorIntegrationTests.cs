@@ -117,7 +117,9 @@ public class InterceptorIntegrationTests
     {
         var interceptor = new RecordingServerInterceptor();
         await using var harness = await InterceptorHarness.CreateAsync(serverInterceptor: interceptor);
-        var stream = harness.Client.Get<IInterceptorTestService>().FailStreamAsync().GetAsyncEnumerator();
+        var streamProxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await streamProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var stream = streamProxy.Service.FailStreamAsync().GetAsyncEnumerator();
         try
         {
             Ensure(await stream.MoveNextAsync() && stream.Current == 1, "intercepted stream first item");
@@ -183,7 +185,7 @@ public class InterceptorIntegrationTests
         var wrongStream = new TrackingShortCircuitClientInterceptor("not-a-stream");
         await using (var client = CreateDisconnectedClient(wrongStream))
         {
-            var stream = client.Get<IInterceptorTestService>().FailStreamAsync().GetAsyncEnumerator();
+            var stream = client.CreateProxy<IInterceptorTestService>().Service.FailStreamAsync().GetAsyncEnumerator();
             try
             {
                 var failure = await CaptureException(stream.MoveNextAsync().AsTask());
@@ -201,7 +203,7 @@ public class InterceptorIntegrationTests
         await using (var client = CreateDisconnectedClient(wrongOneWay))
         {
             var failure = await CaptureException(
-                client.Get<IInterceptorTestService>().NotifyAsync(1).AsTask());
+                client.CreateProxy<IInterceptorTestService>().Service.NotifyAsync(1).AsTask());
             Ensure(failure is InvalidCastException, "non-null OneWay short-circuit result");
             Ensure(wrongOneWay.Context?.Status == SharpLinkInvocationStatus.Failed,
                 "non-null OneWay short-circuit context status");
@@ -211,7 +213,7 @@ public class InterceptorIntegrationTests
         await using (var client = CreateDisconnectedClient(validStream))
         {
             var values = new List<int>();
-            await foreach (var value in client.Get<IInterceptorTestService>().FailStreamAsync())
+            await foreach (var value in client.CreateProxy<IInterceptorTestService>().Service.FailStreamAsync())
                 values.Add(value);
             Ensure(values is [42], "valid streaming short circuit");
             Ensure(validStream.Context?.Status == SharpLinkInvocationStatus.Succeeded,
@@ -223,7 +225,7 @@ public class InterceptorIntegrationTests
         var validOneWay = new TrackingShortCircuitClientInterceptor(null);
         await using (var client = CreateDisconnectedClient(validOneWay))
         {
-            await client.Get<IInterceptorTestService>().NotifyAsync(1);
+            await client.CreateProxy<IInterceptorTestService>().Service.NotifyAsync(1);
             Ensure(validOneWay.Context?.Status == SharpLinkInvocationStatus.Succeeded,
                 "valid OneWay short-circuit context status");
             Ensure(client.State == SharpLinkConnectionState.Created,
@@ -267,7 +269,9 @@ public class InterceptorIntegrationTests
         InterceptorTestService.ResetDelayedCall();
         await using var harness = await InterceptorHarness.CreateAsync(
             serverInterceptor: new ReturningServerInterceptor());
-        var call = harness.Client.Get<IInterceptorTestService>().DelayedAsync().AsTask();
+        var callProxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await callProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var call = callProxy.Service.DelayedAsync().AsTask();
         try
         {
             await InterceptorTestService.DelayedCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
@@ -290,7 +294,9 @@ public class InterceptorIntegrationTests
         InterceptorTestService.ResetDelayedCall();
         await using var harness = await InterceptorHarness.CreateAsync(
             clientInterceptor: new ReturningClientInterceptor());
-        var call = harness.Client.Get<IInterceptorTestService>().DelayedAsync().AsTask();
+        var callProxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await callProxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var call = callProxy.Service.DelayedAsync().AsTask();
         try
         {
             await InterceptorTestService.DelayedCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
@@ -391,7 +397,7 @@ public class InterceptorIntegrationTests
         await using (var client = CreateDisconnectedClient(requiredShortCircuit))
         {
             var failure = await CaptureException(
-                client.Get<IInterceptorTestService>().RequiredNullAsync().AsTask());
+                client.CreateProxy<IInterceptorTestService>().Service.RequiredNullAsync().AsTask());
             Ensure(failure is InvalidCastException, "required Client short-circuit null response");
             Ensure(requiredShortCircuit.Context?.Status == SharpLinkInvocationStatus.Failed,
                 "required Client short-circuit null status");
@@ -400,7 +406,7 @@ public class InterceptorIntegrationTests
         var optionalShortCircuit = new TrackingShortCircuitClientInterceptor(null);
         await using (var client = CreateDisconnectedClient(optionalShortCircuit))
         {
-            Ensure(await client.Get<IInterceptorTestService>().OptionalNullAsync() is null,
+            Ensure(await client.CreateProxy<IInterceptorTestService>().Service.OptionalNullAsync() is null,
                 "optional Client short-circuit null response");
             Ensure(optionalShortCircuit.Context?.Status == SharpLinkInvocationStatus.Succeeded,
                 "optional Client short-circuit null status");
@@ -412,8 +418,9 @@ public class InterceptorIntegrationTests
     {
         await using var harness = await InterceptorHarness.CreateAsync(
             exceptionMapper: new UndefinedCodeExceptionMapper());
-        var failure = await CaptureSharpLinkException(
-            harness.Client.Get<IInterceptorTestService>().FailAsync().AsTask());
+        var proxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+        var failure = await CaptureSharpLinkException(proxy.Service.FailAsync().AsTask());
 
         Ensure(failure.Code == SharpLinkErrorCode.Internal,
             "undefined mapper code must use the safe Internal boundary");
@@ -449,7 +456,9 @@ public class InterceptorIntegrationTests
         await using (var clientHarness = await InterceptorHarness.CreateAsync(
                          clientInterceptor: new ReturningClientInterceptor()))
         {
-            _ = await clientHarness.Client.Get<IInterceptorTestService>().CountInvocationAsync();
+            var proxy = clientHarness.Client.CreateProxy<IInterceptorTestService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            _ = await proxy.Service.CountInvocationAsync();
         }
         var clientInvocationCount = InterceptorTestService.InvocationCount;
 
@@ -457,7 +466,9 @@ public class InterceptorIntegrationTests
         await using (var serverHarness = await InterceptorHarness.CreateAsync(
                          serverInterceptor: new ReturningServerInterceptor()))
         {
-            _ = await serverHarness.Client.Get<IInterceptorTestService>().CountInvocationAsync();
+            var proxy = serverHarness.Client.CreateProxy<IInterceptorTestService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10));
+            _ = await proxy.Service.CountInvocationAsync();
         }
         var serverInvocationCount = InterceptorTestService.InvocationCount;
 
