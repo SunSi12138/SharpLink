@@ -64,7 +64,7 @@ internal sealed class ServerGeneratedBridge(
                 payloadNullable,
                 cancellationToken));
 
-    public async ValueTask PumpOutboundStreamAsync<T>(
+    public ValueTask PumpOutboundStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
@@ -73,42 +73,23 @@ internal sealed class ServerGeneratedBridge(
         long contractId,
         long methodId,
         CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _protocolBridge.PumpOutboundStreamAsync(
-                requestId,
-                streamId,
-                new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
-                codec,
-                payloadNullable,
-                contractId,
-                methodId,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (
-            exception is not OutOfMemoryException and not StackOverflowException)
-        {
-            // Once the framework call owner has selected a terminal, this pump has lost both
-            // user-code and wire-publication ownership. Do not run the application exception
-            // mapper and do not publish a second StreamComplete(Error); the selected call terminal
-            // is already responsible for the externally visible outcome. The local send-flow state
-            // still belongs to this pump and must be retired even though no wire terminal is sent.
-            if (GetSelectedTerminal(requestId) is { } selectedTerminal)
-            {
-                session.CompleteSendStream(requestId, streamId, selectedTerminal);
-                return;
-            }
+        => new OutputInvocation<T>(this, requestId, stream).PumpAsync(
+            streamId, codec, payloadNullable, contractId, methodId, cancellationToken);
 
-            var protocolError = server.MapStreamServiceException(
-                callCancellations,
-                session,
-                requestId,
-                contractId,
-                methodId,
-                exception);
-            session.SendStreamErrorAsync(requestId, streamId, protocolError);
+    private void CompleteFailedOutput(
+        long requestId, ushort streamId, long contractId, long methodId, Exception exception)
+    {
+        // A selected call terminal already owns the externally visible outcome. Close
+        // only local send flow here; the invocation still owns its physical output join.
+        if (GetSelectedTerminal(requestId) is { } selectedTerminal)
+        {
+            session.CompleteSendStream(requestId, streamId, selectedTerminal);
+            return;
         }
+
+        var protocolError = server.MapStreamServiceException(
+            callCancellations, session, requestId, contractId, methodId, exception);
+        session.SendStreamErrorAsync(requestId, streamId, protocolError);
     }
 
     private SharpLinkException? GetSelectedTerminal(long requestId)
@@ -147,33 +128,73 @@ internal sealed class ServerGeneratedBridge(
     }
 
     private sealed class UserCodeEntryAsyncEnumerable<T>(
-        ServerGeneratedBridge bridge,
-        long requestId,
-        IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
+        ServerGeneratedBridge bridge, long requestId, IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
     {
         public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
             bridge.EnsureUserCodeEntry(requestId);
-            return new UserCodeEntryAsyncEnumerator(
-                bridge,
-                requestId,
-                stream.GetAsyncEnumerator(cancellationToken));
+            return new UserCodeEntryAsyncEnumerator<T>(bridge, requestId, stream.GetAsyncEnumerator(cancellationToken));
         }
+    }
 
-        private sealed class UserCodeEntryAsyncEnumerator(
-            ServerGeneratedBridge bridge,
-            long requestId,
-            IAsyncEnumerator<T> enumerator) : IAsyncEnumerator<T>
+    private sealed class OutputInvocation<T>(
+        ServerGeneratedBridge bridge, long requestId, IAsyncEnumerable<T> stream)
+        : IAsyncEnumerable<T>, IGeneratedOutputPhysicalLifetime
+    {
+        // Replaces the existing output-wrapper stream reference only on abandon.
+        private object _streamOrTail = stream;
+
+        public GeneratedOutputPhysicalTail GetPhysicalTail()
         {
-            public T Current => enumerator.Current;
-
-            public ValueTask<bool> MoveNextAsync()
-            {
-                bridge.EnsureUserCodeEntry(requestId);
-                return enumerator.MoveNextAsync();
-            }
-
-            public ValueTask DisposeAsync() => enumerator.DisposeAsync();
+            if (_streamOrTail is GeneratedOutputPhysicalTail existing)
+                return existing;
+            var tail = new GeneratedOutputPhysicalTail();
+            _streamOrTail = tail;
+            return tail;
         }
+
+        private ValueTask JoinPhysicalOutputAsync()
+            => _streamOrTail is GeneratedOutputPhysicalTail tail ? tail.JoinAsync() : ValueTask.CompletedTask;
+
+        internal async ValueTask PumpAsync(
+            ushort streamId, IRpcCodec<T> codec, bool payloadNullable,
+            long contractId, long methodId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await bridge._protocolBridge.PumpOutboundStreamAsync(
+                    requestId, streamId, this, codec, payloadNullable,
+                    contractId, methodId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+            {
+                bridge.CompleteFailedOutput(requestId, streamId, contractId, methodId, exception);
+            }
+            finally
+            {
+                // Existing invocation ownership encloses this physical join, retaining
+                // the exact service/module lease, scope and original call-state CTS.
+                await JoinPhysicalOutputAsync().ConfigureAwait(false);
+            }
+        }
+
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            bridge.EnsureUserCodeEntry(requestId);
+            return new UserCodeEntryAsyncEnumerator<T>(bridge, requestId,
+                ((IAsyncEnumerable<T>)_streamOrTail).GetAsyncEnumerator(cancellationToken));
+        }
+    }
+
+    private sealed class UserCodeEntryAsyncEnumerator<T>(
+        ServerGeneratedBridge bridge, long requestId, IAsyncEnumerator<T> enumerator) : IAsyncEnumerator<T>
+    {
+        public T Current => enumerator.Current;
+        public ValueTask<bool> MoveNextAsync()
+        {
+            bridge.EnsureUserCodeEntry(requestId);
+            return enumerator.MoveNextAsync();
+        }
+        public ValueTask DisposeAsync() => enumerator.DisposeAsync();
     }
 }

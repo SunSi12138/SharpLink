@@ -395,7 +395,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             bool registerDynamicServiceDependencies = true,
             IManifestReadinessControl? control = null,
             ISharpLinkCompressionProvider? compressionProvider = null,
-            bool sharedMemory = false)
+            bool sharedMemory = false,
+            TimeProvider? clientTimeProvider = null,
+            TimeSpan? requestTimeout = null)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
@@ -419,6 +421,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
             var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (clientTimeProvider is not null) clientBuilder.UseTimeProvider(clientTimeProvider);
+            if (requestTimeout is not null) clientBuilder.UseRequestTimeout(requestTimeout.Value);
             if (sharedMemory)
                 clientBuilder.UseSharedMemory(memoryName);
             else
