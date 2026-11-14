@@ -67,7 +67,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         // Neither half of the pair may reach the peer: the Request was refused, so the cancel that
         // the terminal transition wanted to publish belongs to no Request at all.
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not (ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayInputRequest)),
             "a Request the send queue refused must not reach the peer");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "a Request that never entered the send queue must never produce a cancel");
@@ -120,7 +120,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             "an elapsed deadline that the scheduler has not reported yet must still fail the call");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not (ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayInputRequest)),
             "a Request whose budget already elapsed must not be published by the gate that admits it");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may be emitted for a request the gate refused to publish");
@@ -173,7 +173,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             "a deadline that elapses inside the compression provider must fail the call");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not (ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayInputRequest)),
             "a deadline that won during frame preparation must leave the Request unpublished");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may be emitted for a request that was never published");
@@ -234,7 +234,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             stall.Set();
             var published = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
             var cancelled = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
-            Ensure(published?.Header.Type == ProtocolV2FrameType.Request,
+            Ensure(published?.Header.Type == ProtocolV2FrameType.OneWayInputRequest && published.Value.Payload[0] == 1,
                 "the accepted Request still reaches the peer after the deadline stopped the caller");
             Ensure(cancelled?.Header.Type == ProtocolV2FrameType.Cancel &&
                    cancelled!.Value.Header.RequestId == published!.Value.Header.RequestId,
@@ -435,7 +435,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             "a plain OneWay whose budget elapsed during preparation must fail at its deadline");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not (ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayInputRequest)),
             "a Request that expired before admission must never be published");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may be emitted for a request that was never published");
@@ -533,7 +533,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             "a deadline that elapses while a plain OneWay is serialized must fail the call");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not (ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayInputRequest)),
             "an already expired plain OneWay must not be published at all");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may follow a Request that was never published");
@@ -686,10 +686,16 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         TestClientTransportFactory transport)
     {
         await GetOnlyReadyConnection(client).Session.FlushSendQueueAsync();
-        // Flush completes before the transport observer necessarily parses the startup frames.
-        // Its FIFO Ping proves that the observer consumed all preceding handshake output.
-        _ = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Ping)
+        // The initial heartbeat Ping may precede BindContract. Fence all completed cold
+        // preparation with a new peer Ping/Pong rather than leaving a Bind in the observation
+        // queue and misidentifying it as the later business frame.
+        var timestamp = new byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64LittleEndian(timestamp, 775);
+        await transport.Connection.InjectFrameAsync(ProtocolV2FrameType.Ping,
+            ProtocolV2FrameFlags.None, 0, timestamp);
+        var pong = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Pong)
             .WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(pong.Payload.AsSpan().SequenceEqual(timestamp), "startup fence must preserve its Ping identity");
     }
 
     private static Task StallNextEmission(

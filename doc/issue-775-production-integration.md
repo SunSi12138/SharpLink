@@ -168,3 +168,28 @@ Selected production compatibility boundary:
   the same deterministic regression to instance Singleton, factory Singleton, Connection and
   Call lifetimes, with exact activation counts across two invocations and one cold resolution.
   The original failed source/log is retained; no budget or failure expectation was relaxed.
+
+### Focused runtime results and cold-demand correction
+
+- The protected-lifetime fix414cc018 passes all28 ServiceRegistration cases, including
+  all four lifetime forms and failure/cleanup aggregation. Request scope suites pass5/5
+  and6/6 without changing their100,000-call ownership control.
+- Migrated the simulated peer to real nonempty, stable per-Session server/epoch identities.
+  Its manifest refresh helper preserves those identities; raw malformed-frame injection
+  remains raw. Discovery7/7, contract/Prepare5/5, remote-observation21/21 and protocol
+  manifest4/4 pass, including two new empty-server/epoch rejection controls.
+- Deadline clock1/1 retains the exact8-sample criterion. Logical deadline2/2 passes.
+  Timed Unary emission initially failed its unchanged no-per-call-framework-task assertion:
+  repeated cold channel factories and Prepare joins were dirtying the same binding demand.
+  New-demand registration is now idempotent and a Prepare join does not mark an in-progress
+  capture dirty; actual topology/manifest publications still do. The strict3/3 timed Unary
+  suite then passed. Publication/early-Ack inventories must recheck this scheduler change.
+- Deadline publication initially passed7/11. The old startup Ping fence preceded the new
+  Bind frame, leaving Bind in the business observation queue; the OneWay-input positive
+  assertion also expected the retired Request shape. Replaced that fence by an ordered new
+  peer Ping/Pong, asserted OneWayInputRequest plus count1, and strengthened negative business
+  publication checks to reject either request frame family. All11/11 then pass with original
+  budgets, producer-not-started and Request-before-Cancel assertions retained.
+- Logs for these migrations are artifacts/775-integration/unit-*-identity-wip.log,
+  *-demand-wip.log and *-fence-wip.log. Failed logs remain. These focused runs do not imply
+  the full ordinary Unit suite, full solution, platforms or performance are accepted.

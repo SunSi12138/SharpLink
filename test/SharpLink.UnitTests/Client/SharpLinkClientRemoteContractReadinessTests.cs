@@ -400,7 +400,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     {
         using var payload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(payload,
-            new ProtocolV2ContractManifest(generation, contracts), new SharpLinkProtocolOptions());
+            connection.CreateRemoteManifest(generation, contracts), new SharpLinkProtocolOptions());
         await connection.InjectFrameAsync(ProtocolV2FrameType.ContractManifest,
             ProtocolV2FrameFlags.None, 0, payload.WrittenMemory);
         var timestamp = new byte[sizeof(long)];

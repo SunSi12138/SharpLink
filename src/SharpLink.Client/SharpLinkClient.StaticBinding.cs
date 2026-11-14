@@ -30,7 +30,7 @@ internal sealed partial class SharpLinkClient
         }
         try
         {
-            ScheduleStaticBindingRefresh(site);
+            ScheduleStaticBindingRefresh(site, stateChanged: false);
             while (true)
             {
                 var changed = Volatile.Read(ref _staticBindingChanged);
@@ -64,7 +64,7 @@ internal sealed partial class SharpLinkClient
         => Interlocked.Exchange(ref _staticBindingChanged,
             new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
 
-    private void ScheduleStaticBindingRefresh(StaticBindingCallSite site)
+    private void ScheduleStaticBindingRefresh(StaticBindingCallSite site, bool stateChanged = true)
     {
         // Stop seals/drains the same supervisor under this existing publication gate.
         // Register the queued task before releasing it; no unowned ThreadPool callback can
@@ -78,6 +78,9 @@ internal sealed partial class SharpLinkClient
                 if (state == 2) return;
                 if (state == 1)
                 {
+                    // Joining the same demand is not a new topology/manifest event.
+                    // Real state publications still mark the in-progress capture dirty.
+                    if (!stateChanged) return;
                     if (Interlocked.CompareExchange(ref site.RefreshState, 2, 1) == 1) return;
                     continue;
                 }

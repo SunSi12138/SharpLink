@@ -96,8 +96,10 @@ internal sealed partial class SharpLinkClient
 
     private void CompleteStaticSiteConstruction(StaticBindingCallSite site, bool published)
     {
+        var newDemand = false;
         lock (_staticBindingGate)
         {
+            newDemand = published && !site.DemandCommitted;
             site.DemandCommitted |= published;
             site.Constructions--;
             if (!site.DemandCommitted && site.Constructions == 0 &&
@@ -105,7 +107,7 @@ internal sealed partial class SharpLinkClient
                 reference.TryGetTarget(out var current) && ReferenceEquals(current, site))
                 _staticBindingSites.Remove((site.Local.Generation, site.Scope));
         }
-        if (published) ScheduleStaticBindingRefresh(site);
+        if (newDemand) ScheduleStaticBindingRefresh(site, stateChanged: false);
     }
 
     private static IRpcContractChannel WrapStaticChannel(StaticBindingCallSite site, RpcProxyOptions? options)

@@ -60,6 +60,8 @@ internal sealed class TestTransportConnection : ITransportConnection
     private int _disposed;
     private IReadOnlyDictionary<long, RpcHash128> _advertisedContracts = new Dictionary<long, RpcHash128>();
     private readonly Dictionary<long, ulong> _bindings = [];
+    private readonly Guid _serverInstanceId = Guid.NewGuid();
+    private readonly Guid _registryEpoch = Guid.NewGuid();
 
     public TestTransportConnection()
     {
@@ -82,7 +84,6 @@ internal sealed class TestTransportConnection : ITransportConnection
         string? compressionProfile = null,
         CancellationToken cancellationToken = default)
     {
-        Volatile.Write(ref _advertisedContracts, (contractManifest ?? []).ToDictionary());
         negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
         var responsePayload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, new ProtocolV2HandshakeResponse(
@@ -102,7 +103,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         var manifestPayload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
             manifestPayload,
-            new ProtocolV2ContractManifest(0, contractManifest ?? []),
+            CreateRemoteManifest(0, contractManifest ?? []),
             ProtocolLimits);
         await InjectFrameAsync(
             ProtocolV2FrameType.ContractManifest,
@@ -110,6 +111,18 @@ internal sealed class TestTransportConnection : ITransportConnection
             0,
             manifestPayload.WrittenMemory,
             cancellationToken);
+    }
+
+    internal ProtocolV2ContractManifest CreateRemoteManifest(long generation,
+        IEnumerable<KeyValuePair<long, RpcHash128>> contracts)
+    {
+        var snapshot = contracts.ToArray();
+        Volatile.Write(ref _advertisedContracts, snapshot.ToDictionary());
+        return new ProtocolV2ContractManifest(generation, snapshot)
+        {
+            ServerInstanceId = _serverInstanceId,
+            RegistryEpoch = _registryEpoch
+        };
     }
 
     public Task InjectPacketAsync(

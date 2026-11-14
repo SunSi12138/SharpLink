@@ -110,7 +110,7 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
         using var payload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
             payload,
-            new ProtocolV2ContractManifest(
+            transport.Connection.CreateRemoteManifest(
                 1,
                 [new KeyValuePair<long, RpcHash128>(OrdersContractId, replacementHash)]),
             new SharpLinkProtocolOptions());

@@ -17,7 +17,7 @@ public sealed class ProtocolV2ContractManifestTests
             [
                 new KeyValuePair<long, RpcHash128>(42, secondHash),
                 new KeyValuePair<long, RpcHash128>(3, firstHash)
-            ]);
+            ]) { ServerInstanceId = Guid.NewGuid(), RegistryEpoch = Guid.NewGuid() };
         using var writer = new PooledByteBufferWriter();
 
         ProtocolV2ContractManifestCodec.Write(writer, manifest, Limits);
@@ -26,11 +26,31 @@ public sealed class ProtocolV2ContractManifestTests
             Limits);
 
         Ensure(decoded.Generation == 7, "manifest generation round-trip");
+        Ensure(decoded.ServerInstanceId == manifest.ServerInstanceId && decoded.RegistryEpoch == manifest.RegistryEpoch,
+            "manifest encoding must retain both exact binding Session identities");
         Ensure(decoded.OrderedContracts.Count == 2, "manifest entry count round-trip");
         Ensure(decoded.OrderedContracts[0].Key == 3 && decoded.OrderedContracts[0].Value == firstHash,
             "manifest encoding must normalize entries by ContractId");
         Ensure(decoded.OrderedContracts[1].Key == 42 && decoded.OrderedContracts[1].Value == secondHash,
             "manifest encoding must preserve the exact RpcAssemblyHash for each ContractId");
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void ContractManifestShouldRejectEmptyBindingSessionIdentity(bool emptyServer)
+    {
+        var manifest = new ProtocolV2ContractManifest(0, [])
+        {
+            ServerInstanceId = emptyServer ? Guid.Empty : Guid.NewGuid(),
+            RegistryEpoch = emptyServer ? Guid.NewGuid() : Guid.Empty
+        };
+        using var writer = new PooledByteBufferWriter();
+        EnsureThrows<ArgumentException>(() => ProtocolV2ContractManifestCodec.Write(writer, manifest, Limits));
+        var forged = new byte[44];
+        if (emptyServer) manifest.RegistryEpoch.TryWriteBytes(forged.AsSpan(28, 16));
+        else manifest.ServerInstanceId.TryWriteBytes(forged.AsSpan(12, 16));
+        EnsureThrows<SharpLinkException>(() => ProtocolV2ContractManifestCodec.Read(new ReadOnlySequence<byte>(forged), Limits));
     }
 
     [Test]
