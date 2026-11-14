@@ -333,7 +333,10 @@ internal sealed class ClientConnection :
         try { Session.StreamManager.CompleteAll(exception); }
         catch (Exception cleanupException) { (cleanupFailures ??= []).Add(cleanupException); }
         if (cancellationException is not null)
-            _client.ReportConnectionCancellationCallbackFailure(cancellationException);
+        {
+            try { _client.ReportConnectionCancellationCallbackFailure(cancellationException); }
+            catch (Exception cleanupException) { (cleanupFailures ??= []).Add(cleanupException); }
+        }
         ThrowCleanupFailures(cleanupFailures);
     }
 

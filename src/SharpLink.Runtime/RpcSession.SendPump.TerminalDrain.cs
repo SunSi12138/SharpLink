@@ -14,12 +14,24 @@ internal sealed partial class RpcSession
                 CompleteTerminalFrame(frame, terminalException, ref failures);
             }
             pending.Clear();
+            try { DrainQueuedFrames(terminalException); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+            PulseCapacityWaiters();
+            ThrowTerminalFrameFailures(failures);
+        }
+
+        private void DrainQueuedFrames(Exception terminalException)
+        {
+            List<Exception>? failures = null;
             while (_progressQueue.Reader.TryRead(out var frame))
                 CompleteTerminalFrame(frame, terminalException, ref failures);
             while (_normalQueue.Reader.TryRead(out var frame))
                 CompleteTerminalFrame(frame, terminalException, ref failures);
-            PulseCapacityWaiters();
+            ThrowTerminalFrameFailures(failures);
+        }
 
+        private static void ThrowTerminalFrameFailures(List<Exception>? failures)
+        {
             // A pending-call observer is part of this joined pump lifetime. Its failure must
             // remain visible, but must not retain the next frame, either queue or flush marker.
             if (failures is { Count: 1 })

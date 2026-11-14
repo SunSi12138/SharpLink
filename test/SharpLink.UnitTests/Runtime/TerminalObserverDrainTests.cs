@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using SharpLink.Client;
+using Microsoft.Extensions.Logging;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -18,6 +19,7 @@ public sealed class TerminalObserverDrainTests
     [NotInParallel]
     public async Task TerminalDrainShouldJoinRealPendingObserverAndEveryPhysicalOwner(bool faultClock, bool queuedDisconnectCleanup)
     {
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var clock = new ThrowingClock();
         using var context = new SharpLinkRuntimeContextBuilder().UseTimeProvider(clock).Configure(options =>
         {
@@ -57,7 +59,8 @@ public sealed class TerminalObserverDrainTests
         };
         listener.SetMeasurementEventCallback<long>((_, bytes, _, _) =>
         {
-            if (bytes >= 0 || Volatile.Read(ref observe) == 0 || Interlocked.Exchange(ref metricClaimed, 1) != 0) return;
+            if (!metricScope.Value || bytes >= 0 || Volatile.Read(ref observe) == 0 || Interlocked.Exchange(ref metricClaimed, 1) != 0) return;
+            clock.Trace.Enqueue($"metric gate entered thread={Environment.CurrentManagedThreadId}");
             if (faultClock && queuedDisconnectCleanup)
             {
                 if (!clock.FailAllAttempted.Wait(TimeSpan.FromSeconds(5))) gateFailure = new Exception("queued FailAll did not reach the real clock");
@@ -155,6 +158,16 @@ public sealed class TerminalObserverDrainTests
         }
         finally
         {
+            Console.WriteLine("TERMINAL_OBSERVER_COMPONENT_TRACE_V1 " + JsonSerializer.Serialize(new
+            {
+                faultClock,
+                queuedDisconnectCleanup,
+                metricClaimed,
+                clock.Throws,
+                failAllAttempted = clock.FailAllAttempted.IsSet,
+                trace = clock.Trace.ToArray()
+            }));
+            metricScope.Value = false;
             Volatile.Write(ref observe, 0); clock.RemainingFailures = 0; output.ReleaseFirst(); output.ReleaseSecond();
             // Post-observation cleanup permits the baseline-failing component to exit; it is not recovery evidence.
             try { table.FailAllPendingRequests(new IOException("test salvage")); } catch { }
@@ -166,6 +179,32 @@ public sealed class TerminalObserverDrainTests
             if (marker?.IsCompleted == true) _ = marker.Exception;
             if (waiter?.IsCompleted == true) _ = waiter.Exception;
         }
+    }
+
+    [Test]
+    public async Task CancellationDiagnosticFailureMustNotHidePendingClockCleanupFailure()
+    {
+        var clock = new ThrowingClock();
+        using var context = new SharpLinkRuntimeContextBuilder().UseTimeProvider(clock).Build();
+        using var logs = new CancellationLogger();
+        await using var facade = SharpClientBuilder.Create().UseTransport(new NoConnect()).UseLoggerFactory(logs).DisableRequestTimeout().Build();
+        var input = new Pipe(); var output = new Pipe();
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport("terminal-multiple-cleanup-faults", input.Reader, output.Writer,
+            RpcSessionTestFixture.ClientOptions(context));
+        using var cancellation = new CancellationTokenSource();
+        using var registration = cancellation.Token.Register(() => throw new IOException("connection cancellation callback failure"));
+        var connection = new ClientConnection((SharpLinkClient)facade, session, cancellation, 4, context);
+        var operation = connection.PendingCalls.Rent(Int32Codec.Instance, PendingCallKind.Unary,
+            RpcDeadline.Create(TimeSpan.FromHours(1), clock), default, out _).AsValueTask();
+        clock.RemainingFailures = int.MaxValue;
+        Exception? cleanup = null;
+        try { connection.Fail(new IOException("original terminal failure")); } catch (Exception error) { cleanup = error; }
+        clock.RemainingFailures = 0;
+        Ensure(operation.IsCompleted && Contains(cleanup, clock.Failure) && Contains(cleanup, logs.Failure),
+            "a secondary cancellation diagnostic failure must not replace the earlier joined clock failure");
+        Ensure(await Capture(operation.AsTask()) is IOException { Message: "original terminal failure" }, "cleanup faults must not replace the pending transport cause");
+        await connection.DisposeAsync();
+        await input.Writer.CompleteAsync(); await output.Reader.CompleteAsync();
     }
 
     [Test]
@@ -280,14 +319,32 @@ public sealed class TerminalObserverDrainTests
         public long Offset;
         public Exception Failure { get; } = new InvalidOperationException("terminal cleanup timestamp failure");
         public ManualResetEventSlim FailAllAttempted { get; } = new();
+        public ConcurrentQueue<string> Trace { get; } = new();
         public override long GetTimestamp()
         {
             if (Volatile.Read(ref RemainingFailures) > 0 && Interlocked.Decrement(ref RemainingFailures) >= 0)
             {
-                if (new StackTrace().ToString().Contains("FailAllPendingRequests", StringComparison.Ordinal)) FailAllAttempted.Set();
+                var stack = new StackTrace().ToString();
+                var route = stack.Contains("FailAllPendingRequests", StringComparison.Ordinal) ? "FailAll" :
+                    stack.Contains("OnRequestEmissionFailure", StringComparison.Ordinal) ? "emission" : "other";
+                Trace.Enqueue($"clock {route} throw thread={Environment.CurrentManagedThreadId}");
+                if (route == "FailAll") FailAllAttempted.Set();
                 Interlocked.Increment(ref Throws); throw Failure;
             }
             return Stopwatch.GetTimestamp() + Offset;
+        }
+    }
+    private sealed class CancellationLogger : ILoggerFactory, ILogger
+    {
+        public Exception Failure { get; } = new InvalidOperationException("cancellation diagnostic logger failure");
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (formatter(state, exception).Contains("connection cancellation callback failed", StringComparison.Ordinal)) throw Failure;
         }
     }
     private sealed class GatedOutput : PipeWriter

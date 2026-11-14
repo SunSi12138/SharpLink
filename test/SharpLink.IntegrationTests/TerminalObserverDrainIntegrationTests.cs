@@ -23,6 +23,9 @@ public sealed class TerminalObserverDrainIntegrationTests
         var transport = new FaultingTransport(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, port)));
         var client = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromHours(1))
             .UseTimeProvider(clock).UseTransport(transport).Build();
+        // The server run has already captured a different ExecutionContext. Only this
+        // client's pump/queued cleanup may claim the process-wide measurement gate.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         ClientConnection? connection = null;
         var operations = new List<Task<int>>();
         Exception? callbackFailure = null;
@@ -36,7 +39,7 @@ public sealed class TerminalObserverDrainIntegrationTests
         };
         listener.SetMeasurementEventCallback<long>((_, bytes, _, _) =>
         {
-            if (bytes >= 0 || Volatile.Read(ref observe) == 0 || Interlocked.Exchange(ref negativeSeen, 1) != 0)
+            if (!metricScope.Value || bytes >= 0 || Volatile.Read(ref observe) == 0 || Interlocked.Exchange(ref negativeSeen, 1) != 0)
                 return;
             if (faultClock && !clock.FailAllAttempted.Wait(TimeSpan.FromSeconds(5)))
                 callbackFailure = new Exception("real public disconnect did not reach queued FailAll before the pump observer");
@@ -110,6 +113,7 @@ public sealed class TerminalObserverDrainIntegrationTests
         }
         finally
         {
+            metricScope.Value = false;
             Volatile.Write(ref observe, 0);
             clock.Armed = false;
             transport.Output?.Release();
