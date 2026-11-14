@@ -75,6 +75,18 @@ jobs:
         if: runner.os == 'Linux'
         run: ./eng/verify-generated-assembly-dependencies.sh
 
+      - name: Ordinary contract-binding inventories and old-Stub rejection
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} eng/run-contract-binding-tests.py
+
+      - name: Upload contract-binding evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: contract-binding-release-${{ runner.os }}-${{ github.sha }}
+          path: artifacts/contract-binding
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
@@ -89,6 +101,7 @@ jobs:
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
 
       - name: Load Test Tests
         run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build

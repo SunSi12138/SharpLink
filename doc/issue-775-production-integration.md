@@ -365,3 +365,18 @@ Selected production compatibility boundary:
   zero client active/reservation/send-stream owners, zero server routes and full128-byte credit
   restoration. Conflicting/malicious count fail-close remains covered by the unchanged frozen
   OneWay84 inventory; successful safe drain is not relabelled as Session termination.
+
+### Ordinary CI ownership
+
+- Added Probe and its three buildable auxiliary fixtures to the ordinary solution. The old
+  Stub consumer intentionally remains outside that build graph. eng/run-contract-binding-tests.py
+  is the shared Extended/three-platform Release entry: exact source-bound16 inventories,
+  source resolver guard, raw logs and an exact five-member CS0535 old-Stub rejection. It stops
+  on first unexpected failure and removes only each expected stale report before execution.
+  CI uploads evidence even on failure; binding controls run before later full-suite gates.
+- Python syntax checks pass. The complete new runner and revised solution build must still be
+  executed before this wiring is accepted; no hosted result or package compatibility is implied.
+- Full Integration's next real failure occurs at initial Prepare for separated dynamic Contract
+  and Service assemblies: Bind incorrectly compares the Service module's assembly hash while
+  Manifest advertises the Contract owner's hash. Fix that cold identity/receipt boundary with
+  a separated-owner regression before revising the later queued-retirement expectations.

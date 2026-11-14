@@ -55,6 +55,10 @@
     <Project Path="test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj" />
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
     <Project Path="test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj" />
+    <Project Path="test/SharpLink.BindingTests/Probe/SharpLink.BindingTests.csproj" />
+    <Project Path="test/SharpLink.BindingTests/GroupPluginChanged/SharpLink.GroupPluginChanged.csproj" />
+    <Project Path="test/SharpLink.BindingTests/GroupPluginUnrelated/SharpLink.GroupPluginUnrelated.csproj" />
+    <Project Path="test/SharpLink.BindingTests/PreviousAbi/SharpLink.PreviousAbi.csproj" />
     <Project Path="test/SharpLink.GeneratedAssemblyScanner/SharpLink.GeneratedAssemblyScanner.csproj" />
     <Project Path="test/SharpLink.AotContracts/SharpLink.AotContracts.csproj" />
     <Project Path="test/SharpLink.AotServices/SharpLink.AotServices.csproj" />
