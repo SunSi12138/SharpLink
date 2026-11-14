@@ -165,13 +165,20 @@ internal sealed partial class ClientAssemblyRegistry
                             rollbackError = dependencyError;
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
-                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        _proxyLookup.Publish(candidate.Proxies);
-                        _dynamicModules.Add(assembly, module);
-                        _generation++;
-                        published = true;
-                        return SharpLinkAssemblyRegistrationResult.Success();
+                        if (generation != _generation ||
+                            !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
+                        {
+                            retry = true;
+                        }
+                        else
+                        {
+                            _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            _proxyLookup.Publish(candidate.Proxies);
+                            _dynamicModules.Add(assembly, module);
+                            _generation++;
+                            published = true;
+                            return SharpLinkAssemblyRegistrationResult.Success();
+                        }
                     }
                 }
                 if (retry)
@@ -339,18 +346,25 @@ internal sealed partial class ClientAssemblyRegistry
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
                         }
 
-                        drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                            TaskCreationOptions.RunContinuationsAsynchronously);
-                        drainOperation = drainCompletion.Task;
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
-                        _dynamicModules.Add(newAssembly, newModule);
-                        _unregisterOperations.Add(oldAssembly, drainOperation);
-                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        _proxyLookup.Publish(candidate.Proxies);
-                        _generation++;
-                        oldModule.TryBeginDraining();
-                        published = true;
-                        break;
+                        if (generation != _generation ||
+                            !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
+                        {
+                            retry = true;
+                        }
+                        else
+                        {
+                            drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                                TaskCreationOptions.RunContinuationsAsynchronously);
+                            drainOperation = drainCompletion.Task;
+                            _dynamicModules.Add(newAssembly, newModule);
+                            _unregisterOperations.Add(oldAssembly, drainOperation);
+                            _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            _proxyLookup.Publish(candidate.Proxies);
+                            _generation++;
+                            oldModule.TryBeginDraining();
+                            published = true;
+                            break;
+                        }
                     }
                 }
                 if (retry)
@@ -570,31 +584,36 @@ internal sealed partial class ClientAssemblyRegistry
     private void ReleaseModule(Assembly assembly, SharpLinkDynamicModule module)
     {
         RpcGeneratedManifestRegistration codecRegistration;
-        lock (_gate)
+        while (true)
         {
-            if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                return;
-            var nextProxies = _proxyLookup.Capture()
-                .Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            codecRegistration = module.CodecRegistration;
-            var codecTypes = codecRegistration.Codecs.Keys.ToArray();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            for (var index = 0; index < codecTypes.Length; index++)
+            lock (_gate)
             {
-                var codecType = codecTypes[index];
-                var replacement = FindReplacementCodec(codecType, module);
-                if (replacement is null)
-                    nextFactories.Remove(codecType);
-                else
-                    nextFactories[codecType] = replacement;
+                if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                    return;
+                var nextProxies = _proxyLookup.Capture()
+                    .Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                    .ToFrozenDictionary();
+                var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
+                codecRegistration = module.CodecRegistration;
+                var codecTypes = codecRegistration.Codecs.Keys.ToArray();
+                var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                for (var index = 0; index < codecTypes.Length; index++)
+                {
+                    var codecType = codecTypes[index];
+                    var replacement = FindReplacementCodec(codecType, module);
+                    if (replacement is null)
+                        nextFactories.Remove(codecType);
+                    else
+                        nextFactories[codecType] = replacement;
+                }
+                if (!_runtimeContext.TryPublishGeneratedCodecs(nextFactories))
+                    continue;
+                _proxyLookup.Publish(nextProxies);
+                _dynamicModules.Remove(assembly);
+                _generation++;
+                break;
             }
-            _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            _proxyLookup.Publish(nextProxies);
-            _dynamicModules.Remove(assembly);
-            _generation++;
         }
         try
         {

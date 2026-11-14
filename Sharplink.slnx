@@ -54,6 +54,7 @@
     <Project Path="test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj" />
     <Project Path="test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj" />
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
+    <Project Path="test/SharpLink.CodecPublicationProbe/SharpLink.CodecPublicationProbe.csproj" />
     <Project Path="test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj" />
     <Project Path="test/SharpLink.GeneratedAssemblyScanner/SharpLink.GeneratedAssemblyScanner.csproj" />
     <Project Path="test/SharpLink.AotContracts/SharpLink.AotContracts.csproj" />
