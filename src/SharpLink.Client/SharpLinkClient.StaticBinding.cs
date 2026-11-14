@@ -14,6 +14,7 @@ internal sealed partial class SharpLinkClient
         ArgumentOutOfRangeException.ThrowIfGreaterThan(timeout, SharpLinkTimer.MaximumDelay);
         token.ThrowIfCancellationRequested();
         EnsureStaticSliceAvailable();
+        site.EnsureLocalRunning();
         if (Volatile.Read(ref site.Snapshot).Any(static target => target.Connection.CanAcceptCalls))
             return ValueTask.CompletedTask;
         var clock = _runtimeContext.TimeProvider;
@@ -35,6 +36,7 @@ internal sealed partial class SharpLinkClient
                 var changed = Volatile.Read(ref _staticBindingChanged);
                 token.ThrowIfCancellationRequested();
                 EnsureStaticSliceAvailable();
+                site.EnsureLocalRunning();
                 var remaining = deadline.GetRemaining(_runtimeContext.TimeProvider);
                 if (remaining <= TimeSpan.Zero)
                     throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Binding preparation deadline expired.");
@@ -90,6 +92,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureStaticSliceAvailable();
+            site.EnsureLocalRunning();
             var connections = Volatile.Read(ref _readyConnections);
             var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
             var work = new List<Task<StaticBoundTarget>>();
@@ -113,6 +116,7 @@ internal sealed partial class SharpLinkClient
             lock (_staticBindingGate)
             {
                 EnsureStaticSliceAvailable();
+                site.EnsureLocalRunning();
                 if (!ReferenceEquals(connections, Volatile.Read(ref _readyConnections)) ||
                     !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
                 {

@@ -4,6 +4,7 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient
 {
     internal Func<long, CancellationToken, ValueTask>? BeforeStreamProducerClaimTestHook;
+    internal Func<string, ValueTask>? BeforeBoundStreamRegistrationTestHook;
 
     // Seal and task publication share the existing pool/supervisor gate. User code can
     // run only after its physical owner has been registered, never in the receive loop.
@@ -21,7 +22,7 @@ internal sealed partial class SharpLinkClient
     }
 
     private async Task RunAcceptedClientStreamsAsync<TStreams>(ClientConnection connection, TStreams streams,
-        long requestId, PendingStreamAdmission admission, SharpLinkDynamicModuleLease producerLease)
+        long requestId, PendingStreamAdmission admission, SharpLinkClientStreamPhysicalLease producerLease)
         where TStreams : struct, IRpcClientStreamWriter
     {
         try

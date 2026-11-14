@@ -53,7 +53,7 @@ internal sealed partial class SharpLinkClient
 
 #if SHARPLINK_775_STATIC_SLICE
         private static long s_nextSliceGeneration;
-        internal long SliceGeneration { get; } = Interlocked.Increment(ref s_nextSliceGeneration);
+        internal long SliceGeneration { get; init; } = Interlocked.Increment(ref s_nextSliceGeneration);
 #endif
         internal object? Proxy;
     }

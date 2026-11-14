@@ -29,8 +29,9 @@ internal sealed partial class SharpLinkClient
         EnsureStaticSliceAvailable();
         foreach (var registration in _assemblyRegistry.CaptureProxySnapshot().Values)
         {
-            if (registration.Descriptor.ContractId == contractId &&
-                ReferenceEquals(FindOwningManifest(registration).OwnerAssembly, registeredAssembly))
+            if (registration.Descriptor.ContractId != contractId) continue;
+            using var protection = AcquireLocalConstruction(registration);
+            if (ReferenceEquals(FindOwningManifest(registration).OwnerAssembly, registeredAssembly))
                 return CaptureStaticLocalContract(registration);
         }
         throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Exact local assembly/contract is not registered.");
@@ -38,12 +39,17 @@ internal sealed partial class SharpLinkClient
 
     private RpcLocalContract CaptureStaticLocalContract(ClientProxyRegistration registration)
     {
-        if (registration.Module is not null)
-            throw StaticBindingWire.Error(StaticBindingFailure.DynamicUnsupported);
+        using var protection = AcquireLocalConstruction(registration);
         var hash = FindOwningManifest(registration).RpcAssemblyHash;
-        if (hash.IsEmpty)
-            throw StaticBindingWire.Error(StaticBindingFailure.HashMismatch);
+        if (hash.IsEmpty) throw StaticBindingWire.Error(StaticBindingFailure.HashMismatch);
         return new RpcLocalContract(_sliceIssuer, registration.SliceGeneration, registration.Descriptor.ContractId, hash);
+    }
+
+    private static SharpLinkDynamicModuleLease AcquireLocalConstruction(ClientProxyRegistration registration)
+    {
+        if (registration.Module is not { } module) return default;
+        if (module.TryAcquire(false, out var lease)) return lease;
+        throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "RPC module is draining");
     }
 
     private ClientProxyRegistration ResolveStaticLocalContract(RpcLocalContract local)
@@ -64,7 +70,7 @@ internal sealed partial class SharpLinkClient
         throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Exact local contract is unavailable.");
     }
 
-    private StaticBindingCallSite AcquireStaticSite(RpcLocalContract local, RpcProxyOptions? options)
+    private StaticBindingCallSite AcquireStaticSite(RpcLocalContract local, RpcProxyOptions? options, SharpLinkDynamicModule? module)
     {
         var scope = new StaticBindingScope(options?.Requirement ?? RpcRegistrationRequirement.Compatible, options?.Receipt);
         if (!scope.IsValid || scope.Receipt is { } receipt &&
@@ -82,7 +88,7 @@ internal sealed partial class SharpLinkClient
                     if (!pair.Value.TryGetTarget(out _)) _staticBindingSites.Remove(pair.Key);
                 if (_staticBindingSites.Count == StaticBindingWire.Capacity)
                     throw StaticBindingWire.Error(StaticBindingFailure.Capacity);
-                site = new StaticBindingCallSite(this, local, scope);
+                site = new StaticBindingCallSite(this, local, scope, module);
                 _staticBindingSites[key] = new WeakReference<StaticBindingCallSite>(site);
             }
             site.Constructions++;
@@ -105,12 +111,16 @@ internal sealed partial class SharpLinkClient
     }
 
     private static IRpcContractChannel WrapStaticChannel(StaticBindingCallSite site, RpcProxyOptions? options)
-        => options?.Metadata is { Count: > 0 } metadata ? new SharpLinkMetadataRpcChannel(site, metadata) : site;
+    {
+        IRpcContractChannel channel = site.LocalModule is { } module ? new SharpLinkModuleRpcChannel(site.Owner, site, module) : site;
+        return options?.Metadata is { Count: > 0 } metadata ? new SharpLinkMetadataRpcChannel(channel, metadata) : channel;
+    }
 
     public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
     {
-        _ = ResolveStaticLocalContract(local);
-        var site = AcquireStaticSite(local, options);
+        var registration = ResolveStaticLocalContract(local);
+        using var protection = AcquireLocalConstruction(registration);
+        var site = AcquireStaticSite(local, options, registration.Module);
         var published = false;
         try
         {
@@ -125,7 +135,8 @@ internal sealed partial class SharpLinkClient
     {
         var local = GetLocalContract<T>();
         var registration = ResolveStaticLocalContract(local);
-        var site = AcquireStaticSite(local, options);
+        using var protection = AcquireLocalConstruction(registration);
+        var site = AcquireStaticSite(local, options, registration.Module);
         var published = false;
         try
         {
@@ -136,6 +147,24 @@ internal sealed partial class SharpLinkClient
             return result;
         }
         finally { CompleteStaticSiteConstruction(site, published); }
+    }
+
+    private void RetireLocalBindingSites(SharpLinkDynamicModule module)
+    {
+        lock (_staticBindingGate)
+            foreach (var pair in _staticBindingSites.ToArray())
+                if (pair.Value.TryGetTarget(out var site) && ReferenceEquals(site.LocalModule, module))
+                {
+                    Volatile.Write(ref site.Failure, new SharpLinkException(SharpLinkErrorCode.Unavailable, "RPC module is draining"));
+                    // Pre-cut owners may still serialize their original head. Keep its scalar
+                    // routes under normal Session invalidation until those physical owners exit.
+                    if (module.State == SharpLinkDynamicModuleState.Released)
+                    {
+                        Volatile.Write(ref site.Snapshot, []);
+                        _staticBindingSites.Remove(pair.Key);
+                    }
+                }
+        SignalStaticBindingChange();
     }
 }
 #endif

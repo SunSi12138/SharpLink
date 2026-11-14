@@ -1,0 +1,162 @@
+name: Temporary 775 client local ownership
+on:
+  push:
+    branches: [codex/775-local-validate-20261114]
+permissions:
+  contents: read
+jobs:
+  functional:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record subject and unchanged ordinary-compilation evidence
+        shell: pwsh
+        run: |
+          New-Item -Force -ItemType Directory artifacts/775-slice | Out-Null
+          "subject=$env:GITHUB_SHA" | Set-Content artifacts/775-slice/subject.txt
+          python eng/775-slice/verify-default-profile.py 2>&1 | Tee-Object artifacts/775-slice/default-evidence-status.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python eng/775-slice/verify-facts-source.py 2>&1 | Tee-Object artifacts/775-slice/facts-source.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest eng/tests/test_admitted_dispatch_parity.py 2>&1 | Tee-Object artifacts/775-slice/source-parity.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Basic ordinary build without rerunning unchanged Unit failure
+        shell: pwsh
+        run: |
+          dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/default-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build nonshipping scoped slice
+        shell: pwsh
+        run: |
+          dotnet build eng/775-slice/Probe/SharpLink.BindingSlice.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/slice-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build changed-hash group plugin
+        shell: pwsh
+        run: |
+          dotnet build eng/775-slice/GroupPluginChanged/SharpLink.GroupPluginChanged.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/changed-plugin-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise frozen real TCP and SharedMemory controls
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll $transport 2>&1 | Tee-Object "artifacts/775-slice/$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build independent unrelated-publication plugin
+        shell: pwsh
+        run: |
+          dotnet build eng/775-slice/GroupPluginUnrelated/SharpLink.GroupPluginUnrelated.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/unrelated-plugin-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build previous ABI locator and exact negative consumer
+        shell: pwsh
+        run: |
+          dotnet build eng/775-slice/PreviousAbi/SharpLink.PreviousAbi.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/previous-abi-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build eng/775-slice/OldStubConsumer/SharpLink.OldStubConsumer.csproj -c Release -p:SharpLink775StaticSlice=true --disable-build-servers -m:1 -p:UseSharedCompilation=false -v:minimal 2>&1 | Tee-Object artifacts/775-slice/old-stub-negative.log
+          $code = $LASTEXITCODE
+          $diagnostics = Get-Content artifacts/775-slice/old-stub-negative.log -Raw
+          if ($code -eq 0 -or $diagnostics -notmatch 'CS0535' -or $diagnostics -notmatch 'TryResolveMethod' -or $diagnostics -notmatch 'InvokeCancellableAsync') { throw 'Expected exact old Stub ABI compilation rejection was not observed.' }
+          'PASS exact negative consumer: missing resolver and readonly invocation ABI' | Set-Content artifacts/775-slice/negative-abi-validation.log
+          exit 0
+      - name: Install pinned hosted-only ALC diagnostic tool
+        shell: pwsh
+        run: |
+          dotnet tool install dotnet-dump --version 10.0.750501 --tool-path artifacts/775-tools 2>&1 | Tee-Object artifacts/775-slice/diagnostic-tool.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise frozen dynamic lifecycle gate before receipt
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll group $transport 2>&1 | Tee-Object "artifacts/775-slice/group-$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify-group.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/group-validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise independently frozen receipt gate
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll receipt $transport 2>&1 | Tee-Object "artifacts/775-slice/receipt-$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify-receipt.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/receipt-validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise independently frozen complete method facts ABI
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll facts $transport 2>&1 | Tee-Object "artifacts/775-slice/facts-$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify-facts.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/facts-validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise frozen per-call stream admission and physical ownership
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll streams $transport 2>&1 | Tee-Object "artifacts/775-slice/streams-$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify-streams.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/streams-validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise frozen client-local generation and dual physical owners
+        env:
+          SHARPLINK_CAPTURE_ALC_DUMP: '1'
+        shell: pwsh
+        run: |
+          foreach ($transport in @('tcp', 'sharedmemory')) {
+            dotnet eng/775-slice/Probe/bin/Release/net10.0/SharpLink.BindingSlice.dll local $transport 2>&1 | Tee-Object "artifacts/775-slice/local-$transport.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python eng/775-slice/verify-local.py artifacts/775-slice $env:GITHUB_SHA 2>&1 | Tee-Object artifacts/775-slice/local-validation.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Analyze ALC failure roots without uploading raw heap
+        if: always()
+        shell: pwsh
+        run: |
+          $dump = 'artifacts/775-diagnostics/alc-failure.dmp'
+          if (-not (Test-Path -LiteralPath $dump)) { exit 0 }
+          $tool = if ($IsWindows) { './artifacts/775-tools/dotnet-dump.exe' } else { './artifacts/775-tools/dotnet-dump' }
+          foreach ($type in @('System.Reflection.LoaderAllocator', 'GroupLoadContext', 'LoadedGroup', 'ExecuteReuseAndUnloadAsync', 'SharpLinkDynamicModule')) {
+            $label = $type.Replace('.', '-')
+            $heap = & $tool analyze $dump -c "dumpheap -type $type" -c exit 2>&1
+            $code = $LASTEXITCODE
+            $heap | Set-Content "artifacts/775-slice/alc-$label.log"
+            "exit=$code" | Add-Content "artifacts/775-slice/alc-$label.log"
+            foreach ($line in $heap) {
+              if ("$line" -match '^\s*([0-9a-fA-F]{8,16})\s+([0-9a-fA-F]{8,16})\s+\d+') {
+                $address = $Matches[1]
+                & $tool analyze $dump -c "dumpobj $address" -c "gcroot $address" -c exit 2>&1 | Set-Content "artifacts/775-slice/alc-root-$address.log"
+                "exit=$LASTEXITCODE" | Add-Content "artifacts/775-slice/alc-root-$address.log"
+              }
+            }
+          }
+          & $tool analyze $dump -c 'clrstack -all' -c exit 2>&1 | Set-Content artifacts/775-slice/alc-stacks.log
+          "exit=$LASTEXITCODE" | Add-Content artifacts/775-slice/alc-stacks.log
+          exit 0
+      - name: Retain original evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: local-ownership-${{ matrix.os }}-${{ github.run_attempt }}
+          path: artifacts/775-slice
+          if-no-files-found: error
+          retention-days: 14

@@ -41,6 +41,9 @@ internal sealed partial class ClientAssemblyRegistry
         new(ReferenceEqualityComparer.Instance);
     private long _generation;
     private bool _shutdownStarted;
+#if SHARPLINK_775_STATIC_SLICE
+    internal Action<SharpLinkDynamicModule>? LocalModuleRetired;
+#endif
 
     internal ClientAssemblyRegistry(
         SharpLinkRuntimeContext runtimeContext,
@@ -346,9 +349,16 @@ internal sealed partial class ClientAssemblyRegistry
                         _dynamicModules.Add(newAssembly, newModule);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+#if SHARPLINK_775_STATIC_SLICE
+                        // All fallible candidate work is complete; close the original local
+                        // wrapper gate before exposing its replacement proxy generation.
+                        oldModule.TryBeginDraining();
+#endif
                         _proxyLookup.Publish(candidate.Proxies);
                         _generation++;
+#if !SHARPLINK_775_STATIC_SLICE
                         oldModule.TryBeginDraining();
+#endif
                         published = true;
                         break;
                     }
@@ -391,6 +401,9 @@ internal sealed partial class ClientAssemblyRegistry
             "DynamicAssemblyReplacementDrain",
             TaskObservationMode.ExternallyObserved);
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
+#if SHARPLINK_775_STATIC_SLICE
+        LocalModuleRetired?.Invoke(oldModule!);
+#endif
         return WaitForReplacementAsync(drainOperation!, cancellationToken);
     }
 
@@ -509,6 +522,9 @@ internal sealed partial class ClientAssemblyRegistry
         TimeSpan gracefulTimeout)
     {
         module.TryBeginDraining();
+#if SHARPLINK_775_STATIC_SLICE
+        LocalModuleRetired?.Invoke(module);
+#endif
         var drainTask = module.WaitForDrainAsync();
         if (!drainTask.IsCompleted)
         {
@@ -603,6 +619,9 @@ internal sealed partial class ClientAssemblyRegistry
         finally
         {
             module.MarkReleased();
+#if SHARPLINK_775_STATIC_SLICE
+            LocalModuleRetired?.Invoke(module);
+#endif
         }
     }
 

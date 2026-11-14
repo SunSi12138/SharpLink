@@ -76,7 +76,7 @@ internal static partial class Program
     private sealed class ProbeProducer : IAsyncEnumerable<int>, IAsyncEnumerator<int>
     {
         internal int Starts;
-        internal bool HoldMove, HoldDispose;
+        internal bool HoldMove, HoldDispose, HoldAfterFirst;
         internal TaskCompletionSource Entered { get; } = Signal();
         internal TaskCompletionSource ReleaseMove { get; } = Signal();
         internal TaskCompletionSource DisposeEntered { get; } = Signal();
@@ -89,7 +89,7 @@ internal static partial class Program
         public int Current => _index;
         public async ValueTask<bool> MoveNextAsync()
         {
-            if (HoldMove) await ReleaseMove.Task; // Deliberately ignore cancellation until the physical cut is released.
+            if (HoldMove || HoldAfterFirst && _index >= 1) await ReleaseMove.Task; // Deliberately ignore cancellation until the physical cut is released.
             Token.ThrowIfCancellationRequested();
             return ++_index <= 2;
         }

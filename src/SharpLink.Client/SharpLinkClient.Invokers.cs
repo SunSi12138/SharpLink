@@ -202,9 +202,10 @@ internal sealed partial class SharpLinkClient
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
 #if SHARPLINK_775_STATIC_SLICE
         var registrationLease = dispatcher.RetainForRegistration();
-        try { _ = TrackBoundStreamWork(() => StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken, registrationLease), "ServerStreamingInvoker"); }
+        var registrationOwner = SharpLinkClientModuleCallContext.Current?.Retain();
+        try { _ = TrackBoundStreamWork(() => StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken, registrationLease, registrationOwner), "ServerStreamingInvoker"); }
         catch (Exception error)
-        { dispatcher.Complete(error); dispatcher.ReleaseRegistrationRetention(registrationLease); }
+        { dispatcher.Complete(error); dispatcher.ReleaseRegistrationRetention(registrationLease); registrationOwner?.Dispose(); }
 #else
         TrackFrameworkTask(
             StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken),
@@ -415,9 +416,17 @@ internal sealed partial class SharpLinkClient
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
 #if SHARPLINK_775_STATIC_SLICE
         var registrationLease = dispatcher.RetainForRegistration();
-        try { _ = TrackBoundStreamWork(() => StartDuplexStreamingInvokerAsync(dispatcher, method, request, requestCodec, streams, control, cancellationToken, registrationLease), "DuplexStreamingInvoker"); }
+        var registrationOwner = SharpLinkClientModuleCallContext.Current?.Retain();
+        SharpLinkClientStreamPhysicalLease producerLease = default;
+        try
+        {
+            // Transfer before queuing: consumer disposal may otherwise release an unclaimed
+            // producer owner while the queued invoker still retains its original Codec.
+            producerLease = SharpLinkClientStreamModuleLeaseContext.Current?.TakeLease() ?? default;
+            _ = TrackBoundStreamWork(() => StartDuplexStreamingInvokerAsync(dispatcher, method, request, requestCodec, streams, control, cancellationToken, registrationLease, producerLease, registrationOwner), "DuplexStreamingInvoker");
+        }
         catch (Exception error)
-        { dispatcher.Complete(error); dispatcher.ReleaseRegistrationRetention(registrationLease); }
+        { dispatcher.Complete(error); dispatcher.ReleaseRegistrationRetention(registrationLease); producerLease.Dispose(); registrationOwner?.Dispose(); }
 #else
         TrackFrameworkTask(
             StartDuplexStreamingInvokerAsync(dispatcher, method, request, requestCodec, streams, control, cancellationToken),
@@ -895,7 +904,11 @@ internal sealed partial class SharpLinkClient
 #if !SHARPLINK_775_STATIC_SLICE
         var streamCancellationToken = connection!.PendingCalls.GetProducerCancellationToken(requestId);
 #endif
+#if SHARPLINK_775_STATIC_SLICE
+        SharpLinkClientStreamPhysicalLease producerLease = default;
+#else
         SharpLinkDynamicModuleLease producerLease = default;
+#endif
         try
         {
             if (connection.PendingCalls.Contains(requestId))
@@ -981,7 +994,7 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken
 #if SHARPLINK_775_STATIC_SLICE
-        , long registrationLease
+        , long registrationLease, SharpLinkClientModuleCallOwner? registrationOwner
 #endif
         )
     {
@@ -992,6 +1005,9 @@ internal sealed partial class SharpLinkClient
         var requestId = 0L;
         try
         {
+#if SHARPLINK_775_STATIC_SLICE
+            if (BeforeBoundStreamRegistrationTestHook is { } registrationHook) await registrationHook("ServerStreamingInvoker").ConfigureAwait(false);
+#endif
             var registration = await PrepareGeneratedServerStreamAsync(
                 dispatcher,
                 PendingCallKind.ServerStreaming,
@@ -1032,6 +1048,9 @@ internal sealed partial class SharpLinkClient
         }
         finally
         {
+#if SHARPLINK_775_STATIC_SLICE
+            registrationOwner?.Dispose();
+#endif
             dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
@@ -1045,13 +1064,15 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken
 #if SHARPLINK_775_STATIC_SLICE
-        , long registrationLease
+        , long registrationLease, SharpLinkClientStreamPhysicalLease producerLease, SharpLinkClientModuleCallOwner? registrationOwner
 #endif
         )
         where TStreams : struct, IRpcClientStreamWriter
     {
+#if !SHARPLINK_775_STATIC_SLICE
         var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
         SharpLinkDynamicModuleLease producerLease = default;
+#endif
 #if !SHARPLINK_775_STATIC_SLICE
         var registrationLease = dispatcher.RetainForRegistration();
 #endif
@@ -1062,6 +1083,9 @@ internal sealed partial class SharpLinkClient
 #endif
         try
         {
+#if SHARPLINK_775_STATIC_SLICE
+            if (BeforeBoundStreamRegistrationTestHook is { } registrationHook) await registrationHook("DuplexStreamingInvoker").ConfigureAwait(false);
+#endif
             var registration = await PrepareGeneratedServerStreamAsync(
                 dispatcher,
                 PendingCallKind.DuplexStreaming,
@@ -1076,7 +1100,9 @@ internal sealed partial class SharpLinkClient
 #else
             var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
 #endif
+#if !SHARPLINK_775_STATIC_SLICE
             producerLease = moduleProducerLifetime?.TakeLease() ?? default;
+#endif
             await SendRpcCall(
                 connection.Session,
 #if SHARPLINK_775_STATIC_SLICE
@@ -1098,6 +1124,7 @@ internal sealed partial class SharpLinkClient
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
 #if SHARPLINK_775_STATIC_SLICE
+            registrationOwner?.Dispose(); registrationOwner = null;
             if (await streamAdmission.Acceptance.ConfigureAwait(false))
             {
                 if (BeforeStreamProducerClaimTestHook is { } hook) await hook(requestId, streamAdmission.Token).ConfigureAwait(false);
@@ -1116,6 +1143,7 @@ internal sealed partial class SharpLinkClient
         {
             producerLease.Dispose();
 #if SHARPLINK_775_STATIC_SLICE
+            registrationOwner?.Dispose();
             streamAdmission?.ReleaseProducer();
 #endif
             dispatcher.ReleaseRegistrationRetention(registrationLease);
