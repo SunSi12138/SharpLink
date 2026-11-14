@@ -12,10 +12,11 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class TerminalObserverDrainTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
     [NotInParallel]
-    public async Task TerminalDrainShouldJoinRealPendingObserverAndEveryPhysicalOwner(bool faultClock)
+    public async Task TerminalDrainShouldJoinRealPendingObserverAndEveryPhysicalOwner(bool faultClock, bool queuedDisconnectCleanup)
     {
         var clock = new ThrowingClock();
         using var context = new SharpLinkRuntimeContextBuilder().UseTimeProvider(clock).Configure(options =>
@@ -28,7 +29,10 @@ public sealed class TerminalObserverDrainTests
         var input = new Pipe();
         var output = new GatedOutput();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport("terminal-observer", input.Reader, output,
-            RpcSessionTestFixture.ClientOptions(context));
+            RpcSessionTestFixture.ClientOptions(context), completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(session, ProtocolV2Capabilities.FlowControl);
+        var flow = ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(session)!).FlowController!;
         using var cancellation = new CancellationTokenSource();
         var connection = new ClientConnection((SharpLinkClient)facade, session, cancellation, 16, context);
         var table = connection.PendingCalls;
@@ -38,7 +42,7 @@ public sealed class TerminalObserverDrainTests
         var disconnected = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         session.OnDisconnected += error =>
         {
-            queueCleanup(connection, "TerminalObserverComponentCleanup", error);
+            if (queuedDisconnectCleanup) queueCleanup(connection, "TerminalObserverComponentCleanup", error);
             disconnected.TrySetResult(error!);
         };
         var owners = new List<IRpcByteBufferWriter>();
@@ -54,11 +58,11 @@ public sealed class TerminalObserverDrainTests
         listener.SetMeasurementEventCallback<long>((_, bytes, _, _) =>
         {
             if (bytes >= 0 || Volatile.Read(ref observe) == 0 || Interlocked.Exchange(ref metricClaimed, 1) != 0) return;
-            if (faultClock)
+            if (faultClock && queuedDisconnectCleanup)
             {
                 if (!clock.FailAllAttempted.Wait(TimeSpan.FromSeconds(5))) gateFailure = new Exception("queued FailAll did not reach the real clock");
             }
-            else
+            else if (!faultClock)
             {
                 if (!SpinWait.SpinUntil(() => operations.All(task => task.IsCompleted), TimeSpan.FromSeconds(5)))
                     gateFailure = new Exception("healthy FailAll did not complete before observer");
@@ -102,6 +106,9 @@ public sealed class TerminalObserverDrainTests
             waiter = session.SendPacketWithBackpressureAsync(waiting).AsTask();
             var waitingDrain = session.CaptureBackpressuredSendDrain();
             Ensure(!waiter.IsCompleted && !waitingDrain.IsCompleted, "capacity waiter must be physically pending");
+            await session.AcquireStreamSendCreditAsync(990, 1, context.FlowControl.StreamReceiveWindowBytes, default);
+            var creditWaiter = session.AcquireStreamSendCreditAsync(990, 1, 1, default).AsTask();
+            Ensure(!creditWaiter.IsCompleted && flow.ActiveSendStreamCount == 1, "real flow-credit waiter must be pending");
             Volatile.Write(ref observe, 1);
             clock.RemainingFailures = faultClock ? int.MaxValue : 0;
             output.ReleaseSecond();
@@ -109,14 +116,18 @@ public sealed class TerminalObserverDrainTests
             var sessionFailure = await Capture(session.DisposeAsync().AsTask());
             await waitingDrain.WaitAsync(TimeSpan.FromSeconds(5));
             var waiterFailure = await Capture(waiter);
-            var snapshot = new { faultClock, first = Active(first), later = Active(later), progress = Active(progress), normal = Active(normal),
+            var creditFailure = await Capture(creditWaiter);
+            var snapshot = new { faultClock, queuedDisconnectCleanup, first = Active(first), later = Active(later), progress = Active(progress), normal = Active(normal),
                 waiting = Active(waiting), marker = marker.IsCompleted, pending = table.Count, active = table.ActiveCount,
                 completed = operations.Count(task => task.IsCompleted), bytes = session.QueuedSendBytes,
-                clockThrows = clock.Throws, sessionFailure = sessionFailure?.ToString(), gateFailure = gateFailure?.ToString() };
+                clockThrows = clock.Throws, creditStreams = flow.ActiveSendStreamCount, retainedCreditStreams = flow.RetainedSendStreamCount,
+                sessionFailure = sessionFailure?.ToString(), gateFailure = gateFailure?.ToString() };
             Console.WriteLine("TERMINAL_OBSERVER_COMPONENT_V1 " + JsonSerializer.Serialize(snapshot));
             Ensure(gateFailure is null, "component ordering prerequisite");
             Ensure(ReferenceEquals(terminal.InnerException, output.Failure), "original transport failure must remain terminal");
             Ensure(!Active(waiting) && waiterFailure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed }, "capacity waiter convergence");
+            Ensure(ReferenceEquals(creditFailure, terminal) && flow.ActiveSendStreamCount == 0 && flow.RetainedSendStreamCount == 0,
+                "flow-credit waiter and stream accounting must converge with the original transport cause");
             Ensure(!Active(first) && !Active(later) && !Active(progress) && !Active(normal) && marker.IsCompleted && session.QueuedSendBytes == 0,
                 "all batch, progress, normal and flush owners must converge before salvage");
             Ensure(table.Count == 0 && table.ActiveCount == 0 && operations.All(task => task.IsCompleted), "all pending slots and operations must converge");
@@ -143,6 +154,44 @@ public sealed class TerminalObserverDrainTests
     }
 
     [Test]
+    public async Task DirectConnectionDisposeShouldJoinSessionAfterPendingCleanupFailure()
+    {
+        var clock = new ThrowingClock();
+        using var context = new SharpLinkRuntimeContextBuilder().UseTimeProvider(clock).Build();
+        await using var facade = SharpClientBuilder.Create().UseTransport(new NoConnect()).DisableRequestTimeout().Build();
+        var input = new Pipe(); var output = new Pipe();
+        var transport = RpcSessionTestFixture.Transport("direct-terminal-cleanup", input.Reader, output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions(context));
+        RpcSessionTestFixture.CompleteHandshake(session);
+        using var cancellation = new CancellationTokenSource();
+        var connection = new ClientConnection((SharpLinkClient)facade, session, cancellation, 4, context);
+        var operation = connection.PendingCalls.Rent(Int32Codec.Instance, PendingCallKind.Unary,
+            RpcDeadline.Create(TimeSpan.FromHours(1), clock), default, out _).AsValueTask();
+        clock.RemainingFailures = int.MaxValue;
+        var failure = await Capture(connection.DisposeAsync().AsTask());
+        clock.RemainingFailures = 0;
+        Ensure(Contains(failure, clock.Failure) && operation.IsCompleted && connection.PendingCalls.Count == 0 && connection.PendingCalls.ActiveCount == 0,
+            "direct disposal must complete pending work and preserve clock cleanup failure");
+        Ensure(transport.DisposeCount == 1 && !session.IsConnected, "pending cleanup failure must not bypass joined Session/transport disposal");
+        Ensure(await Capture(operation.AsTask()) is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed }, "direct disposal must not invent a timeout");
+        await input.Writer.CompleteAsync(); await output.Reader.CompleteAsync();
+    }
+
+    [Test]
+    public async Task KnownExpiredDeadlineShouldStillWinTransportCompletion()
+    {
+        var clock = new ThrowingClock();
+        using var table = PendingRequestTableTestFixture.Create(1, timeProvider: clock);
+        var operation = table.Rent(Int32Codec.Instance, PendingCallKind.Unary,
+            RpcDeadline.Create(TimeSpan.FromHours(1), clock), default, out _).AsValueTask();
+        clock.Offset = 2 * 3600L * Stopwatch.Frequency;
+        table.FailAllPendingRequests(new IOException("later transport failure"));
+        Ensure(await Capture(operation.AsTask()) is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "a successful authoritative expired deadline sample must retain timeout priority");
+        Ensure(table.Count == 0 && table.ActiveCount == 0, "expired completion must release its slot exactly once");
+    }
+
+    [Test]
     [Arguments(1)]
     [Arguments(int.MaxValue)]
     public async Task FailAllShouldRetireEveryCallWhenDeadlineClockThrows(int failures)
@@ -150,7 +199,7 @@ public sealed class TerminalObserverDrainTests
         var clock = new ThrowingClock();
         using var table = PendingRequestTableTestFixture.Create(4, timeProvider: clock);
         var operations = Enumerable.Range(0, 3).Select(index => table.Rent(Int32Codec.Instance, PendingCallKind.Unary,
-            RpcDeadline.Create(TimeSpan.FromHours(1), clock), default, out _).AsValueTask().AsTask()).ToArray();
+            RpcDeadline.Create(TimeSpan.FromHours(1), clock), default, out _).AsValueTask()).ToArray();
         var transport = new IOException("authoritative transport failure");
         clock.RemainingFailures = failures;
         Exception? cleanup = null;
@@ -160,7 +209,7 @@ public sealed class TerminalObserverDrainTests
         if (count != 0) table.FailAllPendingRequests(new IOException("post-observation salvage"));
         Console.WriteLine($"TERMINAL_PENDING_CLOCK_V1 failures={failures} pending={count} active={active} completed={completed}");
         Ensure(Contains(cleanup, clock.Failure) && count == 0 && active == 0 && completed == 3, "clock failure must be joined only after every pending terminal");
-        foreach (var operation in operations) Ensure(ReferenceEquals(await Capture(operation), transport), "unknown expiry must preserve transport cause");
+        foreach (var operation in operations) Ensure(ReferenceEquals(await Capture(operation.AsTask()), transport), "unknown expiry must preserve transport cause");
     }
 
     [Test]
@@ -213,6 +262,7 @@ public sealed class TerminalObserverDrainTests
     {
         public int RemainingFailures;
         public int Throws;
+        public long Offset;
         public Exception Failure { get; } = new InvalidOperationException("terminal cleanup timestamp failure");
         public ManualResetEventSlim FailAllAttempted { get; } = new();
         public override long GetTimestamp()
@@ -222,7 +272,7 @@ public sealed class TerminalObserverDrainTests
                 if (new StackTrace().ToString().Contains("FailAllPendingRequests", StringComparison.Ordinal)) FailAllAttempted.Set();
                 Interlocked.Increment(ref Throws); throw Failure;
             }
-            return Stopwatch.GetTimestamp();
+            return Stopwatch.GetTimestamp() + Offset;
         }
     }
     private sealed class GatedOutput : PipeWriter

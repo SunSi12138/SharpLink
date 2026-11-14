@@ -295,15 +295,25 @@ internal sealed partial class SharpLinkClient
     private void QueueConnectionCleanup(ClientConnection connection, string operation, Exception? failure = null)
         => TrackFrameworkTask(Task.Run(async () =>
         {
+            Exception? completionFailure = null;
             try
             {
                 if (failure is not null)
                     connection.Fail(failure);
             }
-            finally
+            catch (Exception exception)
             {
-                await DisposeDisconnectedConnectionAsync(connection).ConfigureAwait(false);
+                completionFailure = exception;
             }
+            try { await DisposeDisconnectedConnectionAsync(connection).ConfigureAwait(false); }
+            catch (Exception exception)
+            {
+                if (completionFailure is not null)
+                    throw new AggregateException(completionFailure, exception);
+                throw;
+            }
+            if (completionFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(completionFailure).Throw();
         }), operation);
 
     private void MarkConnectionDraining(ClientConnection connection)

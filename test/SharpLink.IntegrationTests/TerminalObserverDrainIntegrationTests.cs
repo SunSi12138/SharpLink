@@ -62,6 +62,11 @@ public sealed class TerminalObserverDrainIntegrationTests
             transport.Output.Release();
             await clock.OrDisconnected(connection).WaitAsync(TimeSpan.FromSeconds(5));
             var sessionFailure = await Capture(connection.Session.DisposeAsync().AsTask());
+            // Generated telemetry/invocation wrappers finish asynchronously after the operation
+            // itself becomes terminal. Bound observation without confusing continuation delay
+            // with an orphaned operation, and retain a baseline timeout as a state observation.
+            await Task.WhenAny(Task.WhenAll(operations.Select(task => task.ContinueWith(completed => { _ = completed.Exception; },
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default))), Task.Delay(TimeSpan.FromSeconds(5)));
             var completedBeforeSalvage = operations.Count(task => task.IsCompleted);
             var countBeforeSalvage = connection.PendingCalls.Count;
             var activeBeforeSalvage = connection.PendingCalls.ActiveCount;

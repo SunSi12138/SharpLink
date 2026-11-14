@@ -314,6 +314,8 @@ internal sealed class ClientConnection :
         if (previousState == (int)ClientConnectionState.Draining)
             SharpLinkTelemetry.AddClientRetiringConnections(-1);
 
+        exception = Session.PublishedFailure ?? exception;
+        List<Exception>? cleanupFailures = null;
         Exception? cancellationException = null;
         try
         {
@@ -326,10 +328,13 @@ internal sealed class ClientConnection :
         {
             cancellationException = callbackException;
         }
-        PendingCalls.FailAllPendingRequests(exception);
-        Session.StreamManager.CompleteAll(exception);
+        try { PendingCalls.FailAllPendingRequests(exception); }
+        catch (Exception cleanupException) { (cleanupFailures ??= []).Add(cleanupException); }
+        try { Session.StreamManager.CompleteAll(exception); }
+        catch (Exception cleanupException) { (cleanupFailures ??= []).Add(cleanupException); }
         if (cancellationException is not null)
             _client.ReportConnectionCancellationCallbackFailure(cancellationException);
+        ThrowCleanupFailures(cleanupFailures);
     }
 
     public bool TryBeginUntrackedCall()
@@ -595,17 +600,32 @@ internal sealed class ClientConnection :
             TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return Session.DisposeAsync();
+        {
+            await Session.DisposeAsync().ConfigureAwait(false);
+            return;
+        }
 
-        Fail(new SharpLinkException(
-            SharpLinkErrorCode.ConnectionClosed,
-            "Client connection is disposed."));
-        _cancellation.Dispose();
-        PendingCalls.Dispose();
-        return Session.DisposeAsync();
+        List<Exception>? failures = null;
+        try { Fail(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Client connection is disposed.")); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        try { _cancellation.Dispose(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        try { PendingCalls.Dispose(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        try { await Session.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        ThrowCleanupFailures(failures);
+    }
+
+    private static void ThrowCleanupFailures(List<Exception>? failures)
+    {
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private void ReleaseAuxiliaryActiveCall()

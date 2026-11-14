@@ -373,7 +373,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     void IRequestEmissionFailureObserver.OnRequestEmissionFailure(long requestId, Exception exception)
     {
         var deadlineExceeded = exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded };
-        TryComplete(
+        CompleteTransportFailure(
             requestId,
             deadlineExceeded ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure,
             deadlineExceeded ? null : exception);
@@ -526,20 +526,21 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (slots is null)
             return;
 
+        List<Exception>? failures = null;
         for (var index = 0; index < slots.Length; index++)
         {
-            if (!TryTakeCallAtIndex(index, out var call, out var deadlineExpired))
+            if (!TryTakeTransportFailure(index, expectedId: null, out var call, out var deadlineExpired, ref failures))
                 continue;
 
-            var payload = ReadOnlySequence<byte>.Empty;
-            CompleteTakenCall(
+            CompleteTransportFailureCall(
                 call!,
                 deadlineExpired
                     ? PendingCallCompletionReason.DeadlineExceeded
                     : PendingCallCompletionReason.ConnectionClosed,
                 deadlineExpired ? null : exception,
-                ref payload);
+                ref failures);
         }
+        ThrowTerminalCleanupFailures(failures);
     }
 
     public void Dispose()
@@ -547,15 +548,27 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _deadlineScheduler.Dispose();
-        FailAllPendingRequests(new SharpLinkException(
-            SharpLinkErrorCode.ConnectionClosed,
-            "Pending request table is disposed."));
-
-        if (Volatile.Read(ref _waiterCount) == 0)
-            DisposeSlotAvailable();
-        else
-            SignalSlotAvailable();
+        List<Exception>? failures = null;
+        try
+        {
+            try { _deadlineScheduler.Dispose(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+            try
+            {
+                FailAllPendingRequests(new SharpLinkException(
+                    SharpLinkErrorCode.ConnectionClosed,
+                    "Pending request table is disposed."));
+            }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+        finally
+        {
+            if (Volatile.Read(ref _waiterCount) == 0)
+                DisposeSlotAvailable();
+            else
+                SignalSlotAvailable();
+        }
+        ThrowTerminalCleanupFailures(failures);
     }
 
     private bool TryRent<T>(
@@ -816,38 +829,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
                 var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
                 if (!ReferenceEquals(exchanged, current))
-                    continue;
-
-                current.WaitUntilRegistered();
-                call = current;
-                return true;
-            }
-        }
-    }
-
-    private bool TryTakeCallAtIndex(
-        int index,
-        out PendingCall? call,
-        out bool deadlineExpired)
-    {
-        var slots = Volatile.Read(ref _slots)!;
-        while (true)
-        {
-            var current = Volatile.Read(ref slots[index]);
-            if (current is null)
-            {
-                call = null;
-                deadlineExpired = false;
-                return false;
-            }
-
-            lock (current.CompletionGate)
-            {
-                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current))
-                    continue;
-
-                deadlineExpired = current.Deadline.IsExpired(_timeProvider);
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
                     continue;
 
                 current.WaitUntilRegistered();

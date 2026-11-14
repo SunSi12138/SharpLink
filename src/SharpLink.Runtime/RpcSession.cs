@@ -691,6 +691,13 @@ internal sealed partial class RpcSession
         => Volatile.Read(ref _terminal)?.Exception ??
            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Session is closed.");
 
+    // A read loop cancelled by a pump fault can report a generic disconnect before the
+    // OnDisconnected callback runs. Pending completion must retain the already-published cause.
+    internal Exception? PublishedFailure
+        => Volatile.Read(ref _terminal) is { State: SessionTerminalState.Faulted or SessionTerminalState.QuiescentPumpFault } terminal
+            ? terminal.Exception
+            : null;
+
     private void ReturnBuffer(IRpcByteBufferWriter writer)
         => RuntimeContext.Buffers.Return(writer);
 

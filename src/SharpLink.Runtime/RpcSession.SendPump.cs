@@ -306,9 +306,7 @@ internal sealed partial class RpcSession
                 _progressQueue.Writer.TryComplete();
                 _normalQueue.Writer.TryComplete();
                 _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
-                ReleaseBatch(pending, terminalException);
-                DrainQueuedFrames(terminalException);
-                PulseCapacityWaiters();
+                DrainTerminalFrames(pending, terminalException);
             }
         }
 
@@ -466,14 +464,6 @@ internal sealed partial class RpcSession
             for (var index = 0; index < pending.Count; index++)
                 CompleteReserved(pending[index], exception, completeFlushWaiter: true);
             pending.Clear();
-        }
-
-        private void DrainQueuedFrames(Exception exception)
-        {
-            while (_progressQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
-            while (_normalQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
         }
 
         private void CompleteReserved(
