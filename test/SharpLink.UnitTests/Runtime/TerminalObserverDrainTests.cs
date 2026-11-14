@@ -117,11 +117,26 @@ public sealed class TerminalObserverDrainTests
             await waitingDrain.WaitAsync(TimeSpan.FromSeconds(5));
             var waiterFailure = await Capture(waiter);
             var creditFailure = await Capture(creditWaiter);
-            var snapshot = new { faultClock, queuedDisconnectCleanup, first = Active(first), later = Active(later), progress = Active(progress), normal = Active(normal),
-                waiting = Active(waiting), marker = marker.IsCompleted, pending = table.Count, active = table.ActiveCount,
-                completed = operations.Count(task => task.IsCompleted), bytes = session.QueuedSendBytes,
-                clockThrows = clock.Throws, creditStreams = flow.ActiveSendStreamCount, retainedCreditStreams = flow.RetainedSendStreamCount,
-                sessionFailure = sessionFailure?.ToString(), gateFailure = gateFailure?.ToString() };
+            var snapshot = new
+            {
+                faultClock,
+                queuedDisconnectCleanup,
+                first = Active(first),
+                later = Active(later),
+                progress = Active(progress),
+                normal = Active(normal),
+                waiting = Active(waiting),
+                marker = marker.IsCompleted,
+                pending = table.Count,
+                active = table.ActiveCount,
+                completed = operations.Count(task => task.IsCompleted),
+                bytes = session.QueuedSendBytes,
+                clockThrows = clock.Throws,
+                creditStreams = flow.ActiveSendStreamCount,
+                retainedCreditStreams = flow.RetainedSendStreamCount,
+                sessionFailure = sessionFailure?.ToString(),
+                gateFailure = gateFailure?.ToString()
+            };
             Console.WriteLine("TERMINAL_OBSERVER_COMPONENT_V1 " + JsonSerializer.Serialize(snapshot));
             Ensure(gateFailure is null, "component ordering prerequisite");
             Ensure(ReferenceEquals(terminal.InnerException, output.Failure), "original transport failure must remain terminal");

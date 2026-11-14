@@ -81,14 +81,22 @@ public sealed class TerminalObserverDrainIntegrationTests
             var stopFailure = await Capture(client.StopAsync().AsTask());
             Console.WriteLine("TERMINAL_OBSERVER_PUBLIC_V1 " + JsonSerializer.Serialize(new
             {
-                faultClock, rpc = "public TCP Connect + generated unary", healthyRpc = true,
-                pending = countBeforeSalvage, active = activeBeforeSalvage, completed = completedBeforeSalvage,
-                queuedBytes = bytesBeforeSalvage, negativeSeen, clockThrows = clock.Throws,
+                faultClock,
+                rpc = "public TCP Connect + generated unary",
+                healthyRpc = true,
+                pending = countBeforeSalvage,
+                active = activeBeforeSalvage,
+                completed = completedBeforeSalvage,
+                queuedBytes = bytesBeforeSalvage,
+                negativeSeen,
+                clockThrows = clock.Throws,
                 failAllObserved = clock.FailAllAttempted.IsSet,
                 emissionObserved = clock.Trace.Any(route => route.Contains("OnRequestEmissionFailure", StringComparison.Ordinal)),
                 operationCauses = operationCauses.Select(error => error?.ToString()).ToArray(),
-                sessionFailure = sessionFailure?.ToString(), stopFailure = stopFailure?.ToString(),
-                callbackFailure = callbackFailure?.ToString(), trace = clock.Trace.ToArray()
+                sessionFailure = sessionFailure?.ToString(),
+                stopFailure = stopFailure?.ToString(),
+                callbackFailure = callbackFailure?.ToString(),
+                trace = clock.Trace.ToArray()
             }));
             Ensure(callbackFailure is null && negativeSeen != 0, "fixed public-entry window must be observed");
             Ensure(countBeforeSalvage == 0 && activeBeforeSalvage == 0 && completedBeforeSalvage == 3 && bytesBeforeSalvage == 0,

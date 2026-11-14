@@ -1,5 +1,27 @@
 # Cold terminal observer drain — frozen acceptance plan
 
+## Result
+
+The narrow candidate passes the real public TCP fault and healthy-clock controls: [candidate run 43619532628](https://github.com/SunSi12138/SharpLink/actions/runs/43619532628), source `49db9a09295b7f700f4a80345917ca7b8c62386b`, job `132521823671`, artifact `14123057375`. The eight new non-RPC components also pass locally on SDK `10.0.115` / runtime `10.0.15`; adjacent normal flush/pending/cancellation/deadline/storage/saturation/credit controls pass `13 + 30 + 4 + 13 + 1` cases. Formal PR CI remains required on the final head.
+
+| Public disconnect observation, before salvage | Old product / throwing clock | Candidate / throwing clock | Candidate / healthy clock |
+| --- | --- | --- | --- |
+| Healthy generated TCP RPC prerequisite | passed | passed | passed |
+| Pending slots / active capacity | 3 / 3 | 0 / 0 | 0 / 0 |
+| Completed unary operations | 0 / 3 | 3 / 3 | 3 / 3 |
+| Queued physical bytes | 86 | 0 | 0 |
+| Actual FailAll / emission clock routes | both observed | both observed | no clock failures |
+| Original transport cause on every operation | operations unfinished | preserved | preserved |
+| Joined injected clock failure | preserved in Session | preserved in joined cleanup | none |
+
+Both ZIPs were downloaded and individually read back: exact SDK/runtime/source/plan, raw output, exit code and one real HTML report each. Repeated Detailed reporter echoes were checked for identical rows rather than counted as extra trials. Baseline `43618676149` remains a failed run with `0/2` test success; the healthy baseline physically drained but lost canonical cause, as detailed below. Candidate is `2/2`, zero failures/skips, exit `0`. This is a correctness control, not a performance sample.
+
+The default pool/real pending-table component additionally verifies batch plus both queues, flush marker, capacity waiter and real flow-credit waiter convergence; active/retained send-credit streams and queued bytes reach zero. Emission-only component mode deterministically retains pending entries until the real table observer runs, so its joined observer failures cannot disappear behind a completed FailAll. Direct-dispose and actual AttemptOutcome controls prove that a removed slot does not strand its operation or bypass transport disposal. When AttemptOutcome cannot sample elapsed time, its clock failure is joined and no fabricated admission-policy outcome is reported.
+
+Cost is cold teardown work: per-frame exception boundaries, completed-call cleanup boundaries, and lazy lists/aggregates only on cleanup failure; connection disposal now joins the session even after a prior cleanup failure. No new state field, normal per-request object, normal response/cancel/deadline completion work, or successful-flush operation was added. No new QPS/allocation measurement is claimed. [#964's earlier negative performance evidence](https://github.com/SunSi12138/SharpLink/pull/964#issuecomment-6551430584) and custom-writer successful-flush stale-slot obligation remain separate. This slice does not implement the full #775 Binding design or close those remaining obligations.
+
+## Frozen plan (retained with amendments)
+
 Base: `58c4d23d196e019c050c0386dc8a66e1e53de260` (dev after #984).
 Owner: telemetry_gate. Scope: SendPump terminal cleanup, PendingRequestTable transport completion, and their direct connection-cleanup callers. No RuntimeContext/publication changes. No #964 cherry-pick.
 
