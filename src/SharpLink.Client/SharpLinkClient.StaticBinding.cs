@@ -92,13 +92,13 @@ internal sealed partial class SharpLinkClient
 
     private async Task RefreshStaticBindingAsync(StaticBindingCallSite site)
     {
+        var topology = Volatile.Read(ref _bindingTopology);
+        var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
         try
         {
             EnsureStaticSliceAvailable();
             site.EnsureLocalRunning();
-            var topology = Volatile.Read(ref _bindingTopology);
             var connections = topology.Connections;
-            var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
             var work = new List<Task<StaticBoundTarget>>();
             var mismatch = false;
             var observedHashes = new List<string>();
@@ -112,11 +112,10 @@ internal sealed partial class SharpLinkClient
                     else if (site.Scope.Receipt.HasValue ||
                         manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var hash) && hash == site.Hash)
                         work.Add(PrepareStaticTargetAsync(connection, site));
-                    else
+                    else if (manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var observed))
                     {
                         mismatch = true;
-                        observedHashes.Add(manifest.Manifest.Contracts.TryGetValue(site.ContractId, out var observed)
-                            ? observed.ToString() : "<missing>");
+                        observedHashes.Add(observed.ToString());
                     }
                 }
             var targets = await Task.WhenAll(work).ConfigureAwait(false);
@@ -149,7 +148,18 @@ internal sealed partial class SharpLinkClient
                 Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, confirmed));
             }
         }
-        catch (Exception failure) { Volatile.Write(ref site.Failure, failure); }
+        catch (Exception failure)
+        {
+            lock (_poolGate)
+            lock (_remoteContractManifestGate)
+            lock (_staticBindingGate)
+            {
+                if (!ReferenceEquals(topology, Volatile.Read(ref _bindingTopology)) ||
+                    !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
+                    _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
+                else Volatile.Write(ref site.Failure, failure);
+            }
+        }
         finally
         {
             var rerun = Interlocked.Exchange(ref site.RefreshState, 0) == 2;
@@ -172,11 +182,19 @@ internal sealed partial class SharpLinkClient
             foreach (var reference in _staticBindingSites.Values)
                 if (reference.TryGetTarget(out var site))
                 {
+                    Volatile.Write(ref site.Failure, null);
                     var retained = Volatile.Read(ref site.Snapshot).Targets.Where(target =>
                         Array.IndexOf(topology.Connections, target.Connection) >= 0 && target.Connection.CanAcceptCalls).ToArray();
                     Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, retained));
                 }
         }
+    }
+
+    private void InvalidateStaticBindingFailures()
+    {
+        lock (_staticBindingGate)
+            foreach (var reference in _staticBindingSites.Values)
+                if (reference.TryGetTarget(out var site)) Volatile.Write(ref site.Failure, null);
     }
 
     private void InvalidateStaticBindingRoutes(RpcSession session)

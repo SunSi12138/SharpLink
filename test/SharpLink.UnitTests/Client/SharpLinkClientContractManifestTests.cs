@@ -9,6 +9,102 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     private const long OrdersContractId = 8_101;
 
     [Test]
+    public async Task PrepareShouldWaitForMissingManifestRatherThanClaimHashMismatch()
+    {
+        var transport = new TestClientTransportFactory(contractManifest: []);
+        await using var client = CreateClient(transport);
+        await client.ConnectAsync();
+        var owner = (SharpLinkClient)client;
+        var captured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        owner.BeforeBindingSiteCommitTestHook = () =>
+        {
+            captured.TrySetResult();
+            return new ValueTask(release.Task);
+        };
+        try
+        {
+            var proxy = client.CreateProxy<IOrdersContract>();
+            var site = (StaticBindingCallSite)client.CreateContractChannel(client.GetLocalContract<IOrdersContract>());
+            var prepare = proxy.PrepareAsync(RaceCoordinationTimeout).AsTask();
+            await captured.Task.WaitAsync(RaceCoordinationTimeout);
+            var changed = (TaskCompletionSource)typeof(SharpLinkClient).GetField(
+                "_staticBindingChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(owner)!;
+            release.TrySetResult();
+            await changed.Task.WaitAsync(RaceCoordinationTimeout);
+            Ensure(site.Failure is null && !prepare.IsCompleted && site.Snapshot.Targets.Length == 0 && owner.BindingBudget.Operations == 0,
+                "a missing manifest is pending propagation, not a permanent mismatch or speculative Bind");
+            owner.BeforeBindingSiteCommitTestHook = null;
+            await PublishManifestAsync(transport.Connection, 1, [new(OrdersContractId, Manifest.Instance.RpcAssemblyHash)]);
+            await prepare.WaitAsync(RaceCoordinationTimeout);
+            Ensure(site.Snapshot.Targets.Length == 1, "the original finite wait must complete on the later real BindAck");
+        }
+        finally { release.TrySetResult(); owner.BeforeBindingSiteCommitTestHook = null; }
+    }
+
+    [Test]
+    public async Task StaleBindFailureMustNotPoisonPreparationForANewerManifest()
+    {
+        var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);
+        await using var client = CreateClient(transport);
+        await client.ConnectAsync();
+        // The simulated authoritative peer has changed while its old manifest is still visible.
+        _ = transport.Connection.CreateRemoteManifest(1, [new(OrdersContractId, new RpcHash128(1, 2))]);
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acknowledgements = 0;
+        transport.Connection.BeforeBindAck = async (ack, token) =>
+        {
+            if (Interlocked.Increment(ref acknowledgements) == 1)
+            {
+                Ensure(ack.Failure == StaticBindingFailure.HashMismatch, "the first real wire reply must be a definitive old-capture failure");
+                firstEntered.TrySetResult();
+                await releaseFirst.Task.WaitAsync(token);
+            }
+            else
+            {
+                Ensure(ack.Failure == StaticBindingFailure.None, "the refreshed Bind must succeed on the newer manifest");
+                secondEntered.TrySetResult();
+                await releaseSecond.Task.WaitAsync(token);
+            }
+        };
+        try
+        {
+            var proxy = client.CreateProxy<IOrdersContract>();
+            var prepare = proxy.PrepareAsync(RaceCoordinationTimeout).AsTask();
+            await firstEntered.Task.WaitAsync(RaceCoordinationTimeout);
+            var observation = client.WaitForRemoteContractAsync(8_102, new RpcHash128(3, 4)).AsTask();
+            await PublishManifestAsync(transport.Connection, 2,
+                [new(OrdersContractId, Manifest.Instance.RpcAssemblyHash), new(8_102, new RpcHash128(3, 4))]);
+            await observation.WaitAsync(RaceCoordinationTimeout);
+            releaseFirst.TrySetResult();
+            await secondEntered.Task.WaitAsync(RaceCoordinationTimeout);
+            var joined = proxy.PrepareAsync(RaceCoordinationTimeout).AsTask();
+            Ensure(!joined.IsCompleted, "an old Bind failure cannot become the new manifest's preparation result");
+            releaseSecond.TrySetResult();
+            await Task.WhenAll(prepare, joined).WaitAsync(RaceCoordinationTimeout);
+            Ensure(acknowledgements == 2, "joining the refreshed demand must not add another Bind operation");
+        }
+        finally
+        {
+            releaseFirst.TrySetResult(); releaseSecond.TrySetResult();
+            transport.Connection.BeforeBindAck = null;
+        }
+    }
+
+    private static async Task PublishManifestAsync(TestTransportConnection connection, long generation,
+        KeyValuePair<long, RpcHash128>[] contracts)
+    {
+        using var payload = new PooledByteBufferWriter();
+        ProtocolV2ContractManifestCodec.Write(payload, connection.CreateRemoteManifest(generation, contracts),
+            new SharpLinkProtocolOptions());
+        await connection.InjectFrameAsync(ProtocolV2FrameType.ContractManifest,
+            ProtocolV2FrameFlags.None, 0, payload.WrittenMemory);
+    }
+
+    [Test]
     public async Task EqualRpcAssemblyHashShouldAllowAcknowledgedPreparation()
     {
         var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);

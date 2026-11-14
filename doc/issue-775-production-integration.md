@@ -212,3 +212,23 @@ Selected production compatibility boundary:
   Dynamic/local-negative cases, inline calls, metadata, fixture fields and raw protocol controls
   remain explicit migration work. The next solution build reports159 downstream errors, chiefly
   remaining retired Get callers; this is not a full-build pass or a reduced test inventory.
+
+### Missing visibility is not a permanent incompatibility
+
+- Rechecked #775's current cold-wait contract: local factories are independent, Ready is
+  not bound Ready, and only a definite mismatch should fail explicit Prepare immediately.
+  Found that the promoted profile classified a missing advertised contract as HashMismatch.
+  Corrected absence to remain pending within the original finite monotonic deadline, without
+  speculative Bind or producer work. An advertised different hash still fails immediately.
+- Also found that a late failed Bind capture could publish its exception after a newer
+  topology/manifest publication. Failure publication now validates the same captured tuple
+  as success; new topology/manifest publications invalidate old cold errors. This does not
+  add a hot-path lookup or alter selection/guard/producer boundaries.
+- Added two deterministic gated Unit cases before running: absent manifest remains pending
+  with zero Bind operations then completes its original wait on later real Ack; a held old
+  HashMismatch reply cannot poison two waiters while the newer Bind/Ack is held. Gates pause
+  actual simulated wire replies, not the client binding work. Original10-second budgets and
+  no-sleep/no-retry rules retained. Contract suite7/7 and observation21/21 pass.
+- Corrected our earlier unregister test migration: absence is a cancellable finite wait, not
+  immediate FailedPrecondition. The observation is still not a lease. Removed the unused old
+  Get-time remote validation helpers rather than keeping a second validation mode.

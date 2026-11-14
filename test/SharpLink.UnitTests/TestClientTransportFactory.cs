@@ -62,6 +62,7 @@ internal sealed class TestTransportConnection : ITransportConnection
     private readonly Dictionary<long, ulong> _bindings = [];
     private readonly Guid _serverInstanceId = Guid.NewGuid();
     private readonly Guid _registryEpoch = Guid.NewGuid();
+    internal Func<StaticBindingAck, CancellationToken, ValueTask>? BeforeBindAck;
 
     public TestTransportConnection()
     {
@@ -281,6 +282,9 @@ internal sealed class TestTransportConnection : ITransportConnection
         BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(16), binding);
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(24), failure == StaticBindingFailure.None ? 1 : 0);
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(32), failure == StaticBindingFailure.None ? 1 : 0);
+        if (BeforeBindAck is { } beforeAck)
+            await beforeAck(new StaticBindingAck(failure, request.ContractId, binding,
+                failure == StaticBindingFailure.None ? 1 : 0, failure == StaticBindingFailure.None ? 1 : 0), token);
         await InjectFrameAsync(ProtocolV2FrameType.BindAck, ProtocolV2FrameFlags.None, sent.Header.RequestId, payload, token);
     }
 

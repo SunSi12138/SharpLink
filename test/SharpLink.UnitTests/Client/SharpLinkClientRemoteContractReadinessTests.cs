@@ -189,9 +189,12 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         var proxy = client.CreateProxy<IOrdersContract>();
         Ensure(proxy.Service is OrdersProxy, "remote unregister cannot invalidate local factory construction");
-        var failure = await CaptureExceptionAsync(proxy.PrepareAsync(RaceCoordinationTimeout).AsTask());
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "readiness is an observation rather than a binding lease; finite Prepare must reject unregister");
+        using var cancellation = new CancellationTokenSource();
+        var prepare = proxy.PrepareAsync(RaceCoordinationTimeout, cancellation.Token).AsTask();
+        cancellation.Cancel();
+        var failure = await CaptureExceptionAsync(prepare);
+        Ensure(failure is OperationCanceledException,
+            "the old observation is not a binding lease; missing registration leaves only the caller's finite wait");
     }
 
     [Test]
