@@ -86,3 +86,27 @@ The normal Unit census remains2212, so its fixed-old regression counts must not 
 The temporary workflow and validation branches are removed after consuming terminal runs; historical runs/artifacts remain.
 Local downloaded ZIPs, offline exact-inventory readbacks, raw logs and discovery live under
 artifacts/dynamic-oneway-drain/ in the owning worktree. No new raw log upload/release is part of this PR.
+
+## Independent review: synchronous cleanup ordering gate
+
+Review of9a4a9f17 found that "before the first await" was insufficient: Abandon of input1 can synchronously
+discard buffered data and dispose its real pooled child, including receive-credit publication and public MeterListener
+callbacks, while input2 still accepts business Codec work. The independent non-RPC Session probe reproduced this
+exact gap. Its original report/probe/log remain in the separate SharpLink-984-Review worktree.
+
+Before changing the product, add one permanent Unit case using the existing real Session fixture, generated inbound
+children and public counting Codec/MeterListener. Hold input1's synchronous WindowUpdate-enqueue callback;
+only after that callback enters, dispatch input2. Old9a4a9f17 must fail DYNAMIC_INPUT_CLOSE_ALL_BEFORE_CLEANUP
+with firstCodecCalls1/secondCodecCalls1/drainCompleted=false. The repair must show secondCodecCalls0 while the
+same cleanup callback remains held, then finish without peer terminal and preserve both scalar routes until terminal.
+Release the gate and join Session cleanup in finally; a watchdog/build failure is not the defect marker.
+
+Repair only the close-all boundary: close all captured child business-admission gates without invoking cleanup callbacks,
+then initiate buffered discard/child disposal/detach callbacks and join. Retain the existing state fields, original ordinary
+Abandon contract, credit routes and physical ownership. No global lock, owner object or new callback hook.
+
+Local execution is limited to this non-RPC component; freeze its exact filter and retain old-head failure and candidate
+result. Hosted verification covers this changed ordering and existing physical-disposal/scalar-credit components on
+Linux/Windows, plus exact-head canonical CI. Reuse the four unaffected real-RPC/ALC quadrants and allocation evidence;
+do not repeat them for reassurance. The new Unit UID requires an actual census increment2212→2213 (injected-control
+runner2220→2221); fixed historical focused inventories remain unchanged.
