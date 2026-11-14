@@ -609,8 +609,7 @@ internal sealed class StreamFlowController
         Debug.Assert(state.Completed);
         Debug.Assert(state.Credit == _streamWindow);
         Debug.Assert(state.Next is null);
-        // An idle pooled state must not retain the completed stream's exception graph.
-        state.AbortException = null;
+        state.AbortException = null; // Release the completed stream's exception graph before pooling.
         var pooledState = _pooledSendStates;
         if (pooledState is null)
         {
