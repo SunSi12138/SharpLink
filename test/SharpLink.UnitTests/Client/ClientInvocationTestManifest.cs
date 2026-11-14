@@ -9,6 +9,8 @@ internal sealed class ClientInvocationTestManifest : ISharpLinkGeneratedAssembly
 {
     internal static readonly ClientInvocationTestManifest Instance = new();
     internal static readonly RpcHash128 Hash = new(0x746573742d727063UL, 0x2d62696e64696e67UL);
+    internal static readonly IReadOnlyList<KeyValuePair<long, RpcHash128>> RemoteContracts =
+        [new(1, Hash)];
     public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
     public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
     public string GeneratorVersion => "manual-channel-test";

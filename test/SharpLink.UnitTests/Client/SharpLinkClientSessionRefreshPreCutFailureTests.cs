@@ -139,6 +139,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
         SharpLinkClient client,
         PreCutFailureTransportFactory factory)
     {
+        await ClientInvokerTestHelper.PrepareAsync(client);
         var sourceTransport = factory.GetConnection(0);
         var commitEntered = new TaskCompletionSource<ClientConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -191,6 +192,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
         SharpLinkClient client,
         PreCutFailureTransportFactory factory)
     {
+        await ClientInvokerTestHelper.PrepareAsync(client);
         await WaitForConditionAsync(
             () => client.ReadyConnectionCount == 1,
             "the post-reservation failure setup must settle on exactly one Ready connection before a refresh is injected");
@@ -323,6 +325,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
 
                 await connection.InjectSuccessfulHandshakeAsync(
                     ProtocolV2Capabilities.SessionRefresh,
+                    contractManifest: ClientInvocationTestManifest.RemoteContracts,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 return connection;
             }

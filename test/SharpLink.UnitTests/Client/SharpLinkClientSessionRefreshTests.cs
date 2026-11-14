@@ -17,6 +17,7 @@ public sealed class SharpLinkClientSessionRefreshTests
                 options.MaxConnections = 1;
             }));
         await client.ConnectAsync();
+        await ClientInvokerTestHelper.PrepareAsync(client);
         Ensure(client.ReadyConnectionCount == 1 && factory.ConnectCount == 1,
             $"fixed test must start with one Ready physical connection; ready={client.ReadyConnectionCount}, connects={factory.ConnectCount}");
         var source = factory.GetConnection(0);
@@ -39,6 +40,7 @@ public sealed class SharpLinkClientSessionRefreshTests
 
         await ReleaseReplacementAndWaitForEligibilityCutAsync(factory, client, "fixed");
         var replacement = factory.GetConnection(1);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         Ensure(client.ReadyConnectionCount == 1,
             $"replacement publication must atomically swap Ready eligibility instead of overshooting the pool; ready={client.ReadyConnectionCount}");
@@ -264,6 +266,7 @@ public sealed class SharpLinkClientSessionRefreshTests
 
                 await connection.InjectSuccessfulHandshakeAsync(
                     ProtocolV2Capabilities.SessionRefresh,
+                    contractManifest: ClientInvocationTestManifest.RemoteContracts,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 return connection;
             }

@@ -45,7 +45,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
         var newProxy = newProxyProxy.Service;
         Ensure(await newProxy.GetEndpointIdAsync() == "second",
             "a proxy created after replacement must bind to the new child");
-        var oldFailure = await CaptureExceptionAsync(oldProxy.GetEndpointIdAsync().AsTask());
+        var oldFailure = await CaptureExceptionAsync(() => oldProxy.GetEndpointIdAsync().AsTask());
         Ensure(oldFailure is SharpLinkException or InvalidOperationException,
             "a proxy created before replacement must remain bound to the retired child");
 
@@ -119,11 +119,11 @@ public sealed class RuntimeMultiClusterIntegrationTests
         }
     }
 
-    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    private static async Task<Exception?> CaptureExceptionAsync(Func<Task> invoke)
     {
         try
         {
-            await task;
+            await invoke();
             return null;
         }
         catch (Exception exception)

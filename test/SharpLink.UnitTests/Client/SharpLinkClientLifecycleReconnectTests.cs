@@ -265,6 +265,7 @@ public sealed class SharpLinkClientLifecycleReconnectTests
         });
         await client.ConnectAsync();
         var firstConnection = await transport.WaitForConnectionAsync(0);
+        await ClientInvokerTestHelper.PrepareAsync(client);
 
         var firstCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         _ = await firstConnection.WaitForSentPacket(ProtocolV2FrameType.Request);

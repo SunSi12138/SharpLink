@@ -441,3 +441,19 @@ Selected production compatibility boundary:
   replacement performs that source's real local generation change before injecting cleanup
   failure. No fabricated handle, default identity or unsupported factory bypass is used. Actual
   multi-cluster RPCs still prepare the exact returned handle before invoking it.
+
+- The complete RuntimeAssemblyIntegrationTests class passes70/70, including the separated-owner,
+  graceful/forced queued generation, physical ALC and multi-cluster controls. Full Integration's
+  next run reached370 passes before a test's exception-capture helper evaluated the retired
+  child's synchronous guard outside its try. Capturing the invocation delegate now observes
+  both synchronous and asynchronous rejection; RuntimeMultiClusterIntegrationTests passes2/2
+  and still proves the old proxy cannot retarget the replacement slot.
+- Unit refresh/reconnect simulated peers now explicitly advertise the synthetic contract they
+  serve. Preparation is outside the tested RPC/gate, and a fresh physical replacement is bound
+  before new business calls. Refresh3/3, pre-cut failure/commit-reservation6/6 and reconnect8/8
+  pass. Other refresh race/redirect fixtures still need the same explicit boundary migration;
+  no automatic RequestAccepted or default peer contract was added.
+- Admitted dispatch parity remains6/6; production reference boundary passes10 projects,
+  15 declarations/15 active references with the patched SDK. A first boundary invocation used
+  the system SDK path and could not resolve global.json; rerunning with the selected SDK fixes
+  only that execution environment, without changing the guard or its graph.

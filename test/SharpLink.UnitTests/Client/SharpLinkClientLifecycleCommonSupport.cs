@@ -151,7 +151,8 @@ internal static class SharpLinkClientLifecycleSharedSupport
                 throw new SocketException((int)SocketError.ConnectionRefused);
 
             var connection = new TestTransportConnection();
-            await connection.InjectSuccessfulHandshakeAsync(cancellationToken: cancellationToken);
+            await connection.InjectSuccessfulHandshakeAsync(
+                contractManifest: ClientInvocationTestManifest.RemoteContracts, cancellationToken: cancellationToken);
             if (connectNumber > 1 && connectNumber <= _immediatelyDrainedReconnects + 1)
             {
                 using var goAway = new PooledByteBufferWriter();
