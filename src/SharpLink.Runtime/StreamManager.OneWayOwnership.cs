@@ -3,6 +3,25 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class StreamManager
 {
+    internal bool IsOneWayInputRoute(long requestId, ushort streamId)
+    {
+        var routes = Volatile.Read(ref _dispatchersByRequestId);
+        if (routes is null || !routes.TryGetValue(requestId, out var requestRoutes) || !requestRoutes.TryAcquire(streamId, out var entry)) return false;
+        try { return entry.Dispatcher is PreAdmissionStreamDispatcher { IsOneWayInput: true }; }
+        finally { entry.Release(); }
+    }
+
+    internal void ConfigureOneWayInputProgress(long requestId, int count, Func<bool> acceptProgress)
+    {
+        var routes = Volatile.Read(ref _dispatchersByRequestId);
+        if (routes is null || !routes.TryGetValue(requestId, out var requestRoutes)) return;
+        for (var index = 1; index <= count; index++)
+        {
+            if (!requestRoutes.TryAcquire(checked((ushort)index), out var entry)) continue;
+            try { if (entry.Dispatcher is PreAdmissionStreamDispatcher mailbox) mailbox.SetOneWayProgress(acceptProgress); }
+            finally { entry.Release(); }
+        }
+    }
     // Keep stable discard routes/credit until peer terminal, but join the old typed child
     // before its registration/Codec owner is released. Never allocate a route here.
     internal async ValueTask AbandonOneWayInputsAfterDispatchesAsync(long requestId, int count)
@@ -30,6 +49,15 @@ internal sealed partial class StreamManager
 internal sealed partial class PreAdmissionStreamDispatcher
 {
     private Task? _physicalChildDisposal;
+    private Func<bool>? _oneWayProgress;
+    internal bool IsOneWayInput { get { lock (_gate) return _oneWayProgress is not null; } }
+    internal void SetOneWayProgress(Func<bool> acceptProgress) { lock (_gate) _oneWayProgress = acceptProgress; }
+    private bool AcceptOneWayDecodedProgress()
+    {
+        Func<bool>? check;
+        lock (_gate) check = _oneWayProgress;
+        return check?.Invoke() ?? true;
+    }
     internal async ValueTask AbandonAndJoinPhysicalAsync()
     {
         Abandon(out _);

@@ -137,11 +137,23 @@ internal sealed partial class SharpLinkServer
                         }
 
                         IRpcByteBufferWriter? decodedOwner = null;
+#if SHARPLINK_775_STATIC_SLICE
+                        var oneWayCompressedDispatch = false;
+#endif
                         try
                         {
+#if SHARPLINK_775_STATIC_SLICE
+                            oneWayCompressedDispatch = header.Type == ProtocolV2FrameType.StreamData &&
+                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
+                                session.StreamManager.IsOneWayInputRoute(streamRequestId, RpcSession.ReadCompressedStreamId(payload));
+#endif
                             if (header.Type == ProtocolV2FrameType.StreamData &&
                                 (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
+#if SHARPLINK_775_STATIC_SLICE
+                                (!hasOwningStreamCallState || oneWayCompressedDispatch))
+#else
                                 !hasOwningStreamCallState)
+#endif
                             {
                                 // Only a genuinely pre-admission stream may use the manager's
                                 // compressed buffering path. Once an owning call state exists,
@@ -181,6 +193,15 @@ internal sealed partial class SharpLinkServer
                                     header.Type, header.Flags, payload, ct, out decodedOwner);
                             }
                         }
+#if SHARPLINK_775_STATIC_SLICE
+                        catch (OperationCanceledException) when (oneWayCompressedDispatch &&
+                            !TryAcceptInboundStreamProgress(requestCancellationMap, streamRequestId, out _))
+                        {
+                            // The mailbox has already returned the accepted bytes. A cooperative
+                            // provider observing this call's terminal is not a Session failure.
+                            continue;
+                        }
+#endif
                         catch (SharpLinkException exception) when (
                             exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
                         {
@@ -221,6 +242,9 @@ internal sealed partial class SharpLinkServer
                                             failedRequestId,
                                             out _))
                                     {
+#if SHARPLINK_775_STATIC_SLICE
+                                        if (!oneWayCompressedDispatch)
+#endif
                                         await DrainTerminalStreamProgressAsync(
                                             session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
                                             .ConfigureAwait(false);

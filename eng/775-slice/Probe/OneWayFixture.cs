@@ -7,6 +7,7 @@ using SharpLink.Runtime;
 using SharpLink.Server;
 using SharpLink.Sdk;
 using SharpLink.IntegrationTests;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.BindingSlice;
 internal static partial class Program
@@ -15,11 +16,13 @@ internal static partial class Program
     {
         private readonly TestCompressionProvider _inner = new();
         internal int Decodes, Compressed;
+        internal Action? BeforeDecode;
+        internal bool CompleteDecodeAfterCancellation;
         public string WireProfile => _inner.WireProfile;
         public bool TryCompress(ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes, CancellationToken cancellationToken = default)
         { var result = _inner.TryCompress(input, output, maxOutputBytes, cancellationToken); if (result) Interlocked.Increment(ref Compressed); return result; }
         public void Decompress(ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes, CancellationToken cancellationToken = default)
-        { Interlocked.Increment(ref Decodes); _inner.Decompress(input, output, maxOutputBytes, cancellationToken); }
+        { Interlocked.Increment(ref Decodes); BeforeDecode?.Invoke(); _inner.Decompress(input, output, maxOutputBytes, CompleteDecodeAfterCancellation ? CancellationToken.None : cancellationToken); }
     }
     private sealed class OneWayFixture : IAsyncDisposable
     {
@@ -29,12 +32,13 @@ internal static partial class Program
         internal OneWayCompression Compression { get; } = new();
         internal OneWayCompression ClientCompression { get; } = new();
         internal LocalDiagnosticMapper Mapper { get; } = new();
+        internal ManualTimeProvider Clock { get; } = new();
         internal StaticBindingCallSite Site { get; }
         internal RpcProxy<IOneWayInputRpc> Rpc { get; }
         internal RpcMethodDescriptor Fire { get; }
         internal ClientConnection Connection => Field<ClientConnection[]>(Client, "_readyConnections").Single();
         internal ServerConnectionState Peer => Field<ServerConnectionRegistry>(Server, "_connectionRegistry").SnapshotActive().Single();
-        internal OneWayFixture(string transport, bool compression = false, bool callQuota = false)
+        internal OneWayFixture(string transport, bool compression = false, bool callQuota = false, bool manualClock = false)
         {
             var manifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(m => m.OwnerAssembly == typeof(IOneWayInputRpc).Assembly);
             Fire = manifest.Contracts.Single(c => c.ContractType == typeof(IOneWayInputRpc)).Methods.Single(m => m.Name == nameof(IOneWayInputRpc.FireAsync)).Facts;
@@ -44,6 +48,11 @@ internal static partial class Program
             var cb = SharpClientBuilder.Create().UseGeneratedManifestSource(new FixedGeneratedManifestSource([manifest])).UseRequestTimeout()
                 .UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; })
                 .UseRuntime(o => { Configure(o); if (compression) o.Compression.Providers.Add(ClientCompression); });
+            if (manualClock)
+            {
+                sb.UseTimeProvider(Clock).UseHeartbeat(TimeSpan.FromDays(1), TimeSpan.FromDays(2));
+                cb.UseRequestTimeout(TimeSpan.FromSeconds(5));
+            }
             if (compression) cb.UseRequestCompressionPolicy(new() { MinimumPayloadBytes = 1, MinimumSavingsBytes = 1, MinimumSavingsRatio = 0 });
             if (transport == "tcp") { sb.UseTcp(0, IPAddress.Loopback); cb.UseTcp("127.0.0.1", ((IPEndPoint)sb.Transport!.LocalEndPoint!).Port); }
             else { var name = "sharplink-775-oneway-" + Guid.NewGuid().ToString("N"); sb.UseTransport(new SharedMemoryServerTransportListener(name)); cb.UseSharedMemory(name); }

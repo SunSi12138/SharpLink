@@ -22,6 +22,8 @@ internal static partial class Program
         await OneWayCallQuotaAsync(transport, ct);
         await OneWayRouteQuotaAsync(transport, ct);
         await OneWayOverWindowAsync(transport, ct);
+        await OneWayDecodeDeadlineAsync(transport, false, ct);
+        await OneWayDecodeDeadlineAsync(transport, true, ct);
         await OneWayConflictingCountAsync(transport, ct);
         await OneWayStopAsync(transport, ct);
         await LocalAlcAsync(transport, "oneway local ALC", OneWayLocalOwnerAsync, ct);
@@ -176,9 +178,13 @@ internal static partial class Program
         var before = OneWayValueCodec.Decodes;
         try
         {
-            var id = await f.HeadAsync(f.Site.Snapshot.Single().Token, f.Fire.MethodId, 1, false, ct); await entered.Task.WaitAsync(ct);
+            var id = await f.HeadAsync(f.Site.Snapshot.Single().Token, f.Fire.MethodId, 1, false, ct);
+            Console.WriteLine("ONEWAY_WINDOW head sent"); await entered.Task.WaitAsync(ct);
+            Console.WriteLine("ONEWAY_WINDOW interceptor held");
             await f.DataAsync(id, 48, true, false, ct);
+            Console.WriteLine("ONEWAY_WINDOW first original48 sent");
             await f.DataAsync(id, 48, true, false, ct);
+            Console.WriteLine($"ONEWAY_WINDOW second original48 sent provider={f.Compression.Decodes}");
             await UntilAsync(() => !peer.Session.IsConnected, ct);
             Check(OneWayValueCodec.Decodes == before && f.Compression.Decodes == 0 && f.Service.Calls == 0,
                 "oneway over-window compressed original lengths fail before provider and typed Codec");
@@ -198,6 +204,35 @@ internal static partial class Program
             "oneway conflicting known count terminates before wrong Codec and provider");
         Check(peer.Session.StreamManager.ActiveStreamCount == 0,
             "oneway conflicting known count allocates no inferred routes");
+    }
+    private static async Task OneWayDecodeDeadlineAsync(string transport, bool cooperative, CancellationToken ct)
+    {
+        var prefix = cooperative ? "oneway cooperative decode deadline" : "oneway noncooperative decode deadline";
+        await using var f = new OneWayFixture(transport, true, manualClock: true); await f.ConnectAsync(ct);
+        var before = OneWayValueCodec.Decodes; var producer = new OneWayControlledProducer();
+        var entered = Signal(); using var release = new ManualResetEventSlim();
+        try
+        {
+            var call = f.Rpc.Service.FireAsync(new(7), producer, ct).AsTask();
+            await f.Service.Entered.Task.WaitAsync(ct);
+            f.Compression.CompleteDecodeAfterCancellation = !cooperative;
+            f.Compression.BeforeDecode = () => { entered.TrySetResult(); if (!release.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("OneWay provider deadline cut not released."); };
+            producer.Release.TrySetResult(); await entered.Task.WaitAsync(ct);
+            Check(OneWayValueCodec.Decodes - before == 1 && f.Compression.Decodes == 2,
+                prefix + " owns original head and provider before typed item Codec");
+            f.Clock.Advance(TimeSpan.FromSeconds(5));
+            Check(OneWayValueCodec.Decodes - before == 1,
+                prefix + " expiration cannot execute typed Codec while provider is held");
+            release.Set();
+            // Producer may observe the remote/server deadline only through its original local
+            // deadline; all later items are already terminal discard, not another provider call.
+            await call.WaitAsync(ct); await f.QuiesceAsync(ct);
+            Check(OneWayValueCodec.Decodes - before == 1 && f.Compression.Decodes == 2 && f.Service.Calls == 1,
+                prefix + " reclaims progress after original provider without wrong Codec");
+            Check(await f.Rpc.Service.BarrierAsync(ct) == 42 && f.Mapper.Failures.All(e => e is OperationCanceledException),
+                prefix + " reclaims original credit routes and preserves unrelated Session");
+        }
+        finally { producer.Release.TrySetResult(); release.Set(); f.Compression.BeforeDecode = null; }
     }
     private static async Task OneWayStopAsync(string transport, CancellationToken ct)
     {

@@ -938,12 +938,28 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         }
         catch
         {
+#if SHARPLINK_775_STATIC_SLICE
+            try { if (IsOneWayInput) NotifyBytesConsumed(encodedByteCount); }
+            finally { ReleaseChildDispatch(); }
+#else
             ReleaseChildDispatch();
+#endif
             throw;
         }
 
         try
         {
+#if SHARPLINK_775_STATIC_SLICE
+            // OneWay may legally produce before its interceptor terminal. Its stable mailbox
+            // owns credit before decompression and reclaims progress again after user decode.
+            if (!AcceptOneWayDecodedProgress())
+            {
+                try { NotifyBytesConsumed(encodedByteCount); }
+                finally { ReleaseChildDispatch(); }
+                decoded.Dispose();
+                return ValueTask.CompletedTask;
+            }
+#endif
             var dispatch = DispatchAttachedAcquired(dispatcher, decoded.Payload, encodedByteCount);
             if (dispatch.IsCompletedSuccessfully)
             {

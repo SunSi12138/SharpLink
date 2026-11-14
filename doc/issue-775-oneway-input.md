@@ -98,3 +98,36 @@ token/build-input parity permits reuse of that evidence, not a passing full-regr
 This slice does not complete production API/package/caller migration, independent #805
 review, canonical generation, Trim/NativeAOT, broad error/auth/multi-Session combinations,
 or the final performance gate. #775 and #805 remain open; no PR/merge is implied.
+
+## First counterexample and corrective freeze (before the second subject)
+
+First subject `a463a142c22d56af2b8c74788eb50394aa5f0dd4` /
+[run 43567231843](https://github.com/SunSi12138/SharpLink/actions/runs/43567231843)
+fails on both hosts at the original 240-second watchdog in the over-window TCP control.
+All six retained inventories pass all four cells; new OneWay controls reach the route-quota
+control before the hang. Both original ZIPs, raw job logs and failure-only stack/root text
+are preserved. No new OneWay JSON exists for that failed process.
+
+The reader's old compressed-input branch bypasses a stable mailbox whenever a call state
+exists. OneWay can already own a call state while its interceptor is held and its typed
+consumer is not attached. The first buffered candidate is instead sent to the provider;
+a corrupt-provider error completes that input route rather than exercising the intended
+receive-window rejection. Waiting for a Session terminal then hits the frozen watchdog.
+This is a missing OneWay pre-terminal buffering boundary, not evidence for increasing time.
+
+Route owned OneWay compressed input through its existing stable mailbox even with a call
+state. Reserve original-byte credit before provider execution; keep compressed buffering
+before the interceptor terminal. The mailbox carries a scalar request/map progress callback
+(no collectible registration or pooled state pointer), reclaims progress after a successful
+provider call, and repays accepted bytes on provider failure. A cooperative provider observing
+this call's deadline is not a Session failure, and the read-loop error path must not charge
+or consume those accepted bytes twice. Other three streaming families retain their old
+read-loop arbitration path; ordinary compilation tokens remain unchanged.
+
+Before the corrective subject, retain all original74 cases exactly and add **eight**
+controls, for **82** total: cooperative/noncooperative provider held across a deterministic
+five-second server deadline; no typed item Codec while held or after terminal; original
+credit/routes reclaimed; unrelated Unary/Session still usable. Providers use the existing
+RLE fixture; only the deliberately noncooperative test ignores cancellation. Existing
+watchdogs, 15-second synchronous cut and ten-GC limits are unchanged. Extra phase logging
+identifies the original over-window cut; it is not a new acceptance condition.

@@ -154,6 +154,7 @@ internal sealed partial class SharpLinkServer
                         descriptor.ClientStreamCount,
                         admittedCallState);
 #if SHARPLINK_775_STATIC_SLICE
+                    ConfigureBoundOneWayInputProgress(session, requestId, descriptor.ClientStreamCount, requestCancellationMap);
                     retainedPayload!.SliceMethod = boundMethod;
                     retainedPayload!.SliceSelection = bindingSelection;
 #endif
@@ -417,6 +418,9 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     invokeToken,
                     retainUntilLocalCompletion: true);
+#if SHARPLINK_775_STATIC_SLICE
+                ConfigureBoundOneWayInputProgress(session, requestId, descriptor.ClientStreamCount, requestCancellationMap);
+#endif
 
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(

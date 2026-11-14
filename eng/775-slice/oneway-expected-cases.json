@@ -72,5 +72,13 @@
   "oneway server asynchronous service disposal retains original physical stream protection",
   "oneway server physical consumer exit permits group retirement and quota reclaim",
   "oneway local ALC / old ALC collects with client server and scalar channel live",
-  "oneway server ALC / old ALC collects with original client server and proxy live"
+  "oneway server ALC / old ALC collects with original client server and proxy live",
+  "oneway cooperative decode deadline owns original head and provider before typed item Codec",
+  "oneway cooperative decode deadline expiration cannot execute typed Codec while provider is held",
+  "oneway cooperative decode deadline reclaims progress after original provider without wrong Codec",
+  "oneway cooperative decode deadline reclaims original credit routes and preserves unrelated Session",
+  "oneway noncooperative decode deadline owns original head and provider before typed item Codec",
+  "oneway noncooperative decode deadline expiration cannot execute typed Codec while provider is held",
+  "oneway noncooperative decode deadline reclaims progress after original provider without wrong Codec",
+  "oneway noncooperative decode deadline reclaims original credit routes and preserves unrelated Session"
 ]
