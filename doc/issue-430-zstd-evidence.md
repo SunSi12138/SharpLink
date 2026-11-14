@@ -66,7 +66,7 @@ Stable Stage-2 validation run: https://github.com/SunSi12138/SharpLink/actions/r
 
 Platform/BCL evidence run: https://github.com/SunSi12138/SharpLink/actions/runs/34024909888
 
-The workflow pins .NET 11 Preview 7 SDK `11.0.100-preview.7.26381.103` only as evidence. The shipping package in this change does **not** target preview `net11.0`. A stable .NET 11 TFM/backend can be added after GA without changing the SharpLink profile if these compatibility properties continue to hold.
+The historical run pinned .NET 11 Preview 7 SDK `11.0.100-preview.7.26381.103` only as evidence. The shipping package in that change did **not** target preview `net11.0`. These results remain Preview 7 evidence; they do not establish interoperability with the GA runtime.
 
 | Platform | .NET 10 ZstdSharp NativeAOT | Separate native zstd deployment | ZstdSharp -> BCL | BCL -> ZstdSharp | corruption/truncation/trailing/concat/bound |
 |---|---|---|---|---|---|
@@ -250,4 +250,4 @@ These hosted-runner measurements are evidence against a systematic disabled-path
 - WAN-like evidence demonstrates material value where bandwidth is constrained.
 - Same-runner A/B evidence does not show a systematic regression when compression is disabled.
 
-The remaining .NET 11 work is a release-timing task, not an unresolved wire-contract problem: after .NET 11 GA, add the BCL backend under the existing profile and rerun the same compatibility/platform gates before shipping that target.
+The .NET 11 GA SDK is now available. Adding a BCL backend remains separate work: use the GA toolchain pinned in `eng/net11/global.json` and rerun the same compatibility/platform gates before shipping that target under the existing profile. The .NET 10 ZstdSharp provider is unchanged.

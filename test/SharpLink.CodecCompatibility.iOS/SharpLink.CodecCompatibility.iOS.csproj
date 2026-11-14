@@ -14,11 +14,16 @@
     <TrimMode>copy</TrimMode>
     <UseMonoRuntime Condition="'$(CodecRuntime)' == 'mono'">true</UseMonoRuntime>
     <UseMonoRuntime Condition="'$(CodecRuntime)' == 'coreclr'">false</UseMonoRuntime>
+    <DefineConstants Condition="'$(CodecRuntime)' == 'coreclr'">$(DefineConstants);SHARPLINK_IOS_CORECLR</DefineConstants>
     <UseInterpreter Condition="'$(CodecRuntime)' == 'mono'">true</UseInterpreter>
     <MtouchDebug Condition="'$(CodecRuntime)' == 'coreclr'">false</MtouchDebug>
     <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);IL2026;IL2090;CA1422</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(CodecRuntime)' == 'coreclr'">
+    <PartialAppManifest Include="Info.CoreCLR.plist" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />

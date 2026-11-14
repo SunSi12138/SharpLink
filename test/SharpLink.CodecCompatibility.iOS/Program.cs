@@ -33,9 +33,9 @@ public static class Application
             var sdk = Environment.GetEnvironmentVariable("SHARPLINK_SDK_VERSION") ?? "unknown";
             var targetFramework = Environment.GetEnvironmentVariable("SHARPLINK_TARGET_FRAMEWORK")
                 ?? "net10.0-ios/iossimulator";
-            var isExperimentalCoreClr = targetFramework.StartsWith("net11.0-ios", StringComparison.OrdinalIgnoreCase);
-            var expectedRuntimeFamily = isExperimentalCoreClr ? "CoreCLR" : "Mono";
-            var expectedCompilationMode = isExperimentalCoreClr ? null : "Interpreter";
+            var isCoreClr = targetFramework.StartsWith("net11.0-ios", StringComparison.OrdinalIgnoreCase);
+            var expectedRuntimeFamily = isCoreClr ? "CoreCLR" : "Mono";
+            var expectedCompilationMode = isCoreClr ? null : "Interpreter";
 
             Console.WriteLine(
                 $"SharpLink codec probe starting from Main: mode={mode}, target={targetFramework}, runtime={expectedRuntimeFamily}.");
@@ -119,6 +119,9 @@ public sealed class AppDelegate : UIApplicationDelegate
 
     public override bool FinishedLaunching(UIApplication application, NSDictionary? launchOptions)
     {
+#if SHARPLINK_IOS_CORECLR
+        return true;
+#else
         var controller = new UIViewController();
         controller.View!.BackgroundColor = UIColor.SystemBackground;
         Window = new UIWindow(UIScreen.MainScreen.Bounds)
@@ -127,5 +130,30 @@ public sealed class AppDelegate : UIApplicationDelegate
         };
         Window.MakeKeyAndVisible();
         return true;
+#endif
     }
 }
+
+#if SHARPLINK_IOS_CORECLR
+[Register("SceneDelegate")]
+public sealed class SceneDelegate : UIResponder, IUIWindowSceneDelegate
+{
+    [Export("window")]
+    public UIWindow? Window { get; set; }
+
+    [Export("scene:willConnectToSession:options:")]
+    public void WillConnect(UIScene scene, UISceneSession session, UISceneConnectionOptions connectionOptions)
+    {
+        if (scene is not UIWindowScene windowScene)
+            return;
+
+        var controller = new UIViewController();
+        controller.View!.BackgroundColor = UIColor.SystemBackground;
+        Window = new UIWindow(windowScene)
+        {
+            RootViewController = controller
+        };
+        Window.MakeKeyAndVisible();
+    }
+}
+#endif

@@ -1,0 +1,21 @@
+name: Setup .NET 11 evidence environment
+description: Select the pinned GA SDK for explicit .NET 11 jobs.
+
+runs:
+  using: composite
+  steps:
+    - name: Select .NET 11 toolchain for this job
+      shell: bash
+      run: cp eng/net11/global.json global.json
+
+    - name: Setup .NET CI environment
+      uses: ./.github/actions/setup-dotnet
+
+    - name: Verify and record .NET 11 SDK
+      shell: bash
+      run: |
+        expected="$(node -p "require('./eng/net11/global.json').sdk.version")"
+        actual="$(dotnet --version)"
+        test "$actual" = "$expected"
+        echo "SHARPLINK_SDK_VERSION=$actual" >> "$GITHUB_ENV"
+        dotnet --info

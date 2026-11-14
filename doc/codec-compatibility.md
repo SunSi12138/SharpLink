@@ -49,6 +49,24 @@ There is currently no retained Android <-> iOS, iOS x64 <-> iOS arm64, or mobile
 
 The .NET 10 servicing workflow keeps the platform identity fixed to Linux x64 CoreCLR and varies the exact SDK/runtime pair. Baseline and latest each act as producer and consumer, yielding baseline -> baseline, baseline -> latest, latest -> baseline, and latest -> latest. Exact runtime versions are pinned and validated in the manifests.
 
+### .NET 11 toolchain
+
+The explicit Browser CoreCLR and iOS CoreCLR jobs select SDK **11.0.100** from [`eng/net11/global.json`](../eng/net11/global.json) through the shared `setup-dotnet11` action. The SDK includes .NET runtime **11.0.0** and C# 15; its WebAssembly SDK pack is **11.0.0**. Prerelease SDK selection and SDK roll-forward are disabled for these jobs. The root `global.json`, default `net10.0` targets, and .NET 10 package versions remain the normal development and release entry points.
+
+These versions are published in the official [.NET 11 GA release notes](https://github.com/dotnet/core/blob/main/release-notes/11.0/11.0.0/11.0.0.md), [release metadata](https://dotnetcli.blob.core.windows.net/dotnet/release-metadata/11.0/releases.json), and [WebAssembly SDK package](https://www.nuget.org/packages/Microsoft.NET.Sdk.WebAssembly.Pack/11.0.0).
+
+The iOS job additionally pins workload set **11.0.100.1**, which supplies `Microsoft.iOS.Sdk.net11.0_27.2` **27.2.11039**. This GA workload requires **Xcode 27.2**; the simulator host adopts the required UIScene lifecycle only for its CoreCLR target. Both `iossimulator-x64` and `iossimulator-arm64` remain published targets. The existing x64 blocking / arm64 experimental evidence policy is unchanged. A runner without the required Xcode cannot establish GA simulator evidence; it must be upgraded rather than bypassing the Xcode check or falling back to a preview workload. See the [iOS GA release](https://github.com/dotnet/macios/releases/tag/dotnet-11.0.1xx-xcode27.2.11039) and [x64 runtime package](https://www.nuget.org/packages/Microsoft.iOS.Runtime.iossimulator-x64.net11.0_27.2/27.2.11039).
+
+For a standalone .NET 11 experiment, run the CLI from `eng/net11` and pass the project path explicitly, so the root .NET 10 SDK selection is not changed. Runtime Async is a separate compiler opt-in in a `net11.0` project:
+
+```xml
+<PropertyGroup>
+  <Features>runtime-async=on</Features>
+</PropertyGroup>
+```
+
+This does not require `EnablePreviewFeatures`. The GA [announcement](https://devblogs.microsoft.com/dotnet/announcing-dotnet-11/) still labels application Runtime Async as preview; use the documented opt-in rather than treating SDK GA as automatic enablement. The [runtime guidance](https://learn.microsoft.com/en-us/dotnet/core/whats-new/dotnet-11/runtime#runtime-async) also notes that the old `DOTNET_RuntimeAsync` / `UNSUPPORTED_RuntimeAsync` environment switches have been removed. The .NET 10 benchmark project remains traditional compiler lowering. Its references to standalone `net11-bench` artifacts describe historical experiments, not a checked-in harness or GA measurements.
+
 ### Mono compatibility boundary
 
 Mono is **not part of the core compatibility matrix** and is not a blanket SharpLink cross-runtime ABI guarantee. Mono evidence is retained only where an actual Mono runtime executed the shared probe, and claims are scoped to the exercised edge and fixture category.

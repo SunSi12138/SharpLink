@@ -29,8 +29,8 @@ namespace SharpLink.Benchmarks;
 /// </para>
 /// <para>
 /// Scope: this measures the <b>traditional async lowering</b> that ships in the .NET 10 SDK.
-/// The runtime-async comparison axis of issue #159 cannot be populated until a runtime-async
-/// feature ships, so it is intentionally absent here (re-run this same matrix once one does).
+/// Runtime Async is available as an explicit opt-in in the .NET 11 GA SDK; this .NET 10
+/// project does not enable it. Compare separately with the pinned toolchain in eng/net11/global.json.
 /// </para>
 /// </summary>
 [MemoryDiagnoser]
