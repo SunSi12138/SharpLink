@@ -1,102 +1,96 @@
-name: Temporary dynamic OneWay drain proof
+name: Temporary dynamic OneWay cost and regression
 on:
   push:
-    branches: ['validation/dynamic-oneway-drain-candidate-20261114']
+    branches: ['validation/dynamic-oneway-drain-cost-20261114']
 permissions:
   contents: read
 jobs:
-  candidate:
+  cost:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        transport: [tcp, sharedmemory]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    env:
-      SHARPLINK_DRAIN_RESULTS: ${{ github.workspace }}/artifacts/dynamic-oneway-drain/cases
-      SHARPLINK_DRAIN_TRANSPORT: ${{ matrix.transport }}
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup-dotnet
-      - name: Build genuine dynamic fixtures
-        run: dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
-      - name: Original six and terminal controls
-        shell: bash
-        run: |
-          mkdir -p artifacts/dynamic-oneway-drain
-          for selector in DynamicInputDrainShouldHoldServiceUntilPhysicalDecodeExits DynamicOneWayInputTerminalShouldRetainPhysicalOwner; do
-            dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build -- \
-              --treenode-filter "/*/*/RuntimeAssemblyIntegrationTests/$selector" \
-              --maximum-parallel-tests 1 --timeout 60s --output Detailed \
-              --results-directory "artifacts/dynamic-oneway-drain/$selector" \
-              > "artifacts/dynamic-oneway-drain/$selector.log" 2>&1
-            cat "artifacts/dynamic-oneway-drain/$selector.log"
-          done
-      - name: Child gate, physical disposal, scalar credit and capture cost
-        shell: bash
-        run: |
-          dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build -- \
-            --treenode-filter '/*/*/DynamicInputDrainComponentTests/*' \
-            --maximum-parallel-tests 1 --timeout 60s --output Detailed \
-            --results-directory artifacts/dynamic-oneway-drain/components \
-            > artifacts/dynamic-oneway-drain/components.log 2>&1
-          cat artifacts/dynamic-oneway-drain/components.log
-      - name: Require exact real case inventories
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json,os,re
-          from pathlib import Path
-          p=Path('artifacts/dynamic-oneway-drain')
-          for name,total in [('DynamicInputDrainShouldHoldServiceUntilPhysicalDecodeExits',6),
-                             ('DynamicOneWayInputTerminalShouldRetainPhysicalOwner',6),('components',5)]:
-              t=re.sub(r'\x1b\[[0-9;]*m','',(p/(name+'.log')).read_text())
-              def count(k):
-                  m=re.findall(r'\b'+k+r':\s*(\d+)\b',t)
-                  return int(m[-1]) if m else 0
-              assert [count(k) for k in ['total','failed','succeeded','skipped']] == [total,0,total,0],t
-          cases=[json.loads(f.read_text()) for f in (p/'cases').glob('*.json')]
-          expected={(l,m,'success') for l in ['Singleton','Call'] for m in ['NotifyStreamAsync','ReceiveStreamAsync','NotifyAsync']}
-          expected|={(l,'NotifyStreamAsync',t) for l in ['Singleton','Call'] for t in ['throw','cancel','replace']}
-          assert len(cases)==12 and {(c['lifetime'],c['method'],c['terminal']) for c in cases}==expected,cases
-          assert all(c['alcCollected'] and c['source']==os.environ['GITHUB_SHA'] for c in cases)
-          assert len(list(p.rglob('*report.html'))) == 3
-          (p/'result.json').write_text(json.dumps({'source':os.environ['GITHUB_SHA'],'rpcCases':12,'components':5,'alc':'active client/server'},indent=2))
-          PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        if: matrix.transport == 'tcp'
         with:
           ref: 0acc813a1a520a0d7e2b3b8e66ef8f8a535575ca
           path: artifacts/drain-cost-baseline
-      - name: Measure bounded mailbox state increment
-        if: matrix.transport == 'tcp'
+      - name: Allocation-only matched source control
         shell: bash
         run: |
+          git diff --exit-code 56bc05b5dbd309d0b1efa41cfe028831b8ab857d HEAD -- src
+          dotnet build src/SharpLink.Runtime/SharpLink.Runtime.csproj -c Release -v minimal
           dotnet build artifacts/drain-cost-baseline/src/SharpLink.Runtime/SharpLink.Runtime.csproj -c Release -v minimal
-          mkdir -p artifacts/drain-cost-probe
+          mkdir -p artifacts/drain-cost-probe artifacts/dynamic-oneway-cost
           cp eng/dynamic-oneway-mailbox-allocation.cs artifacts/drain-cost-probe/Program.cs
           cat > artifacts/drain-cost-probe/CostProbe.csproj <<'XML'
           <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><IsPackable>false</IsPackable></PropertyGroup></Project>
           XML
           dotnet build artifacts/drain-cost-probe/CostProbe.csproj -c Release -v minimal
-          dotnet run --project artifacts/drain-cost-probe/CostProbe.csproj -c Release --no-build -- "$GITHUB_WORKSPACE/artifacts/drain-cost-baseline/src/SharpLink.Runtime/bin/Release/net10.0" > artifacts/dynamic-oneway-drain/mailbox-baseline.json
-          dotnet run --project artifacts/drain-cost-probe/CostProbe.csproj -c Release --no-build -- "$GITHUB_WORKSPACE/src/SharpLink.Runtime/bin/Release/net10.0" > artifacts/dynamic-oneway-drain/mailbox-candidate.json
+          dotnet run --project artifacts/drain-cost-probe/CostProbe.csproj -c Release --no-build -- "$GITHUB_WORKSPACE/artifacts/drain-cost-baseline/src/SharpLink.Runtime/bin/Release/net10.0" > artifacts/dynamic-oneway-cost/baseline.json
+          dotnet run --project artifacts/drain-cost-probe/CostProbe.csproj -c Release --no-build -- "$GITHUB_WORKSPACE/src/SharpLink.Runtime/bin/Release/net10.0" > artifacts/dynamic-oneway-cost/candidate.json
           python3 - <<'PY'
-          import json
+          import json,os
           from pathlib import Path
-          p=Path('artifacts/dynamic-oneway-drain')
-          a=json.loads((p/'mailbox-baseline.json').read_text(encoding='utf-8-sig'))
-          b=json.loads((p/'mailbox-candidate.json').read_text(encoding='utf-8-sig'))
+          p=Path('artifacts/dynamic-oneway-cost')
+          a=json.loads((p/'baseline.json').read_text(encoding='utf-8-sig'))
+          b=json.loads((p/'candidate.json').read_text(encoding='utf-8-sig'))
           assert a['iterations']==b['iterations']==32768 and a['runtime']==b['runtime']
+          assert '0acc813a1a520a0d7e2b3b8e66ef8f8a535575ca' in a['source'],a
+          assert os.environ['GITHUB_SHA'] in b['source'],b
           delta=b['bytesPerMailboxWithCommonReflection']-a['bytesPerMailboxWithCommonReflection']
-          assert 0 <= delta <= 16, (a,b,delta)
+          assert 0 <= delta <= 16,(a,b,delta)
           print('MAILBOX_STATE_BYTES_DELTA',delta)
+          (p/'result.json').write_text(json.dumps({'baseline':a,'candidate':b,'bytesDelta':delta,'scope':'mailbox state only, no timing claim'},indent=2))
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: dynamic-oneway-drain-${{ runner.os }}-${{ matrix.transport }}
-          path: artifacts/dynamic-oneway-drain
+          name: dynamic-oneway-cost-${{ runner.os }}
+          path: artifacts/dynamic-oneway-cost
+          retention-days: 30
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build ordinary Integration
+        run: dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+      - name: Exact discovered ordinary Integration inventory
+        shell: bash
+        run: |
+          mkdir -p artifacts/dynamic-oneway-integration
+          dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build -- \
+            --maximum-parallel-tests 1 --timeout 120s --output Detailed \
+            --results-directory "$GITHUB_WORKSPACE/artifacts/dynamic-oneway-integration" \
+            > artifacts/dynamic-oneway-integration/run.log 2>&1
+          cat artifacts/dynamic-oneway-integration/run.log
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          p=Path('artifacts/dynamic-oneway-integration')
+          t=re.sub(r'\x1b\[[0-9;]*m','',(p/'run.log').read_text())
+          def count(k):
+              m=re.findall(r'\b'+k+r':\s*(\d+)\b',t)
+              return int(m[-1]) if m else 0
+          assert [count(k) for k in ['total','failed','succeeded','skipped']]==[512,0,512,0],t[-5000:]
+          assert len(list(p.rglob('*report.html')))==1
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: dynamic-oneway-integration-${{ runner.os }}
+          path: artifacts/dynamic-oneway-integration
           retention-days: 30
 

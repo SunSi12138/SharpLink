@@ -54,3 +54,12 @@ Before the refined run, freeze a separate allocation-only probe:32768 mailboxes 
 same host/runtime, identical reflection constructor driver; the retained Task+flag field delta must be0–16 B/mailbox.
 This is bounded per-input-stream state, not a Unary allocation, an extra per-call owner object or a timing equivalence claim.
 
+## Refined functional result
+Production56bc05b5 / run43613725539: Linux/Windows × TCP/SharedMemory all pass the exact12 RPC/ALC +5 component inventories;
+all48 source-bound case JSONs and12 actual HTML reports passed the collector. Both SharedMemory jobs succeed.
+The two TCP jobs fail only afterward in the allocation tool's wrong BufferWriterPoolOptions namespace.
+Correct that tool to Runtime; do not repeat the four valid functional subjects. Product source remains unchanged.
+The subsequent temporary run performs only that allocation line plus the previously unrun ordinary512-case Integration
+suite on Linux and Windows.512 is the actual discovered495 existing +12 RPC +5 component UID inventory.
+The normal Unit census remains2212, so its fixed-old regression counts must not be edited.
+

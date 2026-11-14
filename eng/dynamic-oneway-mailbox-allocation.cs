@@ -10,7 +10,7 @@ AssemblyLoadContext.Default.Resolving += (_, name) =>
 };
 var assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(folder, "SharpLink.Runtime.dll"));
 var abstractions = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(folder, "SharpLink.Abstractions.dll"));
-var options = Activator.CreateInstance(abstractions.GetType("SharpLink.Abstractions.BufferWriterPoolOptions", true)!);
+var options = Activator.CreateInstance(assembly.GetType("SharpLink.Runtime.BufferWriterPoolOptions", true)!);
 var pool = Activator.CreateInstance(assembly.GetType("SharpLink.Runtime.SharpLinkBufferWriterPool", true)!, options);
 var mailbox = assembly.GetType("SharpLink.Runtime.PreAdmissionStreamDispatcher", true)!;
 var constructor = mailbox.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).Single();

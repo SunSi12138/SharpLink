@@ -47,8 +47,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         {
             Directory.CreateDirectory(output);
             File.WriteAllText(Path.Combine(output, $"{lifetime}-{method}-{terminal}.json"),
-                JsonSerializer.Serialize(new { lifetime, method, terminal, alcCollected = true,
-                    source = Environment.GetEnvironmentVariable("GITHUB_SHA") }));
+                JsonSerializer.Serialize(new
+                {
+                    lifetime,
+                    method,
+                    terminal,
+                    alcCollected = true,
+                    source = Environment.GetEnvironmentVariable("GITHUB_SHA")
+                }));
         }
     }
 
@@ -82,7 +88,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 await ((Task)codec.GetProperty("DecodeEntered")!.GetValue(null)!).WaitAsync(TimeSpan.FromSeconds(5));
                 try { await plugin.GetServiceStaticTask(serviceProbe, "HandlerTask").WaitAsync(TimeSpan.FromSeconds(5)); }
                 catch (InvalidOperationException exception) when (
-                    terminal == "throw" && exception.Message == "DYNAMIC_INPUT_HANDLER_FAILURE") { }
+                    terminal == "throw" && exception.Message == "DYNAMIC_INPUT_HANDLER_FAILURE")
+                { }
                 catch (OperationCanceledException) when (terminal == "cancel") { }
             }
             var activeStreams = module.RemainingStreams;
