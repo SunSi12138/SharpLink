@@ -2,13 +2,20 @@ using SharpLink.Client;
 using SharpLink.Sdk;
 using System.Collections.Generic;
 using System.Threading;
+using System.Runtime.CompilerServices;
 
 namespace SharpLink.UnitTests.Client;
 
 internal static class ClientInvokerTestHelper
 {
+    // A fixture client owns one retained synthetic receiver, like a real RpcProxy.Service.
+    // Recreating and discarding the factory result on every invocation lets a concurrent GC
+    // collect the prepared weak site between calls. Ephemeron ownership does not root clients.
+    private static readonly ConditionalWeakTable<ISharpLinkClient, IRpcContractChannel> Channels = new();
+
     internal static IRpcContractChannel CreateChannel(ISharpLinkClient client)
-        => client.CreateContractChannel(client.GetLocalContract<ClientInvocationTestManifest.IInvocationTestContract>());
+        => Channels.GetValue(client, static owner => owner.CreateContractChannel(
+            owner.GetLocalContract<ClientInvocationTestManifest.IInvocationTestContract>()));
 
     // Bootstrap explicitly before the measured invocation. Never hide an asynchronous
     // Prepare inside the call: deadline/policy capture must stay at the call boundary.

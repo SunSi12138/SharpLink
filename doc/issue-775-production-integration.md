@@ -507,3 +507,12 @@ Selected production compatibility boundary:
 - A retry fixture timeout still needs the continuation rerun. Its observer now surfaces an early
   invocation failure instead of hanging on a never-emitted request. A targeted forced-GC probe
   passed, so no speculative strong cache or production retention change was introduced.
+
+- The second continuation narrowed to2219/2220: its new direct observation exposed
+  NoBoundRoute on the retry fixture's second call. The helper had discarded the prepared
+  factory result and recreated a receiver per invocation; concurrent forced-GC controls could
+  collect that weak site between the two business calls. Retain one synthetic receiver per
+  fixture client in a ConditionalWeakTable, mirroring a real retained RpcProxy.Service without
+  rooting released clients. This is test ownership, not a new product cache or per-call wait.
+  The unchanged continuation now passes2220/2220, zero skipped (41.38s); raw prior failures
+  remain. The complete2221 ordinary census still includes the paused/red #387 control.
