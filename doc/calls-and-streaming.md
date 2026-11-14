@@ -1,5 +1,14 @@
 # 调用、流式与取消
 
+## 创建与准备契约
+
+`client.CreateProxy<TContract>()` 同步创建本地 handle，不等待连接、远端 Manifest 或 Bind。
+在启动业务调用前，对这个 handle 显式执行一次有限预算的
+`await proxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken)`，再保留并使用
+`proxy.Service`。没有已绑定合法目标时，默认调用以 `Unavailable/NoBoundRoute` 失败，
+不会序列化业务参数或启动输入 producer。连接 Ready 不代表契约已绑定；重连或替换后必须
+在新物理 Session 上重新绑定，不能搬用旧 binding token。
+
 ## 超时、RpcDeadline 与 TimeBudget
 
 Client 不再隐式选择请求超时 fallback。每个 `SharpClientBuilder` 必须在 Build 前显式三选一：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 明确关闭 Client-wide fallback；保持未指定状态会使 Build 失败。这个 Client-wide fallback 只自动应用于普通 Unary 调用；OneWay、ClientStreaming、ServerStreaming 和 Duplex 不自动继承它。流式/OneWay 调用若要携带本地 `TimeBudget`，应使用方法 `[Timeout]`，或继承已有父调用 lifetime。方法 `[Timeout]` 是方法级策略，会覆盖 Client fallback；例如 Client custom fallback 为 30 秒、方法 `[Timeout(120)]` 时，该方法的本地策略为 120 秒，而不是两者取最小值。无参数 `[Timeout]` 继续表示使用 Client fallback，因此 Client 选择 `DisableRequestTimeout()` 时不能凭空产生一个 fallback。
@@ -10,12 +19,18 @@ Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock �
 
 ## Metadata
 
-Metadata 是 RPC envelope state，不是业务合同参数。需要由调用方为某一次 invocation 明确选择 metadata 时，使用窄能力 `GetWithMetadata<TContract>(SharpLinkMetadata)` 获取绑定该 metadata 的 proxy，再正常调用业务方法；它不会恢复通用 options bag，也不会使用 ambient/global state。例如：
+Metadata 是 RPC envelope state，不是业务合同参数。调用方通过 `CreateProxy<TContract>` 的
+`RpcProxyOptions.Metadata` 为这个 proxy 固定 metadata；需要不同值时创建另一个 handle，
+不要修改 ambient/global state。例如：
 
 ```csharp
-var tenantProxy = client.GetWithMetadata<IMyService>(
-    new SharpLinkMetadata(new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a")));
-await tenantProxy.GetAsync(id, cancellationToken);
+var tenantProxy = client.CreateProxy<IMyService>(new RpcProxyOptions
+{
+    Metadata = new SharpLinkMetadata(
+        new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a"))
+});
+await tenantProxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
+await tenantProxy.Service.GetAsync(id, cancellationToken);
 ```
 
 Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为横切策略补充/变换当前逻辑调用的 metadata；不要用调用顺序或全局可变 interceptor 状态模拟 caller-selected metadata。服务端从 `SharpLinkCallContext.Current?.Metadata` 或 Server interceptor context 读取。Metadata 受 `MaxMetadataBytes` 限制，适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
@@ -28,11 +43,16 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 ## ClientStreaming 与 Duplex
 
-生成代理在请求被接受后启动客户端流泵。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
+ClientStreaming 和 Duplex 在收到本次调用的 `RequestAccepted` 后才启动客户端流泵，
+Bind 成功本身不能替代调用准入。ServerStreaming 和 Duplex 在调用时捕获 policy/deadline，
+在首次枚举时取得本地动态模块所有权。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
 
 ## OneWay
 
 OneWay 成功表示请求已进入本地发送/服务端接收流程，不包含业务结果。服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察。
+
+OneWay 输入不使用逐请求 Ack：专用输入请求携带 1–127 个流的独立有界 count，
+服务端可在 binding/method 被拒绝时安全丢弃并回收 credit/route；矛盾形态或无法有界清理时关闭 Session。
 
 ## `[NonCancellable]`
 
@@ -42,8 +62,11 @@ OneWay 成功表示请求已进入本地发送/服务端接收流程，不包含
 
 ## 3.0 扩展边界
 
-业务只通过生成的契约 proxy 调用 Unary、OneWay 和三类 Streaming。Generated API 5
-用 `IRpcChannel`/client-stream sink 与 `IRpcGeneratedServerBridge` 连接调用生命周期；
+业务通过生成的契约 proxy 调用 Unary、OneWay 和三类 Streaming；手写调用通过
+client-issued `RpcLocalContract` 创建同一模型的 `IRpcContractChannel`。Generated API 6
+用这个契约 channel/client-stream sink 与 `IRpcGeneratedServerBridge` 连接调用生命周期；
 bridge 不公开 Session、dispatcher 或 flow-control mutator。所有框架后台发送/排空仍由 owner
 监督并在停止时等待；应用提前停止枚举必须释放 enumerator。调用时间只传播剩余 TimeBudget
-（Protocol v2 minor 4），不读取跨机器绝对 deadline。3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。
+（Protocol v2 minor 5，最低兼容 minor 5），不读取跨机器绝对 deadline。
+旧 `Get`、`GetWithMetadata` 和 client-wide `IRpcChannel` 已移除，没有兼容转发。
+3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。

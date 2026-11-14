@@ -221,7 +221,7 @@ public interface IAliasOnlyAdapterContract : IService
 using System;
 
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, {{low}}UL)]
-[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 2, "3.0.0-test", "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 6, 2, "3.0.0-test", "sharplink-3.0-api6-contract-binding-v1")]
 
 namespace SharpLink.Abstractions
 {
@@ -311,14 +311,15 @@ public interface IReferencedNestedBaselineContract : IService
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
 
-        static MetadataReference GeneratedPayloadReference(string assemblyName, string abiIdentity)
+        static MetadataReference GeneratedPayloadReference(string assemblyName, string abiIdentity,
+            int apiVersion = 6, int protocolVersion = 2)
             => CreateMetadataReference(
                 assemblyName,
                 $$"""
 using System;
 
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, 0x6666666666666666UL)]
-[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 2, "3.0.0-test", "{{abiIdentity}}")]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), {{apiVersion}}, {{protocolVersion}}, "3.0.0-test", "{{abiIdentity}}")]
 
 namespace SharpLink.Abstractions
 {
@@ -371,7 +372,17 @@ public interface IReferencedCodecContract : IService
 
         var current = GeneratedPayloadReference(
             "CurrentGeneratedPayload",
-            "sharplink-3.0-api5-owner-bound-unsafe-blit-v1");
+            "sharplink-3.0-api6-contract-binding-v1");
+        foreach (var (api, protocol) in new[] { (5, 2), (7, 2), (6, 3) })
+        {
+            var incompatibleVersion = GeneratedPayloadReference(
+                $"IncompatibleGeneratedPayload{api}_{protocol}",
+                "sharplink-3.0-api6-contract-binding-v1", api, protocol);
+            var versionDiagnostics = RunGenerator(consumer, sdk, incompatibleVersion);
+            Ensure(versionDiagnostics.Any(static diagnostic => diagnostic.GetMessage().Contains(
+                    "incompatible SharpLink generated ABI", StringComparison.Ordinal)),
+                $"a claimed current ABI must not admit API {api}/Protocol {protocol}");
+        }
         var currentDiagnostics = RunGenerator(consumer, sdk, current);
         Ensure(
             !currentDiagnostics.Any(static diagnostic =>

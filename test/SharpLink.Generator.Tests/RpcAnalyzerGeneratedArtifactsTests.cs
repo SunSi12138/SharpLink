@@ -14,7 +14,7 @@ public partial class RpcAnalyzerTests
 {
 
     [Test]
-    public Task GeneratedApi4ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
+    public Task GeneratedApi6ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -52,17 +52,17 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var allGenerated = string.Join("\n", generated);
 
-        Ensure(manifest.Contains("public int ApiVersion => 5;", StringComparison.Ordinal) &&
+        Ensure(manifest.Contains("public int ApiVersion => 6;", StringComparison.Ordinal) &&
                manifest.Contains("public int ProtocolVersion => 2;", StringComparison.Ordinal),
-            "the Generator must own literal API 5 / Protocol 2 stamps");
+            "the Generator must own literal API 6 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
-               manifest.Contains(", 5, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-3.0-api5-owner-bound-unsafe-blit-v1", StringComparison.Ordinal),
+               manifest.Contains(", 6, 2,", StringComparison.Ordinal) &&
+               manifest.Contains("sharplink-3.0-api6-contract-binding-v1", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
         Ensure(stub.Contains("IRpcGeneratedServerBridge bridge", StringComparison.Ordinal),
-            "API 4 stubs must depend on the whole-stream server bridge");
+            "API 6 stubs must depend on the whole-stream server bridge");
         Ensure(stub.Contains("IBufferWriter<byte> output", StringComparison.Ordinal),
             "response payload output must be narrowed to IBufferWriter<byte>");
         Ensure(stub.Contains("internal __Stub_", StringComparison.Ordinal) &&
@@ -78,12 +78,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
                  })
         {
             Ensure(!stub.Contains(forbidden, StringComparison.Ordinal),
-                $"API 4 Stub leaked forbidden Runtime ABI token '{forbidden}'");
+                $"API 6 Stub leaked forbidden Runtime ABI token '{forbidden}'");
         }
         Ensure(!proxy.Contains("using SharpLink.Runtime;", StringComparison.Ordinal),
-            "API 4 Proxy must not acquire a Runtime AssemblyRef through an unused import");
+            "API 6 Proxy must not acquire a Runtime AssemblyRef through an unused import");
         Ensure(!allGenerated.Contains("SharpLink.Runtime", StringComparison.Ordinal),
-            "no generated API 4 source may reference SharpLink.Runtime");
+            "no generated API 6 source may reference SharpLink.Runtime");
         return Task.CompletedTask;
     }
 
@@ -199,8 +199,10 @@ public sealed class HelloService : IHelloService
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
-        Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
-            "streaming stubs must publish framework cancellation support");
+        Ensure(allGenerated.Contains("public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)"),
+            "stubs must resolve complete immutable method facts at cold Bind");
+        Ensure(!allGenerated.Contains("public bool SupportsCancellation(long", StringComparison.Ordinal),
+            "stubs must not retain a parallel narrow cancellation resolver");
         Ensure(allGenerated.Contains(
                 "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
                 StringComparison.Ordinal),
@@ -209,7 +211,7 @@ public sealed class HelloService : IHelloService
                 "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
                 StringComparison.Ordinal),
             "multiple client-stream count must be generated deterministically");
-        var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
+        var supportsCancellationCases = CountOccurrences(allGenerated, "{ SupportsCancellation = true }");
         Ensure(supportsCancellationCases >= 3,
             "client, server, and duplex streaming methods must all support framework cancellation");
         return Task.CompletedTask;

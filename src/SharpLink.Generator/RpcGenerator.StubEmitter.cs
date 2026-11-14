@@ -230,29 +230,6 @@ public partial class RpcGenerator
     private static string GetStubResponseCodecField(RpcMethodModel method)
         => $"__responseCodec_{GetMethodSuffix(method)}";
 
-    private static void AppendCancellationSupport(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
-    {
-        var cancellableMethods = methods
-            .Where(static method => method.HasCancellationToken ||
-                                    method.IsStreamReturn ||
-                                    method.Parameters.Any(static parameter => parameter.IsStream))
-            .ToArray();
-
-        if (cancellableMethods.Length == 0)
-        {
-            sb.AppendLine("    public bool SupportsCancellation(long methodHash) => false;");
-            return;
-        }
-
-        sb.AppendLine("    public bool SupportsCancellation(long methodHash)");
-        sb.AppendLine("        => methodHash switch");
-        sb.AppendLine("        {");
-        foreach (var method in cancellableMethods)
-            sb.AppendLine($"            {method.Hash}L => true,");
-        sb.AppendLine("            _ => false");
-        sb.AppendLine("        };");
-    }
-
     private static void AppendMethodDescriptors(StringBuilder sb, RpcInterfaceModel model)
     {
         sb.AppendLine("    public bool TryResolveMethod(long methodHash, out RpcMethodDescriptor descriptor)");
@@ -261,13 +238,6 @@ public partial class RpcGenerator
         sb.AppendLine("        {");
         foreach (var method in model.Methods)
         {
-            var kind = GetMethodKind(method);
-            var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
-            var clientStreamCount = method.Parameters.Count(static parameter => parameter.IsStream);
-            var hasClientStreams = clientStreamCount != 0;
-            var methodTimeout = method.TimeoutTicks is { } ticks
-                ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
-                : "null";
             sb.AppendLine($"            case {method.Hash}L:");
             sb.AppendLine($"                descriptor = {MethodFactsExpression(model.Hash, method)};");
             sb.AppendLine("                return true;");

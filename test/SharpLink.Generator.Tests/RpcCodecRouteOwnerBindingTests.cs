@@ -78,7 +78,7 @@ public sealed class RouteAdapter : TestRouteAdapterBase
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal __Proxy_", StringComparison.Ordinal) &&
-               generated.Contains("(IRpcChannel channel, IRpcCodecProvider __codecs)", StringComparison.Ordinal),
+               generated.Contains("(IRpcContractChannel channel, IRpcCodecProvider __codecs)", StringComparison.Ordinal),
             "the generated proxy must accept the Contract owner Codec provider supplied by the manifest descriptor factory");
         Ensure(!generated.Contains("channel.RuntimeContext.Codecs.GetCodec", StringComparison.Ordinal),
             "a custom runtime must never silently downgrade a routed proxy to the context-global Codec provider");

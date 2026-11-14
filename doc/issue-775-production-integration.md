@@ -282,3 +282,29 @@ Selected production compatibility boundary:
   relaxed budget or passing claim. Remaining session-refresh test peers must advertise and bind
   their real synthetic contract; replacement Ready is not replacement bound Ready, and no old
   token may be redirected. Full suites, platforms/packages and performance are still incomplete.
+
+### Generator ABI gate and accepted-input semantics
+
+- The complete ordinary Generator suite now passes295/295. Migrated current producer metadata
+  fixtures to API6/exact contract-binding ABI, retaining legacy and wrong-ABI negatives. The
+  migration exposed a production omission: referenced-manifest bootstrap still required API5.
+  It now requires API6; referenced Codec identity validation also checks API/protocol, nonempty
+  producer version and the manifest's actual owner, rather than trusting the exact-ABI string
+  alone. Added API5/API7/protocol3 counterexamples carrying the claimed current ABI.
+- Generated Stub checks use the single cold TryResolveMethod and complete cancellation facts;
+  removed the uncalled old narrow cancellation emitter. Routed owner Codec and name-collision
+  checks target IRpcContractChannel. The metadata documentation compiles against the built real
+  Abstractions metadata/options/opaque handle API without adding that assembly to other mocked
+  Generator test compilations. Updated calls-and-streaming.md for explicit finite preparation,
+  default NoBoundRoute, per-call RequestAccepted and OneWay's independent bounded/no-Ack shape.
+- ClientStreamingResultStressTests initially deadlocked its obsolete pre-Ack-input expectation.
+  Its three migrated controls pass with the original10 iterations/10-second phase limits:
+  no producer/deferred input before the gated interceptor terminal, captured A/B/C unwind after
+  global X/Y/Z replacement, actual compressed input roundtrip after acceptance, and queued head
+  accounting released before accepted payload exceeds MaxQueuedBytes. The latter is now an
+  accepted-input control, not a claim that ordinary two-way producers still spool before Ack;
+  OneWay deferred-buffer/rejection controls remain required under its no-Ack contract.
+- Full Integration has advanced but is not accepted. Its next failure was a raw compression
+  probe using an arbitrary ContractId/method1 as the retired request prefix; the replacement
+  control is being changed to real Bind/Ack and an actual known descriptor before injecting
+  hostile compressed bytes. Its provider/cancel/resource proof must pass, not be bypassed.

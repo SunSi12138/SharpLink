@@ -691,7 +691,13 @@ public partial class RpcGenerator
             foreach (var attribute in assembly.GetAttributes())
             {
                 if (IsAttribute(attribute, "SharpLink.Abstractions", "SharpLinkGeneratedAssemblyManifestAttribute") &&
-                    attribute.ConstructorArguments.Length >= 5 &&
+                    attribute.ConstructorArguments.Length == 5 &&
+                    attribute.ConstructorArguments[0].Value is INamedTypeSymbol manifestType &&
+                    SymbolEqualityComparer.Default.Equals(manifestType.ContainingAssembly, assembly) &&
+                    attribute.ConstructorArguments[1].Value is 6 &&
+                    attribute.ConstructorArguments[2].Value is 2 &&
+                    attribute.ConstructorArguments[3].Value is string generatorVersion &&
+                    !string.IsNullOrWhiteSpace(generatorVersion) &&
                     attribute.ConstructorArguments[4].Value is string abiIdentity &&
                     string.Equals(abiIdentity, GeneratedAbiIdentity, StringComparison.Ordinal))
                 {
