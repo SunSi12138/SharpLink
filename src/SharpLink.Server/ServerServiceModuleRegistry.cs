@@ -126,6 +126,9 @@ internal sealed class ServerServiceModuleRegistry
         internal void Add(SharpLinkDynamicModule module, ServiceRegistration[] services)
             => _owner._detachedModuleServices.Add(module, services);
 
+        internal bool TryGetValue(SharpLinkDynamicModule module, out ServiceRegistration[] services)
+            => _owner._detachedModuleServices.TryGetValue(module, out services!);
+
         /// <summary>
         /// Transfers detached service ownership exactly once to the module cleanup path.
         /// </summary>

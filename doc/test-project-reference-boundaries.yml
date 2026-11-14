@@ -74,6 +74,9 @@ test_projects:
   aot_smoke: test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj
   benchmarks: test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
   chaos_tests: test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj
+  codec_publication_probe: test/SharpLink.CodecPublicationProbe/SharpLink.CodecPublicationProbe.csproj
+  referenced_codec_provider: test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj
+  referenced_codec_consumer: test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj
   codec_compatibility: test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
   codec_compatibility_android: test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj
   codec_compatibility_browser: test/SharpLink.CodecCompatibility.Browser/SharpLink.CodecCompatibility.Browser.csproj
@@ -179,6 +182,28 @@ allowed_references:
     to: [generator]
     mode: analyzer
     classification: allowed
+
+  # Public metadata callback fixture and its exact referenced-Codec provider/consumer.
+  - from: codec_publication_probe
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+  - from: referenced_codec_provider
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+  - from: referenced_codec_consumer
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+  - from: referenced_codec_consumer
+    target_scope: test
+    to: [referenced_codec_provider]
+    mode: assembly
+    classification: intentional_test_infrastructure
 
   - from: codec_compatibility
     target_scope: production
@@ -373,7 +398,7 @@ allowed_references:
     classification: allowed
   - from: unit_tests
     target_scope: test
-    to: [multi_cluster_contracts, rollback_plugin, static_codec_owner_contracts]
+    to: [multi_cluster_contracts, rollback_plugin, static_codec_owner_contracts, codec_publication_probe, referenced_codec_provider, referenced_codec_consumer]
     mode: assembly
     classification: intentional_test_infrastructure
 

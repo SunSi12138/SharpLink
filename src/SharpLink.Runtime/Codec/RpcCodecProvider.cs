@@ -229,6 +229,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 {
     private readonly IRpcCodecAdapterScope[] _scopes;
     private IRpcCodecProvider? _contractCodecProvider;
+    private int _publicationRetired;
     private int _disposed;
 
     private RpcGeneratedManifestRegistration(
@@ -239,6 +240,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         IRpcCodecAdapterScope[] scopes)
     {
         Manifest = manifest;
+        OwnerAssembly = manifest.OwnerAssembly;
         ContractCodecs = contractCodecs;
         Codecs = codecs;
         BaseProvider = baseProvider;
@@ -246,6 +248,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     }
 
     internal ISharpLinkGeneratedAssemblyManifest Manifest { get; }
+    internal System.Reflection.Assembly OwnerAssembly { get; }
 
     /// <summary>Gets Codec bindings visible only to RPC Contracts owned by this manifest.</summary>
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> ContractCodecs { get; }
@@ -275,6 +278,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     internal void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+    internal void BeginRetirement()
+        => Volatile.Write(ref _publicationRetired, 1);
+
+    internal void ThrowIfPublicationRetired()
+        => ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _publicationRetired) != 0 || Volatile.Read(ref _disposed) != 0, this);
 
     internal static RpcGeneratedManifestRegistration Create(
         ISharpLinkGeneratedAssemblyManifest manifest,
