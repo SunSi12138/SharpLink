@@ -64,6 +64,21 @@ internal sealed partial class SharpLinkClient
         public SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot()
             => _current.GetEndpointSelectionPolicySnapshot();
 
+        public EndpointSelectionPolicyGeneration CaptureBindingSelectionPolicy()
+            => _current.CaptureSelectionPolicy();
+
+        public int SelectBindingEndpoint(StaticBindingSnapshot snapshot,
+            EndpointSelectionPolicyGeneration policy, ulong excluded)
+        {
+            try { return _current.SelectEndpoint(snapshot.Candidates, policy, excluded); }
+            catch (Exception exception) when (policy.HasCustomSelector)
+            {
+                _client._logger.LogError(exception, "SharpLink endpoint selector failed.");
+                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                    "The endpoint selector failed.", exception);
+            }
+        }
+
         public void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
             => _current.UpdateLoadBalancing(strategy);
 
@@ -852,6 +867,11 @@ internal sealed partial class SharpLinkClient
         {
             _connections.PublishReadyConnections(_current.Current);
             var readiness = _current.PublishReadySnapshot(force);
+            var boundTopology = _current.SelectionSnapshot;
+            _client.PublishBindingTopology(new BindingTopologySnapshot(boundTopology.Endpoints.Select((endpoint, index) =>
+                new BindingEndpointTopology(boundTopology.Candidates[index], endpoint.ReadyConnections,
+                    () => EnsureExpansion(endpoint),
+                    () => RetireAdmissionStateIfReleased(endpoint, boundTopology.Candidates[index]))).ToArray()));
             if (readiness.MembershipChanged)
             {
                 SharpLinkTelemetry.AddClientReadyEndpoints(
@@ -957,6 +977,7 @@ internal sealed partial class SharpLinkClient
                 })
                 .ToArray();
             _current.Clear();
+            _client.PublishBindingTopology(BindingTopologySnapshot.Empty);
             SharpLinkTelemetry.AddClientActiveEndpoints(-_telemetryActiveEndpointCount);
             SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
             SharpLinkTelemetry.AddClientDrainingEndpoints(-_telemetryDrainingEndpointCount);

@@ -14,7 +14,7 @@ internal sealed partial class StaticBindingCallSite(SharpLinkClient owner, RpcLo
     internal RpcLocalContract Local { get; } = local;
     internal long ContractId => Local.ContractId;
     internal RpcHash128 Hash => Local.Hash;
-    internal StaticBoundTarget[] Snapshot = [];
+    internal StaticBindingSnapshot Snapshot = StaticBindingSnapshot.Empty;
     internal Exception? Failure;
     internal int RefreshState;
     internal int Constructions;

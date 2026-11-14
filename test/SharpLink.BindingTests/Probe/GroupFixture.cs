@@ -154,7 +154,8 @@ internal static partial class Program
             var contract = LocalManifest.Contracts.Single(c => c.ContractType == contractType);
             var local = Client.GetLocalContract(typeof(IHotRpc).Assembly, contract.ContractId);
             var scope = new StaticBindingCallSite(Client, local)
-                { Snapshot = [new StaticBoundTarget(Connections[connection], ack.Token)] };
+                { Snapshot = StaticBindingSnapshot.Create(Field<BindingTopologySnapshot>(Client, "_bindingTopology"),
+                    [new StaticBoundTarget(Connections[connection], ack.Token)]) };
             var registration = Field<ClientAssemblyRegistry>(Client, "_assemblyRegistry").CaptureProxySnapshot()[contractType];
             // Keep generated argument framing and codec ownership, including per-argument lengths.
             return contract.ProxyFactory(scope, registration.Codecs);

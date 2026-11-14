@@ -52,6 +52,13 @@ internal sealed partial class SharpLinkClient
         public SharpLinkEndpointSelectionPolicySnapshot GetEndpointSelectionPolicySnapshot()
             => _topology.GetEndpointSelectionPolicySnapshot();
 
+        public EndpointSelectionPolicyGeneration CaptureBindingSelectionPolicy()
+            => _topology.CaptureSelectionPolicy();
+
+        public int SelectBindingEndpoint(StaticBindingSnapshot snapshot,
+            EndpointSelectionPolicyGeneration policy, ulong excluded)
+            => _topology.SelectEndpoint(snapshot.Candidates, policy, excluded);
+
         public void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
             => _topology.UpdateLoadBalancing(strategy);
 
@@ -728,6 +735,10 @@ internal sealed partial class SharpLinkClient
                 _endpoints[index].PublishReadyConnections();
 
             var publication = _topology.PublishReadySnapshot(_endpoints);
+            var boundTopology = _topology.SelectionSnapshot;
+            _client.PublishBindingTopology(new BindingTopologySnapshot(boundTopology.Endpoints.Select((endpoint, index) =>
+                new BindingEndpointTopology(boundTopology.Candidates[index], endpoint.ReadyConnections,
+                    () => EnsureExpansion(endpoint))).ToArray()));
             if (publication.ReadyEndpointDelta != 0)
                 SharpLinkTelemetry.AddClientReadyEndpoints(publication.ReadyEndpointDelta);
             _client.PublishReadinessFacts(new ClientReadinessFacts(
@@ -786,6 +797,7 @@ internal sealed partial class SharpLinkClient
                     _endpoints[index].Connections.Clear();
                 _retiringConnections.Clear();
                 var previousReadyEndpoints = _topology.Clear();
+                _client.PublishBindingTopology(BindingTopologySnapshot.Empty);
                 if (previousReadyEndpoints != 0)
                     SharpLinkTelemetry.AddClientReadyEndpoints(-previousReadyEndpoints);
                 _client.PublishReadinessFacts(new ClientReadinessFacts(

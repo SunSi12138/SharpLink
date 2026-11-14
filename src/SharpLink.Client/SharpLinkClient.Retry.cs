@@ -238,7 +238,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
+            var target = GetReadyStaticTarget(control.BindingSite, method, outcome, selection);
             connection = target.Connection;
             contractId = unchecked((long)target.Token);
             try

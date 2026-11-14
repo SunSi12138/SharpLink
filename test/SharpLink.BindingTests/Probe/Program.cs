@@ -31,15 +31,17 @@ internal static partial class Program
 
     public static async Task Main(string[] args)
     {
+        var routing = args[0] == "routing";
         var oneWay = args[0] == "oneway";
         var group = args[0] == "group";
         var receipt = args[0] == "receipt";
         var facts = args[0] == "facts";
         var streams = args[0] == "streams";
         var localModules = args[0] == "local";
-        var transport = group || receipt || facts || streams || localModules || oneWay ? args[1] : args[0];
-        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(localModules || oneWay ? 240 : streams ? 180 : group || receipt || facts ? 120 : 60));
-        if (oneWay)
+        var transport = group || receipt || facts || streams || localModules || oneWay || routing ? args[1] : args[0];
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(localModules || oneWay ? 240 : streams ? 180 : group || receipt || facts || routing ? 120 : 60));
+        if (routing) await RunRoutingAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
+        else if (oneWay)
         {
             try { await RunOneWayAsync(transport, watchdog.Token).WaitAsync(watchdog.Token); }
             catch (OperationCanceledException) when (watchdog.IsCancellationRequested) { CaptureAlcFailure(); throw; }
@@ -59,10 +61,11 @@ internal static partial class Program
             await RunPublicationControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
             await RunQuotaControlsAsync(transport, watchdog.Token).WaitAsync(watchdog.Token);
         }
-        var report = new { transport, kind = oneWay ? "functional-oneway-input" : localModules ? "functional-local-module" : streams ? "functional-stream-admission" : facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
-            source = Environment.GetEnvironmentVariable("GITHUB_SHA"), runtime = Environment.Version.ToString() };
+        var report = new { transport, kind = routing ? "functional-bound-routing" : oneWay ? "functional-oneway-input" : localModules ? "functional-local-module" : streams ? "functional-stream-admission" : facts ? "functional-method-facts" : receipt ? "functional-receipt" : group ? "functional-group-lifecycle" : "functional-only", passed = Passed.Count, cases = Passed,
+            source = Environment.GetEnvironmentVariable("SHARPLINK_TEST_SOURCE") ?? Environment.GetEnvironmentVariable("GITHUB_SHA"),
+            execution = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" ? "github_actions" : "local", runtime = Environment.Version.ToString() };
         Directory.CreateDirectory("artifacts/775-slice");
-        await File.WriteAllTextAsync($"artifacts/775-slice/{(oneWay ? "oneway-" : localModules ? "local-" : streams ? "streams-" : facts ? "facts-" : receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
+        await File.WriteAllTextAsync($"artifacts/775-slice/{(routing ? "routing-" : oneWay ? "oneway-" : localModules ? "local-" : streams ? "streams-" : facts ? "facts-" : receipt ? "receipt-" : group ? "group-" : "")}{transport}.json", JsonSerializer.Serialize(report));
         Console.WriteLine("RESULT " + JsonSerializer.Serialize(report));
     }
 
@@ -128,7 +131,7 @@ internal static partial class Program
         var manual = publicClient.CreateContractChannel(local);
         var site = (StaticBindingCallSite)manual;
         Check(ReferenceEquals(site.RuntimeContext, publicClient.RuntimeContext), "runtime context without raw cast");
-        Check(site.Snapshot.Length == 0 && client.ReadyConnectionCount == 0, "factory local only before connect");
+        Check(site.Snapshot.Targets.Length == 0 && client.ReadyConnectionCount == 0, "factory local only before connect");
         await ExpectCode(async () => await rpc.Service.EchoAsync(new SlicePayload(7)), SharpLinkErrorCode.Unavailable, "unbound failfast");
         Check(SlicePayloadCodec.Serialized == 0, "unbound call does not serialize");
         using (var canceled = new CancellationTokenSource())
@@ -148,9 +151,9 @@ internal static partial class Program
         await server.StartAsync(token);
         await client.ConnectAsync(token);
         await waiter;
-        Check(site.Snapshot.Length > 0, "before-connect prepare reaches real BindAck");
+        Check(site.Snapshot.Targets.Length > 0, "before-connect prepare reaches real BindAck");
         Check(service.Activations == 0, "Bind does not activate service");
-        var target = site.Snapshot.Single();
+        var target = site.Snapshot.Targets.Single();
         var sent = target.Connection.StaticBindings.Sent;
         var ready = rpc.PrepareAsync(TimeSpan.FromSeconds(1), token);
         Check(ready.IsCompletedSuccessfully, "already-ready prepare synchronous");
@@ -186,14 +189,14 @@ internal static partial class Program
             if (Volatile.Read(ref site.RefreshState) == 0) break;
             await changed.Task.WaitAsync(token);
         }
-        site.Snapshot = [target with { Token = target.Token ^ (1UL << 48) }];
+        site.Snapshot = StaticBindingSnapshot.Create(site.Snapshot.Topology, [target with { Token = target.Token ^ (1UL << 48) }]);
         try
         {
             await ExpectCode(async () => await manual.InvokeUnaryAsync(descriptor, new SlicePayload(3), new SlicePayloadCodec(), intCodec, null, token),
                 SharpLinkErrorCode.FailedPrecondition, "wrong full token rejected");
             Check(service.Invocations == count && service.Activations == activations && SlicePayloadCodec.Deserialized == decoded, "wrong token no business decode or activation");
         }
-        finally { site.Snapshot = [target]; }
+        finally { site.Snapshot = StaticBindingSnapshot.Create(site.Snapshot.Topology, [target]); }
         var otherBuilder = SharpClientBuilder.Create().UseRequestTimeout().UseConnectionPool(o => { o.MinConnections = 1; o.MaxConnections = 1; });
         if (transport == "tcp") otherBuilder.UseTcp("127.0.0.1", tcpPort);
         else otherBuilder.UseSharedMemory(sharedName!);
@@ -206,7 +209,7 @@ internal static partial class Program
         var otherSite = (StaticBindingCallSite)other.CreateContractChannel(other.GetLocalContract<ISliceRpc>());
         await other.ConnectAsync(token);
         await otherProxy.PrepareAsync(TimeSpan.FromSeconds(10), token);
-        var otherTarget = otherSite.Snapshot.Single();
+        var otherTarget = otherSite.Snapshot.Targets.Single();
         Check(target.Token == otherTarget.Token && !ReferenceEquals(target.Connection.Session, otherTarget.Connection.Session),
             "same numeric token belongs to distinct physical Sessions");
         Check(await rpc.Service.SessionAsync() != await otherProxy.Service.SessionAsync(), "scoped calls stay on their own Session");

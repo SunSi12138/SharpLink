@@ -256,7 +256,9 @@ internal sealed partial class SharpLinkClient
         if (index != snapshot.Length)
             Array.Resize(ref snapshot, index);
         Volatile.Write(ref _readyConnections, snapshot);
-        PruneStaticBindingRoutes(snapshot);
+        PublishBindingTopology(new BindingTopologySnapshot(snapshot.Length == 0 ? [] :
+            [new BindingEndpointTopology(_fixedEndpoint is null ? null : new SharpLinkEndpointCandidate(
+                _fixedEndpoint, () => snapshot.Length, () => ActiveClientCallCount, generation: 0), snapshot, EnsureExpansion)]));
         PublishReadinessFacts(new ClientReadinessFacts(
             ActiveEndpoints: 1,
             ReadyEndpoints: snapshot.Length == 0 ? 0 : 1,

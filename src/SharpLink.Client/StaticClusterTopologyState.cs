@@ -116,91 +116,23 @@ internal sealed partial class SharpLinkClient
             EndpointSelectionPolicyGeneration policy,
             ulong excluded)
         {
-            var endpoints = snapshot.Endpoints;
-            var availableCount = 0;
-            for (var index = 0; index < endpoints.Length; index++)
-                availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
-            if (availableCount == 0)
-                return -1;
-            if (availableCount == 1 && !policy.HasCustomSelector)
-            {
-                for (var index = 0; index < endpoints.Length; index++)
-                    if ((excluded & (1UL << index)) == 0)
-                        return index;
-            }
-            if (policy.Selector is { } selector)
-                return SelectCustomEndpoint(snapshot.Candidates, excluded, selector);
-            return policy.Strategy switch
-            {
-                SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
-                SharpLinkLoadBalancingStrategy.RoundRobin => EndpointSelectionKernel.SelectRoundRobinIndex(
-                    ref _roundRobinCursor, endpoints.Length, excluded),
-                SharpLinkLoadBalancingStrategy.LeastPending => SelectLeastPending(endpoints, excluded),
-                _ => SelectPowerOfTwo(endpoints, excluded, availableCount)
-            };
+            return SelectEndpoint(snapshot.Candidates, policy, excluded);
         }
 
-        private int SelectCustomEndpoint(
-            SharpLinkEndpointCandidate[] candidates,
-            ulong excluded,
-            ISharpLinkEndpointSelector selector)
+        internal int SelectEndpoint(SharpLinkEndpointCandidate[] candidates,
+            EndpointSelectionPolicyGeneration policy, ulong excluded)
         {
             try
             {
-                return selector.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
+                return EndpointSelectionKernel.SelectEndpoint(candidates, policy, excluded,
+                    ref _roundRobinCursor, ref _leastPendingCursor);
             }
-            catch (Exception exception)
+            catch (Exception exception) when (policy.HasCustomSelector)
             {
                 _logger?.LogError(exception, "SharpLink endpoint selector failed.");
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.FailedPrecondition,
-                    "The endpoint selector failed.",
-                    exception);
+                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                    "The endpoint selector failed.", exception);
             }
-        }
-
-        private int SelectPowerOfTwo(
-            StaticClientRuntimeEndpointState[] endpoints,
-            ulong excluded,
-            int availableCount)
-        {
-            var first = SelectRandom(endpoints.Length, excluded, availableCount);
-            var second = SelectRandom(endpoints.Length, excluded | (1UL << first), availableCount - 1);
-            if (second < 0)
-                return first;
-            var firstState = endpoints[first];
-            var secondState = endpoints[second];
-            return EndpointSelectionKernel.CompareNormalizedLoad(
-                firstState.ActiveCallCount,
-                firstState.ReadyConnections.Length,
-                secondState.ActiveCallCount,
-                secondState.ReadyConnections.Length) <= 0
-                ? first
-                : second;
-        }
-
-        private static int SelectRandom(int length, ulong excluded, int availableCount)
-            => availableCount <= 0
-                ? -1
-                : EndpointSelectionKernel.SelectRandomIndex(
-                    length,
-                    excluded,
-                    availableCount,
-                    Random.Shared.Next(availableCount));
-
-        private int SelectLeastPending(StaticClientRuntimeEndpointState[] endpoints, ulong excluded)
-        {
-            var start = unchecked((uint)Interlocked.Increment(ref _leastPendingCursor));
-            var selected = -1;
-            for (var offset = 0; offset < endpoints.Length; offset++)
-            {
-                var index = (int)((start + (uint)offset) % (uint)endpoints.Length);
-                if ((excluded & (1UL << index)) != 0)
-                    continue;
-                if (selected < 0 || endpoints[index].ActiveCallCount < endpoints[selected].ActiveCallCount)
-                    selected = index;
-            }
-            return selected;
         }
 
         private static bool HasSameMembership(

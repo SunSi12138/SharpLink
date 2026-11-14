@@ -119,7 +119,7 @@ internal static partial class Program
     {
         var prefix = "oneway refused " + (method ? "method" : "binding") + (compressed ? " compressed" : " plain");
         await using var f = new OneWayFixture(transport, compressed); await f.ConnectAsync(ct);
-        var before = OneWayValueCodec.Decodes; var target = f.Site.Snapshot.Single();
+        var before = OneWayValueCodec.Decodes; var target = f.Site.Snapshot.Targets.Single();
         var id = await f.HeadAsync(method ? target.Token : target.Token ^ (1UL << 48), method ? long.MaxValue : f.Fire.MethodId, 1, compressed, ct);
         await UntilAsync(() => f.Peer.Session.StreamManager.ActiveStreamCount == 1, ct);
         Check(f.Service.Calls == 0 && OneWayValueCodec.Decodes == before && f.Compression.Decodes == 0, prefix + " installs bounded route before any wrong Codec or decompression");
@@ -136,7 +136,7 @@ internal static partial class Program
         var hold = f.Rpc.Service.HoldAsync(ct).AsTask(); await f.Service.Entered.Task.WaitAsync(ct);
         try
         {
-            var id = await f.HeadAsync(f.Site.Snapshot.Single().Token, f.Fire.MethodId, 1, true, ct);
+            var id = await f.HeadAsync(f.Site.Snapshot.Targets.Single().Token, f.Fire.MethodId, 1, true, ct);
             await UntilAsync(() => f.Peer.Session.StreamManager.ActiveStreamCount == 1, ct);
             Check(f.Service.Calls == 0 && OneWayValueCodec.Decodes == before && f.Compression.Decodes == 0,
                 "oneway call quota refusal precedes compressed head decoding and typed invocation");
@@ -153,7 +153,7 @@ internal static partial class Program
     private static async Task OneWayRouteQuotaAsync(string transport, CancellationToken ct)
     {
         await using var f = new OneWayFixture(transport, true); await f.ConnectAsync(ct); var peer = f.Peer; var connection = f.Connection;
-        var before = OneWayValueCodec.Decodes; var wrong = f.Site.Snapshot.Single().Token ^ (1UL << 48);
+        var before = OneWayValueCodec.Decodes; var wrong = f.Site.Snapshot.Targets.Single().Token ^ (1UL << 48);
         await f.HeadAsync(wrong, f.Fire.MethodId, 4, true, ct);
         await UntilAsync(() => peer.Session.StreamManager.ActiveStreamCount == 4, ct);
         Check(peer.Session.StreamManager.ActiveStreamCount == 4 && OneWayValueCodec.Decodes == before && f.Compression.Decodes == 0,
@@ -178,7 +178,7 @@ internal static partial class Program
         var before = OneWayValueCodec.Decodes;
         try
         {
-            var id = await f.HeadAsync(f.Site.Snapshot.Single().Token, f.Fire.MethodId, 1, false, ct);
+            var id = await f.HeadAsync(f.Site.Snapshot.Targets.Single().Token, f.Fire.MethodId, 1, false, ct);
             Console.WriteLine("ONEWAY_WINDOW head sent"); await entered.Task.WaitAsync(ct);
             Console.WriteLine("ONEWAY_WINDOW interceptor held");
             await f.DataAsync(id, 48, true, false, ct);
@@ -198,7 +198,7 @@ internal static partial class Program
     {
         await using var f = new OneWayFixture(transport, true); await f.ConnectAsync(ct); var peer = f.Peer;
         var before = OneWayValueCodec.Decodes;
-        await f.HeadAsync(f.Site.Snapshot.Single().Token, f.Fire.MethodId, 2, true, ct);
+        await f.HeadAsync(f.Site.Snapshot.Targets.Single().Token, f.Fire.MethodId, 2, true, ct);
         await UntilAsync(() => !peer.Session.IsConnected, ct); await f.Client.StopAsync(); await f.Server.StopAsync(TimeSpan.FromSeconds(5));
         Check(OneWayValueCodec.Decodes == before && f.Compression.Decodes == 0 && f.Service.Calls == 0,
             "oneway conflicting known count terminates before wrong Codec and provider");

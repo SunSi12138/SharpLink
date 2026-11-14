@@ -2,6 +2,47 @@ namespace SharpLink.Client;
 
 internal static class EndpointSelectionKernel
 {
+    // Shared by ordinary topology selection and contract-bound candidates. Cursors stay
+    // topology-owned; a physical attempt captures policy once before calling this kernel.
+    internal static int SelectEndpoint(
+        SharpLinkEndpointCandidate[] candidates,
+        EndpointSelectionPolicyGeneration policy,
+        ulong excluded,
+        ref int roundRobinCursor,
+        ref int leastPendingCursor)
+    {
+        var available = 0;
+        for (var index = 0; index < candidates.Length; index++)
+            if ((excluded & (1UL << index)) == 0) available++;
+        if (available == 0) return -1;
+        if (policy.Selector is { } selector)
+            return selector.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
+        if (policy.Strategy == SharpLinkLoadBalancingStrategy.RoundRobin)
+            return SelectRoundRobinIndex(ref roundRobinCursor, candidates.Length, excluded);
+        if (policy.Strategy == SharpLinkLoadBalancingStrategy.LeastPending)
+        {
+            var start = unchecked((uint)Interlocked.Increment(ref leastPendingCursor));
+            var selected = -1;
+            for (var offset = 0; offset < candidates.Length; offset++)
+            {
+                var index = (int)((start + (uint)offset) % (uint)candidates.Length);
+                if ((excluded & (1UL << index)) == 0 &&
+                    (selected < 0 || candidates[index].ActiveCallCount < candidates[selected].ActiveCallCount))
+                    selected = index;
+            }
+            return selected;
+        }
+        var first = SelectRandomIndex(candidates.Length, excluded, available, Random.Shared.Next(available));
+        if (available == 1 || policy.Strategy == SharpLinkLoadBalancingStrategy.Random) return first;
+        var second = SelectRandomIndex(candidates.Length, excluded | (1UL << first), available - 1,
+            Random.Shared.Next(available - 1));
+        // Readiness can disappear after publication. Ranking remains total; reservation
+        // still rejects a stale connection and never returns it as callable.
+        return CompareNormalizedLoad(candidates[first].ActiveCallCount,
+            Math.Max(1, candidates[first].ReadyConnectionCount), candidates[second].ActiveCallCount,
+            Math.Max(1, candidates[second].ReadyConnectionCount)) <= 0 ? first : second;
+    }
+
     public static int CompareNormalizedLoad(
         int firstActiveCalls,
         int firstReadyConnections,

@@ -100,3 +100,28 @@ Selected production compatibility boundary:
   compiler errors in old tests/benchmarks/AOT/load callers, mainly required Stub facts ABI,
   test-client factories and retired Get/raw channel use. This is the migration worklist,
   not a reduced regression scope; full solution acceptance is still incomplete.
+
+### Ordinary-path controls and routing acceptance (frozen before execution)
+
+- At3400cdbf, the ordinary production path passed all seven unchanged deterministic
+  inventories on Windows/TCP and Windows/shared-memory:488 cases per transport,
+ 14 JSON reports verified for exact source, transport, names and uniqueness. This
+  does not substitute for the unfinished full solution/platform/performance gates.
+- Multi-endpoint integration now publishes one immutable bound routing snapshot from
+  the existing topology writer. Endpoint generation, candidates, retry exclusions and
+  Session/token pairs share that publication. Selection uses the existing topology's
+  captured policy/cursors, original admission outcome and expansion/retirement owners.
+  Blue/green redirects cannot borrow another physical Session's token.
+- Added25 frozen real-RPC routing controls in routing-expected-cases.json, for both
+  TCP and shared memory: all four built-in strategies, live custom policy replacement,
+  invalid/throwing selectors, retry exclusion, dynamic same-ID generation replacement,
+  original-stream physical completion, no extra reconnect, Stop route/quota release.
+- Routing acceptance: each exact inventory must pass within the120-second process
+  watchdog with original10-second finite Prepare and no relaxed budgets. Stop on the
+  first exception, timeout, unexpected endpoint, token/Session retarget or quota leak;
+  retain its raw log and fix the evidenced cause before a new candidate is run.
+  Then retain the seven existing488-case inventories unchanged for the new source.
+- Full TUnit/Generator/Integration/LoadTest migration and gates remain pending. Local
+  reports explicitly label execution=local; source accepts SHARPLINK_TEST_SOURCE instead
+  of requiring the GitHub environment variable. Performance A/A criteria are still to
+  be frozen before any performance run; no performance conclusion is asserted here.

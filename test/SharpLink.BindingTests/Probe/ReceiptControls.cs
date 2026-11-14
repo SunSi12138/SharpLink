@@ -99,7 +99,7 @@ internal static partial class Program
         var contract = local.Manifest.Contracts.Single(c => c.ContractType.Name == nameof(IHotRpc));
         var selector = data.GetLocalContract(local.Assembly, contract.ContractId);
         var ordinary = (StaticBindingCallSite)data.CreateContractChannel(selector);
-        Check(ordinary.Snapshot.Length == 0 && data.ReadyConnectionCount == 0, "receipt local factory remains independent of Connect");
+        Check(ordinary.Snapshot.Targets.Length == 0 && data.ReadyConnectionCount == 0, "receipt local factory remains independent of Connect");
         await data.ConnectAsync(token);
         var dataConnection = DataConnection(data);
         var beforeManifest = RemoteManifest(data);
@@ -127,7 +127,7 @@ internal static partial class Program
             Check(ReferenceEquals(exact, duplicate) && !ReferenceEquals(exact, ordinary), "receipt site key preserves full immutable requirement");
             var generated = new ReceiptProxy(data, contract.ContractType, exactOptions);
             await generated.PrepareAsync(token);
-            Check(await generated.GetAsync() == 2 && exact.Snapshot.Length == 1,
+            Check(await generated.GetAsync() == 2 && exact.Snapshot.Targets.Length == 1,
                 "receipt generated Service and Prepare share exact changed hash site");
             var ack = await dataConnection.StaticBindings.BindAsync(contract.ContractId, local.Manifest.RpcAssemblyHash,
                 Scope(receipt, RpcRegistrationRequirement.ExactRegistration));
@@ -192,16 +192,16 @@ internal static partial class Program
             await ExpectCode(() => { f.Server.GetRegistrationReceipt(old.Assembly, contract.ContractId); return Task.CompletedTask; },
                 SharpLinkErrorCode.FailedPrecondition, "receipt cannot be captured from superseded assembly owner");
 
-            var oldTarget = exact.Snapshot.Single();
+            var oldTarget = exact.Snapshot.Targets.Single();
             var invalidated = Signal();
             dataConnection.StaticBindings.InvalidationObservedTestHook = () => invalidated.TrySetResult();
             var lastReceipt = await ReplaceViaControlAsync(f, control, next, last, token);
             await invalidated.Task.WaitAsync(token);
-            var stale = new StaticBindingCallSite(data, selector, exact.Scope) { Snapshot = [oldTarget] };
+            var stale = new StaticBindingCallSite(data, selector, exact.Scope) { Snapshot = StaticBindingSnapshot.Create(exact.Snapshot.Topology, [oldTarget]) };
             await ExpectCode(() => stale.InvokeUnaryAsync(descriptor, default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
                 data.RuntimeContext.Codecs.GetCodec<int>(), null, token).AsTask(), SharpLinkErrorCode.Unavailable,
                 "receipt old binding cannot retarget same hash replacement");
-            await WaitUntilAsync(data, () => exact.Snapshot.Length == 0, token);
+            await WaitUntilAsync(data, () => exact.Snapshot.Targets.Length == 0, token);
             await ExpectCode(() => exact.PrepareAsync(TimeSpan.FromSeconds(5), token).AsTask(), SharpLinkErrorCode.FailedPrecondition,
                 "receipt ExactRegistration never automatically downgrades after replacement");
             await minimum.PrepareAsync(TimeSpan.FromSeconds(5), token);
@@ -286,13 +286,13 @@ internal static partial class Program
             var site = (StaticBindingCallSite)f.Client.CreateContractChannel(f.Client.GetLocalContract<IHotRpc>(), options);
             var prepare = proxy.PrepareAsync(TimeSpan.FromSeconds(5), token).AsTask();
             await entered.Task.WaitAsync(token);
-            Check(f.Connections.All(c => c.StaticBindings.CompletedCount == 1) && site.Snapshot.Length == 0 && !prepare.IsCompleted,
+            Check(f.Connections.All(c => c.StaticBindings.CompletedCount == 1) && site.Snapshot.Targets.Length == 0 && !prepare.IsCompleted,
                 "receipt committed Acks remain unready while actual site publication is held");
             var invalidated = new[] { Signal(), Signal() };
             for (var i = 0; i < 2; i++) { var index = i; f.Connections[i].StaticBindings.InvalidationObservedTestHook = () => invalidated[index].TrySetResult(); }
             await ReplaceGroupAtBoundary(f, old, next, token);
             await Task.WhenAll(invalidated.Select(signal => signal.Task)).WaitAsync(token);
-            Check(f.Connections.All(c => c.StaticBindings.CompletedCount == 0) && site.Snapshot.Length == 0,
+            Check(f.Connections.All(c => c.StaticBindings.CompletedCount == 0) && site.Snapshot.Targets.Length == 0,
                 "receipt invalidation detaches confirmed state before delayed site commit");
             old.Drop();
             GCheck(Collected(old.Weak), "receipt", "delayed site publication retains only scalar targets and old ALC is collectible");

@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkClient
     internal StaticBindingBudget BindingBudget { get; } = new();
     private TaskCompletionSource _staticBindingChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _staticPrepareWaiters;
+    private BindingTopologySnapshot _bindingTopology = BindingTopologySnapshot.Empty;
     internal Func<ValueTask>? BeforeBindingSiteCommitTestHook;
 
     internal ValueTask PrepareStaticBindingAsync(StaticBindingCallSite site, TimeSpan timeout, CancellationToken token)
@@ -14,7 +15,7 @@ internal sealed partial class SharpLinkClient
         token.ThrowIfCancellationRequested();
         EnsureStaticSliceAvailable();
         site.EnsureLocalRunning();
-        if (Volatile.Read(ref site.Snapshot).Any(static target => target.Connection.CanAcceptCalls))
+        if (Volatile.Read(ref site.Snapshot).Targets.Any(static target => target.Connection.CanAcceptCalls))
             return ValueTask.CompletedTask;
         var clock = _runtimeContext.TimeProvider;
         return WaitForStaticBindingAsync(site, RpcDeadline.Create(timeout, clock.GetTimestamp(), clock.TimestampFrequency), token);
@@ -39,7 +40,7 @@ internal sealed partial class SharpLinkClient
                 var remaining = deadline.GetRemaining(_runtimeContext.TimeProvider);
                 if (remaining <= TimeSpan.Zero)
                     throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Binding preparation deadline expired.");
-                if (Volatile.Read(ref site.Snapshot).Any(static target => target.Connection.CanAcceptCalls)) return;
+                if (Volatile.Read(ref site.Snapshot).Targets.Any(static target => target.Connection.CanAcceptCalls)) return;
                 if (Volatile.Read(ref site.Failure) is { } failure) throw failure;
                 try { await changed.Task.WaitAsync(remaining, _runtimeContext.TimeProvider, token).ConfigureAwait(false); }
                 catch (TimeoutException)
@@ -92,7 +93,8 @@ internal sealed partial class SharpLinkClient
         {
             EnsureStaticSliceAvailable();
             site.EnsureLocalRunning();
-            var connections = Volatile.Read(ref _readyConnections);
+            var topology = Volatile.Read(ref _bindingTopology);
+            var connections = topology.Connections;
             var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
             var work = new List<Task<StaticBoundTarget>>();
             var mismatch = false;
@@ -116,7 +118,7 @@ internal sealed partial class SharpLinkClient
             {
                 EnsureStaticSliceAvailable();
                 site.EnsureLocalRunning();
-                if (!ReferenceEquals(connections, Volatile.Read(ref _readyConnections)) ||
+                if (!ReferenceEquals(topology, Volatile.Read(ref _bindingTopology)) ||
                     !ReferenceEquals(manifests, Volatile.Read(ref _remoteContractManifestSnapshot)))
                 {
                     _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
@@ -130,7 +132,7 @@ internal sealed partial class SharpLinkClient
                 if (confirmed.Length != targets.Length) _ = Interlocked.CompareExchange(ref site.RefreshState, 2, 1);
                 Volatile.Write(ref site.Failure, confirmed.Length == 0 && (mismatch || receiptMismatch)
                     ? StaticBindingWire.Error(receiptMismatch ? StaticBindingFailure.ReceiptMismatch : StaticBindingFailure.HashMismatch) : null);
-                Volatile.Write(ref site.Snapshot, confirmed);
+                Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, confirmed));
             }
         }
         catch (Exception failure) { Volatile.Write(ref site.Failure, failure); }
@@ -148,13 +150,19 @@ internal sealed partial class SharpLinkClient
         return new StaticBoundTarget(connection, ack.Token);
     }
 
-    private void PruneStaticBindingRoutes(ClientConnection[] connections)
+    private void PublishBindingTopology(BindingTopologySnapshot topology)
     {
         lock (_staticBindingGate)
+        {
+            Volatile.Write(ref _bindingTopology, topology);
             foreach (var reference in _staticBindingSites.Values)
                 if (reference.TryGetTarget(out var site))
-                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
-                        Array.IndexOf(connections, target.Connection) >= 0 && target.Connection.CanAcceptCalls).ToArray());
+                {
+                    var retained = Volatile.Read(ref site.Snapshot).Targets.Where(target =>
+                        Array.IndexOf(topology.Connections, target.Connection) >= 0 && target.Connection.CanAcceptCalls).ToArray();
+                    Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Create(topology, retained));
+                }
+        }
     }
 
     private void InvalidateStaticBindingRoutes(RpcSession session)
@@ -162,8 +170,8 @@ internal sealed partial class SharpLinkClient
         lock (_staticBindingGate)
             foreach (var reference in _staticBindingSites.Values)
                 if (reference.TryGetTarget(out var site))
-                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
-                        !ReferenceEquals(target.Connection.Session, session)).ToArray());
+                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Filter(target =>
+                        !ReferenceEquals(target.Connection.Session, session)));
     }
 
     private void InvalidateBoundTokens(RpcSession session, ulong[] tokens)
@@ -171,8 +179,8 @@ internal sealed partial class SharpLinkClient
         lock (_staticBindingGate)
             foreach (var reference in _staticBindingSites.Values)
                 if (reference.TryGetTarget(out var site))
-                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
-                        !ReferenceEquals(target.Connection.Session, session) || !tokens.Contains(target.Token)).ToArray());
+                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Filter(target =>
+                        !ReferenceEquals(target.Connection.Session, session) || !tokens.Contains(target.Token)));
         PulseStaticBindingDemands();
     }
 
@@ -182,42 +190,48 @@ internal sealed partial class SharpLinkClient
             foreach (var reference in _staticBindingSites.Values)
                 if (reference.TryGetTarget(out var site) && !site.Scope.Receipt.HasValue &&
                     (!manifest.Contracts.TryGetValue(site.ContractId, out var hash) || hash != site.Hash))
-                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Where(target =>
-                        !ReferenceEquals(target.Connection.Session, session)).ToArray());
+                    Volatile.Write(ref site.Snapshot, Volatile.Read(ref site.Snapshot).Filter(target =>
+                        !ReferenceEquals(target.Connection.Session, session)));
     }
 
-    private StaticBoundTarget GetReadyStaticTarget(StaticBindingCallSite? site, RpcMethodDescriptor method, AttemptOutcomeState? outcome)
+    private StaticBoundTarget GetReadyStaticTarget(StaticBindingCallSite? site, RpcMethodDescriptor method,
+        AttemptOutcomeState? outcome, EndpointRetrySelectionState? retrySelection = null)
     {
         if (site is null || method.ContractId != site.ContractId)
             throw StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute);
-        for (var attempt = 0; attempt < 2; attempt++)
+        EnsureStaticSliceAvailable();
+        var snapshot = Volatile.Read(ref site.Snapshot);
+        var policy = _cluster?.CaptureBindingSelectionPolicy();
+        var endpoints = snapshot.Endpoints;
+        var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
+        for (var attempt = 0; attempt < endpoints.Length; attempt++)
         {
-            var targets = Volatile.Read(ref site.Snapshot);
-            if (_shutdownCts.IsCancellationRequested || targets.Length == 0) break;
-            if (outcome is not null && _fixedEndpoint is not null && !outcome.TryAcquire(
-                new SharpLinkEndpointCandidate(_fixedEndpoint, targets.Length, ActiveClientCallCount, generation: 0)))
-                throw StaticBindingWire.Error(StaticBindingFailure.Unavailable);
-            var selected = targets[0];
-            if (targets.Length > 1)
+            var index = _cluster is null
+                ? ((excluded & 1) == 0 ? 0 : -1)
+                : _cluster.SelectBindingEndpoint(snapshot, policy!, excluded);
+            if ((uint)index >= (uint)endpoints.Length || (excluded & (1UL << index)) != 0)
+                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                    "The endpoint selector returned an unavailable candidate index.");
+            var endpoint = endpoints[index];
+            if (endpoint.Candidate is { } candidate && outcome is not null && !outcome.TryAcquire(candidate))
             {
-                var first = Random.Shared.Next(targets.Length);
-                var second = Random.Shared.Next(targets.Length - 1);
-                if (second >= first) second++;
-                selected = targets[first].Connection.ActiveCallCount <= targets[second].Connection.ActiveCallCount
-                    ? targets[first] : targets[second];
+                retrySelection?.Exclude(snapshot, index);
+                excluded |= 1UL << index;
+                continue;
             }
-            if (selected.Connection.TryReserveCallAdmission(out var admitted))
+            retrySelection?.Exclude(snapshot, index);
+            if (endpoint.TryReserve(out var selected))
             {
-                if (ReferenceEquals(admitted, selected.Connection))
-                {
-                    if (admitted.ActiveCallCount != 0) EnsureExpansion();
-                    return selected;
-                }
-                admitted.ReleaseCallAdmissionReservation();
+                if (selected.Connection.ActiveCallCount != 0) endpoint.Topology.EnsureExpansion();
+                return selected;
             }
-            outcome?.CompleteLocalFailure(StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute));
+            outcome?.CompleteWithoutPending(PendingCallCompletionReason.ConnectionClosed,
+                CreateConnectionClosedException("The selected bound endpoint connection is no longer ready."));
+            endpoint.Topology.ReleaseStaleAdmission?.Invoke();
+            excluded |= 1UL << index;
         }
         EnsureStaticSliceAvailable();
+        SharpLinkTelemetry.RecordSelectionFailure(endpoints.Length == 0 ? "no_ready_endpoint" : "no_admitted_connection");
         throw StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute);
     }
 }

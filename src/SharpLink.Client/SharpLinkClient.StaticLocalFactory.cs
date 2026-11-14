@@ -75,8 +75,6 @@ internal sealed partial class SharpLinkClient
         if (!scope.IsValid || scope.Receipt is { } receipt &&
             (receipt.ContractId != local.ContractId || receipt.RpcAssemblyHash != local.Hash))
             throw StaticBindingWire.Error(StaticBindingFailure.ReceiptMismatch);
-        if (_cluster is not null)
-            throw new NotSupportedException("The nonshipping static slice supports a fixed endpoint only.");
         lock (_staticBindingGate)
         {
             EnsureStaticSliceAvailable();
@@ -159,7 +157,7 @@ internal sealed partial class SharpLinkClient
                     // routes under normal Session invalidation until those physical owners exit.
                     if (module.State == SharpLinkDynamicModuleState.Released)
                     {
-                        Volatile.Write(ref site.Snapshot, []);
+                        Volatile.Write(ref site.Snapshot, StaticBindingSnapshot.Empty);
                         _staticBindingSites.Remove(pair.Key);
                     }
                 }
