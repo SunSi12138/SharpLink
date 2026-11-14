@@ -24,6 +24,12 @@ internal sealed partial class SharpLinkServer
                 });
             }
             EnsureNoDynamicDependants(module);
+            if (module.TryBeginDraining())
+            {
+                // Keep active RPC codecs alive, but invalidate admission candidates now.
+                _registryGeneration++;
+                _runtimeContext.InvalidateGeneratedCodecPublication();
+            }
             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;
@@ -114,39 +120,45 @@ internal sealed partial class SharpLinkServer
     {
         ServiceRegistration[] removedServices;
         RpcGeneratedManifestRegistration codecRegistration;
-        lock (_registryGate)
+        while (true)
         {
-            if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                return;
-            var services = Volatile.Read(ref _services);
-            if (!_detachedModuleServices.Remove(module, out removedServices!))
+            lock (_registryGate)
             {
-                removedServices = services.Values
-                    .Where(service => ReferenceEquals(service.Module, module))
-                    .ToArray();
+                if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                    return;
+                var services = Volatile.Read(ref _services);
+                if (!_detachedModuleServices.TryGetValue(module, out removedServices!))
+                {
+                    removedServices = services.Values
+                        .Where(service => ReferenceEquals(service.Module, module))
+                        .ToArray();
+                }
+                var nextServices = services
+                    .Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                    .ToFrozenDictionary();
+                var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
+                codecRegistration = module.CodecRegistration;
+                var removedCodecTypes = codecRegistration.Codecs.Keys.ToArray();
+                var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                for (var index = 0; index < removedCodecTypes.Length; index++)
+                {
+                    var codecType = removedCodecTypes[index];
+                    var replacement = FindReplacementCodec(codecType, module);
+                    if (replacement is null)
+                        nextFactories.Remove(codecType);
+                    else
+                        nextFactories[codecType] = replacement;
+                }
+                if (!_runtimeContext.TryPublishGeneratedCodecs(nextFactories))
+                    continue;
+                _detachedModuleServices.Remove(module, out _);
+                Volatile.Write(ref _services, nextServices);
+                _dynamicModules.Remove(assembly);
+                _registryGeneration++;
+                ScheduleContractManifestPublish();
+                break;
             }
-            var nextServices = services
-                .Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            codecRegistration = module.CodecRegistration;
-            var removedCodecTypes = codecRegistration.Codecs.Keys.ToArray();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            for (var index = 0; index < removedCodecTypes.Length; index++)
-            {
-                var codecType = removedCodecTypes[index];
-                var replacement = FindReplacementCodec(codecType, module);
-                if (replacement is null)
-                    nextFactories.Remove(codecType);
-                else
-                    nextFactories[codecType] = replacement;
-            }
-            _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            Volatile.Write(ref _services, nextServices);
-            _dynamicModules.Remove(assembly);
-            _registryGeneration++;
-            ScheduleContractManifestPublish();
         }
 
         List<Exception>? failures = null;
