@@ -136,29 +136,37 @@ public class CompressionPersistentDecodeReviewTests
                 new[] { provider.WireProfile }),
             limits);
         ProtocolV2FrameWriter.EndFrame(frames, handshake);
+        await stream.WriteAsync(frames.WrittenMemory);
+        await stream.FlushAsync();
+        using var bindTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var binding = await RawContractBindingTestHelper.BindAsync(
+            stream, typeof(IPersistentDecodeReviewService), limits, bindTimeout.Token);
+        var method = binding.Contract.Methods.Single(static method =>
+            method.Name == nameof(IPersistentDecodeReviewService.MeasureAsync));
+        using var business = new PooledByteBufferWriter();
 
         var request = ProtocolV2FrameWriter.BeginFrame(
-            frames,
+            business,
             ProtocolV2FrameType.Request,
-            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable,
+            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable | ProtocolV2FrameFlags.HasReturn,
             requestId);
         Span<byte> requestPrefix = stackalloc byte[ProtocolV2Constants.RequestPrefixBytes];
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(
             requestPrefix,
-            harness.InterfaceHash);
+            binding.Token);
         System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
             requestPrefix[sizeof(long)..],
-            1L);
-        frames.Write(requestPrefix);
+            method.MethodId);
+        business.Write(requestPrefix);
         Span<byte> originalLength = stackalloc byte[sizeof(uint)];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
             originalLength,
             declaredDecodedArgumentsBytes);
-        frames.Write(originalLength);
-        frames.Write(new byte[compressedBodyBytes]);
-        ProtocolV2FrameWriter.EndFrame(frames, request);
+        business.Write(originalLength);
+        business.Write(new byte[compressedBodyBytes]);
+        ProtocolV2FrameWriter.EndFrame(business, request);
 
-        await stream.WriteAsync(frames.WrittenMemory);
+        await stream.WriteAsync(business.WrittenMemory);
         await stream.FlushAsync();
         await provider.WaitForStartedCountAsync(1);
         Ensure(harness.DecodeStartedWorkCount == 1,
@@ -371,18 +379,15 @@ public class CompressionPersistentDecodeReviewTests
             CancellationTokenSource serverCts,
             Task serverTask,
             ISharpLinkServer server,
-            int port,
-            long interfaceHash)
+            int port)
             : base(server)
         {
             _serverCts = serverCts;
             _serverTask = serverTask;
             Port = port;
-            InterfaceHash = interfaceHash;
         }
 
         internal int Port { get; }
-        internal long InterfaceHash { get; }
 
         internal static Task<RawInputHarness> CreateAsync(ISharpLinkCompressionProvider provider)
         {
@@ -400,14 +405,12 @@ public class CompressionPersistentDecodeReviewTests
                 .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var interfaceHash = ReadAnyInterfaceHash(server);
             var serverTask = RunServerAsync(server, serverCts.Token);
             return Task.FromResult(new RawInputHarness(
                 serverCts,
                 serverTask,
                 server,
-                port,
-                interfaceHash));
+                port));
         }
 
         public async ValueTask DisposeAsync()
@@ -421,12 +424,6 @@ public class CompressionPersistentDecodeReviewTests
             _serverCts.Dispose();
         }
 
-        private static long ReadAnyInterfaceHash(ISharpLinkServer server)
-        {
-            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
-                return key;
-            throw new Exception("server has no registered service hash");
-        }
     }
 
     private static Task RunServerAsync(ISharpLinkServer server, CancellationToken cancellationToken)

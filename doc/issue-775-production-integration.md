@@ -305,6 +305,9 @@ Selected production compatibility boundary:
   accepted-input control, not a claim that ordinary two-way producers still spool before Ack;
   OneWay deferred-buffer/rejection controls remain required under its no-Ack contract.
 - Full Integration has advanced but is not accepted. Its next failure was a raw compression
-  probe using an arbitrary ContractId/method1 as the retired request prefix; the replacement
-  control is being changed to real Bind/Ack and an actual known descriptor before injecting
-  hostile compressed bytes. Its provider/cancel/resource proof must pass, not be bypassed.
+  probe using an arbitrary ContractId/method1 as the retired request prefix. The replacement
+  uses real Bind/Ack and an actual known Unary descriptor before injecting hostile compressed
+  bytes. All3 CompressionPersistentDecodeReview cases pass: large compressed input still starts
+  exactly one persistent decode provider despite a small declared output; Cancel remains
+  responsive and all retained/decode/decoded-byte/call resources release. The raw helper reads
+  bounded frames and checks exact Ack correlation/identity; it never invents a binding token.
