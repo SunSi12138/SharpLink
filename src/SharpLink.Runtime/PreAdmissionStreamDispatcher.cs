@@ -380,13 +380,16 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     }
 
     internal void Abandon(out bool alreadyCompleted)
+        => Abandon(out alreadyCompleted, admissionAlreadyClosed: false);
+
+    private void Abandon(out bool alreadyCompleted, bool admissionAlreadyClosed)
     {
         BufferedItem[] discarded;
         TaskCompletionSource? dispatchesDrained = null;
         lock (_gate)
         {
             alreadyCompleted = _completed;
-            if (_localAbandonRequested)
+            if (_localAbandonRequested && !admissionAlreadyClosed)
                 return;
 
             _localAbandonRequested = true;

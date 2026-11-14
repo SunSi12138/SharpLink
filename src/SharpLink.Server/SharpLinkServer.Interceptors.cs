@@ -33,6 +33,7 @@ internal sealed partial class SharpLinkServer
 
         var isStream = false;
         var hasRequestStreams = false;
+        StreamManager.InputStreamDrain inputDrain = default;
         RpcMethodDescriptor? methodDescriptor = null;
         if (registration.HasModule)
         {
@@ -42,6 +43,11 @@ internal sealed partial class SharpLinkServer
                 RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
             hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.DuplexStreaming;
+            if (descriptor.Kind == RpcMethodKind.OneWay && descriptor.ClientStreamCount > 0)
+            {
+                isStream = hasRequestStreams = true;
+                inputDrain = session.StreamManager.CaptureInputStreamDrain(requestId, descriptor.ClientStreamCount);
+            }
         }
 
         SharpLinkDynamicModuleLease dynamicSingletonLease = default;
@@ -66,6 +72,9 @@ internal sealed partial class SharpLinkServer
                     cancellationToken,
                     context,
                     methodDescriptor);
+                if (!inputDrain.IsEmpty)
+                    return CompleteDynamicOneWayInputAsync(invocation,
+                        new ServiceLease(dynamicSingleton, moduleLease: dynamicSingletonLease), inputDrain);
                 return CompleteDynamicSingletonInvocationAsync(
                     invocation,
                     dynamicSingletonLease,
@@ -79,6 +88,9 @@ internal sealed partial class SharpLinkServer
             var failedTelemetry = StartServerTelemetryCall(
                 methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
             failedTelemetry.Complete(exception);
+            if (!inputDrain.IsEmpty)
+                return CompleteDynamicOneWayInputAsync(ValueTask.FromException(exception),
+                    new ServiceLease(registration, moduleLease: dynamicSingletonLease), inputDrain);
             return CompleteDynamicSingletonInvocationAsync(
                 ValueTask.FromException(exception),
                 dynamicSingletonLease,
@@ -118,7 +130,8 @@ internal sealed partial class SharpLinkServer
                 cancellationToken,
                 context,
                 hasRequestStreams,
-                methodDescriptor);
+                methodDescriptor,
+                inputDrain);
         }
 
         return InvokeAcquiredServiceAsync(
@@ -133,7 +146,8 @@ internal sealed partial class SharpLinkServer
             cancellationToken,
             context,
             hasRequestStreams,
-            methodDescriptor);
+            methodDescriptor,
+            inputDrain);
     }
 
     private static async ValueTask CompleteDynamicSingletonInvocationAsync(
@@ -188,7 +202,8 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        RpcMethodDescriptor? methodDescriptor,
+        StreamManager.InputStreamDrain inputDrain)
     {
         if (!lease.RequiresDisposal)
         {
@@ -206,6 +221,20 @@ internal sealed partial class SharpLinkServer
                 methodDescriptor);
         }
 
+        if (!inputDrain.IsEmpty)
+        {
+            ValueTask invocation;
+            try
+            {
+                invocation = InvokeServiceTrackedAsync(stub, lease.Service, session, generatedBridge,
+                    methodId, requestId, arguments, output, cancellationToken, context, methodDescriptor);
+            }
+            catch (Exception exception)
+            {
+                invocation = ValueTask.FromException(exception);
+            }
+            return CompleteDynamicOneWayInputAsync(invocation, lease, inputDrain);
+        }
         return InvokeServiceWithLeaseAsync(
             stub,
             lease,
@@ -233,7 +262,8 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        RpcMethodDescriptor? methodDescriptor,
+        StreamManager.InputStreamDrain inputDrain)
     {
         ServiceLease lease;
         try
@@ -260,7 +290,8 @@ internal sealed partial class SharpLinkServer
             cancellationToken,
             context,
             hasRequestStreams,
-            methodDescriptor).ConfigureAwait(false);
+            methodDescriptor,
+            inputDrain).ConfigureAwait(false);
     }
 
     private ValueTask InvokeServiceTrackedAsync(
