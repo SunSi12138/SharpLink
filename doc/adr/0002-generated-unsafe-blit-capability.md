@@ -22,7 +22,11 @@ Runtime is not globally trimmable. Generated correctness no longer depends on fi
 
 ## Compatibility and consequences
 
-3.0 uses generated API 5 and exact ABI identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`, a single increment from released 2.0.3/API4. The exact identity rejects incompatible development artifacts that also happen to use API 5. This work does not incorporate the independent #754 method-shape proposal. Before a combined 3.0 release, #754 and #762 must use one coordinated generated identity, generator output contract and reviewed public API baseline; sharing the API5 number is not compatibility.
+The original API5 owner-bound proposal is superseded by the combined API6 identity
+`sharplink-3.0-api6-contract-binding-v1`. Owner-local UnsafeBlit capability checks remain unchanged;
+contract-scoped factories, complete method facts and Stub invocation signatures share that one
+identity. Regenerate API4/API5 artifacts. The API6 contract-channel migration and wire minor5 boundary
+are recorded in [the migration guide](../rpc-channel-3.0-migration.md); an API integer alone is not compatibility.
 
 The raw wire representation, physical ABI requirements and CodecHash remain unchanged. The public process-wide `SharpLinkGeneratedUnsafeBlitCatalog` is removed. Arbitrary unmanaged types without a generated or explicit codec now fail in ordinary JIT as well as trimmed/AOT applications. See the migration guide for the distinction between standalone runtime registration and generated RPC policy.
 

@@ -1,50 +1,62 @@
 # RPC wire identity and contract binding
 
-SharpLink uses deterministic generated identities to separate fast lookup from wire-compatibility validation.
+A generated ContractId/MethodId is a compact lookup identifier, not a compatibility proof.
+The generated contract owner's deterministic 128-bit RpcAssemblyHash identifies its canonical
+RPC wire surface. Bind requires an exact, nonempty local hash; there is no fuzzy per-method fallback.
 
-## Identity model
+## Construct locally, prepare on the real data Session
 
-`ContractId` and `MethodId` are compact lookup identifiers. Equality of either identifier is not proof that two independently built contract assemblies have the same wire shape.
+`CreateProxy<T>()` and `CreateContractChannel(client.GetLocalContract<T>())` freeze one validated
+local registration generation, its hash, scope and immutable requirement. Both are synchronous
+local operations; neither consults a remote Manifest or performs a network round trip. Retain
+the returned handle/receiver. [Prepare it explicitly](rpc-channel-3.0-migration.md) with a finite
+budget when the next call requires readiness.
 
-Each generated contract assembly therefore carries a deterministic 128-bit `RpcAssemblyHash`. The generator derives this hash from the canonical RPC wire surface of the assembly. Two peers may bind an RPC contract only when the local and remote `RpcAssemblyHash` values are exactly equal.
+After handshake, each server Session publishes a ContractManifest: ServerInstanceId, RegistryEpoch,
+registry generation, and ContractId/hash entries. Connection Ready means that bootstrap completed,
+not that every receiver has a confirmed binding. A missing entry keeps normal preparation pending;
+an advertised incompatible hash is a definite FailedPrecondition. Without a bound route, business
+calls fail fast with Unavailable/NoBoundRoute before payload/producer work.
 
-The compatibility invariant is strict:
+The controller coalesces matching demands and sends bounded BindContract operations on the actual
+data Session. The server validates full identity and optional receipt, then installs an immutable
+binding for **that exact service registration** before replying. Bind does not activate a service,
+run a business Codec, reserve a call, or freeze future authorization decisions.
 
-- equal `RpcAssemblyHash` values permit contract binding;
-- different hashes reject contract binding;
-- a missing remote contract entry rejects binding;
-- an empty local generated hash is invalid.
+## Keep token, Session and registration together
 
-There is no fuzzy or per-method fallback after an assembly hash mismatch.
+The confirmed call-site snapshot publishes topology, compatible candidates, retry exclusions and
+Session/token pairs atomically. The existing Picker selects and reserves that physical Session.
+The ordinary 16-byte route prefix is BindingId + MethodId, not ContractId + MethodId; the full
+hash/receipt is not copied or revalidated on every business call.
 
-## Remote discovery
+The server still checks the captured full token, acquires its registration's protection, and
+validates method facts/shape before resource admission and business decoding. Subsequent queue,
+decode, interceptor, Stub, producer and consumer cleanup keep that same registration/facts/Codec.
+A new Session cannot borrow a predecessor's token, even if it reports the same Server/epoch.
 
-Protocol v2 negotiates the `ContractManifest` capability. A server publishes a deterministic snapshot containing:
+## Replace and reclaim without retargeting
 
-- a monotonically increasing registry generation;
-- each remotely callable `ContractId`;
-- the `RpcAssemblyHash` of the generated assembly that owns that contract.
+Replacement closes the whole old group's admission gate before publishing its successor. A
+pre-cut protected call may complete on the old registration; new work cannot reacquire it after
+the cut. A binding never changes its meaning to point at latest. The controller may prepare new
+bindings for later attempts under the original scope, while ExactRegistration must not downgrade.
 
-The initial snapshot is a connection-bootstrap step. The normal protocol handshake is completed first, then the server sends the initial `ContractManifest`; the client does not publish that connection into its callable ready pool until the manifest has been received and any proxy acquired before `ConnectAsync` has been validated.
+Invalidation can arrive before a delayed Ack; that Ack cannot resurrect a known-retired route.
+Slots, operation correlations, invalidation state and quotas are bounded. Reclaimed slots change
+the full token incarnation, and retirement detaches collectible payload only after physical owners
+exit. Idle bindings are not call leases and must not permanently root old Assembly/Type/Codec data.
 
-This preserves the synchronous `Get<TContract>()` API. `Get<TContract>()` never performs a hidden network round trip.
+## Receipt identifies one publication, not remote authority
 
-## Bind-time validation
+Server `RegisterAssemblyWithReceipts` and `ReplaceAssemblyWithReceiptsAsync` return immutable
+per-service receipts captured at their own publication. The receipt contains the Contract owner's
+hash but the Service's registration ID and publication generation. A later replacement while old
+work drains cannot change the returned result. `GetRegistrationReceipt` is only an exact-owner
+current-state snapshot, not an operation result.
 
-For a connected client, `Get<TContract>()` and `GetWithMetadata<TContract>()` compare the local generated assembly hash with the latest discovered remote manifest snapshot before returning or creating a proxy.
-
-A mismatch fails with `FailedPrecondition`. The diagnostic identifies the contract, local assembly/hash, remote hash, session, and remote manifest generation. Rejection happens before an RPC `Request` payload is emitted.
-
-The request/response wire layout does not carry `RpcAssemblyHash`, and the normal invocation hot path does not repeat the comparison on every RPC.
-
-## Dynamic assembly lifecycle
-
-When the server registers, replaces, or drains a dynamic RPC assembly while running, it coalesces registry changes and publishes a newer manifest snapshot to ready clients.
-
-A client uses the newer snapshot for subsequent `Get<TContract>()` calls. A proxy reference already returned to application code is not silently rebound or replaced by a manifest refresh; existing assembly drain/replacement lifecycle rules remain responsible for retiring old bindings.
-
-During server shutdown, manifest publication is not scheduled. Registry cleanup must not create new framework work after draining begins.
-
-## Operational interpretation
-
-A hash mismatch means the peers were generated from different RPC wire contracts even if their lookup IDs happen to collide. Deploy matching generated contract assemblies, or complete the intended rolling replacement/drain sequence, rather than bypassing the validation.
+Compatible checks identity and an explicit receipt's Server/epoch. MinimumVersion also checks
+that service's own generation; ExactRegistration additionally checks the registration ID. A
+receipt-aware Bind may target a verified same-Server/epoch data Session with a stale Manifest,
+but still requires the real BindAck. Receipt and BindingId grant no authorization and reserve no
+capacity. Full grammar and limits are in [Protocol v2](protocol-v2.md).

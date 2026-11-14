@@ -2,9 +2,14 @@
 
 Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check、cancellation reason、contract manifest 和 session refresh。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 和最低兼容 minor 均为 **5**。它在已发布 minor 4 的 TimeBudget/error grammar
+之上增加 Session-local contract binding、逐调用流准入和 OneWay 输入有界形态；minor 4 peer 在
+握手阶段以 `Unimplemented` 拒绝，不能把旧 ContractId 请求误解释成 BindingId。
+metadata、compression、flow control、health check、cancellation reason、contract manifest 和
+session refresh 仍按各自协商能力工作；无共同压缩 profile 时使用未压缩连接。
 
-3.0 的进程内 Generated ABI 为 API 5，与此处 wire minor 是独立版本轴；不因 API 号变化而自动改变 wire grammar。当前包双进程门禁不是 2.0.3 ↔ 3.0 兼容矩阵，跨 major 成功互操作不属于 3.0 的发布承诺；不兼容输入仍必须在握手或契约绑定边界拒绝，不能误解释后执行业务。
+3.0 的进程内 Generated ABI 为 **API 6**，与 wire minor 是独立版本轴。当前包双进程门禁验证
+同一批 3.0 包，不提供 2.0.3 ↔ 3.0 的跨 major 互操作承诺。
 
 ## 固定帧头
 
@@ -27,7 +32,7 @@ Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼�
 | `HandshakeRequest` | 0 | minor、supported/required capabilities、本端 frame/window 限制、有界压缩算法列表、认证载荷 |
 | `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制和唯一压缩 token；失败时为二进制错误 |
 | `Ping` / `Pong` | 0 | 发送端 monotonic timestamp (`int64`) |
-| `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 TimeBudget、metadata 和业务 payload |
+| `Request` | 非 0 | `bindingId:uint64 + methodId:int64`（16 B），随后是可选 TimeBudget、metadata 和业务 payload |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
 | `Cancel` | 非 0 | 未协商 `CancellationReason` 时为空；协商后固定一个有效 reason byte |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
@@ -36,14 +41,23 @@ Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼�
 | `GoAway` | 0 | `lastAcceptedRequestId:uint64 + binary error/reason` |
 | `HealthCheck` | 非 0 | 空；只在协商 health-check capability 后发送 |
 | `HealthResponse` | 非 0 | 单字节 `Unhealthy/Ready/Draining` 状态 |
+| `ContractManifest` (13) | 0 | generation、count、Server/epoch、按 ContractId 排序的 ID/hash 条目 |
+| `ResponseCompressionPreferenceUpdate` / `Ack` (14/15) | 0 | 固定大小的 preference / cumulative applied generation |
+| `SessionRefreshRequested` (16) | 0 | server instance 与 desired generation |
+| `BindContract` (17) | 非 0 operation ID | 40 B identity/constraint，或含 receipt 的 112 B |
+| `BindAck` (18) | 对应 operation ID | 40 B status、contract、binding token、registration、publication generation |
+| `BindingInvalidated` (19) | 0 | `count:int64 + count × token:uint64`；count 为 1–64 |
+| `BindingRelease` (20) | 0 | 一个完整 `token:uint64` |
+| `RequestAccepted` (21) | 对应调用 ID | 空载荷，无 flags；不是 BindAck 或业务结果 |
+| `OneWayInputRequest` (22) | 非 0 | `streamCount:uint8`（1–127）+ 普通 Request envelope |
 
-Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID 0 仅用于连接控制帧；溢出分配时必须跳过 0。
+Stream ID 0 表示默认返回流，1–65535 表示显式流参数。普通 Request、Response、Cancel 和 Stream 帧使用同一非零调用 ID；Bind/Ack 使用独立有界 operation correlation。
 
 ## 标志
 
 - `Error`：载荷使用二进制错误格式。
 - `Truncated`：错误消息已在 UTF-8 字符边界截断，只能与 `Error` 同时出现。
-- `HasTimeBudget`：Request 路由前缀后包含发送瞬间剩余 RPC lifetime（`TimeSpan.Ticks`，非负 `int64`）；它是 duration，不是 UTC timestamp。
+- `HasTimeBudget`：Request 路由前缀后包含构造请求帧时采样的剩余 RPC lifetime（`TimeSpan.Ticks`，非负 `int64`）；它是 duration，不是 UTC timestamp。
 - `HasMetadata`：TimeBudget 后包含 `varuint length + metadata bytes`；metadata payload 为 `entryCount:varuint`，随后重复 UTF-8 key/value 的 `varuint length + bytes`。
 - `Compressed`：对应载荷已压缩，必须先通过能力协商。
 - `Cancellable`：调用允许远端取消。
@@ -66,9 +80,12 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 5: contract manifest
 - bit 6: session refresh
 
-当前 wire generation 使用 `minor 4`（`MinimumCompatibleMinorVersion == MinorVersion == 4`），只相对已发布的 1.1.1/minor 3 升级一次。开发期使用过的中间编号不构成发布兼容性边界。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+当前 wire generation 使用 `minor 5`（`MinimumCompatibleMinorVersion == MinorVersion == 5`）。
+minor 在握手/发布边界验证 grammar；握手后能力判断读取冻结的 negotiated capability set，
+不按 minor 重新猜测能力。能够识别某个 bit 不等于端点已实现并主动 advertise 该能力。
+压缩等能力还需匹配其 capability-scoped profile/binding。
 
-minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
+minor 5 的 `HandshakeRequest` 保留三个固定 frame/window 限制字段后的压缩协商部分：
 
 ```text
 responseCompressionPreferenceGeneration:uint64
@@ -84,12 +101,56 @@ wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感�
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
 
+## Session binding 与逐调用流准入
+
+`ContractManifest` payload 为 `generation:int64 + count:int32 + serverInstanceId:16B +
+registryEpoch:16B`，随后每条为 `contractId:int64 + hashHigh:uint64 + hashLow:uint64`。
+GUID 使用 `Guid.TryWriteBytes` 默认布局，必须非空；ID 必须非零、唯一且按有符号 ID 严格递增，
+hash 不得为空。Manifest 观察、连接 Ready 和某个契约已绑定是不同边界。
+
+`BindContract` / `BindAck` 均不压缩、无 flags。以下大小均不含 15 B 帧头：
+
+```text
+Bind (40 B): ContractId:int64 + hashHigh:uint64 + hashLow:uint64
+             + requirement:int64 + receiptPresent:int64
+optional receipt (72 B): serverInstanceId:16B + registryEpoch:16B
+             + generation:int64 + ContractId:int64 + hashHigh:uint64 + hashLow:uint64
+             + registrationId:int64
+Ack (40 B): status:int64 + ContractId:int64 + BindingId:uint64
+             + registrationId:int64 + publicationGeneration:int64
+```
+
+requirement 为 Compatible=0、MinimumVersion=1、ExactRegistration=2；receiptPresent 只能为 0/1，
+后两种要求 receipt。status=0 表示成功，token/registration 必须非零；拒绝时二者均为零。
+服务端先在注册事务边界验证完整身份/receipt 并安装表项，再回复；Bind 不激活 Service、不执行
+业务 Codec、不预留普通调用容量。公开控制面与 receipt 约束见 [调用文档](calls-and-streaming.md)。
+
+BindingId 只对应签发它的物理 Session 和精确 registration，不能跨重连/蓝绿 redirect 搬用。
+服务端每个请求仍比较完整 token、取得该 registration 的生命周期保护，并验证方法 facts/shape，
+然后才进入资源准入、解压、Codec 和调用 pipeline。未知/退休 token 不执行业务；退休 gate 是最终
+准入切点，不依赖失效通知及时到达。槽位复用必须更换完整 incarnation，耗尽不得 wrap 后重用。
+
+当前实现每 Session 最多 64 binding slots、每 binding 最多 256 methods；同一 Client/Server 的
+跨 Session 总 binding 配额为 128、进行中 control operations 为 64。Client live sites 和 Prepare
+waiters 各最多 64。操作、迟到 Ack/失效状态和等待均有界；Draining 不接受新 Bind，已开始流的
+RequestAccepted/取消/终止仍可完成。具体缓存不是可由应用设置的远端身份或授权能力。
+
+两向流在本次调用资源/路由、activation 和现有 auth/interceptor terminal 就绪后，先发送
+`RequestAccepted` 再进入生成 Stub。ClientStreaming/Duplex producer 只有在其原 pending generation
+仍存活且取得 start claim 后才运行；取消、deadline、Drain 和迟到 Ack 不得复活 producer。
+ServerStreaming/Duplex 的最终成功仍由 `StreamComplete` 表示。
+
+OneWay 输入不使用逐调用 Ack。专用帧的 count 和 16 B route 均独立且未压缩；服务端按此 count
+安全丢弃被拒调用的输入、归还 credit 并清除 route。与已绑定 facts 冲突、count 非法或无法有界
+清理时关闭 Session；合法有界的未知方法可 drain，不需要调用未知 Stub/Codec 推断形态。
+
 ## 压缩载荷
 
 压缩只覆盖 Generated Codec 产生的业务 payload，路由、TimeBudget、metadata 和 stream ID 始终保持未压缩，便于在分配前完成路由、资源与长度校验：
 
 ```text
-Request    = route/TimeBudget/metadata envelope + originalBodyLength:uint32 + compressedBody
+Request            = route/TimeBudget/metadata envelope + originalBodyLength:uint32 + compressedBody
+OneWayInputRequest = count:uint8 + Request envelope/body（count 也不压缩）
 Response   = originalBodyLength:uint32 + compressedBody
 StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
 
@@ -108,7 +169,12 @@ Core 不内置具体压缩算法，也不为算法增加私有 framing/checksum�
 
 Admission control 不增加 wire capability，也不改变客户端发送格式。服务端在未创建 Service、Scope、Codec 状态或执行 Interceptor 前，按 `Global → Contract → Method → Partition` 累计取得全部 permit。无等待策略、队列数量已满、队列保留字节已满、速率或并发限制拒绝时，普通调用返回 `ResourceExhausted`；Server Draining 时返回 `Unavailable`。拒绝当前调用不会关闭连接，过载解除后同一健康连接可继续调用。
 
-等待中的 Request 保留完整 wire payload。客户端流与双向流使用 Generator 输出的 `ClientStreamCount` 预留 stream ID，并按到达顺序有界保留 `StreamData/StreamComplete`；压缩帧按实际 wire bytes 进入队列字节预算，但在保留前验证 `originalItemLength`，取得 permit 后才解压并交给 Generated Codec。队列溢出、取消、deadline、断连或 Draining 会终止整次调用并一次归还所有 owner 与 flow-control credit。
+等待中的 Request 保留有界的原始 head，并保护其精确 registration。两向 ClientStreaming/Duplex
+在本次 RequestAccepted 前不启动 producer，不能再把这段等待描述为两向输入预准入 spool。
+明确启用排队的 OneWay 输入仍可在准入前生产；按独立 count 预留 stream ID，并按到达顺序有界
+保留 StreamData/StreamComplete。压缩 item 在保留前验证 originalItemLength，按 wire bytes 计入
+预准入字节预算，取得 permit 后才解压/调用 Codec。溢出、取消、deadline、断连或强制 Drain
+终止该调用并释放物理 owner、route 和 credit；已获准的原代调用不得改投 replacement。
 
 OneWay 的本地发送成功只表示帧已被客户端 SendPump 接受。服务端过载拒绝 OneWay 时不执行方法、不发送伪成功响应，并记录 dropped/resource-exhausted 指标；只有显式启用 `QueueOneWayCalls` 才允许 OneWay 等待。
 
@@ -136,7 +202,7 @@ OneWay 的本地发送成功只表示帧已被客户端 SendPump 接受。服务
 错误载荷格式为：
 
 ```text
-errorCode:uint16 + messageLength:varuint32 + UTF8 message
+errorCode:uint16 + detailCode:uint16 + messageLength:varuint32 + UTF8 message
 ```
 
 错误消息默认上限 64 KiB；发送端在 UTF-8 字符边界截断并设置 `Truncated`。未知错误码、超限长度或长度不匹配均为 `ProtocolViolation`。服务实现未显式映射的异常只发送安全的 `Internal` 消息，不发送堆栈。

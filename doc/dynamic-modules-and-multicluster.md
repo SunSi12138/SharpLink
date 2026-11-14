@@ -26,7 +26,7 @@ Coordinator 也必须显式选择 child Client 的 request-timeout policy。`Use
 
 Coordinator 的 canonical lifecycle 是 `StartAsync / WaitForReadyAsync / WaitForShutdownAsync / StopAsync`。`StartAsync` 只启动本地 child runtime，不把远端 readiness 混入生命周期；`WaitForReadyAsync()` 可以等待当前所有 slot，`WaitForReadyAsync(cluster)` 可以只等待指定 slot。兼容 `ConnectAsync` 仍提供 legacy all-required-slots connection operation，但不会定义 coordinator lifecycle。
 
-一个 slot 的连接/Resolver/Breaker 状态不与其他 slot 共享。`Get<TContract>` 根据 immutable route snapshot 选择唯一 slot；缺失或冲突路由立即失败，不做猜测或广播。
+一个 slot 的连接/Resolver/Breaker 状态不与其他 slot 共享。`CreateProxy<TContract>` 根据 immutable route snapshot 选择唯一 slot；缺失或冲突路由立即失败，不做猜测或广播。
 
 ## 运行时 slot 生命周期
 
@@ -125,9 +125,9 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ### Proxy 与 endpoint 语义
 
-- Add 后新 `Get<T>()` 选择新 slot；若调用要求立即远端可用，应先显式 `WaitForReadyAsync(cluster)`。
-- Replace 后新 `Get<T>()` 绑定新 child；Replace 前缓存的 Proxy 继续绑定旧 child，并在旧 child开始停止后拒绝新调用。
-- Remove 后新 `Get<T>()` 立即失败；旧 Proxy 最终观察到 child 已停止。
+- Add 后新 `CreateProxy<T>()` 选择新 slot；若调用要求立即远端可用，在 `WaitForReadyAsync(cluster)` 后创建 handle 并有限 Prepare。
+- Replace 后新 `CreateProxy<T>()` 绑定新 child；Replace 前缓存的 Proxy 继续绑定旧 child，并在旧 child开始停止后拒绝新调用。
+- Remove 后新 `CreateProxy<T>()` 立即失败；旧 Proxy 最终观察到 child 已停止。
 - 不自动重绑定旧 Proxy，因此 RPC 热路径没有 coordinator 查询或额外的 slot indirection。
 - `UseCluster(...)` 只配置一个 child 内部的多 endpoint pool，不代表 coordinator slot。
 - DNS/dynamic resolver 自身的 endpoint 更新不需要 Replace；冻结的静态 endpoint、transport、pool 或负载均衡配置变化使用 `ReplaceClusterAsync`。
@@ -136,7 +136,7 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 动态模块由 generated Manifest 描述 contract、service、Codec 和 cluster route。注册流程先验证版本、依赖闭包、contract id、schema/wire identity 和路由所有权，再原子发布 snapshot。
 
-替换不是覆盖字典：新 generation 先完整验证并发布，旧 generation 进入 draining；已开始调用继续使用旧服务/Codec，新的调用路由到新 generation。注销等待 active calls/streams 和 adapter scope 释放，超时不会假装成功。
+替换不是覆盖字典：新 generation 先完整验证，关闭旧组准入 gate 后发布新 snapshot；旧 generation 进入 draining；已开始调用继续使用旧服务/Codec，新的调用路由到新 generation。注销等待 active calls/streams 和 adapter scope 释放，超时不会假装成功。
 
 ## 远端 wire contract 可见性
 
@@ -145,7 +145,8 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ```csharp
 await client.WaitForRemoteContractAsync(contractId, expectedHash, cancellationToken);
-var proxy = client.Get<IContract>();
+var proxy = client.CreateProxy<IContract>();
+await proxy.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
 // 多集群只等待目标 slot：
 await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, cancellationToken);
 ```
@@ -158,9 +159,10 @@ await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, can
 注销后的缺失合同等待后续注册或取消，不保留代理、Type 或 Assembly。
 
 每条连接独立按 manifest generation 排序，不能比较不同连接的 generation。成功是当前观察，
-不是 lease，随后重连、注销或替换仍可能使同步 `Get` 失败。相同 ID/hash 已可见时立即成功，
-包括哈希相同的替换；它不证明业务实现或 Artifact generation 已发布。`Get` 继续保持同步，
-不会偷偷发起网络调用。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
+不是 lease，也不证明某个 receiver 已绑定。相同 ID/hash 已可见时立即成功，包括哈希相同的
+替换；它不证明指定实现代次已发布。factory 始终只做同步本地构造；准备可调用目标仍需对
+同一 handle 有限 Prepare。若需某次 Server 注册/替换的原始结果，传递其原子 receipt 并在
+同一数据 Session Bind；不要用 Manifest wait 或事后 current-state 查询代替。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
 
 ## 跨端 generation synchronization
 
@@ -186,11 +188,11 @@ NativeAOT 不支持运行时加载未知插件，动态模块只适用于 JIT �
 
 运行时 slot 的 unit 与真实 TCP 证据位于 `test/SharpLink.UnitTests/Client/SharpLinkMultiCluster*Tests.cs` 和 `RuntimeMultiClusterIntegrationTests`，覆盖 Created/Running 状态、Add publication 与 readiness 解耦、structured expected rejection、Replace ready-before-swap、publication-vs-cleanup 结果、取消/Stop race、预算、Proxy 一次绑定、Add/Replace/Remove 和删除后的资源释放结果。
 
-## 2.0 Generated ABI 和发布门禁
+## 当前 Generated ABI 和发布门禁
 
-所有契约/服务/插件必须用 2.0 SDK 重新生成 API 4，并携带当前 ABI identity。
+所有契约/服务/插件必须用匹配的 3.0 SDK 重新生成 API 6，并携带当前 ABI identity。
 locator 在 manifest materialization 之前 fail fast；Catalog 是 generated bootstrap，
 应用只通过 `ISharpLinkAssemblyRegistry` 注册、替换和注销。
 `ReferencesReleased` 描述框架引用释放，不保证应用自身 Assembly/Type/proxy 引用已清空，
 因此 ALC 卸载仍需调用方释放引用并验证回收。版本/identity 与完整公开签名由
-[API baseline](../eng/public-api/2.0.0) 和 [版本清单](../eng/release-versions.json) 检查。
+[API baseline](../eng/public-api/3.0.0) 和 [版本清单](../eng/release-versions.json) 检查。

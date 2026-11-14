@@ -56,7 +56,7 @@ Server 不拥有：
 1. Builder 收集 transport/listener、service registration、auth、interceptor、admission 和 Runtime Context 相关配置。
 2. Build 验证并冻结配置，形成稳定的服务 Registry 与实例级 policy。
 3. Run/Start 打开 listener，接受物理连接，并为每条连接建立 Runtime Session 与服务端 connection state。
-4. 每次调用根据生成 Descriptor/Stub 与 Registry 建立 invocation state 和 `SharpLinkCallContext`。
+4. Bind 冷路径核对 Contract hash/receipt；每次调用验证本 Session token，保护精确 registration、解析一次方法 facts，再建立 invocation state 和 `SharpLinkCallContext`。
 5. Streaming 的服务实例/Scope 和调用状态保持到整条流真正终止，而不是只保持到方法返回一个 enumerable/stream handle。
 6. Stop/Draining 停止接收新工作，并按 grace 规则等待已接收调用；listener、Session 和其他 framework/transport teardown 可以在有界停止流程中完成。无法协作终止的 invocation 可以晚于 `StopAsync` 返回，仍被这些调用持有的 service graph、Scope 或旧 generation 必须继续保留，并在最后一个 owner 释放后延迟清理。
 
@@ -69,7 +69,8 @@ Generator 提供 Stub、Descriptor、Activator 和 Manifest；Server 决定这�
 - Build 阶段合并可见 registration 并验证一个 Contract 的服务所有权。
 - Stub 提供类型安全的调用入口；Server 负责选择目标服务实例、Scope 和 invocation lifetime。
 - Activator 提供静态构造路径；Server/DI 负责依赖 Scope 的创建和释放。
-- 动态 replace/register/unregister 必须以实例级 generation/ownership 语义发布，旧 generation 在相关调用排空前不能被提前释放。
+- 动态 replace/unregister 先关闭整个旧组的新调用 gate，再发布新快照；预切点已保护的原调用保持到物理退出，不能改投新代。
+- 需要操作级 receipt 时使用原子 Register/Replace-with-receipts 结果；它不激活 Service，也不代表旧代已排空或新数据 Session 已 Bind。
 
 动态模块的完整语义见 [`dynamic-modules-and-multicluster.md`](dynamic-modules-and-multicluster.md)。
 

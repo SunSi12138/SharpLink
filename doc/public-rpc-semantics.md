@@ -6,11 +6,11 @@
 
 | Concern | Public semantic boundary |
 | --- | --- |
-| Deadline | 在逻辑调用创建时冻结为单调时钟 deadline；同一个 deadline 约束后续调用阶段和所有 retry，不会在重试、重选 endpoint 或 stream 启动后重新计时。此前的 `ConnectAsync`、transport dial、handshake、readiness wait 不属于这个 RPC deadline。 |
+| Deadline | 在逻辑调用创建时冻结为单调时钟 deadline；同一个 deadline 约束后续调用阶段和所有 retry，不会在重试、重选 endpoint 或 stream 启动后重新计时。此前的 `ConnectAsync`、transport dial、handshake、readiness / 显式 Prepare wait 不属于这个 RPC deadline。 |
 | `ConnectAsync` | 启动或加入 client 自己的连接生命周期；它不是“所有 endpoint 已 Ready”的屏障。需要 N 个 Ready endpoint 时使用 `WaitForReadinessAsync(N)`。 |
 | `[OneWay]` | 成功只承诺本地发送边界成功，不承诺远端 handler 已执行，更不承诺业务成功。需要确认远端执行结果时使用 request/response RPC。 |
 | Retry | 只可能发生在 `[Idempotent]` Unary；OneWay/Streaming 不 retry。每次 retry 是同一逻辑调用的新物理 attempt，并重新执行 endpoint selection，但仍共享原 logical deadline。timeout/disconnect 不证明 Server 未执行过请求。 |
-| Multi-cluster replace | `ReplaceClusterAsync` 前已经取得的 proxy 固定绑定旧 child；要调用 replacement child，需要重新 `Get<T>()`。 |
+| Multi-cluster replace | `ReplaceClusterAsync` 前已经取得的 proxy 固定绑定旧 child；要调用 replacement child，需要重新 `CreateProxy<T>()` 并 Prepare。 |
 | Server module / endpoint update | Server-side service/module generation replacement、resolver topology 和 endpoint-selection policy 更新不会要求重取普通 client proxy；但已经开始的 call / physical attempt 不会中途迁移到新 generation 或 endpoint。 |
 
 ## 1. Deadline、timeout 与 cancellation
@@ -43,7 +43,7 @@ Timeout 来源按以下规则组合：
 两个容易误读的本地容量边界：
 
 - 标准 generated Unary 当前使用有界 pending table 的**立即租用**。pending capacity 已满时会本地 `ResourceExhausted(PendingRequestCapacity)`，并不会默认排队等 slot。只有明确选择 wait-for-slot 的内部/扩展路径才存在 pending-slot wait；这种 wait 仍受同一个 deadline 约束。
-- Request 进入 session send queue 也不是一个隐含的无限等待点。标准 request enqueue 在 send queue 满时会本地 `ResourceExhausted(SendQueueCapacity)`；如果 deadline-bearing Request 已经成功入队，它的实际 emission/flush 仍必须在原 deadline 内完成。
+- Request 进入 session send queue 也不是一个隐含的无限等待点。标准 request enqueue 在 send queue 满时会本地 `ResourceExhausted(SendQueueCapacity)`；如果 deadline-bearing Request 已经成功入队，调用方对 emission/flush 的等待仍受原 deadline 约束，物理队列中的字节不能靠取消等待撤回。
 
 服务端收到带 TimeBudget 的请求后，admission queue 也受该调用 budget/cancellation 约束。Client 自己的绝对 deadline 同时继续运行，所以网络发送、传输和响应等待不会因为跨进程 TimeBudget 重新开始而延长 caller 的总预算。
 
@@ -54,15 +54,22 @@ RPC deadline 只在 RPC logical call 创建时出现。因此下面这些**此�
 - `ConnectAsync`；
 - transport dial；
 - protocol/TLS handshake；
-- `WaitForReadinessAsync`。
+- `WaitForReadinessAsync` 和 receiver 的显式有限 `PrepareAsync`。
 
 它们有各自的生命周期与取消边界：`ConnectAsync` 的 caller token 只取消当前 caller 的等待，共享的 client-owned connection attempt 可以继续；`WaitForReadinessAsync` 的 token 取消 readiness wait；SharpLink RPC handshake 由独立的 `SharpLinkProtocolOptions.HandshakeTimeout` 约束，启用 TLS 的 transport 还可能有独立的 TLS handshake timeout。transport dial 服从 transport/client lifecycle 的取消机制，而不是某个尚未创建的 RPC deadline。
 
 应用当然可以用同一个外部 `CancellationToken` 或更高层 orchestrator 同时限制“启动 + readiness + RPC”的总时间，但那是应用级 budget，不会把 SharpLink 的 RPC deadline 改造成 connect timeout。
 
-### 1.4 emission 时的 TimeBudget
+### 1.4 创建、发布与 emission 的 TimeBudget
 
-Request 不会在逻辑调用刚创建时把一个静态 timeout 数字永久写进 wire。deadline-bearing Request 保留本地绝对 deadline，SendPump 在 transport emission 的最后边界重新计算剩余时间，然后写入 `TimeBudget` 并 flush。若在 emission 前预算已经耗尽，请求本地失败为 `DeadlineExceeded`，不会把过期 Request 发布到 transport。
+构造请求帧时从原 logical deadline 采样剩余 TimeBudget；pending publication gate 在入队前再次
+检查同一个绝对 deadline。到期先获胜时，Request 不得入队，也不得为未发布的 Request 发 Cancel。
+SendPump 按已接收的帧原样发送，不在 transport emission 重采样或改写 TimeBudget。
+
+已经成功入队的 Request 可能在调用本地到期后仍到达对端。pending deadline 负责本地终态、取消
+和 producer 抑制；deadline-bearing 调用对 emission/flush 的等待也受原 deadline 约束，但取消等待
+不等于从物理队列撤回字节。它仍不能证明 Server 未执行。两向输入在原 pending generation 存活且
+收到本次 RequestAccepted 前不运行 producer，迟到 Ack 不能复活过期调用。
 
 ### 1.5 terminal precedence
 
@@ -75,7 +82,7 @@ Request 不会在逻辑调用刚创建时把一个静态 timeout 数字永久写
 
 ## 2. `ConnectAsync` 与 readiness 不是同一件事
 
-`ConnectAsync` 建立的是 client 的 topology-specific connectivity boundary，不是 topology-wide readiness barrier。
+`ConnectAsync` 建立的是 client 的 topology-specific connectivity boundary，不是 topology-wide readiness barrier。连接 Ready 也不表示某个契约已 Bind；需要立即调用时，对保留的 receiver 有限 Prepare，默认未绑定调用 FailFast。
 
 - 单 endpoint client：初始 connect 成功意味着配置的 `MinConnections` 已建立并可以发布 Ready。
 - static multi-endpoint / dynamic resolver client：`ConnectAsync` 启动或加入该 topology 的 connectivity lifecycle；它不会等待每个目标 endpoint 都 Ready。Dynamic resolver 的已接受空 snapshot 也不会被解释成“等待所有未来 endpoint Ready”。
@@ -92,7 +99,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 当前本地成功边界分两种：
 
 - **普通、无 deadline 的非 streaming OneWay**：调用成功表示 Request 已被本地 `RpcSession` 的 SendPump 接收/入队。若本地 send queue 满，会立即得到本地 `ResourceExhausted`。返回成功时数据可能尚未完成 transport flush。
-- **带 deadline 的 OneWay**：为了保证过期 Request 不被发布，客户端会观察该 Request 所在 batch 的 emission；只有 `PipeWriter.FlushAsync` 成功后该发送阶段才成功。若 deadline 在 emission 前耗尽，则本地 `DeadlineExceeded`。
+- **带 deadline 的 OneWay**：客户端会观察该 Request 所在 batch 的 emission；只有 `PipeWriter.FlushAsync` 成功后该发送阶段才成功。若等待期间 deadline 获胜，则本地 `DeadlineExceeded`；这不撤回已成功入队的 Request。
 
 这两种成功都**不表示**：
 
@@ -103,7 +110,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 服务端 OneWay 在 admission overload 下还可能按配置直接丢弃；客户端因为没有 response 无法从返回值判断这一结果。
 
-带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；其初始 Request 必须先通过 emission deadline 检查，producer 才会启动。这仍然不是远端业务确认。
+带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；其初始 Request 必须先完成受原 deadline 约束的 emission，producer 才会启动；它不等待 RequestAccepted。这仍然不是远端业务确认。
 
 如果业务必须确认“远端 handler 已成功完成”或“副作用已经提交”，应使用有响应的 RPC，或在应用协议中设计明确 acknowledgement / idempotency mechanism，而不是把 `await OneWay` 当成远端确认。
 
@@ -115,23 +122,27 @@ Replacement 不能用一条“proxy 会/不会自动 rebind”覆盖所有类型
 
 Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate 到可发布状态，再原子切换 slot，最后排空旧 child。
 
-- publication **之后**的新 `Get<T>()` 绑定新 child；
+- publication **之后**的新 `CreateProxy<T>()` 绑定新 child；
 - publication **之前**已经取得的 proxy 仍绑定旧 child，不会自动 rebind；
 - 已经开始的 in-flight call 不迁移到新 child；它按旧 child 的连接/排空/取消生命周期完成或失败；
 - 旧 proxy 在旧 child 进入停止阶段后发起的新调用会看到旧 child 的 lifecycle rejection，而不是偷偷转发到新 child。
 
-因此要使用 replacement child，应用必须重新 `Get<T>()`。这个设计刻意避免每次 proxy 调用都回到 coordinator 做热路径 lookup。
+因此要使用 replacement child，应用必须重新 `CreateProxy<T>()` 并 Prepare。这个设计刻意避免每次 proxy 调用都回到 coordinator 做热路径 lookup。
 
 ### 4.2 Server-side dynamic service/module generation replacement
 
 Server-side dynamic service/module replacement 的 publication boundary 与 multi-cluster proxy binding 不同：
 
 - 已经开始的调用保持其捕获的旧 server generation/service/codec 选择，不会中途改投新 generation；
-- replacement publication 之后到达 Server 的新调用使用新 generation；
+- 旧组 gate 关闭后不再接受新的旧代调用；新 Bind 在 publication 后选择新 registration，允许显式 FailFast 空窗；
 - 旧 generation 在 drain 完成后才可卸载；
-- 普通 client proxy 只绑定自己的 client/channel，并不持有某个 server service object，因此仅仅因为 Server 发布了新 service/module generation，**不需要重新 `Get<T>()`**。
+- 普通 client proxy 只绑定自己的 client/channel，并不持有某个 server service object，因此仅仅因为 Server 发布了新 service/module generation，**不需要重新 `CreateProxy<T>()`**；可在原 handle 上再次有限 Prepare，Bind 完成前允许 FailFast。
 
-Admission 排队只保留所选 registration 的身份，不代表已经取得旧 module 的执行租约，也不会阻止旧 collectible service 卸载。排队期间旧 registration 被 replacement / unregister 退役时，恢复后的 request/response RPC 以 `Unavailable` 拒绝；OneWay 不执行 handler，并按原请求的 stream shape 排空。即使 replacement 使用相同 contract assembly 和兼容 wire shape，也不会让旧 cancellation token 与新 service / codec 混用。已经取得旧 module 执行租约的调用仍按原 drain / cancellation 生命周期完成。 客户端另行获准的 retry 是新的 physical attempt，可以按既有 deadline / retry policy 选择新 generation；这不等于把同一已排队 attempt 转移到新 registration。
+Bound 请求在准入排队前已取得精确 registration 的基础保护，并在队列、解码和物理退出期间
+保留原代。正常 grace 内，预切点排队调用可继续在 R1 完成，并会推迟 R1 的 ReferencesReleased / ALC
+回收；强制取消后则不得激活或解码旧业务。无论新旧 hash 是否相同，恢复时都不能改投 R2 或混用
+旧 CTS 与新 Codec。客户端另行获准的 retry 是新的 physical attempt，可以按原 deadline/policy
+选择新 bound target；它不是把同一已排队 attempt 转移到新 registration。
 
 如果替换的是 **client-side collectible contract assembly** 本身，则旧 proxy/type/codec 仍属于旧 AssemblyLoadContext；要使用新 contract assembly 并允许旧 ALC 卸载，必须释放旧 proxy/type 等强引用，并从新 contract generation 获取新的 proxy。这是 client module ownership 问题，不是 server service rebind。
 
@@ -139,7 +150,7 @@ Admission 排队只保留所选 registration 的身份，不代表已经取得�
 
 Endpoint resolver 或 runtime selection-policy 更新不会重绑 proxy；proxy 仍属于同一个 client。每个**物理 attempt**捕获自己的 endpoint/topology/selection 边界，已选中的 in-flight attempt 不会在中途搬到另一个 endpoint。后续 retry 是新的 attempt，因此可以看到更新后的 topology/policy 并重新执行 endpoint selection；它仍可能因为当前 Ready set/policy 选择到与前一 attempt 相同的 endpoint。
 
-因此 resolver/selection-policy 更新通常由已有 proxy 的**后续新 attempt**透明观察，不要求重新 `Get<T>()`。
+因此 resolver/selection-policy 更新通常由已有 proxy 的**后续新 attempt**透明观察，不要求重新 `CreateProxy<T>()`；新增物理 Session 仍须独立 Bind，需要立即可用时在原 handle 上有限 Prepare。
 
 ## 5. Retry 的公开边界
 
@@ -184,7 +195,7 @@ OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 都不 retry。自�
 
 Streaming 不自动获得 Unary 的 client fallback timeout；但一旦它有方法 deadline 或继承的 ambient deadline，这个 deadline 属于**整个 logical stream call**，不会在 request startup 完成、第一次 `MoveNextAsync` 或 producer 启动后重置。已开始的 stream 也不会因为 reconnect/retry 跨连接迁移。
 
-对 ServerStreaming / Duplex，初始 `Response` 只是服务端对 stream request 的 acknowledgement，不是整个 stream 的 terminal success；真正的正常终止由 `StreamComplete` 驱动。业务不能把“stream 已开始”解释成“所有 item 已成功完成”。
+RequestAccepted 是当前流调用的准入确认，不是业务成功。对 ServerStreaming / Duplex，后续成功 `Response` 也不是整个 stream 的 terminal success；真正的正常终止由 `StreamComplete` 驱动。业务不能把“stream 已开始”解释成“所有 item 已成功完成”。
 
 ### Shutdown / drain 与 cancellation
 
@@ -199,7 +210,7 @@ Client `StopAsync` 是不同语义：它停止 reconnect、拒绝新调用、失
 | Semantic | Evidence |
 | --- | --- |
 | logical deadline 不重置、stream deadline | `test/SharpLink.UnitTests/Client/SharpLinkClientLogicalDeadlineTests.cs`, `ClientStreamProducerDeadlineTests.cs` |
-| TimeBudget 在 emission 边界采样、过期 request 不发送 | `SharpLinkClientTimeBudgetTests.cs`, `SharpLinkClientTrackedEmissionDeadlineTests.cs`, `SharpLinkClientOneWayTimeBudgetTests.cs` |
+| TimeBudget 在创建时采样、入队前过期拒绝、emission 等待不重启预算 | `SharpLinkClientTimeBudgetTests.cs`, `SharpLinkClientTrackedEmissionDeadlineTests.cs`, `SharpLinkClientOneWayTimeBudgetTests.cs` |
 | timeout/cancellation | `SharpLinkClientCallOptionsTests.cs`, `SharpLinkClientTimeoutTests.cs`, `SharpLinkClientCancellationTests.cs` |
 | connect / readiness snapshot / wait | `SharpLinkClientLifecycleStartStopTests.cs`, `SharpLinkClientReadinessStateTests.cs`, `SharpLinkClientReadinessWaitTests.cs`, `SharpLinkClientReadinessPublicationTests.cs` |
 | retry eligibility、endpoint reselection、deadline | `SharpLinkClientRetryBehaviorTests.cs`, `SharpLinkClientRetryDeadlineTests.cs`, `SharpLinkClientRuntimeRetryPolicyTests.cs` |

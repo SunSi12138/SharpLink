@@ -49,3 +49,8 @@ Review ADR 时重点确认：
 ## Accepted records
 
 - [0001: 2.0 public API 与包边界](0001-2.0-public-api-and-packages.md)
+
+## Proposed records
+
+- [0002: Owner-local generated UnsafeBlit capability](0002-generated-unsafe-blit-capability.md)
+- [0003: Contract-scoped receiver and Session-local binding](0003-contract-scoped-binding.md)

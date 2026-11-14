@@ -4,9 +4,16 @@
 
 SharpLink 3.0 是破坏性 major 升级，不承诺与 2.0.3 的源代码、进程内二进制或跨版本 Client/Server 互操作兼容。同一进程内的 SharpLink 包须统一为匹配的 3.0 版本；删除旧 `bin/obj` 和缓存生成源码，重新生成、构建并部署全部契约、服务和插件程序集。
 
-当前 Generated ABI 是 **API 5**，要求精确 identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`。API 3、API 4，以及使用其他开发期 API 5 identity 的程序集必须在 Manifest 构造/发布前被拒绝；不能只比较整数 API 号。手写 locator 应使用当前 `SharpLinkGeneratedManifestVersions` 常量。owner-bound UnsafeBlit 和 standalone generated Codec 的迁移见 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
+当前 Generated ABI 是 **API 6**，精确 identity 为 `sharplink-3.0-api6-contract-binding-v1`。
+API 3/4/5 与其他 identity 的旧生成物在 Manifest 构造前拒绝；不要只改 locator 整数冒充新 ABI。
+全部 Proxy/Stub/bootstrap/Codec 必须用同一 SDK 重新生成。`Get` / `GetWithMetadata` 和
+client-wide `IRpcChannel` 已移除，改为保留 `CreateProxy<T>()` handle、有限 Prepare 后调用
+其 Service；手写调用创建 client-issued 的 `IRpcContractChannel`。见
+[契约通道迁移](rpc-channel-3.0-migration.md) 与 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
 
-Generated ABI 与网络协议是独立版本轴：3.0 仍使用 **Protocol v2 / minor 4**，兼容下限为 4。API 5 不表示 wire minor 5；major 升级也不要求拒绝所有版本号不同的 peer。实际握手按 wire grammar、required capabilities、compression profile 与 frame/window 限制校验；契约绑定按精确 `RpcAssemblyHash` 校验。不支持的 wire generation 或不匹配的契约不得被当作可执行业务的输入。
+Generated ABI 与 wire grammar 独立：当前为 **Protocol v2 / minor 5，兼容下限 5**。
+Bind 验证完整身份/receipt，普通 Request 引用实际 Session 的 BindingId；minor 4 的旧 ContractId
+语义不能混用。两向输入 producer 等本次 RequestAccepted，OneWay 输入仍无逐调用 Ack。
 
 发布要求验证当前 3.0 包的 Client/Server 互操作及拒绝路径的正确性。历史命名的 `eng/verify-protocol-v2-cross-version.sh` 实际从同一批当前包构建 Client/Server，覆盖双进程 Unary、Client/Server/Duplex Streaming 和 OneWay；它不是 2.0.3 ↔ 3.0 矩阵，不提供跨 major 成功互操作证据。该说明定义验证范围，不宣称任一候选已经通过。
 
@@ -237,14 +244,15 @@ Catalog 保留弱引用不代表应用引用已经释放。详见 [边界 ADR](a
 ## 当前 3.0 升级清单
 
 1. 统一 SDK、Generator、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 为匹配的 3.0；同一进程不混装旧 major。
-2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 5，并核对当前 owner-bound ABI identity；把 Generator diagnostics 当错误处理。
-3. 为每个 Client 和 MultiCluster builder 显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；不要依赖旧的隐式 30 秒 fallback。
-4. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
-5. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
-6. 验证 TLS、authentication、authorization、metadata 与错误消息不泄露敏感数据。
-7. 验证 Unary、OneWay、三类 Streaming、deadline、取消、断连和 Server Stop。
-8. 若使用 topology/resilience，验证 generation churn、last-good、retry deadline 和 breaker。
-9. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
-10. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
+2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 6，并核对精确 contract-binding ABI identity；把 Generator diagnostics 当错误处理。
+3. 将旧 factory/raw casts 迁移到契约 handle/channel，并用同一 receiver 的有限 Prepare 建立 readiness。
+4. 为每个 Client 和 MultiCluster builder 显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；不要依赖旧的隐式 30 秒 fallback。
+5. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
+6. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
+7. 验证 TLS、authentication、authorization、metadata 与错误消息不泄露敏感数据。
+8. 验证 Unary、OneWay、三类 Streaming、deadline、取消、断连和 Server Stop。
+9. 若使用 topology/resilience，验证 generation churn、last-good、retry deadline 和 breaker。
+10. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
+11. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
 
-Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。当前 Generated ABI（API 5）与 Protocol v2 minor 4 是独立版本轴；3.0 发布门禁验证当前包互操作与正确拒绝，不增加 2.0.3 跨 major 兼容承诺。
+Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。当前 Generated ABI（API 6）与 Protocol v2 minor 5 是独立版本轴；3.0 发布门禁验证当前包互操作与正确拒绝，不增加 2.0.3 跨 major 兼容承诺。

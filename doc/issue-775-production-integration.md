@@ -606,3 +606,22 @@ inventory/package/platform acceptance must include this actual public delta befo
   Other live protocol/architecture/3.0 migration documents still need reconciliation; historical
   evidence is not rewritten into current acceptance. The remote dev ref was rechecked and remains
   160d0cd9a0550de5bf00c63b6007376c02debc20. No production branch push, hosted run or PR yet.
+
+### Live semantics and protocol documentation
+
+- Reconciled protocol, wire identity, architecture, migration, multi-cluster, public RPC semantics
+  and troubleshooting with API6/minor5. The protocol records all six frames, exact payload sizes,
+  Manifest Server/epoch fields, quotas, OneWay input count, acceptance and registration ownership.
+- Corrected stale emission wording against original material: dev160d0cd's
+  TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline already requires
+  creation-time TimeBudget and a SendPump sending frames verbatim. The old semantics page instead
+  promised emission-time rewrite and no expired queued bytes. It now distinguishes prepublication
+  deadline rejection from bounded caller emission waiting; a published Request can still reach the
+  peer after local timeout. No runtime behavior changed to accommodate this documentation repair.
+- Recorded the intentional queue-owner change with its actual evidence: a pre-cut bound waiter
+  protects R1 through physical exit and can finish gracefully on R1; forced cancellation prevents
+  old activation/decode. The earlier14-shape/ALC/forced controls and502-suite pass replace the old
+  weak-identity-only queue statement, without permitting retargeting to R2.
+- ADR0003 records receiver/lifetime tradeoffs and genuine cold/Ack costs. Final API/package approval
+  remains proposed; historical public-surface approval is not reused for new declarations. Changed
+  documentation links resolve. Historical2.0 sections and source-bound reports keep their versions.

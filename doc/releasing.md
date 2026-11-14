@@ -8,7 +8,7 @@
 - `AssemblyVersion` 与 `FileVersion` 始终使用四段纯数字；预发布后缀只进入包版本和 `InformationalVersion`。
 - 冻结前更新 `CHANGELOG.md`、包引用示例和迁移说明。公开 API、Protocol v2、生成代码、契约 Manifest 或默认行为的变化必须明确标注兼容性。
 - `2.0.0` 公开 API 基线是 2.x 历史基线；3.0 是破坏性 major 升级，不以保持 2.0.3 API/二进制兼容为门禁。发布包 API 对照用于审阅和迁移证据，不代表无破坏变更承诺。补丁版本仍不得进行破坏性 API 或 wire 变更。
-- 3.0 的 Generated ABI 为 API 5 / 精确 owner-bound identity，网络仍为 Protocol v2 minor 4；这两条版本轴分别验收。
+- 3.0 的 Generated ABI 为 API 6 / 精确 contract-binding identity，网络为 Protocol v2 minor 5、下限 5；这两条版本轴分别验收。
 - `eng/verify-protocol-v2-cross-version.sh` 保留历史路径，但实际验收同一批当前 NuGet 包的双进程互操作，不是真实 2.0.3 ↔ 3.0 矩阵。必须保留当前包成功路径及不兼容 minor、required capability、ABI identity、契约 hash 的拒绝测试；不自行扩大跨 major 成功互操作承诺。测试存在或文档列出范围不等于最终候选已经通过。
 
 ## 本地冻结门禁
