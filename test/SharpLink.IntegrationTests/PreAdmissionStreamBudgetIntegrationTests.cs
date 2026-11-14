@@ -7,9 +7,11 @@ public class PreAdmissionStreamBudgetIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task StreamBudgetShouldBeGlobalAndIndependentFromAdmissionQueuedBytes()
+    public async Task OneWayStreamBudgetShouldBeGlobalAndIndependentFromAdmissionQueuedBytes()
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
+        using var rejection = new StreamBudgetRejectionProbe();
         await using var harness = await BudgetHarness.CreateAsync();
         var serviceAProxy = harness.ClientA.CreateProxy<ITestService>();
         await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(10));
@@ -27,12 +29,12 @@ public class PreAdmissionStreamBudgetIntegrationTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var active = serviceA.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
-        Task<int>? uploadA = null;
+        Task? uploadA = null;
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-            uploadA = uploadAService.UploadBytesAsync(
+            uploadA = uploadAService.NotifyStreamBytesAsync(
                 TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > ItemBytes * 2,
@@ -45,14 +47,12 @@ public class PreAdmissionStreamBudgetIntegrationTests
             Ensure(admissionBytesBeforeB < retainedByA,
                 "Dynamic Admission queued bytes must not include retained stream-frame bytes");
 
-            var rejectedB = uploadBService.UploadBytesAsync(
+            var rejectedB = uploadBService.NotifyStreamBytesAsync(
                 SingleItemAsync(CreateItem(0x42))).AsTask();
-            var failure = await CaptureFailureAsync(rejectedB);
-            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
-                   exhausted.Message.Contains(
-                       "server_pre_admission_stream_bytes",
-                       StringComparison.Ordinal),
-                "second connection must receive the stable stream-budget ResourceExhausted reason");
+            await rejectedB.WaitAsync(TimeSpan.FromSeconds(5));
+            await rejection.Observed.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(rejection.Count == 1 && !CompressionService.WaitForOneWayAsync().IsCompleted,
+                "second connection must record the stable server stream-budget rejection without a business result or invocation");
 
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes == retainedByA,
@@ -64,7 +64,8 @@ public class PreAdmissionStreamBudgetIntegrationTests
             Ensure(await active.WaitAsync(TimeSpan.FromSeconds(5)) == 2,
                 "admission permit owner completes");
             producerRelease.TrySetResult();
-            Ensure(await uploadA.WaitAsync(TimeSpan.FromSeconds(5)) == ItemBytes * 2,
+            await uploadA.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(5)) == ItemBytes * 2,
                 "A buffered stream replays after admission");
 
             await WaitUntilAsync(
@@ -73,6 +74,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
                 "all pre-admission and admission queued byte ownership released");
             Ensure(await serviceB.AddAsync(20, 22) == 42,
                 "stream-budget rejection must leave the second connection usable");
+            Ensure(rejection.Count == 1, "one rejected OneWay input must have exactly one server rejection record");
         }
         finally
         {
@@ -86,7 +88,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task ForceStopShouldReleaseBufferedStreamBudgetBeforeExit()
+    public async Task ForceStopShouldReleaseOneWayBufferedStreamBudgetBeforeExit()
     {
         TestService.ResetBlockingAdd();
         await using var harness = await BudgetHarness.CreateAsync();
@@ -98,13 +100,13 @@ public class PreAdmissionStreamBudgetIntegrationTests
         await activeProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var active = activeProxy.Service
             .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
-        Task<int>? queued = null;
+        Task? queued = null;
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
             queued = preparedClientBCompressionService.Service
-                .UploadBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
+                .NotifyStreamBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > ItemBytes * 2 &&
                       harness.AdmissionQueuedBytes > 0,
@@ -152,19 +154,6 @@ public class PreAdmissionStreamBudgetIntegrationTests
         await Task.Yield();
     }
 
-    private static async Task<Exception?> CaptureFailureAsync(Task task)
-    {
-        try
-        {
-            await task.WaitAsync(TimeSpan.FromSeconds(5));
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
-    }
-
     private static async Task ObserveTerminalAsync(Task task)
     {
         try
@@ -194,6 +183,45 @@ public class PreAdmissionStreamBudgetIntegrationTests
     {
         if (!condition)
             throw new Exception($"assert failed: {scenario}");
+    }
+
+    private sealed class StreamBudgetRejectionProbe : IDisposable
+    {
+        private readonly System.Diagnostics.Metrics.MeterListener _listener;
+        private readonly TaskCompletionSource _observed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private long _count;
+        internal Task Observed => _observed.Task;
+        internal long Count => Volatile.Read(ref _count);
+
+        internal StreamBudgetRejectionProbe()
+        {
+            _listener = new System.Diagnostics.Metrics.MeterListener
+            {
+                InstrumentPublished = (instrument, listener) =>
+                {
+                    if (instrument.Meter.Name == SharpLinkTelemetry.Meter.Name &&
+                        instrument.Name == "sharplink.resource_exhausted")
+                        listener.EnableMeasurementEvents(instrument);
+                }
+            };
+            _listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+            {
+                var server = false;
+                var reason = false;
+                foreach (var tag in tags)
+                {
+                    server |= tag.Key == "rpc.side" && Equals(tag.Value, "server");
+                    reason |= tag.Key == "rpc.sharplink.resource_exhaustion_reason" &&
+                              Equals(tag.Value, "server_pre_admission_stream_bytes");
+                }
+                if (!server || !reason) return;
+                Interlocked.Add(ref _count, value);
+                _observed.TrySetResult();
+            });
+            _listener.Start();
+        }
+
+        public void Dispose() => _listener.Dispose();
     }
 
     private sealed class BudgetHarness : IAsyncDisposable
@@ -257,6 +285,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
                 .UseAdmissionControl(options =>
                 {
                     options.Global.UseConcurrency(1);
+                    options.QueueOneWayCalls = true;
                     options.MaxQueuedCalls = 2;
                     options.MaxQueuedBytes = 64 * 1024;
                     options.MaxQueueDelay = TimeSpan.FromSeconds(10);

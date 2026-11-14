@@ -335,8 +335,10 @@ public partial class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task PreAdmissionStreamSpoolShouldRejectWhenStreamBudgetOverflows()
+    public async Task QueuedTwoWayInputShouldNotConsumePreAdmissionStreamBudget()
     {
+        TestService.ResetBlockingAdd();
+        TestService.ResetActiveUploads();
         await using var harness = await TestHarness.CreateAsync(
             serverRuntimeConfigure: options =>
                 options.FlowControl.MaxPreAdmissionStreamBytesPerServer = 128,
@@ -350,20 +352,46 @@ public partial class IntegrationBehaviorTests
         var serviceProxy = harness.Client.CreateProxy<ITestService>();
         await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(10));
         var service = serviceProxy.Service;
-        var active = service.SlowAddWithoutTimeoutAsync(10, 1).AsTask();
-        await Task.Delay(75);
-        var oversized = service.UploadAsync(ToAsyncEnumerable(
-            Enumerable.Range(1, 100), CancellationToken.None)).AsTask();
+        var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var active = service.BlockingAddAsync(10, 1, CancellationToken.None).AsTask();
+        Task<int>? input = null;
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            input = service.UploadAsync(Input()).AsTask();
+            var server = (SharpLinkServer)harness.Server;
+            await WaitUntilAsync(() => server.AdmissionStateKernelForTests!.QueuedCalls == 1);
+            Ensure(!producerStarted.Task.IsCompleted && TestService.ActiveUploads == 0 &&
+                   server.PreAdmissionStreamBytesForDiagnostics == 0,
+                "queued two-way input must perform zero producer/stream-buffer work before acceptance");
+            TestService.ReleaseBlockingAdd();
+            Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 11, "queued input permit owner");
+            Ensure(await input.WaitAsync(TimeSpan.FromSeconds(2)) == 5050 && producerStarted.Task.IsCompleted,
+                "accepted input larger than the pre-admission budget must preserve the payload result");
+            await WaitUntilAsync(() => TestService.ActiveUploads == 0 && server.ActiveCallCountForDiagnostics == 0);
+            Ensure(await service.AddAsync(20, 22) == 42, "accepted input connection recovery");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+            try { await active.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (SharpLinkException) { }
+            if (input is not null)
+            {
+                try { await input.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (SharpLinkException) { }
+            }
+        }
 
-        // The initial request fits, then pre-admission stream frames exhaust the
-        // independent server stream-buffer budget without consuming admission queue bytes.
-        await EnsureThrowsSharpLinkFast(
-            oversized,
-            "pre-admission stream budget",
-            SharpLinkErrorCode.ResourceExhausted);
-        Ensure(TestService.ActiveUploads == 0, "overflowed stream service did not execute");
-        Ensure(await active == 11, "spool overflow permit owner");
-        Ensure(await service.AddAsync(20, 22) == 42, "spool overflow connection recovery");
+        async IAsyncEnumerable<int> Input()
+        {
+            producerStarted.TrySetResult();
+            foreach (var value in Enumerable.Range(1, 100))
+            {
+                yield return value;
+                await Task.Yield();
+            }
+        }
     }
 
     [Test]

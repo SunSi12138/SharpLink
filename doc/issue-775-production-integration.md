@@ -329,3 +329,24 @@ Selected production compatibility boundary:
   the original provider-zero-on-rejection and exactly-one-on-recovery assertions are unchanged.
   Remaining old two-way pre-Ack spooling tests need similarly explicit migration while retaining
   the independent OneWay budget/refusal proof. Full Integration/Unit acceptance is not complete.
+
+### Preserve physical stream-budget controls under the new Ack boundary
+
+- Split the obsolete two-way pre-Ack overflow expectation into its actual contracts. A queued
+  two-way upload performs zero producer, invocation and pre-admission-byte work, then completes
+  payload larger than the old buffer cap after acceptance. A held activation cut likewise has
+  no producer/user work; accepted input uses active stream credit, not the retired queue budget.
+- The physical global-byte/independent-admission-accounting and forced-stop controls now use
+  explicitly queue-enabled OneWay input, where pre-admission production remains legal. Two
+  connections really exceed the12KiB shared byte cap; the rejected OneWay has no business
+  invocation/result and exactly one server resource_exhausted record with the stable
+  server_pre_admission_stream_bytes reason. The surviving buffered input retains its bytes,
+  replays, releases all accounting and leaves the rejected connection reusable. No per-call
+  Ack or caller-visible ResourceExhausted response was invented for OneWay. Both cases pass.
+- The OneWay activation race still proves the exact pre-admission-budget cancellation reason
+  wins before invocation; both activation controls pass. The two-way queued-cap control passes.
+  InterceptorIntegrationTests passes25/25 after moving its synchronization-context observation
+  to the first real post-RequestAccepted MoveNext; its zero Post-count assertion is unchanged.
+- Full Integration attempts have reached264 passing tests before the next old timing assertion,
+  but are still incomplete. The passing focused controls above do not turn those failed full
+  runs into a complete-suite pass. Raw logs and original failure sources remain retained.
