@@ -109,3 +109,11 @@ The checker is running on the very consumer frame whose unload it tests. Add an 
 ForceYielding await boundary before collection; no extra GC iterations, sleep, service stop,
 case removal or budget change. The diagnostic subject does not reach the producer case,
 so its first-run timeout remains unresolved pending that case's early-terminal observation.
+
+Subjectbd0dc58578a994a6b72ea983b3143f693013d48b / run43562276011 demonstrates that
+ForceYielding was insufficient: its captured Windows stack still calls the collector inline
+from the unfinished case's SetResult and collectible consumer completion. ForceYielding's
+already-completed await check does not make a future Task completion asynchronous. Replace
+that fixture handoff with an explicitly queued default-scheduler continuation whose own
+continuations use RunContinuationsAsynchronously. Keep the exact10-GC/live-owner condition;
+no product fix is inferred from this fixture scheduling counterexample.

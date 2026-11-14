@@ -98,7 +98,8 @@ internal static partial class Program
         // The case can finish inline on a collectible consumer's final MoveNext stack.
         // Observe from a queued continuation, after that completion frame can unwind;
         // otherwise the checker itself is executing inside the ALC it tries to unload.
-        var result = await body(f, token).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        var result = await body(f, token).ContinueWith(static task => task.GetAwaiter().GetResult(),
+            CancellationToken.None, TaskContinuationOptions.RunContinuationsAsynchronously, TaskScheduler.Default);
         GCheck(Collected(result.Weak), name, "old ALC collects with client server and scalar channel live");
         GC.KeepAlive(result.Channel); GC.KeepAlive(f.Client); GC.KeepAlive(f.Server);
     }
