@@ -124,3 +124,28 @@ original timeout's hidden result: server Internal service error before producer 
 not a producer that ignores cancellation. Add a fixture mapper that logs the original
 server exception and delegates unchanged to DefaultRpcExceptionMapper(false); preserve
 client-visible mapping and all72 controls to identify the cause before changing production.
+
+## Correct the borrowed-head lifetime before accepting green controls
+
+Subject52bcdca3c6cd30b01cfa6844295dd4a9bc038f23 / run43563117277 reports72/72 on all four
+cells, but its original Windows TCP log contains ArgumentOutOfRangeException at generated
+Stub SequenceReader construction after held acceptance. Cancellation happened to win the
+client terminal, hiding that server failure. This subject is NOT accepted. The original
+linux timeout/fourth-subject Internal are consistent with the same invalid borrowed head.
+
+Per-call Ack adds an await before generated argument decoding; an uncompressed Request's
+Pipe-backed arguments (including empty slice positions) can expire at AdvanceTo. Fix the
+profile in existing DispatchRpc preparation after call admission: canonicalize empty stream
+arguments to ReadOnlySequence.Empty, copy nonempty stream arguments into the existing
+bounded buffer/call-state payload owner before invocation, and use its established release
+path through decode/invocation/disposal. Compressed heads already have their owned buffer;
+ordinary Unary/OneWay compilation is unchanged. No latest registration/Codec lookup is added.
+
+Before the corrective subject runs, retain the original72 cases exactly and freeze four
+additional `local head ...` controls (total76). They hold a real nonempty generated head,
+complete a later real Unary on the same transport while decode is held, then verify the
+original header/result/Codec and no hidden mapped error. All case bodies now reject an
+unexpected mapped server exception even if client cancellation won. The diagnostic mapper
+continues to delegate unchanged to DefaultRpcExceptionMapper(false). Original watchdogs,
+GC budget and stop rules stay unchanged. This is a corrective evidence extension, not a
+replacement or weakening of the original72 inventory.

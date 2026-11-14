@@ -90,6 +90,19 @@ internal static partial class Program
         Check(await driver.Unary() == 0 && await driver.Echo() == 7, "local policy retained selector and generated Unary keep original local Codec owner");
         var waiting = channel.PrepareAsync(TimeSpan.FromSeconds(5), token); await waiting;
         Check(module.RemainingCalls == 0 && module.RemainingStreams == 0, "local policy completed five-family controls release local accounting");
+        var ackEntered = Signal(); var releaseAck = Signal(); var producer = new ProbeProducer();
+        f.Server.BeforeStreamAcceptanceTestHook = async (_, _, _) => { ackEntered.TrySetResult(); await releaseAck.Task; };
+        try
+        {
+            var head = driver.ConsumeWithHeader(producer, token).AsTask(); await ackEntered.Task.WaitAsync(token);
+            Check(producer.Starts == 0 && !head.IsCompleted, "local head nonempty original arguments wait behind per-call acceptance");
+            var control = f.Client.CreateProxy<ISliceRpc>(); await control.PrepareAsync(TimeSpan.FromSeconds(5), token);
+            Check(await control.Service.PingAsync() == 42 && !head.IsCompleted, "local head later real RPC advances transport while original argument decode is held");
+            releaseAck.TrySetResult();
+            Check(await head.WaitAsync(token) == 10 && producer.Starts == 1, "local head owned arguments and original Codec survive transport advancement");
+            Check(f.Mapper.Failures.IsEmpty, "local head no internal decoder failure is masked by client cancellation");
+        }
+        finally { releaseAck.TrySetResult(); f.Server.BeforeStreamAcceptanceTestHook = null; }
         await UnregisterLocal(f, unrelated); unrelated.Drop();
         await UnregisterLocal(f, old); driver.Drop(); return (old.Weak, channel);
     }

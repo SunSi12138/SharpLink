@@ -70,5 +70,9 @@
   "local consumer / old ALC collects with client server and scalar channel live",
   "local duplex / old ALC collects with client server and scalar channel live",
   "local queued server / old ALC collects with client server and scalar channel live",
-  "local queued duplex / old ALC collects with client server and scalar channel live"
+  "local queued duplex / old ALC collects with client server and scalar channel live",
+  "local head nonempty original arguments wait behind per-call acceptance",
+  "local head later real RPC advances transport while original argument decode is held",
+  "local head owned arguments and original Codec survive transport advancement",
+  "local head no internal decoder failure is masked by client cancellation"
 ]

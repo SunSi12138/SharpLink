@@ -327,6 +327,22 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                     }
                 }
+#if SHARPLINK_775_STATIC_SLICE
+                else if (request.BoundMethod!.Descriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+                {
+                    // Per-call acceptance can suspend before generated business decoding.
+                    // Pipe-backed positions (even an empty slice) expire at AdvanceTo.
+                    // Reuse the existing call-state payload owner and terminal cleanup path.
+                    if (request.Arguments.IsEmpty)
+                        request = request with { Arguments = ReadOnlySequence<byte>.Empty };
+                    else
+                    {
+                        decodedRequestOwner = _runtimeContext.Buffers.Rent(checked((int)request.Arguments.Length));
+                        foreach (var segment in request.Arguments) decodedRequestOwner.Write(segment.Span);
+                        request = request with { Arguments = new ReadOnlySequence<byte>(decodedRequestOwner.WrittenMemory) };
+                    }
+                }
+#endif
             }
             catch (SharpLinkException exception) when (
                 exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
