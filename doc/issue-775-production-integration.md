@@ -415,3 +415,12 @@ Selected production compatibility boundary:
   queued selection physically owns it, then retires and collects within the unchanged30-cycle
   GC budget after queue/physical exit. It does not claim collection before ReferencesReleased.
   Weak queued identity is separate from the outer bound invocation's lifetime protection.
+
+- The expanded ordinary Release solution now builds0 warnings/0 errors (17.12s), including
+  the binding fixtures. This is still managed build evidence, not NativeAOT execution.
+- Retained the independent zero-budget cancellation controls as well as graceful completion:
+  compatible replacement cancels only the original queued module, never starts R1/R2 business,
+  and releases its physical queue owner; an unchanged queued call's actual handler token observes
+  its own module cancellation. Both pass. Compressed queued controls2/2 preserve zero decode/
+  activation after forced replacement and exactly one decode for live R1. Queue cancellation5/5
+  passes, retaining explicit OneWay disconnect cleanup after local no-Ack send completion.

@@ -51,17 +51,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 1);
 
             var oldModule = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
-            Ensure(oldModule.RemainingCalls == 0,
-                "an admission waiter must not hold an old module invocation lease");
+            Ensure(oldModule.RemainingCalls == 1 && !oldModule.ForcedCancellation.IsCancellationRequested,
+                "a bound admission waiter owns the original module before retirement");
             if (replaceWhileQueued)
             {
                 var replacement = await harness.Server.ReplaceAssemblyAsync(
                     plugin.ServiceAssembly, replacementAssembly, TimeSpan.Zero);
-                Ensure(replacement.Succeeded && replacement.ReferencesReleased,
-                    "same-contract implementation replacement must publish while the waiter remains queued");
+                Ensure(replacement.Succeeded && oldModule.ForcedCancellation.IsCancellationRequested,
+                    "zero-budget replacement must publish and cancel the original queued owner, not its replacement");
             }
-            Ensure(!oldModule.ForcedCancellation.IsCancellationRequested,
-                "a normally drained old module must not confuse the new-module cancellation oracle");
 
             if (replaceWhileQueued)
             {
@@ -80,6 +78,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     "the replacement must never execute an old queued call");
                 Ensure(!plugin.GetStaticTask("BlockStarted").IsCompleted,
                     "a retired original registration must not execute");
+                await WaitUntilAsync(() => oldModule.State == SharpLinkDynamicModuleState.Released);
+                Ensure(oldModule.RemainingCalls == 0,
+                    "the cancelled original queue must physically exit before old references release");
                 return;
             }
 

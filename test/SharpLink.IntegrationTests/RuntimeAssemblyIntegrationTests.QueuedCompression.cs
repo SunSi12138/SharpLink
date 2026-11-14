@@ -14,7 +14,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
         var server = (SharpLinkServer)harness.Server;
-        var proxy = await CreatePreparedServiceAsync(harness.Client, plugin.ContractType);
+        var handle = CreateLocalProxyHandle(harness.Client, typeof(ISharpLinkClient), plugin.ContractType);
+        await PrepareHandleAsync(handle);
+        var proxy = GetHandleService(handle);
         var payloadType = plugin.ContractAssembly.GetType("SharpLink.DynamicPlugin.DynamicPayload", throwOnError: true)!;
         var payload = Activator.CreateInstance(payloadType)!;
         payloadType.GetProperty("Value")!.SetValue(payload, 42);
@@ -33,8 +35,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(compression.DecodedRequests == 0, "admission precedes compressed persistent decoding");
             if (replace)
             {
+                var original = GetDynamicModule(server, plugin.ServiceAssembly);
+                Ensure(original.RemainingCalls == 1, "queued compressed head retains its pre-cut physical owner");
                 var result = await server.ReplaceAssemblyAsync(plugin.ServiceAssembly, replacement, TimeSpan.Zero);
-                Ensure(result.Succeeded && result.ReferencesReleased, "queued compressed R1 retires normally");
+                Ensure(result.Succeeded && original.ForcedCancellation.IsCancellationRequested,
+                    "zero-budget compressed replacement cancels the original queued owner");
             }
             holder.Lease!.Dispose();
             if (replace)
@@ -49,6 +54,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     "queued compressed persistent payload preserves its circular reference and value");
                 Ensure(compression.DecodedRequests == 1, "selected live generation decodes exactly once");
             }
+            await PrepareHandleAsync(handle);
             Ensure(await InvokeValueTaskAsync<int>(
                 proxy, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
                 "the connection remains usable after compressed queue completion");
