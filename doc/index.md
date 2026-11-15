@@ -26,6 +26,10 @@
 
 工程与 CI 资料：[ADR 约定](adr/README.md)、[CI validation tiers](ci-validation-tiers.md)、[PR Fast gate](pr-fast.md)。
 
+## 尚未实现的目标合同
+
+[#775 N0：单一契约通道合同冻结](issue-775-n0-contract.md) 是后续采用的权威目标入口，规定API/ABI、wire、容量、排队cut与迁移验收；不是当前产品用法。N0文档合并不授权实施新方案或恢复历史候选，当前用户API仍以上述文档为准。
+
 ## 特性与可运行证据
 
 | 能力 | 文档 | Demo |
