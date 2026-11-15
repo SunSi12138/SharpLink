@@ -19,6 +19,19 @@ internal sealed class TransportFrameGate(ProtocolV2FrameType type, bool afterFlu
     private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object _gate = new();
     private readonly List<ObservedFrame> _frames = [];
+    private sealed record FlushObservation(string Phase, Task? Source, string? FailureType);
+    private readonly Dictionary<string, FlushObservation> _flushes = [];
+    private int _droppedFlushObservations;
+    internal void RecordFlush(string session, string phase, Task? source = null, Exception? failure = null)
+    {
+        lock (_gate)
+        {
+            if (!_flushes.ContainsKey(session) && _flushes.Count >= 512) { _droppedFlushObservations++; return; }
+            _flushes[session] = new(phase, source, failure?.GetType().FullName);
+        }
+    }
+    internal object CaptureFlushes()
+    { lock (_gate) return new { dropped = _droppedFlushObservations, sessions = _flushes.Select(static pair => new { session = pair.Key, pair.Value.Phase, sourceStatus = pair.Value.Source?.Status, pair.Value.FailureType }).ToArray() }; }
     private int _claimed;
     private string? _heldSessionId;
     internal string? HeldSessionId => Volatile.Read(ref _heldSessionId);
@@ -65,10 +78,25 @@ internal sealed class GatedPipeWriter(PipeWriter inner, TransportFrameGate gate,
     private async ValueTask<FlushResult> FlushCoreAsync(CancellationToken cancellationToken)
     {
         var shouldGate = _gateThisFlush; _gateThisFlush = false;
-        if (shouldGate && !gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        var result = await inner.FlushAsync(cancellationToken).ConfigureAwait(false);
-        if (shouldGate && gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return result;
+        Task<FlushResult>? actualFlush = null;
+        try
+        {
+            gate.RecordFlush(sessionId, "BeforeFlushGate");
+            if (shouldGate && !gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var flush = inner.FlushAsync(cancellationToken);
+            FlushResult result;
+            if (flush.IsCompletedSuccessfully) result = flush.Result;
+            else
+            {
+                actualFlush = flush.AsTask(); gate.RecordFlush(sessionId, "AwaitInnerFlush", actualFlush);
+                result = await actualFlush.ConfigureAwait(false);
+            }
+            gate.RecordFlush(sessionId, "AfterInnerFlush", actualFlush);
+            if (shouldGate && gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            gate.RecordFlush(sessionId, "Returned", actualFlush);
+            return result;
+        }
+        catch (Exception failure) { gate.RecordFlush(sessionId, "Faulted", actualFlush, failure); throw; }
     }
 }
 internal sealed class GatedConnection : ITransportConnection

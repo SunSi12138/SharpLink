@@ -30,9 +30,11 @@ var result = await proxy.Service.MyUnaryAsync(request, cancellationToken);
 
 ## 已有证据与下一门
 
-本机只运行 basic build、纯非 RPC components 和精确负编译 oracle。SDK10.0.115/runtime10.0.15；Client/Server/Generator/Hosting/GenerationControl 及实际 generated evidence consumer 编译通过。原23项组件证据复用；本轮新增11项真实无关 publication/MC guard与4项共享Picker kernel纯组件通过。MC factory一次捕获实际child route及其metadata上限；Stop清route后仅保留弱Type-key的scalar上限，metadata结构错误仍先于终态且不保留业务owner。组件检查确认32B无引用 facts、full ticks/null/负值、wire payload、65536 binding /1024 operation ledger 硬界与归还、API6/full resolver 与 generated facts。旧 Stub 负编译精确命中 required resolver 和四个新签名的五条 CS0535。
+本机只运行 basic build、纯非 RPC components 和精确负编译 oracle。SDK10.0.115/runtime10.0.15；Client/Server/Generator/Hosting/GenerationControl 及实际 generated evidence consumer 编译通过。原23项组件证据复用；V1修订新增的11项真实无关 publication/MC guard与4项共享Picker kernel纯组件通过。MC factory一次捕获实际child route及其metadata上限；Stop清route后仅保留弱Type-key的scalar上限，metadata结构错误仍先于终态且不保留业务owner。组件检查确认32B无引用 facts、full ticks/null/负值、wire payload、65536 binding /1024 operation ledger 硬界与归还、API6/full resolver 与 generated facts。旧 Stub 负编译精确命中 required resolver 和四个新签名的五条 CS0535。
 
-实际 TCP、队列 cut、early/late Ack、取消/断线、物理 quota 归还只写入了[有界 hosted 协议](validation/issue-775-n1-static-bind-protocol.md)，**尚未运行**。下一门是未参与设计者的独立源码/协议审核；通过后还须 root 明确授权一次 hosted run。
+V1源码/协议已独立批准并执行唯一一次 [Linux TCP run43693296449](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449)：首case初始同site Prepare5秒DeadlineExceeded；只有连接前fail-fast，零RPCcase完成，后7case未执行。client.Stop另遇3秒guard，实际source Task仍未完成；server最终三项ledger为0不能证明client清理。N1功能资格未通过。完整原始证据保留在`artifacts/n1-static-bind/hosted-once/`；运行绑定source be24fda4，所有临时ref/workflow已精确清理，没有重跑。
+
+本轮沿factory→handshake/readiness→refresh/Bind→queue/flush→Ack/confirmation→target及Stop源码审计，未取得能唯一解释首错的确定性反例；不以猜测修产品。V2增加有界失败相位诊断与9项纯组件；另以6项纯控制修复cluster Stop遗漏site归还/关闭Bind工作准入，以及显式Stop早于Seal时refresh预期ConnectionClosed的误记；两者不解释V1首错，见[因果审计](validation/issue-775-n1-prepare-failure-audit.md)。现有trace没有首错当刻的Bind/flush/Ack/target数据，无法把deadline更窄归因。新[协议V2](validation/issue-775-n1-static-bind-protocol.md)保留原八case/全部预算，下一门仍是独立源码/协议审核，任何第二次hosted必须root重新决策；V1授权已消耗。
 
 ## 不能从本切片推出的结论
 

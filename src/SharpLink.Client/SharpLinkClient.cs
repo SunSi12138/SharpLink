@@ -159,6 +159,7 @@ internal sealed partial class SharpLinkClient :
 
     private async Task StopCoreAsync()
     {
+        TraceBindingStop("Starting");
         if (_cluster is not null)
         {
             await StopStaticClusterCoreAsync().ConfigureAwait(false);
@@ -176,6 +177,7 @@ internal sealed partial class SharpLinkClient :
             // Serializes Seal with connection publication, retirement, and cleanup registration.
             _frameworkTasks.Seal();
         }
+        TraceBindingStop("CancelLifetime");
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         PulseReadySignal();
@@ -190,17 +192,22 @@ internal sealed partial class SharpLinkClient :
         }
         for (var index = 0; index < connections.Length; index++)
         {
+            TraceBindingStop("FailConnection", connections[index].Session.Id);
             try { connections[index].Fail(stoppingException); }
             catch (Exception exception) { cleanupFailures.Add(exception); }
+            TraceBindingStop("DisposeConnection", connections[index].Session.Id);
             try { await connections[index].DisposeAsync().ConfigureAwait(false); }
             catch (Exception exception) { cleanupFailures.Add(exception); }
         }
 
+        TraceBindingStop("DrainAssemblyRegistry");
         cleanupFailures.AddRange(await _assemblyRegistry.DrainForShutdownAsync().ConfigureAwait(false));
 
+        TraceBindingStop("DrainFrameworkTasks");
         try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
+        TraceBindingStop("DisposeTransportFactory");
         try { await transportFactory.DisposeAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _reconnectSignal.Dispose(); }
@@ -210,6 +217,7 @@ internal sealed partial class SharpLinkClient :
         try { _runtimeContext.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
+        TraceBindingStop("Stopped");
         ThrowStopCleanupFailures(cleanupFailures);
     }
 
@@ -220,17 +228,27 @@ internal sealed partial class SharpLinkClient :
             TransitionTo(SharpLinkConnectionState.Draining);
         _assemblyRegistry.BeginShutdown();
         _cluster!.BeginStop();
-        _frameworkTasks.Seal();
+        lock (_poolGate)
+        {
+            _poolStopping = true;
+            StopContractSitesLocked();
+            _frameworkTasks.Seal();
+        }
+        TraceBindingStop("CancelLifetime");
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         PulseReadySignal();
+        TraceBindingStop("StopCluster");
         try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
+        TraceBindingStop("DrainAssemblyRegistry");
         cleanupFailures.AddRange(await _assemblyRegistry.DrainForShutdownAsync().ConfigureAwait(false));
 
+        TraceBindingStop("DrainFrameworkTasks");
         try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
+        TraceBindingStop("DisposeClusterResources");
         try { await _cluster.DisposeResourcesAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
@@ -241,6 +259,7 @@ internal sealed partial class SharpLinkClient :
         try { _runtimeContext.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
+        TraceBindingStop("Stopped");
         ThrowStopCleanupFailures(cleanupFailures);
     }
 

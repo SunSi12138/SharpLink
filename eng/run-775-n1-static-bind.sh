@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-uid=N1-STATIC-BIND-20261115-V1
+uid=N1-STATIC-BIND-20261115-V2
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == Linux ]] || { echo 'FIXTURE: GitHub Linux only' >&2; exit 2; }
 [[ "${N1_RUN_UID:-}" == "$uid" ]] || { echo 'FIXTURE: explicit reviewed UID required' >&2; exit 2; }
 [[ -n "${N1_SOURCE_SHA:-}" && "$(git rev-parse HEAD)" == "$N1_SOURCE_SHA" ]] || { echo 'FIXTURE: source subject mismatch' >&2; exit 2; }

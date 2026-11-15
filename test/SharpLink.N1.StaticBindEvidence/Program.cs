@@ -87,8 +87,10 @@ internal static partial class Program
         {
             if (args.Length == 1 && args[0] == "components") Components();
             else if (args.Length == 1 && args[0] == "selection-components") SelectionComponents();
+            else if (args.Length == 1 && args[0] == "cluster-stop-components") await ClusterStopComponentsAsync().ConfigureAwait(false);
+            else if (args.Length == 1 && args[0] == "diagnostic-components") await DiagnosticComponentsAsync().ConfigureAwait(false);
             else if (args.Length == 1 && args[0] == "publication-components") await PublicationComponentsAsync().ConfigureAwait(false);
-            else if (args.Length == 2 && args[0] == "rpc" && args[1] == "N1-STATIC-BIND-20261115-V1")
+            else if (args.Length == 2 && args[0] == "rpc" && args[1] == "N1-STATIC-BIND-20261115-V2")
                 await RunRpcAsync().ConfigureAwait(false);
             else throw new ArgumentException("Use components, or the exact reviewed hosted protocol UID.");
             WriteResult(args, null);
@@ -109,7 +111,7 @@ internal static partial class Program
         var classification = primary is TimeoutException ? "guard" : primary?.Message.StartsWith("FIXTURE", StringComparison.Ordinal) == true ? "fixture" : "source";
         File.WriteAllText(path, JsonSerializer.Serialize(new
         {
-            uid = "N1-STATIC-BIND-20261115-V1", mode = args.FirstOrDefault(), source = Environment.GetEnvironmentVariable("N1_SOURCE_SHA"),
+            uid = "N1-STATIC-BIND-20261115-V2", mode = args.FirstOrDefault(), source = Environment.GetEnvironmentVariable("N1_SOURCE_SHA"),
             outcome = failure is null ? "PASS" : primary is TimeoutException ? "INCONCLUSIVE" : "FAIL", classification = failure is null ? null : classification,
             checks = _checks, runtime = Environment.Version.ToString(), os = Environment.OSVersion.ToString(), firstFailure = failure?.ToString()
         }, new JsonSerializerOptions { WriteIndented = true }));

@@ -221,6 +221,8 @@ internal sealed partial class SharpLinkClient
         if (options.MetadataBytes > limit)
             throw new ArgumentOutOfRangeException(nameof(options), "Metadata exceeds the configured limit.");
     }
+    internal static bool IsExpectedContractRefreshStopExit(bool stopStarted, Exception exception)
+        => stopStarted && exception is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
     private void StopContractSitesLocked()
     {
         lock (_contractSiteGate)
@@ -258,6 +260,8 @@ internal sealed partial class SharpLinkClient
         private ContractTargetSnapshot _targets = ContractTargetSnapshot.Empty;
         private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _running, _dirty, _stopped;
+        private string _refreshPhase = "NotStarted";
+        private int _capturedConnections, _qualifiedConnections;
         private Exception? _refreshError;
         internal ContractSite(SharpLinkClient client, RpcLocalContract local, ContractSiteKey key, ClientProxyRegistration registration, FrozenDictionary<long, RpcMethodDescriptor> localMethods)
         { _client = client; _local = local; Key = key; Registration = registration; _registrationIdentity = registration.Identity; _localMethods = localMethods; }
@@ -300,8 +304,11 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 TaskCompletionSource changed;
-                lock (_gate) { _refreshError = exception; _running = false; _dirty = false; changed = _changed; }
+                lock (_gate) { _refreshError = exception; _running = false; _dirty = false; _refreshPhase = "Faulted"; changed = _changed; }
                 changed.TrySetResult();
+                // Explicit Stop can cut this task before the supervisor is sealed. It is a
+                // control lifetime exit, not an unexpected framework fault or a business result.
+                if (IsExpectedContractRefreshStopExit(Volatile.Read(ref _client._stopStarted) != 0, exception)) return;
                 throw;
             }
         }
@@ -309,12 +316,13 @@ internal sealed partial class SharpLinkClient
         {
             while (true)
             {
-                lock (_gate) _dirty = false;
+                lock (_gate) { _dirty = false; _refreshPhase = "CaptureConnections"; _capturedConnections = 0; _qualifiedConnections = 0; }
                 var targets = new List<BoundContractTarget>(); Exception? error = null;
                 try
                 {
                     EnsureCapturedLocalAvailable();
                     var connections = _client.CaptureBindingConnections();
+                    lock (_gate) { _capturedConnections = connections.Length; _refreshPhase = "QualifyAndStartBinds"; }
                     if (connections.Length > 1024) throw ContractBindingWire.Error(ContractBindStatus.Capacity);
                     var pending = new List<(ClientConnection Connection, Task<BoundContractTarget> Bind)>(connections.Length);
                     foreach (var connection in connections)
@@ -323,7 +331,10 @@ internal sealed partial class SharpLinkClient
                         try
                         {
                             if (_client.QualifyBindingConnection(Key, connection))
+                            {
                                 pending.Add((connection, connection.Bindings.BindAsync(Key)));
+                                lock (_gate) _qualifiedConnections++;
+                            }
                         }
                         catch (Exception exception) { error ??= exception; }
                     }
@@ -332,6 +343,7 @@ internal sealed partial class SharpLinkClient
                         // Any confirmed Session is eligible immediately; a slow peer must not hide
                         // another peer's real Ack. Drain all currently-complete results in one batch
                         // and publish one coherent target/connection snapshot for the normal Picker.
+                        lock (_gate) _refreshPhase = "AwaitBinds";
                         _ = await Task.WhenAny(pending.Select(static item => item.Bind)).ConfigureAwait(false);
                         for (var index = pending.Count - 1; index >= 0; index--)
                         {
@@ -370,6 +382,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (_targets.HasSameRouting(nextTargets)) nextTargets = _targets;
                 _targets = _stopped ? ContractTargetSnapshot.Empty : nextTargets;
+                _refreshPhase = finishing ? "Finished" : "PublishingBatch";
                 _refreshError = error; changed = _changed; _changed = nextChanged;
                 again = _dirty && !_stopped;
                 if (finishing && !again) _running = false;
@@ -435,6 +448,13 @@ internal sealed partial class SharpLinkClient
             if (deadline.IsExpired(_client._runtimeContext.TimeProvider)) throw CreateDeadlineExceededException();
             cancellationToken.ThrowIfCancellationRequested();
             EnsureCapturedLocalAvailable();
+        }
+        internal ContractBindingSiteTrace CaptureTrace()
+        {
+            lock (_gate) return new(Key.LocalGeneration, Key.ContractId, _registrationIdentity.IsAvailable, Committed,
+                _running, _dirty, _stopped, _refreshPhase, _capturedConnections, _qualifiedConnections, _refreshError?.GetType().FullName,
+                (_refreshError as SharpLinkException)?.Code, (_refreshError as SharpLinkException)?.DetailCode,
+                _targets.Targets.Select(static target => new ContractBindingTargetTrace(target.Connection.Session.Id, target.SessionGeneration, target.Token)).ToArray());
         }
         internal int PublishedTargetCount => Volatile.Read(ref _targets).Targets.Length;
         private bool IsReady()

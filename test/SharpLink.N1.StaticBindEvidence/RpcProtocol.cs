@@ -64,11 +64,11 @@ internal static partial class Program
         Console.WriteLine("N1_CASE_BEGIN " + name);
         Harness? harness = null; Exception? first = null;
         try { harness = await Harness.CreateAsync(serverGate, queued).ConfigureAwait(false); await body(harness).ConfigureAwait(false); }
-        catch (Exception exception) { first = exception; }
+        catch (Exception exception) { first = exception; harness?.CaptureFailure("primary-before-cleanup"); }
         if (harness is not null)
         {
             try { await harness.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception cleanup) { first = first is null ? cleanup : new AggregateException(first, cleanup); }
+            catch (Exception cleanup) { first = first is null ? cleanup : new AggregateException(first, cleanup); harness.CaptureFailure("cleanup-failed"); }
         }
         if (first is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
         Console.WriteLine("N1_CASE_END " + name);
@@ -355,6 +355,7 @@ internal static partial class Program
     private sealed class Harness : IAsyncDisposable
     {
         private readonly ISharpLinkServer _server;
+        private readonly FailureDiagnosticLoggerFactory _diagnostics;
         private readonly List<ISharpLinkClient> _clients = [];
         private readonly List<ISharpLinkServer> _extraServers = [];
         internal readonly List<TransportFrameGate> Gates = [];
@@ -362,10 +363,12 @@ internal static partial class Program
         internal int Port { get; }
         internal int QueuedCalls => ((SharpLinkServer)_server).AdmissionStateKernelForTests!.QueuedCalls;
         internal ContractBindingDiagnosticSnapshot Diagnostics => ((SharpLinkServer)_server).CaptureContractBindingDiagnostics();
-        private Harness(ISharpLinkServer server, int port, TransportFrameGate? gate) { _server = server; Port = port; ServerGate = gate; if (gate is not null) Gates.Add(gate); }
+        private Harness(ISharpLinkServer server, int port, TransportFrameGate? gate, FailureDiagnosticLoggerFactory diagnostics) { _diagnostics = diagnostics; _server = server; Port = port; ServerGate = gate; if (gate is not null) Gates.Add(gate); }
         internal static async Task<Harness> CreateAsync(TransportFrameGate? gate, bool queued)
         {
-            var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
+            var diagnostics = new FailureDiagnosticLoggerFactory();
+            var builder = SharpLinkServerBuilder.Create().UseLoggerFactory(diagnostics).UseTcp(0, IPAddress.Loopback);
+            gate ??= new TransportFrameGate((ProtocolV2FrameType)255, false);
             if (queued) builder.UseAdmissionControl(options =>
             {
                 options.Global.UseConcurrency(1); options.MaxQueuedCalls = 1;
@@ -374,7 +377,7 @@ internal static partial class Program
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             if (gate is not null) builder.UseTransport(new GatedListener(builder.Transport!, gate));
             var server = builder.Build();
-            try { await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); return new(server, port, gate); }
+            try { await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); return new(server, port, gate, diagnostics); }
             catch (Exception primary)
             {
                 gate?.Release();
@@ -385,28 +388,44 @@ internal static partial class Program
         }
         internal ISharpLinkClient Client(TransportFrameGate? gate = null, int connections = 1, TimeSpan? reconnectDelay = null)
         {
-            var builder = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(2))
+            var builder = SharpClientBuilder.Create().UseLoggerFactory(_diagnostics).UseRequestTimeout(TimeSpan.FromSeconds(2))
                 .UseConnectionPool(options => { options.MinConnections = connections; options.MaxConnections = connections; });
             var delay = reconnectDelay ?? TimeSpan.FromMilliseconds(50);
             builder.UseReconnectPolicy(new(delay, delay, 1, 1, 1, TimeSpan.Zero));
-            if (gate is null) builder.UseTcp(IPAddress.Loopback.ToString(), Port);
-            else { Gates.Add(gate); builder.UseTransport(new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, Port)), gate)); }
-            var client = builder.Build(); _clients.Add(client); return client;
+            gate ??= new TransportFrameGate((ProtocolV2FrameType)255, false);
+            Gates.Add(gate); builder.UseTransport(new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, Port)), gate));
+            var client = builder.Build(); ((SharpLinkClient)client).EnableContractBindingTraceForDiagnostics(); _clients.Add(client); return client;
         }
         internal async Task<ISharpLinkClient> ClusterClientAsync(TransportFrameGate records, ISharpLinkEndpointSelector selector)
         {
-            var builder = SharpLinkServerBuilder.Create().DisableAutomaticServiceRegistration().UseTcp(0, IPAddress.Loopback);
+            var builder = SharpLinkServerBuilder.Create().UseLoggerFactory(_diagnostics).DisableAutomaticServiceRegistration().UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port; var server = builder.Build(); _extraServers.Add(server);
             await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
             Gates.Add(records);
             var endpoints = new[] { new SharpLinkEndpoint { Id = "A", Address = new SharpLinkTcpAddress("127.0.0.1", Port) },
                 new SharpLinkEndpoint { Id = "B", Address = new SharpLinkTcpAddress("127.0.0.1", port) } };
-            var client = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(2))
+            var client = SharpClientBuilder.Create().UseLoggerFactory(_diagnostics).UseRequestTimeout(TimeSpan.FromSeconds(2))
                 .UseEndpoints(endpoints, endpoint => new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, ((SharpLinkTcpAddress)endpoint.Address).Port)), records))
                 .UseCluster(options => { options.MinReadyEndpoints = 2; options.MaxConnections = 2; options.MaxConnectionsPerEndpoint = 1; })
                 .UseEndpointSelector(selector)
                 .UseReconnectPolicy(new(TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), 1, 1, 1, TimeSpan.Zero)).Build();
-            _clients.Add(client); return client;
+            ((SharpLinkClient)client).EnableContractBindingTraceForDiagnostics(); _clients.Add(client); return client;
+        }
+        internal void CaptureFailure(string phase)
+        {
+            try
+            {
+                FailureDiagnostics.Write(phase, new
+                {
+                    clients = _clients.Select(static client => ((SharpLinkClient)client).CaptureContractBindingTrace()).ToArray(),
+                    serverLedger = Diagnostics, serverTasks = ((SharpLinkServer)_server).FrameworkTaskSnapshotForDiagnostics,
+                    extraServers = _extraServers.Select(static server => new { ledger = ((SharpLinkServer)server).CaptureContractBindingDiagnostics(), tasks = ((SharpLinkServer)server).FrameworkTaskSnapshotForDiagnostics }).ToArray(),
+                    frameGates = Gates.Distinct().Select(static gate => new { held = gate.HeldSessionId, entered = gate.Entered.Task.Status, flushes = gate.CaptureFlushes(), frames = FailureDiagnostics.CaptureFrames(gate) }).ToArray(),
+                    frameworkFaults = _diagnostics.Capture()
+                });
+            }
+            catch (Exception diagnosticFailure)
+            { Console.Error.WriteLine("N1_DIAGNOSTIC_CAPTURE_FAILURE phase=" + phase + " type=" + diagnosticFailure.GetType().FullName); }
         }
         public async ValueTask DisposeAsync()
         {

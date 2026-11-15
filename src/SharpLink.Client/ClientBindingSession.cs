@@ -13,6 +13,7 @@ internal sealed class ClientBindingSession
     private ulong _lastIssued;
     private int _reservations, _maintenanceOperations;
     private bool _closed;
+    private ContractBindingOperationTrace? _firstFailedOperation;
     private sealed record CompletedBinding(ulong Operation, ContractSiteKey Key, ContractBindAck Ack)
     { internal bool Retiring; internal RpcDeadline ReleaseDeadline; }
     private sealed class BindOperation(ulong id, ContractSiteKey key, RpcDeadline deadline)
@@ -20,6 +21,11 @@ internal sealed class ClientBindingSession
         internal Task PreviousPublication { get; set; } = Task.CompletedTask;
         internal TaskCompletionSource Publication { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Published;
+        internal string Phase = "Reserved";
+        internal Task? Send;
+        internal string? FailureType;
+        internal SharpLinkErrorCode? FailureCode;
+        internal ushort? FailureDetail;
         internal ulong Id { get; } = id;
         internal ContractSiteKey Key { get; } = key;
         internal RpcDeadline Deadline { get; } = deadline;
@@ -67,16 +73,20 @@ internal sealed class ClientBindingSession
         Exception? failure = null;
         try
         {
+            lock (_gate) operation.Phase = "PreviousPublication";
             if (!await SharpLinkTimer.WaitAsync(operation.PreviousPublication, operation.Deadline, _client.BindingTimeProvider).ConfigureAwait(false)) throw Deadline();
             if (operation.Deadline.IsExpired(_client.BindingTimeProvider)) throw Deadline();
             var key = operation.Key;
             // Once sending begins, cancellation/unknown enqueue outcome is reconciled by closing this Session.
             exposed = true;
             sendOwnsReconciliation = true;
-            await ContractBindingWire.SendAndFlushWithinBudgetAsync(_connection.Session, ProtocolV2FrameType.BindContract, operation.Id,
-                ContractBindingWire.WriteRequest(new(key.ContractId, key.Hash, key.Requirement, key.Receipt)), operation.Deadline, _client.BindingTimeProvider, CancellationToken.None).ConfigureAwait(false);
+            lock (_gate) operation.Phase = "SendQueueFlush";
+            var send = ContractBindingWire.SendAndFlushWithinBudgetAsync(_connection.Session, ProtocolV2FrameType.BindContract, operation.Id,
+                ContractBindingWire.WriteRequest(new(key.ContractId, key.Hash, key.Requirement, key.Receipt)), operation.Deadline, _client.BindingTimeProvider, CancellationToken.None).AsTask();
+            lock (_gate) operation.Send = send;
+            await send.ConfigureAwait(false);
             sendOwnsReconciliation = false;
-            lock (_gate) operation.Published = true;
+            lock (_gate) { operation.Published = true; operation.Phase = "AwaitAck"; }
             operation.Publication.TrySetResult();
             if (!await SharpLinkTimer.WaitAsync(operation.Ack.Task, operation.Deadline, _client.BindingTimeProvider).ConfigureAwait(false)) throw Deadline();
             var ack = await operation.Ack.Task.ConfigureAwait(false);
@@ -88,14 +98,21 @@ internal sealed class ClientBindingSession
                 if (_closed || !_connection.CanAcceptCalls || incarnation <= _retired[slot])
                     throw ContractBindingWire.Error(ContractBindStatus.Retired);
                 if (_confirmed[slot] is not null) throw ContractBindingWire.Violation("BindAck reused a live slot.");
+                operation.Phase = "Confirming";
                 ValidateReceipt(operation.Key, ack);
                 _confirmed[slot] = new(operation.Id, operation.Key, ack); adopted = true;
             }
+            lock (_gate) operation.Phase = "Confirmed";
             operation.Result.TrySetResult(new(_connection, _connection.BindingGeneration, ack.Token));
         }
         catch (Exception exception)
         {
             failure = exception is OperationCanceledException ? Deadline() : exception;
+            lock (_gate)
+            {
+                operation.Phase = "FailureOrReconciliation"; operation.FailureType = failure.GetType().FullName;
+                if (failure is SharpLinkException rpc) { operation.FailureCode = rpc.Code; operation.FailureDetail = rpc.DetailCode; }
+            }
             if (exposed && !sendOwnsReconciliation && !(operation.Ack.Task.IsCompletedSuccessfully && operation.Ack.Task.Result.Status != ContractBindStatus.Success))
             {
                 _connection.Session.NotifyDisconnected(failure);
@@ -110,6 +127,7 @@ internal sealed class ClientBindingSession
             operation.Publication.TrySetResult();
             lock (_gate)
             {
+                if (failure is not null && _client.BindingTraceEnabled) _firstFailedOperation ??= CaptureOperation(operation);
                 _operations.Remove(operation.Key);
                 if (!adopted) { _reservations--; _client.BindingQuota.ReturnBinding(); }
             }
@@ -216,12 +234,30 @@ internal sealed class ClientBindingSession
 
     internal void Close(Exception exception)
     {
+        ContractBindingSessionTrace? trace = null;
         lock (_gate)
         {
             if (_closed) return; _closed = true;
+            if (_client.BindingTraceEnabled) trace = CaptureTrace(exception); // Capture actual pre-cancellation phases before their waiters resume.
             foreach (var operation in _operations.Values) operation.Ack.TrySetException(exception);
             // Confirmed entries are detached only after the actual Session drain in DisposeAsync.
         }
+        if (trace is not null) _client.RecordBindingClosure(trace);
+    }
+    private ContractBindingOperationTrace CaptureOperation(BindOperation operation)
+        => new(operation.Id, operation.Key.ContractId, operation.Phase, operation.PreviousPublication.Status,
+            operation.Send?.Status, operation.Published, operation.Ack.Task.Status,
+            operation.Ack.Task.IsCompletedSuccessfully ? (int)operation.Ack.Task.Result.Status : null,
+            operation.Result.Task.Status, operation.Deadline.GetRemaining(_client.BindingTimeProvider).Ticks,
+            operation.FailureType, operation.FailureCode, operation.FailureDetail);
+    internal ContractBindingSessionTrace CaptureTrace(Exception? closeReason = null)
+    {
+        lock (_gate) return new(_connection.Session.Id, _connection.BindingGeneration, _connection.Session.ProtocolPhase,
+            _connection.Session.CaptureSupportSnapshot(), _connection.Session.HasPendingSendPumpIdleWait,
+            _connection.Session.IsConnected, _connection.CanAcceptCalls, _closed, _lastIssued, _reservations, _maintenanceOperations,
+            _publicationTail.Status, _operations.Values.Select(CaptureOperation).ToArray(),
+            _confirmed.OfType<CompletedBinding>().Select(static completed => completed.Ack.Token).ToArray(), _firstFailedOperation,
+            closeReason?.GetType().FullName, (closeReason as SharpLinkException)?.Code, (closeReason as SharpLinkException)?.DetailCode);
     }
     internal void CompletePhysicalClose()
     {
