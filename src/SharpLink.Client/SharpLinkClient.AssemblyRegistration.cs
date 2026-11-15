@@ -33,18 +33,31 @@ internal sealed partial class SharpLinkClient
     bool IDynamicAssemblyRegistrationInspector.IsDynamicAssemblyRegistered(Assembly assembly)
         => IsDynamicAssemblyRegistered(assembly);
 
+    internal sealed class ClientProxyRegistrationIdentity
+    {
+        private int _retired;
+        internal bool IsAvailable => Volatile.Read(ref _retired) == 0;
+        internal void Retire() => Volatile.Write(ref _retired, 1);
+    }
+
     internal sealed class ClientProxyRegistration
     {
         internal ClientProxyRegistration(
             SharpLinkGeneratedContractDescriptor descriptor,
             SharpLinkDynamicModule? module,
             IRpcCodecProvider codecs)
+            : this(descriptor, module, codecs, new ClientProxyRegistrationIdentity()) { }
+
+        internal ClientProxyRegistration(SharpLinkGeneratedContractDescriptor descriptor,
+            SharpLinkDynamicModule? module, IRpcCodecProvider codecs, ClientProxyRegistrationIdentity identity)
         {
+            Identity = identity ?? throw new ArgumentNullException(nameof(identity));
             Descriptor = descriptor;
             Module = module;
             Codecs = codecs;
         }
 
+        internal ClientProxyRegistrationIdentity Identity { get; }
         internal SharpLinkGeneratedContractDescriptor Descriptor { get; }
 
         internal SharpLinkDynamicModule? Module { get; }

@@ -166,28 +166,7 @@ internal sealed partial class SharpLinkClient
             EndpointSelectionPolicyGeneration policy,
             ulong excluded)
         {
-            var endpoints = snapshot.Endpoints;
-            var availableCount = 0;
-            for (var index = 0; index < endpoints.Length; index++)
-                availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
-            if (availableCount == 0)
-                return -1;
-            if (availableCount == 1 && !policy.HasCustomSelector)
-            {
-                for (var index = 0; index < endpoints.Length; index++)
-                    if ((excluded & (1UL << index)) == 0)
-                        return index;
-            }
-            if (policy.Selector is { } selector)
-                return selector.Select(new SharpLinkEndpointSelectionContext(snapshot.Candidates, excluded));
-            return policy.Strategy switch
-            {
-                SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
-                SharpLinkLoadBalancingStrategy.RoundRobin => EndpointSelectionKernel.SelectRoundRobinIndex(
-                    ref _roundRobinCursor, endpoints.Length, excluded),
-                SharpLinkLoadBalancingStrategy.LeastPending => SelectLeastPending(endpoints, excluded),
-                _ => SelectPowerOfTwo(endpoints, excluded, availableCount)
-            };
+            return SelectCandidates(snapshot.Candidates, policy, excluded);
         }
 
         public static ClientConnection? SelectConnection(DynamicEndpointState endpoint)
@@ -202,36 +181,13 @@ internal sealed partial class SharpLinkClient
             Volatile.Write(ref _selectionSnapshot, DynamicEndpointSelectionSnapshot.Empty);
         }
 
-        private int SelectPowerOfTwo(DynamicEndpointState[] endpoints, ulong excluded, int availableCount)
+        internal int SelectContractEndpoint(ContractClusterSnapshot snapshot, EndpointSelectionPolicyGeneration policy, ulong excluded)
+            => SelectCandidates(snapshot.Candidates, policy, excluded);
+        private int SelectCandidates(SharpLinkEndpointCandidate[] candidates, EndpointSelectionPolicyGeneration policy, ulong excluded)
         {
-            var first = SelectRandom(endpoints.Length, excluded, availableCount);
-            var second = SelectRandom(endpoints.Length, excluded | (1UL << first), availableCount - 1);
-            if (second < 0)
-                return first;
-            var firstState = endpoints[first];
-            var secondState = endpoints[second];
-            return EndpointSelectionKernel.CompareNormalizedLoad(
-                firstState.ActiveCallCount, firstState.ReadyConnections.Length,
-                secondState.ActiveCallCount, secondState.ReadyConnections.Length) <= 0 ? first : second;
-        }
-
-        private static int SelectRandom(int length, ulong excluded, int availableCount)
-            => availableCount <= 0 ? -1 : EndpointSelectionKernel.SelectRandomIndex(
-                length, excluded, availableCount, Random.Shared.Next(availableCount));
-
-        private int SelectLeastPending(DynamicEndpointState[] endpoints, ulong excluded)
-        {
-            var start = unchecked((uint)Interlocked.Increment(ref _leastPendingCursor));
-            var selected = -1;
-            for (var offset = 0; offset < endpoints.Length; offset++)
-            {
-                var index = (int)((start + (uint)offset) % (uint)endpoints.Length);
-                if ((excluded & (1UL << index)) != 0)
-                    continue;
-                if (selected < 0 || endpoints[index].ActiveCallCount < endpoints[selected].ActiveCallCount)
-                    selected = index;
-            }
-            return selected;
+            if (policy.Selector is { } selector)
+                return selector.Select(new SharpLinkEndpointSelectionContext(candidates, excluded));
+            return EndpointSelectionKernel.SelectBuiltInEndpoint(candidates, policy.Strategy, excluded, ref _roundRobinCursor, ref _leastPendingCursor);
         }
 
         private static bool HasSameMembership(DynamicEndpointState[] left, DynamicEndpointState[] right)

@@ -14,6 +14,8 @@ using SharpLink.Runtime;
 using SharpLink.Server;
 using SharpLink.Sdk;
 
+[assembly: SharpLinkClusterContractAssembly("n1", typeof(SharpLink.N1.StaticBindEvidence.IProbe))]
+
 namespace SharpLink.N1.StaticBindEvidence;
 
 [RpcCodec(typeof(ProbePayloadCodec))]
@@ -47,8 +49,8 @@ public sealed class ProbeService : IProbe
     public static int Created, Echoes, Notifications;
     public static TaskCompletionSource QueueBlockEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public static TaskCompletionSource QueueBlockRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public static readonly TaskCompletionSource BlockEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public static readonly TaskCompletionSource BlockRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public static TaskCompletionSource BlockEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public static TaskCompletionSource BlockRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public static TaskCompletionSource? NotifyRelease;
     public static readonly TaskCompletionSource Notified = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ProbeService() => Interlocked.Increment(ref Created);
@@ -84,6 +86,8 @@ internal static partial class Program
         try
         {
             if (args.Length == 1 && args[0] == "components") Components();
+            else if (args.Length == 1 && args[0] == "selection-components") SelectionComponents();
+            else if (args.Length == 1 && args[0] == "publication-components") await PublicationComponentsAsync().ConfigureAwait(false);
             else if (args.Length == 2 && args[0] == "rpc" && args[1] == "N1-STATIC-BIND-20261115-V1")
                 await RunRpcAsync().ConfigureAwait(false);
             else throw new ArgumentException("Use components, or the exact reviewed hosted protocol UID.");

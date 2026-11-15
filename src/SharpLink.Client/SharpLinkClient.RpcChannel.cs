@@ -266,20 +266,20 @@ internal sealed partial class SharpLinkClient
         EndpointRetrySelectionState? retrySelection, AttemptOutcomeState? attemptOutcome)
     {
         if (control.Site is null) throw ContractBindingWire.Error(ContractBindStatus.UnsupportedShape);
-        if (!control.Site.HasReadyTarget) throw ContractBindingWire.Error(ContractBindStatus.NoBoundRoute);
+        var snapshot = control.Site.CaptureTargetSnapshot();
+        if (snapshot.Targets.Length == 0) throw ContractBindingWire.Error(ContractBindStatus.NoBoundRoute);
         if (_cluster is null)
         {
             if (attemptOutcome is not null && _fixedEndpoint is not null)
             {
-                var candidate = new SharpLinkEndpointCandidate(_fixedEndpoint, ReadyConnectionCount, ActiveClientCallCount, generation: 0);
+                var candidate = new SharpLinkEndpointCandidate(_fixedEndpoint, snapshot.Connections.Length, snapshot.ActiveCallCount, generation: 0);
                 if (!attemptOutcome.TryAcquire(candidate))
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
             }
-            return control.Site.SelectFixedTarget();
+            return control.Site.SelectFixedTarget(snapshot);
         }
-        var connection = GetReadyConnection(method, retrySelection, attemptOutcome);
-        try { return control.Site.FindTarget(connection); }
-        catch { connection.ReleaseCallAdmissionReservation(); throw; }
+        return _cluster.GetReadyBoundTarget(snapshot.Cluster ?? throw new InvalidOperationException("Qualified topology is missing."),
+            control.Site.Key, method, retrySelection, attemptOutcome);
     }
 
     private bool RemoveReadyConnection(ClientConnection connection)

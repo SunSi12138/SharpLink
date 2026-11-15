@@ -88,7 +88,10 @@ internal sealed partial class ClientAssemblyRegistry
     internal void BeginShutdown()
     {
         lock (_gate)
+        {
             _shutdownStarted = true;
+            foreach (var registration in _proxyLookup.Capture().Values) registration.Identity.Retire();
+        }
     }
 
     internal SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
@@ -359,6 +362,7 @@ internal sealed partial class ClientAssemblyRegistry
                             _dynamicModules.Add(newAssembly, newModule);
                             _unregisterOperations.Add(oldAssembly, drainOperation);
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            RetireRegistrationIdentities(_proxyLookup.Capture(), oldModule);
                             _proxyLookup.Publish(candidate.Proxies);
                             _generation++;
                             oldModule.TryBeginDraining();
@@ -425,6 +429,7 @@ internal sealed partial class ClientAssemblyRegistry
             EnsureNoDynamicDependants(module);
             if (module.TryBeginDraining())
             {
+                RetireRegistrationIdentities(_proxyLookup.Capture(), module);
                 // Reentrant metadata must not admit dependants while this live owner drains.
                 _generation++;
                 _runtimeContext.InvalidateGeneratedCodecPublication();
@@ -585,6 +590,13 @@ internal sealed partial class ClientAssemblyRegistry
     {
         await drainTask.ConfigureAwait(false);
         ReleaseModule(assembly, module);
+    }
+
+    private static void RetireRegistrationIdentities(
+        FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> snapshot, SharpLinkDynamicModule module)
+    {
+        foreach (var registration in snapshot.Values)
+            if (ReferenceEquals(registration.Module, module)) registration.Identity.Retire();
     }
 
     private void ReleaseModule(Assembly assembly, SharpLinkDynamicModule module)

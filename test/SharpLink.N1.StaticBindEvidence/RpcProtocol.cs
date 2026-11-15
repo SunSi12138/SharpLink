@@ -28,12 +28,17 @@ internal static partial class Program
         catch (TException exception) { Check(true, name); return exception; }
         throw new InvalidOperationException("ASSERT expected " + typeof(TException).Name + ": " + name);
     }
-    private static async Task UntilAsync(Func<bool> condition, string name)
+    private static async Task UntilAsync(Func<bool> condition, string name, Func<string>? observe = null)
     {
         var start = System.Diagnostics.Stopwatch.GetTimestamp();
         while (!condition())
         {
-            if (System.Diagnostics.Stopwatch.GetElapsedTime(start) > Guard) throw new TimeoutException("FIXTURE guard: " + name);
+            if (System.Diagnostics.Stopwatch.GetElapsedTime(start) > Guard)
+            {
+                var observation = observe?.Invoke() ?? "predicate=false; no task publication inferred";
+                Console.Error.WriteLine("N1_GUARD_PREDICATE phase=" + name + " observed=" + observation);
+                throw new TimeoutException("FIXTURE guard: " + name + "; observed=" + observation);
+            }
             await Task.Delay(10).ConfigureAwait(false);
         }
         Check(true, name);
@@ -42,7 +47,9 @@ internal static partial class Program
     {
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("N1_SOURCE_SHA"))) throw new InvalidOperationException("FIXTURE exact source SHA is required.");
         if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("RPC_PROTOCOL requires the reviewed Linux hosted runner.");
+        if (Environment.Version != new Version(10, 0, 15)) throw new InvalidOperationException("FIXTURE actual runtime must be 10.0.15.");
         Components();
+        await PublicationComponentsAsync().ConfigureAwait(false);
         await RunCaseAsync("generated-pool-session-pairing", GeneratedAsync).ConfigureAwait(false);
         await RunCaseAsync("early-ack-publication", EarlyAckAsync).ConfigureAwait(false);
         await RunCaseAsync("waiter-cancel-shared-bind", CancelWaiterAsync, serverGate: new(ProtocolV2FrameType.BindAck, false)).ConfigureAwait(false);
@@ -74,24 +81,24 @@ internal static partial class Program
         var before = ProbePayloadCodec.Serializes;
         var noRoute = await ThrowsAsync<SharpLinkException>(() => proxy.Service.EchoAsync(new() { Value = 1 }, default).AsTask(), "before-connect-failfast").ConfigureAwait(false);
         Check(noRoute.DetailCode == SharpLinkErrorDetails.ContractBinding.NoBoundRoute && ProbePayloadCodec.Serializes == before, "no-bound-route-before-business-codec");
-        await client.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
+        await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
         await proxy.PrepareAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Check(await proxy.Service.EchoAsync(new() { Value = 13 }, default).ConfigureAwait(false) == 20, "generated-real-unary-result");
         Task<int>? blocked = null;
         try
         {
             blocked = proxy.Service.EchoAsync(new() { Value = 101 }, default).AsTask();
-            await ProbeService.BlockEntered.Task.WaitAsync(Guard).ConfigureAwait(false);
+            await ProbeService.BlockEntered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
             Check(await proxy.Service.EchoAsync(new() { Value = 17 }, default).ConfigureAwait(false) == 24, "picker-uses-other-ready-session");
         }
         finally { ProbeService.BlockRelease.TrySetResult(); }
-        if (blocked is not null) await blocked.WaitAsync(Guard).ConfigureAwait(false);
+        if (blocked is not null) await blocked.GuardedWaitAsync(Guard).ConfigureAwait(false);
         var notificationRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ProbeService.NotifyRelease = notificationRelease;
         try
         {
-            await proxy.Service.NotifyAsync(new() { Value = 31 }).AsTask().WaitAsync(Guard).ConfigureAwait(false);
-            await ProbeService.Notified.Task.WaitAsync(Guard).ConfigureAwait(false);
+            await proxy.Service.NotifyAsync(new() { Value = 31 }).AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
+            await ProbeService.Notified.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
             Check(!notificationRelease.Task.IsCompleted, "oneway-completes-without-business-ack");
         }
         finally { notificationRelease.TrySetResult(); ProbeService.NotifyRelease = null; }
@@ -113,42 +120,91 @@ internal static partial class Program
         var otherClient = harness.Client();
         var foreign = Throws<SharpLinkException>(() => otherClient.CreateContractChannel(client.GetLocalContract<IProbe>()), "foreign-local-selector");
         Check(foreign.DetailCode == SharpLinkErrorDetails.ContractBinding.ForeignLocalContract, "foreign-selector-detail");
+        await QualifiedStaticClusterAsync(harness).ConfigureAwait(false);
+    }
+    private static async Task QualifiedStaticClusterAsync(Harness harness)
+    {
+        var records = new TransportFrameGate((ProtocolV2FrameType)255, false);
+        var selector = new PreferBSelector();
+        var client = await harness.ClusterClientAsync(records, selector).ConfigureAwait(false);
+        var proxy = client.CreateProxy<IProbe>();
+        await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
+        Check(client.GetReadinessSnapshot().ReadyEndpoints == 2, "cluster-both-transport-endpoints-ready");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        Check(await proxy.Service.EchoAsync(new() { Value = 6 }, default).ConfigureAwait(false) == 13, "cluster-qualified-candidate-not-global-ready-first");
+        var notifications = ProbeService.Notifications;
+        await proxy.Service.NotifyAsync(new() { Value = 32 }).ConfigureAwait(false);
+        await UntilAsync(() => ProbeService.Notifications > notifications, "cluster-qualified-oneway-delivered").ConfigureAwait(false);
+        Check(selector.Calls >= 2 && !selector.SawIneligible, "original-custom-picker-sees-only-qualified-A-not-ready-unbound-B");
+        foreach (var request in records.Frames.Where(f => f.Outbound && f.Header.Type == ProtocolV2FrameType.Request))
+        {
+            var token = BinaryPrimitives.ReadUInt64LittleEndian(request.Payload);
+            Check(records.Frames.Any(f => !f.Outbound && f.Header.Type == ProtocolV2FrameType.BindAck && f.SessionId == request.SessionId && ContractBindingWire.ReadAck(new(f.Payload)).Token == token), "cluster-request-reserves-actual-bound-session");
+        }
+    }
+    private sealed class PreferBSelector : ISharpLinkEndpointSelector
+    {
+        private int _calls, _ineligible;
+        internal int Calls => Volatile.Read(ref _calls);
+        internal bool SawIneligible => Volatile.Read(ref _ineligible) != 0;
+        public int Select(in SharpLinkEndpointSelectionContext context)
+        {
+            Interlocked.Increment(ref _calls); var selected = -1;
+            for (var i = 0; i < context.Count; i++)
+            {
+                if (context[i].Endpoint.Id != "A") Interlocked.Exchange(ref _ineligible, 1);
+                if ((context.ExcludedMask & (1UL << i)) == 0)
+                { if (context[i].Endpoint.Id == "B") return i; selected = i; }
+            }
+            return selected;
+        }
     }
     private static async Task EarlyAckAsync(Harness harness)
     {
+        ProbeService.BlockEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        ProbeService.BlockRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var gate = new TransportFrameGate(ProtocolV2FrameType.BindContract, true); harness.Gates.Add(gate);
-        var client = harness.Client(gate); var proxy = client.CreateProxy<IProbe>();
-        await client.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
-        var prepare = proxy.PrepareAsync(TimeSpan.FromSeconds(5)).AsTask();
+        var client = harness.Client(gate, 2); var proxy = client.CreateProxy<IProbe>();
+        await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
+        var prepare = proxy.PrepareAsync(TimeSpan.FromSeconds(5)).AsTask(); Task<int>? blocked = null;
         try
         {
-            await gate.Entered.Task.WaitAsync(Guard).ConfigureAwait(false);
-            await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ReceivedUnpublishedAcks == 1, "real-ack-arrives-before-publication-return").ConfigureAwait(false);
-            Check(!prepare.IsCompleted, "early-ack-does-not-publish-target");
-            var count = ProbePayloadCodec.Serializes;
-            var error = await ThrowsAsync<SharpLinkException>(() => proxy.Service.EchoAsync(new() { Value = 4 }, default).AsTask(), "publishing-target-failfast").ConfigureAwait(false);
-            Check(error.DetailCode == 60004 && ProbePayloadCodec.Serializes == count, "publishing-target-no-business-codec");
+            await gate.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
+            await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ReceivedUnpublishedAcks == 1, "one-real-ack-still-before-publication-return", () => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ToString()).ConfigureAwait(false);
+            await prepare.GuardedWaitAsync(Guard).ConfigureAwait(false);
+            Check(((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 1, "partial-pool-prepare-does-not-wait-for-other-bind");
+            blocked = proxy.Service.EchoAsync(new() { Value = 101 }, default).AsTask();
+            await ProbeService.BlockEntered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
+            Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "partial-pool-normal-picker-uses-confirmed-session");
+            foreach (var frame in gate.Frames.Where(f => f.Outbound && f.Header.Type == ProtocolV2FrameType.Request))
+            {
+                Check(frame.SessionId != gate.HeldSessionId, "unpublished-session-not-a-picker-candidate");
+                var token = BinaryPrimitives.ReadUInt64LittleEndian(frame.Payload);
+                Check(gate.Frames.Any(ack => !ack.Outbound && ack.Header.Type == ProtocolV2FrameType.BindAck && ack.SessionId == frame.SessionId && ContractBindingWire.ReadAck(new(ack.Payload)).Token == token), "partial-pool-request-pairs-confirmed-session-token");
+            }
         }
-        finally { gate.Release(); }
-        await prepare.WaitAsync(Guard).ConfigureAwait(false);
-        Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "early-ack-adopted-after-publication");
+        finally { gate.Release(); ProbeService.BlockRelease.TrySetResult(); }
+        if (blocked is not null) Check(await blocked.GuardedWaitAsync(Guard).ConfigureAwait(false) == 108, "partial-pool-active-call-completes");
+        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics() is { Operations: 0, PublishedTargets: 2 },
+            "held-peer-bind-eventually-publishes-complete-pair", () => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ToString()).ConfigureAwait(false);
+        Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "both-pool-targets-usable-after-publication");
     }
     private static async Task CancelWaiterAsync(Harness harness)
     {
         var client = harness.Client(); var proxy = client.CreateProxy<IProbe>();
-        await client.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
+        await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
         using var cancellation = new CancellationTokenSource();
         var first = proxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellation.Token).AsTask();
         var second = proxy.PrepareAsync(TimeSpan.FromSeconds(5)).AsTask();
         try
         {
-            await harness.ServerGate!.Entered.Task.WaitAsync(Guard).ConfigureAwait(false);
+            await harness.ServerGate!.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
             cancellation.Cancel();
             _ = await ThrowsAsync<OperationCanceledException>(() => first, "prepare-cancel-is-waiter-local").ConfigureAwait(false);
             Check(!second.IsCompleted && ((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 1, "shared-bind-remains-live");
         }
         finally { harness.ServerGate!.Release(); }
-        await second.WaitAsync(Guard).ConfigureAwait(false);
+        await second.GuardedWaitAsync(Guard).ConfigureAwait(false);
         Check(await proxy.Service.EchoAsync(new() { Value = 2 }, default).ConfigureAwait(false) == 9, "shared-bind-survives-other-waiter-cancel");
     }
     private static async Task RawGuardsAsync(Harness harness)
@@ -226,7 +282,7 @@ internal static partial class Program
         }
         finally { cancel.Cancel(); }
         foreach (var waiter in waiters) _ = await ThrowsAsync<OperationCanceledException>(() => waiter, "bounded-waiter-cancel-return").ConfigureAwait(false);
-        await client.StopAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
+        await client.StopAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
         var snapshot = ((SharpLinkClient)client).CaptureContractBindingDiagnostics();
         Check(snapshot.PrepareWaiters == 0 && snapshot.DemandSites == 0 && snapshot.Bindings == 0 && snapshot.Operations == 0, "stopped-client-demand-waiter-quota-zero");
         GC.KeepAlive(channels);
@@ -236,12 +292,12 @@ internal static partial class Program
         ProbeService.QueueBlockEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         ProbeService.QueueBlockRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var records = new TransportFrameGate((ProtocolV2FrameType)255, false); var client = harness.Client(records);
-        var proxy = client.CreateProxy<IProbe>(); await client.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
+        var proxy = client.CreateProxy<IProbe>(); await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
         await proxy.PrepareAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         var first = proxy.Service.EchoAsync(new() { Value = 102 }, default).AsTask();
         try
         {
-            await ProbeService.QueueBlockEntered.Task.WaitAsync(Guard).ConfigureAwait(false);
+            await ProbeService.QueueBlockEntered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
             var sourceHead = records.Frames.Last(f => f.Outbound && f.Header.Type == ProtocolV2FrameType.Request);
             var decodes = ProbePayloadCodec.Deserializes; var handlers = ProbeService.Echoes;
             await using var peer = await RawPeer.ConnectAsync(harness.Port).ConfigureAwait(false);
@@ -260,20 +316,20 @@ internal static partial class Program
             Check(ProbePayloadCodec.Deserializes == decodes && ProbeService.Echoes == handlers, "cut-winner-no-typed-codec-or-handler");
         }
         finally { ProbeService.QueueBlockRelease.TrySetResult(); }
-        Check(await first.WaitAsync(Guard).ConfigureAwait(false) == 109, "claim-winner-keeps-original-handler");
+        Check(await first.GuardedWaitAsync(Guard).ConfigureAwait(false) == 109, "claim-winner-keeps-original-handler");
         await UntilAsync(() => harness.Diagnostics.ProtectedRequests == 0, "active-claim-preserved-through-original-completion").ConfigureAwait(false);
     }
     private static async Task DisconnectAsync(Harness harness)
     {
         var records = new TransportFrameGate((ProtocolV2FrameType)255, false); var client = harness.Client(records);
-        var proxy = client.CreateProxy<IProbe>(); await client.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
+        var proxy = client.CreateProxy<IProbe>(); await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
         var preparation = proxy.PrepareAsync(TimeSpan.FromSeconds(5)).AsTask();
-        await harness.ServerGate!.Entered.Task.WaitAsync(Guard).ConfigureAwait(false);
+        await harness.ServerGate!.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
         var healthy = harness.Client(); var healthyProxy = healthy.CreateProxy<IProbe>();
-        await healthy.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false); await healthyProxy.PrepareAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        await healthy.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); await healthyProxy.PrepareAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         var oldSession = records.Connection!.Id;
         await records.Connection.DisposeAsync().ConfigureAwait(false); harness.ServerGate.Release();
-        await preparation.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        await preparation.GuardedWaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Check(await proxy.Service.EchoAsync(new() { Value = 10 }, default).ConfigureAwait(false) == 17, "reconnect-new-session-bind-with-original-prepare-budget");
         Check(await healthyProxy.Service.EchoAsync(new() { Value = 5 }, default).ConfigureAwait(false) == 12, "other-session-unaffected-by-control-close");
         var frame = records.Frames.Last(f => f.Outbound && f.Header.Type == ProtocolV2FrameType.Request);
@@ -285,12 +341,12 @@ internal static partial class Program
         // Consume one second of the client operation's original ten-second budget before the server starts its own budget.
         var sendGate = new TransportFrameGate(ProtocolV2FrameType.BindContract, false); harness.Gates.Add(sendGate);
         var client = harness.Client(sendGate, reconnectDelay: TimeSpan.FromSeconds(30)); var proxy = client.CreateProxy<IProbe>();
-        await client.ConnectAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false);
+        await client.ConnectAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
         var preparation = proxy.PrepareAsync(TimeSpan.FromSeconds(13)).AsTask();
-        await sendGate.Entered.Task.WaitAsync(Guard).ConfigureAwait(false);
+        await sendGate.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
         await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false); sendGate.Release();
-        await harness.ServerGate!.Entered.Task.WaitAsync(Guard).ConfigureAwait(false);
-        var error = await ThrowsAsync<SharpLinkException>(() => preparation.WaitAsync(TimeSpan.FromSeconds(13)), "bind-original-ten-second-timeout").ConfigureAwait(false);
+        await harness.ServerGate!.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
+        var error = await ThrowsAsync<SharpLinkException>(() => preparation.GuardedWaitAsync(TimeSpan.FromSeconds(13)), "bind-original-ten-second-timeout").ConfigureAwait(false);
         Check(error.Code == SharpLinkErrorCode.DeadlineExceeded, "bind-timeout-cause");
         harness.ServerGate.Release();
         await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 0, "timed-out-operation-physical-return").ConfigureAwait(false);
@@ -300,6 +356,7 @@ internal static partial class Program
     {
         private readonly ISharpLinkServer _server;
         private readonly List<ISharpLinkClient> _clients = [];
+        private readonly List<ISharpLinkServer> _extraServers = [];
         internal readonly List<TransportFrameGate> Gates = [];
         internal TransportFrameGate? ServerGate { get; }
         internal int Port { get; }
@@ -317,7 +374,7 @@ internal static partial class Program
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             if (gate is not null) builder.UseTransport(new GatedListener(builder.Transport!, gate));
             var server = builder.Build();
-            try { await server.StartAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false); return new(server, port, gate); }
+            try { await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); return new(server, port, gate); }
             catch (Exception primary)
             {
                 gate?.Release();
@@ -336,6 +393,21 @@ internal static partial class Program
             else { Gates.Add(gate); builder.UseTransport(new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, Port)), gate)); }
             var client = builder.Build(); _clients.Add(client); return client;
         }
+        internal async Task<ISharpLinkClient> ClusterClientAsync(TransportFrameGate records, ISharpLinkEndpointSelector selector)
+        {
+            var builder = SharpLinkServerBuilder.Create().DisableAutomaticServiceRegistration().UseTcp(0, IPAddress.Loopback);
+            var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port; var server = builder.Build(); _extraServers.Add(server);
+            await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
+            Gates.Add(records);
+            var endpoints = new[] { new SharpLinkEndpoint { Id = "A", Address = new SharpLinkTcpAddress("127.0.0.1", Port) },
+                new SharpLinkEndpoint { Id = "B", Address = new SharpLinkTcpAddress("127.0.0.1", port) } };
+            var client = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(2))
+                .UseEndpoints(endpoints, endpoint => new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, ((SharpLinkTcpAddress)endpoint.Address).Port)), records))
+                .UseCluster(options => { options.MinReadyEndpoints = 2; options.MaxConnections = 2; options.MaxConnectionsPerEndpoint = 1; })
+                .UseEndpointSelector(selector)
+                .UseReconnectPolicy(new(TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), 1, 1, 1, TimeSpan.Zero)).Build();
+            _clients.Add(client); return client;
+        }
         public async ValueTask DisposeAsync()
         {
             foreach (var gate in Gates) gate.Release();
@@ -343,10 +415,19 @@ internal static partial class Program
             var failures = new List<Exception>();
             foreach (var client in _clients)
             {
-                try { await client.StopAsync().AsTask().WaitAsync(Guard).ConfigureAwait(false); }
+                try { await client.StopAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); }
                 catch (Exception exception) { failures.Add(exception); }
             }
-            try { await _server.StopAsync(TimeSpan.FromSeconds(3)).AsTask().WaitAsync(TimeSpan.FromSeconds(4)).ConfigureAwait(false); }
+            foreach (var extra in _extraServers)
+            {
+                try { await extra.StopAsync(TimeSpan.FromSeconds(3)).AsTask().GuardedWaitAsync(TimeSpan.FromSeconds(4)).ConfigureAwait(false); }
+                catch (Exception exception) { failures.Add(exception); }
+                var diagnostic = ((SharpLinkServer)extra).CaptureContractBindingDiagnostics();
+                Console.WriteLine("N1_EXTRA_SERVER_FINAL " + diagnostic);
+                if (diagnostic.Bindings != 0 || diagnostic.Operations != 0 || diagnostic.ProtectedRequests != 0)
+                    failures.Add(new InvalidOperationException("ASSERT extra endpoint physical ledger must be zero."));
+            }
+            try { await _server.StopAsync(TimeSpan.FromSeconds(3)).AsTask().GuardedWaitAsync(TimeSpan.FromSeconds(4)).ConfigureAwait(false); }
             catch (Exception exception) { failures.Add(exception); }
             if (failures.Count == 0)
             {

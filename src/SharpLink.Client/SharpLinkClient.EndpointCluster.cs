@@ -22,6 +22,9 @@ internal sealed partial class SharpLinkClient
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
             AttemptOutcomeState? attemptOutcome);
+        ContractClusterSnapshot CreateContractSnapshot(BoundContractTarget[] targets);
+        BoundContractTarget GetReadyBoundTarget(ContractClusterSnapshot snapshot, ContractSiteKey key,
+            RpcMethodDescriptor method, EndpointRetrySelectionState? retrySelection, AttemptOutcomeState? attemptOutcome);
         bool TryGetEndpointCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate);
         void HandleConnectionFailure(ClientConnection connection, Exception exception);
         void MarkConnectionDraining(ClientConnection connection);

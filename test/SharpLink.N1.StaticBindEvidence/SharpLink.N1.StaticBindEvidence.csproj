@@ -6,4 +6,8 @@
     <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
     <ProjectReference Include="../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <ItemGroup><ProjectReference Include="../fixtures/issue-775-n1-unrelated-codec/UnrelatedCodec.csproj" ReferenceOutputAssembly="false" /></ItemGroup>
+  <Target Name="CopyUnrelatedPublicationFixture" AfterTargets="Build">
+    <Copy SourceFiles="../fixtures/issue-775-n1-unrelated-codec/bin/$(Configuration)/net10.0/SharpLink.N1.UnrelatedCodec.dll" DestinationFolder="$(OutputPath)fixtures" />
+  </Target>
 </Project>

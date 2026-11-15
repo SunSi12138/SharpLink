@@ -17,8 +17,11 @@ internal sealed partial class ClientAssemblyRegistry
             return default;
 
         var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>();
+        // Retain cold candidate wrapper isolation while preserving the exact logical registration.
+        // Preparing/rolling back an unrelated snapshot must not retire or replace its identity.
         foreach (var pair in currentProxies)
-            nextProxies[pair.Key] = new SharpLinkClient.ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module, pair.Value.Codecs);
+            nextProxies[pair.Key] = new SharpLinkClient.ClientProxyRegistration(
+                pair.Value.Descriptor, pair.Value.Module, pair.Value.Codecs, pair.Value.Identity);
         var byId = nextProxies.Values.ToDictionary(
             static registration => registration.Descriptor.ContractId,
             static registration => registration);

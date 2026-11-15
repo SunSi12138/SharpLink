@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><TargetFramework>net10.0</TargetFramework><IsPackable>false</IsPackable><GenerateDocumentationFile>false</GenerateDocumentationFile><AssemblyName>SharpLink.N1.UnrelatedCodec</AssemblyName></PropertyGroup>
+ <ItemGroup>
+  <ProjectReference Include="../../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+  <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+ </ItemGroup>
+</Project>

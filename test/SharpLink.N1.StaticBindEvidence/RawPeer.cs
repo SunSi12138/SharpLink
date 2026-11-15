@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -19,10 +20,16 @@ internal sealed class RawPeer : IAsyncDisposable
     private RawPeer(TcpClient tcp) { _tcp = tcp; _stream = tcp.GetStream(); }
     internal static async Task<RawPeer> ConnectAsync(int port)
     {
-        var tcp = new TcpClient();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        await tcp.ConnectAsync(IPAddress.Loopback, port, timeout.Token).ConfigureAwait(false);
-        return new(tcp);
+        var tcp = new TcpClient(); var guard = TimeSpan.FromSeconds(3); var start = Stopwatch.GetTimestamp();
+        using var timeout = new CancellationTokenSource(guard); Task? source = null;
+        try
+        {
+            source = tcp.ConnectAsync(IPAddress.Loopback, port, timeout.Token).AsTask();
+            await source.ConfigureAwait(false); return new(tcp);
+        }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        { tcp.Dispose(); throw FixtureGuard.Capture("raw-connect", guard, start, source, null, exception); }
+        catch { tcp.Dispose(); throw; }
     }
     internal async Task<ProtocolV2HandshakeResponse?> HandshakeAsync(ushort minor = 6)
     {
@@ -57,29 +64,47 @@ internal sealed class RawPeer : IAsyncDisposable
     }
     internal async Task SendAsync(ProtocolV2FrameType type, ProtocolV2FrameFlags flags, ulong id, ReadOnlyMemory<byte> payload)
     {
+        var guard = TimeSpan.FromSeconds(3); var start = Stopwatch.GetTimestamp();
+        using var timeout = new CancellationTokenSource(guard); Task? source = null;
+        try { source = WriteFrameAsync(type, flags, id, payload, timeout.Token); await source.ConfigureAwait(false); }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        { throw FixtureGuard.Capture("raw-write-" + type, guard, start, source, null, exception); }
+    }
+    private Task WriteFrameAsync(ProtocolV2FrameType type, ProtocolV2FrameFlags flags, ulong id, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
         var bytes = new byte[15 + payload.Length]; bytes[0] = 0x89;
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(1), payload.Length); bytes[5] = (byte)type; bytes[6] = (byte)flags;
         BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(7), id); payload.Span.CopyTo(bytes.AsSpan(15));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        await _stream.WriteAsync(bytes, timeout.Token).ConfigureAwait(false);
+        return _stream.WriteAsync(bytes, cancellationToken).AsTask();
     }
     internal async Task<ObservedFrame> ReadAsync()
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (true)
+        var guard = TimeSpan.FromSeconds(3); var start = Stopwatch.GetTimestamp();
+        using var timeout = new CancellationTokenSource(guard); Task? source = null; var phase = "before-read-publication";
+        try
         {
-            var header = new byte[15]; await _stream.ReadExactlyAsync(header, timeout.Token).ConfigureAwait(false);
-            var length = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(1));
-            if (length < 0 || length > 4 * 1024 * 1024) throw new InvalidDataException("FIXTURE bounded frame length.");
-            var payload = new byte[length]; await _stream.ReadExactlyAsync(payload, timeout.Token).ConfigureAwait(false);
-            var bytes = new byte[15 + length]; header.CopyTo(bytes, 0); payload.CopyTo(bytes, 15);
-            var sequence = new ReadOnlySequence<byte>(bytes);
-            if (!ProtocolV2FrameParser.TryReadFrame(ref sequence, new SharpLinkProtocolOptions(), out var parsed, out _))
-                throw new InvalidDataException("FIXTURE incomplete complete frame.");
-            if (parsed.Type == ProtocolV2FrameType.Ping)
-            { await SendAsync(ProtocolV2FrameType.Pong, ProtocolV2FrameFlags.None, 0, payload).ConfigureAwait(false); continue; }
-            return new("raw", false, parsed, payload);
+            while (true)
+            {
+                var header = new byte[15]; phase = "read-header";
+                source = _stream.ReadExactlyAsync(header, timeout.Token).AsTask(); await source.ConfigureAwait(false);
+                var length = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(1));
+                if (length < 0 || length > 4 * 1024 * 1024) throw new InvalidDataException("FIXTURE bounded frame length.");
+                var payload = new byte[length]; phase = "read-payload";
+                source = _stream.ReadExactlyAsync(payload, timeout.Token).AsTask(); await source.ConfigureAwait(false);
+                var bytes = new byte[15 + length]; header.CopyTo(bytes, 0); payload.CopyTo(bytes, 15);
+                var sequence = new ReadOnlySequence<byte>(bytes);
+                if (!ProtocolV2FrameParser.TryReadFrame(ref sequence, new SharpLinkProtocolOptions(), out var parsed, out _))
+                    throw new InvalidDataException("FIXTURE incomplete complete frame.");
+                if (parsed.Type == ProtocolV2FrameType.Ping)
+                {
+                    phase = "write-pong"; source = WriteFrameAsync(ProtocolV2FrameType.Pong, ProtocolV2FrameFlags.None, 0, payload, timeout.Token);
+                    await source.ConfigureAwait(false); continue;
+                }
+                return new("raw", false, parsed, payload);
+            }
         }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        { throw FixtureGuard.Capture("raw-" + phase, guard, start, source, null, exception); }
     }
     public ValueTask DisposeAsync() { _tcp.Dispose(); return ValueTask.CompletedTask; }
 }

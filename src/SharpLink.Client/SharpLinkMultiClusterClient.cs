@@ -14,6 +14,9 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private readonly TimeProvider _timeProvider;
     private readonly FrameworkTaskSupervisor _frameworkTasks;
     private MultiClusterSnapshot _snapshot;
+    // Scalar terminal guards must outlive route cleanup without rooting collectible contract Types.
+    private readonly ConditionalWeakTable<Type, TerminalContractMetadataLimit> _terminalContractMetadataLimits = new();
+    private sealed record TerminalContractMetadataLimit(int Bytes);
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
     private readonly HashSet<DynamicAssemblyRegistration> _drainingRegistrations =
         new(ReferenceEqualityComparer.Instance);
@@ -120,11 +123,18 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
 
     public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
     {
+        var captured = SharpLinkClient.CaptureContractOptions(options);
+        // Freeze the child route once; even its metadata limit must belong to that same child.
+        var snapshot = Volatile.Read(ref _snapshot);
+        snapshot.Routes.TryGetValue(typeof(TContract), out var route);
+        var child = route is null ? null : (SharpLinkClient)route.Slot.Client;
+        if (child is not null) child.ValidateContractMetadata(captured);
+        else if (_terminalContractMetadataLimits.TryGetValue(typeof(TContract), out var terminalLimit))
+            SharpLinkClient.ValidateContractMetadata(captured, terminalLimit.Bytes);
         var state = State;
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
-        if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
-            return route.Slot.Client.CreateProxy<TContract>(options);
+        if (child is not null) return child.CreateProxyCaptured<TContract>(captured);
         throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
     }
 
@@ -412,6 +422,8 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             catch (Exception exception) { failures.Add(exception); }
             lock (_gate)
             {
+                foreach (var route in _snapshot.Routes)
+                    _terminalContractMetadataLimits.Add(route.Key, new(((SharpLinkClient)route.Value.Slot.Client).ContractMetadataLimit));
                 Volatile.Write(ref _snapshot, MultiClusterSnapshot.Empty);
                 _dynamicRegistrations.Clear();
                 _drainingRegistrations.Clear();

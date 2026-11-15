@@ -15,4 +15,4 @@ export N1_RESULT_PATH="$out/result.json"
   git status --short
 } > "$out/environment.txt"
 dotnet build test/SharpLink.N1.StaticBindEvidence/SharpLink.N1.StaticBindEvidence.csproj -c Release --nologo 2>&1 | tee "$out/build.log"
-dotnet test/SharpLink.N1.StaticBindEvidence/bin/Release/net10.0/SharpLink.N1.StaticBindEvidence.dll rpc "$uid" 2>&1 | tee "$out/run.log"
+dotnet --fx-version 10.0.15 test/SharpLink.N1.StaticBindEvidence/bin/Release/net10.0/SharpLink.N1.StaticBindEvidence.dll rpc "$uid" 2>&1 | tee "$out/run.log"

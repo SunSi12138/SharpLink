@@ -2,6 +2,34 @@ namespace SharpLink.Client;
 
 internal static class EndpointSelectionKernel
 {
+    internal static int SelectBuiltInEndpoint(SharpLinkEndpointCandidate[] candidates,
+        SharpLinkLoadBalancingStrategy strategy, ulong excluded, ref int roundRobinCursor, ref int leastPendingCursor)
+    {
+        var count = candidates.Length;
+        var available = 0;
+        for (var i = 0; i < count; i++) if ((excluded & (1UL << i)) == 0) available++;
+        if (available == 0) return -1;
+        if (available == 1)
+            for (var i = 0; i < count; i++) if ((excluded & (1UL << i)) == 0) return i;
+        if (strategy == SharpLinkLoadBalancingStrategy.RoundRobin)
+            return SelectRoundRobinIndex(ref roundRobinCursor, count, excluded);
+        if (strategy == SharpLinkLoadBalancingStrategy.LeastPending)
+        {
+            var start = unchecked((uint)Interlocked.Increment(ref leastPendingCursor)); var selected = -1;
+            for (var offset = 0; offset < count; offset++)
+            {
+                var i = (int)((start + (uint)offset) % (uint)count);
+                if ((excluded & (1UL << i)) == 0 && (selected < 0 || candidates[i].ActiveCallCount < candidates[selected].ActiveCallCount)) selected = i;
+            }
+            return selected;
+        }
+        var first = SelectRandomIndex(count, excluded, available, Random.Shared.Next(available));
+        if (strategy == SharpLinkLoadBalancingStrategy.Random) return first;
+        var second = SelectRandomIndex(count, excluded | (1UL << first), available - 1, Random.Shared.Next(available - 1));
+        return CompareNormalizedLoad(candidates[first].ActiveCallCount, candidates[first].ReadyConnectionCount,
+            candidates[second].ActiveCallCount, candidates[second].ReadyConnectionCount) <= 0 ? first : second;
+    }
+
     public static int CompareNormalizedLoad(
         int firstActiveCalls,
         int firstReadyConnections,

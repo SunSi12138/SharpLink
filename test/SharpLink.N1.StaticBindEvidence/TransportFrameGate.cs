@@ -20,6 +20,8 @@ internal sealed class TransportFrameGate(ProtocolV2FrameType type, bool afterFlu
     private readonly object _gate = new();
     private readonly List<ObservedFrame> _frames = [];
     private int _claimed;
+    private string? _heldSessionId;
+    internal string? HeldSessionId => Volatile.Read(ref _heldSessionId);
     internal ITransportConnection? Connection;
     internal bool AfterFlush => afterFlush;
     internal IReadOnlyList<ObservedFrame> Frames { get { lock (_gate) return _frames.ToArray(); } }
@@ -30,7 +32,8 @@ internal sealed class TransportFrameGate(ProtocolV2FrameType type, bool afterFlu
             if (_frames.Count >= 512) throw new InvalidOperationException("FIXTURE frame inventory exceeded 512.");
             _frames.Add(new(sessionId, outbound, header, payload.ToArray()));
         }
-        return outbound && header.Type == type && Interlocked.CompareExchange(ref _claimed, 1, 0) == 0;
+        if (!outbound || header.Type != type || Interlocked.CompareExchange(ref _claimed, 1, 0) != 0) return false;
+        Volatile.Write(ref _heldSessionId, sessionId); return true;
     }
     internal async Task WaitAsync(CancellationToken cancellationToken)
     { Entered.TrySetResult(); await _release.Task.WaitAsync(cancellationToken).ConfigureAwait(false); }

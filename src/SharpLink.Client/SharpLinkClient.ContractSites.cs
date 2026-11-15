@@ -3,17 +3,26 @@ namespace SharpLink.Client;
 internal readonly record struct ContractSiteKey(long LocalGeneration, long ContractId, RpcHash128 Hash,
     RpcRegistrationRequirement Requirement, RpcRegistrationReceipt? Receipt);
 internal sealed record BoundContractTarget(ClientConnection Connection, long SessionGeneration, ulong Token);
-internal sealed class ContractTargetSnapshot(BoundContractTarget[] targets)
+internal sealed class ContractTargetSnapshot(BoundContractTarget[] targets, ContractClusterSnapshot? cluster)
 {
-    internal static ContractTargetSnapshot Empty { get; } = new([]);
+    internal static ContractTargetSnapshot Empty { get; } = new([], null);
+    internal ContractClusterSnapshot? Cluster { get; } = cluster;
     internal BoundContractTarget[] Targets { get; } = targets;
     internal ClientConnection[] Connections { get; } = targets.Select(static target => target.Connection).ToArray();
+    internal int ActiveCallCount { get { var count = 0; foreach (var c in Connections) count += c.ActiveCallCount; return count; } }
+    internal bool HasSameRouting(ContractTargetSnapshot other)
+    {
+        if (!ReferenceEquals(Cluster?.SourceTopology, other.Cluster?.SourceTopology) || Targets.Length != other.Targets.Length) return false;
+        foreach (var target in Targets)
+            if (!other.Targets.Any(candidate => ReferenceEquals(candidate.Connection, target.Connection) && candidate.Token == target.Token && candidate.SessionGeneration == target.SessionGeneration)) return false;
+        return true;
+    }
 }
 
 internal sealed partial class SharpLinkClient
 {
     private readonly Guid _localContractIssuer = Guid.NewGuid();
-    private readonly ConditionalWeakTable<ClientProxyRegistration, LocalContractIdentity> _localContractIdentities = new();
+    private readonly ConditionalWeakTable<ClientProxyRegistrationIdentity, LocalContractIdentity> _localContractIdentities = new();
     private readonly Lock _contractSiteGate = new();
     private readonly Dictionary<ContractSiteKey, WeakReference<ContractSite>> _contractSites = [];
     private readonly ContractBindingQuota _contractBindingQuota = new();
@@ -31,9 +40,14 @@ internal sealed partial class SharpLinkClient
     }
     internal ContractBindingDiagnosticSnapshot CaptureContractBindingDiagnostics()
     {
-        int sites; lock (_contractSiteGate) sites = _contractSites.Count;
+        int sites; var targets = 0;
+        lock (_contractSiteGate)
+        {
+            sites = _contractSites.Count;
+            foreach (var weak in _contractSites.Values) if (weak.TryGetTarget(out var site)) targets += site.PublishedTargetCount;
+        }
         return new(_contractBindingQuota.Bindings, _contractBindingQuota.Operations, 0, sites,
-            Volatile.Read(ref _prepareWaiters), CaptureBindingConnections().Sum(static c => c.Bindings.ReceivedUnpublishedAcks));
+            Volatile.Read(ref _prepareWaiters), CaptureBindingConnections().Sum(static c => c.Bindings.ReceivedUnpublishedAcks), targets);
     }
     internal ContractBindingQuota BindingQuota => _contractBindingQuota;
     internal TimeProvider BindingTimeProvider => _runtimeContext.TimeProvider;
@@ -70,7 +84,7 @@ internal sealed partial class SharpLinkClient
         if (registration.Module is not null) throw ContractBindingWire.Error(ContractBindStatus.DynamicUnsupported);
         var hash = FindOwningManifest(registration).RpcAssemblyHash;
         if (hash.IsEmpty) throw LocalContractError(SharpLinkErrorDetails.ContractBinding.InvalidLocalContract);
-        var identity = _localContractIdentities.GetValue(registration, _ =>
+        var identity = _localContractIdentities.GetValue(registration.Identity, _ =>
         {
             lock (_contractSiteGate)
             {
@@ -83,7 +97,12 @@ internal sealed partial class SharpLinkClient
     }
     public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
     {
-        ValidateContractOptions(options);
+        var captured = CaptureContractOptions(options);
+        ValidateContractMetadata(captured);
+        return CreateProxyCaptured<TContract>(captured);
+    }
+    internal RpcProxy<TContract> CreateProxyCaptured<TContract>(CapturedContractOptions options) where TContract : IService
+    {
         var local = GetLocalContract<TContract>();
         var channel = AcquireContractChannel(local, options);
         try
@@ -98,16 +117,19 @@ internal sealed partial class SharpLinkClient
     }
     public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
     {
-        var channel = AcquireContractChannel(local, options);
+        ArgumentNullException.ThrowIfNull(local);
+        var captured = CaptureContractOptions(options);
+        ValidateContractMetadata(captured);
+        var channel = AcquireContractChannel(local, captured);
         try { CompleteContractConstruction(channel.Site, success: true); return channel; }
         catch { CompleteContractConstruction(channel.Site, success: false); throw; }
     }
-    private ContractChannel AcquireContractChannel(RpcLocalContract local, RpcProxyOptions? options)
+    private ContractChannel AcquireContractChannel(RpcLocalContract local, CapturedContractOptions options)
     {
-        ArgumentNullException.ThrowIfNull(local); ValidateContractOptions(options); EnsureContractClientActive();
+        ArgumentNullException.ThrowIfNull(local); EnsureContractClientActive();
         if (local.Issuer != _localContractIssuer) throw LocalContractError(SharpLinkErrorDetails.ContractBinding.ForeignLocalContract);
         var registration = ResolveLocalContract(local);
-        var receipt = options?.Receipt; var requirement = options?.Requirement ?? RpcRegistrationRequirement.Compatible;
+        var receipt = options.Receipt; var requirement = options.Requirement;
         if (receipt is { } r && (r.ContractId != local.ContractId || r.RpcAssemblyHash != local.Hash))
             throw LocalContractError(SharpLinkErrorDetails.ContractBinding.InvalidLocalContract);
         var methodFacts = new Dictionary<long, RpcMethodDescriptor>(registration.Descriptor.Methods.Count);
@@ -126,10 +148,10 @@ internal sealed partial class SharpLinkClient
             {
                 if (_contractSites.Count >= 64) throw ContractBindingWire.Error(ContractBindStatus.Capacity);
                 site = new(this, local, key, registration, localMethods);
-                channel = new ContractChannel(site, options?.Metadata);
+                channel = new ContractChannel(site, options.Metadata);
                 _contractSites.Add(key, new(site));
             }
-            else channel = new ContractChannel(site, options?.Metadata);
+            else channel = new ContractChannel(site, options.Metadata);
             site.ConstructionReservations++;
         }
         return channel;
@@ -166,7 +188,7 @@ internal sealed partial class SharpLinkClient
     private ClientProxyRegistration ResolveLocalContract(RpcLocalContract local)
     {
         foreach (var registration in _assemblyRegistry.CaptureProxySnapshot().Values)
-            if (registration.Descriptor.ContractId == local.ContractId && _localContractIdentities.TryGetValue(registration, out var identity) &&
+            if (registration.Descriptor.ContractId == local.ContractId && _localContractIdentities.TryGetValue(registration.Identity, out var identity) &&
                 identity.Generation == local.Generation && registration.Module is null && identity.Hash == local.Hash)
                 return registration;
         throw LocalContractError(SharpLinkErrorDetails.ContractBinding.LocalContractUnavailable);
@@ -178,16 +200,25 @@ internal sealed partial class SharpLinkClient
         if (_shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
             throw CreateConnectionClosedException("Client is not accepting contract operations.");
     }
-    private void ValidateContractOptions(RpcProxyOptions? options)
+    internal readonly record struct CapturedContractOptions(SharpLinkMetadata? Metadata,
+        RpcRegistrationReceipt? Receipt, RpcRegistrationRequirement Requirement, int MetadataBytes);
+    internal static CapturedContractOptions CaptureContractOptions(RpcProxyOptions? options)
     {
-        if (options is null) return;
-        if (!Enum.IsDefined(options.Requirement)) throw new ArgumentOutOfRangeException(nameof(options));
-        if (options.Receipt is not { } receipt)
-        { if (options.Requirement != RpcRegistrationRequirement.Compatible) throw new ArgumentException("This requirement needs a receipt.", nameof(options)); }
-        else if (receipt.ServerInstanceId == Guid.Empty || receipt.RegistryEpoch == Guid.Empty || receipt.Generation < 0 ||
-            receipt.ContractId == 0 || receipt.RpcAssemblyHash.IsEmpty || receipt.RegistrationId <= 0)
+        var metadata = options?.Metadata; var receipt = options?.Receipt;
+        var requirement = options?.Requirement ?? RpcRegistrationRequirement.Compatible;
+        if (!Enum.IsDefined(requirement)) throw new ArgumentOutOfRangeException(nameof(options));
+        if (receipt is not { } value)
+        { if (requirement != RpcRegistrationRequirement.Compatible) throw new ArgumentException("This requirement needs a receipt.", nameof(options)); }
+        else if (value.ServerInstanceId == Guid.Empty || value.RegistryEpoch == Guid.Empty || value.Generation < 0 ||
+            value.ContractId == 0 || value.RpcAssemblyHash.IsEmpty || value.RegistrationId <= 0)
             throw new ArgumentException("Registration receipt structure is invalid.", nameof(options));
-        if (options.Metadata is { } metadata && ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata) > _protocolOptions.MaxMetadataBytes)
+        return new(metadata, receipt, requirement, metadata is null ? 0 : ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata));
+    }
+    internal int ContractMetadataLimit => _protocolOptions.MaxMetadataBytes;
+    internal void ValidateContractMetadata(CapturedContractOptions options) => ValidateContractMetadata(options, ContractMetadataLimit);
+    internal static void ValidateContractMetadata(CapturedContractOptions options, int limit)
+    {
+        if (options.MetadataBytes > limit)
             throw new ArgumentOutOfRangeException(nameof(options), "Metadata exceeds the configured limit.");
     }
     private void StopContractSitesLocked()
@@ -219,19 +250,26 @@ internal sealed partial class SharpLinkClient
         private readonly RpcLocalContract _local;
         internal ContractSiteKey Key { get; }
         internal ClientProxyRegistration Registration { get; }
+        private readonly ClientProxyRegistrationIdentity _registrationIdentity;
         private readonly FrozenDictionary<long, RpcMethodDescriptor> _localMethods;
         internal int ConstructionReservations;
         internal bool Committed;
         private readonly Lock _gate = new();
         private ContractTargetSnapshot _targets = ContractTargetSnapshot.Empty;
         private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private bool _running, _dirty;
+        private bool _running, _dirty, _stopped;
         private Exception? _refreshError;
         internal ContractSite(SharpLinkClient client, RpcLocalContract local, ContractSiteKey key, ClientProxyRegistration registration, FrozenDictionary<long, RpcMethodDescriptor> localMethods)
-        { _client = client; _local = local; Key = key; Registration = registration; _localMethods = localMethods; }
+        { _client = client; _local = local; Key = key; Registration = registration; _registrationIdentity = registration.Identity; _localMethods = localMethods; }
+        private void EnsureCapturedLocalAvailable()
+        {
+            _client.EnsureContractClientActive();
+            if (!_registrationIdentity.IsAvailable)
+                throw LocalContractError(SharpLinkErrorDetails.ContractBinding.LocalContractUnavailable);
+        }
         internal void Validate(RpcMethodDescriptor method, RpcMethodKind kind)
         {
-            _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local);
+            EnsureCapturedLocalAvailable();
             if (method.ContractId != Key.ContractId || !_localMethods.TryGetValue(method.MethodId, out var facts) || facts != method)
                 throw LocalContractError(SharpLinkErrorDetails.ContractBinding.InvalidLocalContract);
             if (method.Kind != kind || !ContractMethodFacts.IsStaticSlice(method))
@@ -239,14 +277,14 @@ internal sealed partial class SharpLinkClient
         }
         internal void Stop()
         {
-            lock (_gate) { _targets = ContractTargetSnapshot.Empty; _dirty = false; _changed.TrySetResult(); }
+            lock (_gate) { _stopped = true; _targets = ContractTargetSnapshot.Empty; _dirty = false; _changed.TrySetResult(); }
         }
         internal void ScheduleRefresh()
         {
             lock (_gate)
             {
                 _dirty = true;
-                if (_running || _client._shutdownCts.IsCancellationRequested) return;
+                if (_running || _stopped || _client._shutdownCts.IsCancellationRequested) return;
                 _running = true;
             }
             if (!_client.TryStartBindingWork(RefreshAsync, "ContractSiteRefresh"))
@@ -275,7 +313,7 @@ internal sealed partial class SharpLinkClient
                 var targets = new List<BoundContractTarget>(); Exception? error = null;
                 try
                 {
-                    _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local);
+                    EnsureCapturedLocalAvailable();
                     var connections = _client.CaptureBindingConnections();
                     if (connections.Length > 1024) throw ContractBindingWire.Error(ContractBindStatus.Capacity);
                     var pending = new List<(ClientConnection Connection, Task<BoundContractTarget> Bind)>(connections.Length);
@@ -289,37 +327,61 @@ internal sealed partial class SharpLinkClient
                         }
                         catch (Exception exception) { error ??= exception; }
                     }
-                    foreach (var item in pending)
+                    while (pending.Count != 0)
                     {
-                        try
+                        // Any confirmed Session is eligible immediately; a slow peer must not hide
+                        // another peer's real Ack. Drain all currently-complete results in one batch
+                        // and publish one coherent target/connection snapshot for the normal Picker.
+                        _ = await Task.WhenAny(pending.Select(static item => item.Bind)).ConfigureAwait(false);
+                        for (var index = pending.Count - 1; index >= 0; index--)
                         {
-                            var target = await item.Bind.ConfigureAwait(false);
-                            if (item.Connection.CanAcceptCalls) targets.Add(target);
+                            var item = pending[index];
+                            if (!item.Bind.IsCompleted) continue;
+                            pending.RemoveAt(index);
+                            try
+                            {
+                                var target = await item.Bind.ConfigureAwait(false);
+                                if (item.Connection.CanAcceptCalls) targets.Add(target);
+                            }
+                            catch (Exception exception) { error ??= exception; }
                         }
+                        try { PublishConfirmedTargets(targets, error); }
                         catch (Exception exception) { error ??= exception; }
                     }
                 }
                 catch (Exception exception) { error = exception; }
-                try { _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local); }
+                try { EnsureCapturedLocalAvailable(); }
                 catch (Exception exception) { targets.Clear(); error = exception; }
-                var nextTargets = new ContractTargetSnapshot([.. targets]);
-                var nextChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                TaskCompletionSource changed; bool again;
-                lock (_gate)
-                {
-                    _targets = nextTargets; _refreshError = error; changed = _changed;
-                    _changed = nextChanged;
-                    again = _dirty;
-                    if (!again) _running = false;
-                }
-                changed.TrySetResult();
+                var again = PublishConfirmedTargets(targets, error, finishing: true);
                 if (!again) return;
             }
         }
-        internal BoundContractTarget SelectFixedTarget()
+        private bool PublishConfirmedTargets(List<BoundContractTarget> targets, Exception? error, bool finishing = false)
         {
-            _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local);
-            var snapshot = Volatile.Read(ref _targets);
+            EnsureCapturedLocalAvailable();
+            var eligible = targets.Where(target => target.Connection.CanAcceptCalls &&
+                target.Connection.Bindings.IsConfirmed(Key, target.Token)).ToArray();
+            var cluster = _client._cluster?.CreateContractSnapshot(eligible);
+            var qualified = cluster is null ? eligible : cluster.Endpoints.SelectMany(static endpoint => endpoint.Targets).ToArray();
+            var nextTargets = new ContractTargetSnapshot(qualified, cluster);
+            var nextChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource changed; bool again;
+            lock (_gate)
+            {
+                if (_targets.HasSameRouting(nextTargets)) nextTargets = _targets;
+                _targets = _stopped ? ContractTargetSnapshot.Empty : nextTargets;
+                _refreshError = error; changed = _changed; _changed = nextChanged;
+                again = _dirty && !_stopped;
+                if (finishing && !again) _running = false;
+            }
+            changed.TrySetResult();
+            return again;
+        }
+        internal ContractTargetSnapshot CaptureTargetSnapshot()
+        { EnsureCapturedLocalAvailable(); return Volatile.Read(ref _targets); }
+        internal BoundContractTarget SelectFixedTarget(ContractTargetSnapshot snapshot)
+        {
+            EnsureCapturedLocalAvailable();
             var connection = EndpointSelectionKernel.SelectConnection(snapshot.Connections);
             if (connection is null) throw ContractBindingWire.Error(ContractBindStatus.NoBoundRoute);
             try
@@ -334,20 +396,11 @@ internal sealed partial class SharpLinkClient
             }
             catch { connection.ReleaseCallAdmissionReservation(); throw; }
         }
-        internal BoundContractTarget FindTarget(ClientConnection connection)
-        {
-            _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local);
-            var targets = Volatile.Read(ref _targets).Targets;
-            foreach (var target in targets)
-                if (ReferenceEquals(target.Connection, connection) && target.SessionGeneration == connection.BindingGeneration &&
-                    connection.Bindings.IsConfirmed(Key, target.Token) && _client.QualifyBindingConnection(Key, connection)) return target;
-            throw ContractBindingWire.Error(ContractBindStatus.NoBoundRoute);
-        }
         internal async ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
             if (timeout <= TimeSpan.Zero || timeout > SharpLinkTimer.MaximumDelay) throw new ArgumentOutOfRangeException(nameof(timeout));
             cancellationToken.ThrowIfCancellationRequested();
-            _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local);
+            EnsureCapturedLocalAvailable();
             var deadline = RpcDeadline.Create(timeout, _client._runtimeContext.TimeProvider);
             if (IsReady()) { VerifyReadyCompletion(deadline, cancellationToken); return; }
             if (Interlocked.Increment(ref _client._prepareWaiters) > 64)
@@ -358,7 +411,7 @@ internal sealed partial class SharpLinkClient
                 ScheduleRefresh();
                 while (true)
                 {
-                    _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local); cancellationToken.ThrowIfCancellationRequested();
+                    EnsureCapturedLocalAvailable(); cancellationToken.ThrowIfCancellationRequested();
                     var remaining = deadline.GetRemaining(_client._runtimeContext.TimeProvider);
                     if (remaining <= TimeSpan.Zero) throw CreateDeadlineExceededException();
                     Task changed; Exception? error;
@@ -381,9 +434,9 @@ internal sealed partial class SharpLinkClient
         {
             if (deadline.IsExpired(_client._runtimeContext.TimeProvider)) throw CreateDeadlineExceededException();
             cancellationToken.ThrowIfCancellationRequested();
-            _client.EnsureContractClientActive(); _client.ResolveLocalContract(_local);
+            EnsureCapturedLocalAvailable();
         }
-        internal bool HasReadyTarget => IsReady();
+        internal int PublishedTargetCount => Volatile.Read(ref _targets).Targets.Length;
         private bool IsReady()
         {
             foreach (var target in Volatile.Read(ref _targets).Targets)
