@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -23,7 +24,7 @@ public sealed class GeneratedOutputFailureCleanupTests
         var clock = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), clock);
         var observations = new EofPhaseObservations();
-        using var stream = new EofDeadlineStream(clock, deadline, lateCleanupFailure, observations);
+        var stream = new EofDeadlineStream(clock, deadline, lateCleanupFailure, observations);
         var returned = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
         var invocationThread = new Thread(() =>
         {
@@ -47,6 +48,7 @@ public sealed class GeneratedOutputFailureCleanupTests
         invocationThread.Start();
         var phase = "returned";
         string? failureSnapshot = null;
+        ExceptionDispatchInfo? oracleFailure = null;
         try
         {
             try
@@ -73,23 +75,13 @@ public sealed class GeneratedOutputFailureCleanupTests
             catch (Exception error)
             {
                 failureSnapshot = CaptureFailure(error);
-                throw;
+                oracleFailure = ExceptionDispatchInfo.Capture(error);
             }
             finally
             {
-                observations.Record("release");
-                stream.Release.Set();
-                phase = "cleanup-returned";
-                var logical = await returned.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                phase = "cleanup-logical";
-                try { await logical; }
-                catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
-                phase = "physical-join";
-                await stream.Tail.JoinAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-                observations.Record("physical-join-exited");
-                phase = "invocation-thread-join";
-                Ensure(invocationThread.Join(TimeSpan.FromSeconds(2)), "logical invocation thread must exit independently of disposal");
-                observations.Record("invocation-thread-joined");
+                phase = "cleanup";
+                await FinishEofAsync(returned.Task, stream.Tail, invocationThread,
+                    stream.Release.Set, stream.Dispose, observations.Record, oracleFailure);
             }
             phase = "physical-exit-owner";
             Ensure(stream.DisposeCount == 1 && SourceDisposed(stream.Token),
@@ -114,6 +106,125 @@ public sealed class GeneratedOutputFailureCleanupTests
                 $"logical={(returned.Task.IsCompletedSuccessfully ? returned.Task.Result.Status.ToString() : "not-returned")}; " +
                 $"disposeEntered={stream.DisposeEntered.Task.IsCompleted}; disposeCount={Volatile.Read(ref stream.DisposeCount)}; " +
                 $"deadlineExpired={deadline.IsExpired(clock)}; linkedCtsDisposed={(stream.Token.CanBeCanceled ? SourceDisposed(stream.Token).ToString() : "not-captured")}";
+    }
+
+    private static async Task FinishEofAsync(
+        Task<Task> returned, GeneratedOutputPhysicalTail tail, Thread invocationThread,
+        Action release, Action disposeGate, Action<string> record, ExceptionDispatchInfo? oracleFailure)
+    {
+        ExceptionDispatchInfo? cleanupFailure = null;
+        Task? logical = null;
+        var physicalJoined = false;
+        var threadJoined = false;
+        record("release");
+        try { release(); }
+        catch (Exception error) { RecordFailure("release", error); }
+        try { logical = await returned.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception error) { RecordFailure("cleanup-returned", error); }
+        if (logical is not null)
+        {
+            try { await logical; }
+            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
+            catch (Exception error) { RecordFailure("cleanup-logical", error); }
+        }
+        try
+        {
+            await tail.JoinAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            physicalJoined = true;
+            record("physical-join-exited");
+        }
+        catch (Exception error) { RecordFailure("physical-join", error); }
+        try
+        {
+            Ensure(invocationThread.Join(TimeSpan.FromSeconds(2)), "logical invocation thread must exit independently of disposal");
+            threadJoined = true;
+            record("invocation-thread-joined");
+        }
+        catch (Exception error) { RecordFailure("invocation-thread-join", error); }
+        // A failed bounded join is not physical exit. Keep its already released gate alive
+        // rather than disposing it underneath a still-running Wait/Set on the failure path.
+        if (physicalJoined && threadJoined)
+        {
+            try { disposeGate(); }
+            catch (Exception error) { RecordFailure("dispose-gate", error); }
+        }
+        else
+            record("gate-kept:physical-or-thread-not-joined");
+        oracleFailure?.Throw();
+        cleanupFailure?.Throw();
+
+        void RecordFailure(string phase, Exception error)
+        {
+            cleanupFailure ??= ExceptionDispatchInfo.Capture(error);
+            record($"cleanup-failure:{phase}:{error}");
+        }
+    }
+
+    [Test]
+    public async Task UnexpectedLogicalFaultMustJoinPhysicalTailAndPreserveOracleFailure()
+    {
+        var tail = new GeneratedOutputPhysicalTail();
+        var work = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellation = new EofCleanupCancellation();
+        tail.Add(work.Task);
+        tail.Seal(cancellation);
+        var release = new ManualResetEventSlim();
+        var gateDisposals = 0;
+        var invocationThread = new Thread(() =>
+        {
+            try
+            {
+                if (release.Wait(TimeSpan.FromSeconds(5))) work.TrySetResult();
+                else work.TrySetException(new TimeoutException("cleanup control gate was not released"));
+            }
+            catch (Exception error) { work.TrySetException(error); }
+        }) { IsBackground = true };
+        invocationThread.Start();
+        ExceptionDispatchInfo oracleFailure;
+        try { throw new InvalidOperationException("original EOF oracle failure"); }
+        catch (Exception error) { oracleFailure = ExceptionDispatchInfo.Capture(error); }
+        var originalStack = oracleFailure.SourceException.StackTrace!;
+        var logicalFailure = new InvalidOperationException("unexpected EOF logical failure");
+        var returned = Task.FromResult(Task.FromException(logicalFailure));
+        var events = new List<string>();
+        Exception? actual = null;
+        try
+        {
+            await FinishEofAsync(returned, tail, invocationThread, release.Set, () =>
+            {
+                Ensure(!invocationThread.IsAlive && tail.JoinAsync().IsCompleted && cancellation.DisposeCount == 1,
+                    "the gate can dispose only after the real thread, physical tail and original CTS exit");
+                release.Dispose();
+                gateDisposals++;
+            }, events.Add, oracleFailure);
+        }
+        catch (Exception error) { actual = error; }
+        finally
+        {
+            // A regression that skips joins must not dispose a still-in-flight Wait.
+            if (gateDisposals == 0) release.Set();
+            Console.WriteLine("EOF_CLEANUP_FAULT_V1 " + string.Join("; ", events));
+        }
+        Ensure(actual is not null && ReferenceEquals(actual, oracleFailure.SourceException) &&
+            actual.StackTrace!.StartsWith(originalStack, StringComparison.Ordinal),
+            "cleanup faults must not replace the first oracle exception or its original stack");
+        Ensure(events.Contains("physical-join-exited") && events.Contains("invocation-thread-joined") &&
+            events.Any(item => item.Contains("cleanup-failure:cleanup-logical:", StringComparison.Ordinal) &&
+                item.Contains(logicalFailure.Message, StringComparison.Ordinal)),
+            "the unexpected logical fault must be reported without skipping either real join");
+        Ensure(gateDisposals == 1 && cancellation.DisposeCount == 1,
+            "successful physical cleanup must release the original CTS and gate once");
+        await work.Task;
+    }
+
+    private sealed class EofCleanupCancellation : CancellationTokenSource
+    {
+        public int DisposeCount;
+        protected override void Dispose(bool disposing)
+        {
+            Interlocked.Increment(ref DisposeCount);
+            base.Dispose(disposing);
+        }
     }
 
     [Test]
