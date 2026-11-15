@@ -19,6 +19,7 @@ internal sealed partial class SharpLinkClient
     private readonly ContractBindingQuota _contractBindingQuota = new();
     private long _localContractGeneration, _bindingSessionGeneration;
     private int _prepareWaiters;
+    private readonly CancellationToken _contractShutdownToken;
     private sealed record LocalContractIdentity(long Generation, RpcHash128 Hash);
     internal long NextBindingSessionGeneration()
     {
@@ -351,9 +352,9 @@ internal sealed partial class SharpLinkClient
             if (IsReady()) { VerifyReadyCompletion(deadline, cancellationToken); return; }
             if (Interlocked.Increment(ref _client._prepareWaiters) > 64)
             { Interlocked.Decrement(ref _client._prepareWaiters); throw ContractBindingWire.Error(ContractBindStatus.Capacity); }
-            using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
             try
             {
+                using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._contractShutdownToken);
                 ScheduleRefresh();
                 while (true)
                 {
@@ -368,7 +369,9 @@ internal sealed partial class SharpLinkClient
                         if (!await SharpLinkTimer.WaitAsync(changed, deadline, _client._runtimeContext.TimeProvider, waitCancellation.Token).ConfigureAwait(false))
                             throw CreateDeadlineExceededException();
                     }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && _client._shutdownCts.IsCancellationRequested)
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    { cancellationToken.ThrowIfCancellationRequested(); throw; }
+                    catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
                     { throw CreateConnectionClosedException("Client is stopping."); }
                 }
             }

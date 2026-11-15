@@ -184,10 +184,24 @@ internal static partial class Program
             await peer.RequestAsync(3, tokens[0], EchoFacts.MethodId, ProtocolV2FrameFlags.HasReturn).ConfigureAwait(false);
             await ExpectErrorAsync(peer, SharpLinkErrorDetails.ContractBinding.UnknownBinding).ConfigureAwait(false);
             await peer.RequestAsync(4, replacement.Token, EchoFacts.MethodId, ProtocolV2FrameFlags.OneWay).ConfigureAwait(false);
-            _ = await ThrowsAsync<EndOfStreamException>(async () => { _ = await peer.ReadAsync().ConfigureAwait(false); }, "known-shape-conflict-closes-session").ConfigureAwait(false);
+            await ExpectClosedAsync(peer, "known-shape-conflict-closes-session").ConfigureAwait(false);
         }
         await UntilAsync(() => harness.Diagnostics.Bindings == 0 && harness.Diagnostics.Operations == 0 && harness.Diagnostics.ProtectedRequests == 0, "raw-table-and-operation-physical-return").ConfigureAwait(false);
         Check(ProbePayloadCodec.Deserializes == beforeDecode && ProbeService.Created == beforeActivation, "negative-wire-guards-before-codec-and-activation");
+    }
+    private static async Task ExpectClosedAsync(RawPeer peer, string name)
+    {
+        try
+        {
+            var frame = await peer.ReadAsync().ConfigureAwait(false);
+            if (frame.Header.Type == ProtocolV2FrameType.GoAway)
+            {
+                _ = await peer.ReadAsync().ConfigureAwait(false);
+            }
+        }
+        catch (IOException) { Check(true, name); return; }
+        catch (SocketException) { Check(true, name); return; }
+        throw new InvalidOperationException("ASSERT expected closed TCP Session: " + name);
     }
     private static async Task ExpectErrorAsync(RawPeer peer, ushort detail)
     {

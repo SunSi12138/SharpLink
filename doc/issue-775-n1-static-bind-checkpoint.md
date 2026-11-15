@@ -1,6 +1,6 @@
 # #775 N1 静态 Bind：非发布源码检查点
 
-本分支从 dev `0ff57325761683fbc30a8d3561ddb43f578d0e9f` 建立。合同为 [N0](issue-775-n0-contract.md)。这是静态 Unary / 无输入 OneWay 的风险检查点，不能作为产品 PR 合入 dev。
+本分支从 dev `0ff57325761683fbc30a8d3561ddb43f578d0e9f` 建立。冻结前已纳入 dev `3a57eb40814e29d1d944cafa553e0a15e387ba44` 的 #991 test-only 更新。合同为 [N0](issue-775-n0-contract.md)。这是静态 Unary / 无输入 OneWay 的风险检查点，不能作为产品 PR 合入 dev。
 
 ## 当前真实入口
 

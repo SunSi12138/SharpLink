@@ -406,6 +406,11 @@ internal sealed partial class SharpLinkServer
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
                     await connection.Session.SendRpcErrorWithBackpressureAsync(requestId, exception, connection.ConnectionToken).ConfigureAwait(false);
+                else
+                {
+                    Interlocked.Increment(ref _rejectedOneWayCalls);
+                    LogOnewayRpcDispatchFailed(_logger, exception);
+                }
                 return;
             }
             if (!TryAcceptRequest(connection, requestId))

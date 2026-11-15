@@ -61,6 +61,7 @@ internal sealed partial class SharpLinkClient :
     internal SharpLinkClient(ClientRuntimeComposition composition)
     {
         ArgumentNullException.ThrowIfNull(composition);
+        _contractShutdownToken = _shutdownCts.Token;
         _maximumReadinessWaitThreshold = composition.Readiness.MaximumWaitThreshold;
         _readinessFacts = new ClientReadinessFacts(
             composition.Readiness.InitialActiveEndpoints,
