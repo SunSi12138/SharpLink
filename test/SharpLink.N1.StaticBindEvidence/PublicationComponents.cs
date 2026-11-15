@@ -44,12 +44,23 @@ internal static partial class Program
         catch (Exception cleanup) { primary = primary is null ? cleanup : new AggregateException(primary, cleanup); }
         if (primary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primary).Throw();
         var coordinator = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout().AddCluster("n1", builder => builder.UseTcp("127.0.0.1", 1).UseProtocol(options => options.MaxMetadataBytes = 16)).Build();
-        var largeMetadata = new SharpLink.Sdk.SharpLinkMetadata(new System.Collections.Generic.KeyValuePair<string, string>("key", new string('x', 32)));
-        _ = Throws<ArgumentOutOfRangeException>(() => coordinator.CreateProxy<IProbe>(new() { Metadata = largeMetadata }), "coordinator-metadata-uses-captured-child-limit");
-        await coordinator.StopAsync().ConfigureAwait(false);
-        _ = Throws<ArgumentOutOfRangeException>(() => coordinator.CreateProxy<IProbe>(new() { Metadata = largeMetadata }), "coordinator-terminal-metadata-retains-weak-scalar-child-limit");
-        _ = Throws<ArgumentOutOfRangeException>(() => coordinator.CreateProxy<IProbe>(new() { Requirement = (RpcRegistrationRequirement)99 }), "coordinator-structure-before-terminal-enum");
-        _ = Throws<ArgumentException>(() => coordinator.CreateProxy<IProbe>(new() { Requirement = RpcRegistrationRequirement.ExactRegistration }), "coordinator-structure-before-terminal-receipt");
-        _ = Throws<InvalidOperationException>(() => coordinator.CreateProxy<IProbe>(), "coordinator-valid-options-retain-terminal-guard");
+        Exception? coordinatorPrimary = null;
+        try
+        {
+            var largeMetadata = new SharpLink.Sdk.SharpLinkMetadata(new System.Collections.Generic.KeyValuePair<string, string>("key", new string('x', 32)));
+            _ = Throws<ArgumentOutOfRangeException>(() => coordinator.CreateProxy<IProbe>(new() { Metadata = largeMetadata }), "coordinator-metadata-uses-captured-child-limit");
+            await coordinator.StopAsync().ConfigureAwait(false);
+            _ = Throws<ArgumentOutOfRangeException>(() => coordinator.CreateProxy<IProbe>(new() { Metadata = largeMetadata }), "coordinator-terminal-metadata-retains-weak-scalar-child-limit");
+            _ = Throws<ArgumentOutOfRangeException>(() => coordinator.CreateProxy<IProbe>(new() { Requirement = (RpcRegistrationRequirement)99 }), "coordinator-structure-before-terminal-enum");
+            _ = Throws<ArgumentException>(() => coordinator.CreateProxy<IProbe>(new() { Requirement = RpcRegistrationRequirement.ExactRegistration }), "coordinator-structure-before-terminal-receipt");
+            _ = Throws<InvalidOperationException>(() => coordinator.CreateProxy<IProbe>(), "coordinator-valid-options-retain-terminal-guard");
+        }
+        catch (Exception exception) { coordinatorPrimary = exception; }
+        finally
+        {
+            try { await coordinator.StopAsync().ConfigureAwait(false); }
+            catch (Exception cleanup) { coordinatorPrimary = coordinatorPrimary is null ? cleanup : new AggregateException(coordinatorPrimary, cleanup); }
+        }
+        if (coordinatorPrimary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(coordinatorPrimary).Throw();
     }
 }
