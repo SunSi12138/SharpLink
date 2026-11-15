@@ -1,6 +1,9 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO.Pipelines;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 
@@ -19,45 +22,98 @@ public sealed class GeneratedOutputFailureCleanupTests
             "generated-eof-deadline-disposal", input.Reader, output.Writer, RpcSessionTestFixture.ServerOptions());
         var clock = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), clock);
-        using var stream = new EofDeadlineStream(clock, lateCleanupFailure);
+        var observations = new EofPhaseObservations();
+        using var stream = new EofDeadlineStream(clock, deadline, lateCleanupFailure, observations);
         var returned = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
         var invocationThread = new Thread(() =>
         {
+            observations.Record("invocation-thread-entered");
             try
             {
                 using var context = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(session.Id, null, deadline, clock));
-                returned.TrySetResult(new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
-                    73, 0, stream, new IntCodec(), false, 101, 202, CancellationToken.None).AsTask());
+                observations.Record("context-installed");
+                var logical = new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
+                    73, 0, stream, new IntCodec(), false, 101, 202, CancellationToken.None).AsTask();
+                observations.Record("logical-valuetask-returned:" + logical.Status);
+                returned.TrySetResult(logical);
             }
-            catch (Exception error) { returned.TrySetException(error); }
+            catch (Exception error)
+            {
+                observations.Record("invocation-threw:" + error.GetType().Name);
+                returned.TrySetException(error);
+            }
         })
         { IsBackground = true };
         invocationThread.Start();
+        var phase = "returned";
+        string? failureSnapshot = null;
         try
         {
-            await stream.DisposeEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            var logical = await returned.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            Exception? terminal = null;
-            try { await logical.WaitAsync(TimeSpan.FromSeconds(2)); }
-            catch (Exception error) { terminal = error; }
-            Ensure(terminal is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-                "EOF-selected framework deadline must return before a synchronous disposal prefix exits");
-            Ensure(stream.DisposeCount == 1 && !stream.Tail.JoinAsync().IsCompleted && !SourceDisposed(stream.Token),
-                "unique cold disposal must retain the original CTS while its synchronous prefix is held");
+            try
+            {
+                // Logical completion must not depend on when the cold disposal worker starts.
+                observations.Record("observe-returned-start");
+                var logical = await returned.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                phase = "logical-deadline";
+                observations.Record("observe-logical-start:" + logical.Status);
+                Exception? terminal = null;
+                try { await logical.WaitAsync(TimeSpan.FromSeconds(2)); }
+                catch (Exception error) { terminal = error; }
+                observations.Record("logical-observed:" + (terminal as SharpLinkException)?.Code + ":" + logical.Status);
+                Ensure(terminal is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+                    "EOF-selected framework deadline must return before a synchronous disposal prefix exits");
+                phase = "dispose-entered";
+                observations.Record("observe-dispose-start");
+                await stream.DisposeEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                phase = "held-physical-owner";
+                Ensure(stream.DisposeCount == 1 && !stream.Tail.JoinAsync().IsCompleted && !SourceDisposed(stream.Token),
+                    "unique cold disposal must retain the original CTS while its synchronous prefix is held");
+                observations.Record("held-cts-live:dispose-count=1");
+            }
+            catch (Exception error)
+            {
+                failureSnapshot = CaptureFailure(error);
+                throw;
+            }
+            finally
+            {
+                observations.Record("release");
+                stream.Release.Set();
+                phase = "cleanup-returned";
+                var logical = await returned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                phase = "cleanup-logical";
+                try { await logical; }
+                catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
+                phase = "physical-join";
+                await stream.Tail.JoinAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                observations.Record("physical-join-exited");
+                phase = "invocation-thread-join";
+                Ensure(invocationThread.Join(TimeSpan.FromSeconds(2)), "logical invocation thread must exit independently of disposal");
+                observations.Record("invocation-thread-joined");
+            }
+            phase = "physical-exit-owner";
+            Ensure(stream.DisposeCount == 1 && SourceDisposed(stream.Token),
+                "late disposal success or fault must release the original CTS once, without replacing the deadline");
+            observations.Record("physical-exit-cts-disposed:dispose-count=1");
+            phase = "complete-pipes";
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+        catch (Exception error)
+        {
+            failureSnapshot ??= CaptureFailure(error);
+            throw;
         }
         finally
         {
-            stream.Release.Set();
-            var logical = await returned.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            try { await logical; }
-            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
-            await stream.Tail.JoinAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            Ensure(invocationThread.Join(TimeSpan.FromSeconds(2)), "logical invocation thread must exit independently of disposal");
+            Console.WriteLine($"EOF_DEADLINE_PHASES_V1 lateCleanupFailure={lateCleanupFailure}; failure={failureSnapshot ?? "none"}; {observations}");
         }
-        Ensure(stream.DisposeCount == 1 && SourceDisposed(stream.Token),
-            "late disposal success or fault must release the original CTS once, without replacing the deadline");
-        await output.Reader.CompleteAsync();
-        await input.Writer.CompleteAsync();
+
+        string CaptureFailure(Exception error)
+            => $"phase={phase}; error={error.GetType().Name}; returned={returned.Task.Status}; " +
+                $"logical={(returned.Task.IsCompletedSuccessfully ? returned.Task.Result.Status.ToString() : "not-returned")}; " +
+                $"disposeEntered={stream.DisposeEntered.Task.IsCompleted}; disposeCount={Volatile.Read(ref stream.DisposeCount)}; " +
+                $"deadlineExpired={deadline.IsExpired(clock)}; linkedCtsDisposed={(stream.Token.CanBeCanceled ? SourceDisposed(stream.Token).ToString() : "not-captured")}";
     }
 
     [Test]
@@ -98,7 +154,8 @@ public sealed class GeneratedOutputFailureCleanupTests
         return (bool)typeof(CancellationTokenSource).GetField("_disposed", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(source)!;
     }
 
-    private sealed class EofDeadlineStream(ManualTimeProvider clock, bool lateCleanupFailure)
+    private sealed class EofDeadlineStream(
+        ManualTimeProvider clock, RpcDeadline deadline, bool lateCleanupFailure, EofPhaseObservations observations)
         : IAsyncEnumerable<int>, IAsyncEnumerator<int>, IGeneratedOutputPhysicalLifetime, IDisposable
     {
         public GeneratedOutputPhysicalTail Tail { get; } = new();
@@ -108,12 +165,17 @@ public sealed class GeneratedOutputFailureCleanupTests
         public int DisposeCount;
         public int Current => throw new InvalidOperationException("EOF cannot read Current");
         public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-        { Token = cancellationToken; return this; }
+        { Token = cancellationToken; observations.Record("get-enumerator"); return this; }
         public ValueTask<bool> MoveNextAsync()
-        { clock.Advance(TimeSpan.FromSeconds(1)); return ValueTask.FromResult(false); }
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            observations.Record("move-next-eof:expired=" + deadline.IsExpired(clock));
+            return ValueTask.FromResult(false);
+        }
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref DisposeCount);
+            observations.Record("dispose-entered");
             DisposeEntered.TrySetResult();
             Ensure(Release.Wait(TimeSpan.FromSeconds(5)), "synchronous disposal release watchdog exhausted");
             if (lateCleanupFailure) throw new InvalidOperationException("late EOF disposal failure");
@@ -121,6 +183,19 @@ public sealed class GeneratedOutputFailureCleanupTests
         }
         public GeneratedOutputPhysicalTail GetPhysicalTail() => Tail;
         public void Dispose() => Release.Dispose();
+    }
+
+    private sealed class EofPhaseObservations
+    {
+        private readonly long _start = Stopwatch.GetTimestamp();
+        private readonly ConcurrentQueue<(string Phase, long Timestamp, int Thread)> _events = new();
+
+        public void Record(string phase)
+            => _events.Enqueue((phase, Stopwatch.GetTimestamp(), Environment.CurrentManagedThreadId));
+
+        public override string ToString()
+            => string.Join("; ", _events.Select(item =>
+                $"{item.Phase}@{Stopwatch.GetElapsedTime(_start, item.Timestamp).TotalMilliseconds:F3}ms/thread{item.Thread}"));
     }
 
     private sealed class FailureStream(string failureAt) : IAsyncEnumerable<int>, IAsyncEnumerator<int>
