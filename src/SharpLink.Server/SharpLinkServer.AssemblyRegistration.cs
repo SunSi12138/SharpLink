@@ -100,14 +100,21 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
-                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        Volatile.Write(ref _services, candidate.Services);
-                        _dynamicModules.Add(assembly, module);
-                        _registryGeneration++;
-                        ScheduleContractManifestPublish();
-                        published = true;
-                        return SharpLinkAssemblyRegistrationResult.Success();
+                        if (generation != _registryGeneration ||
+                            !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
+                        {
+                            retry = true;
+                        }
+                        else
+                        {
+                            _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            Volatile.Write(ref _services, candidate.Services);
+                            _dynamicModules.Add(assembly, module);
+                            _registryGeneration++;
+                            ScheduleContractManifestPublish();
+                            published = true;
+                            return SharpLinkAssemblyRegistrationResult.Success();
+                        }
                     }
                 }
                 if (retry)
@@ -283,20 +290,27 @@ internal sealed partial class SharpLinkServer
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
                         }
 
-                        drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                            TaskCreationOptions.RunContinuationsAsynchronously);
-                        drainOperation = drainCompletion.Task;
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
-                        _dynamicModules.Add(newAssembly, newModule);
-                        _detachedModuleServices.Add(oldModule, detachedServices);
-                        _unregisterOperations.Add(oldAssembly, drainOperation);
-                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        Volatile.Write(ref _services, candidate.Services);
-                        _registryGeneration++;
-                        ScheduleContractManifestPublish();
-                        oldModule.TryBeginDraining();
-                        published = true;
-                        break;
+                        if (generation != _registryGeneration ||
+                            !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
+                        {
+                            retry = true;
+                        }
+                        else
+                        {
+                            drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                                TaskCreationOptions.RunContinuationsAsynchronously);
+                            drainOperation = drainCompletion.Task;
+                            _dynamicModules.Add(newAssembly, newModule);
+                            _detachedModuleServices.Add(oldModule, detachedServices);
+                            _unregisterOperations.Add(oldAssembly, drainOperation);
+                            _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            Volatile.Write(ref _services, candidate.Services);
+                            _registryGeneration++;
+                            ScheduleContractManifestPublish();
+                            oldModule.TryBeginDraining();
+                            published = true;
+                            break;
+                        }
                     }
                 }
                 if (retry)

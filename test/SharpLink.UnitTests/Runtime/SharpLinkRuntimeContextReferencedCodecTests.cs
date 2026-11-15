@@ -127,7 +127,15 @@ public partial class SharpLinkRuntimeContextTests
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<string> Dependencies => [];
-        public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies { get; } =
-            referencedCodecDependencies;
+        internal Action? BeforeDependenciesRead;
+        public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies
+        {
+            get
+            {
+                Interlocked.Exchange(ref BeforeDependenciesRead, null)?.Invoke();
+                return referencedCodecDependencies;
+            }
+        }
+
     }
 }
