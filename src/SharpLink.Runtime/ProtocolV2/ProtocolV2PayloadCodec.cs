@@ -12,7 +12,7 @@ public static partial class ProtocolV2PayloadCodec
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) +
         sizeof(ulong) + sizeof(byte);
     private const int HandshakeResponseBytes =
-        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) + 32;
 
     /// <summary>Writes a bounded handshake request payload.</summary>
     public static void WriteHandshakeRequest(
@@ -120,6 +120,8 @@ public static partial class ProtocolV2PayloadCodec
         WriteInt32(writer, response.MaxFramePayloadBytes);
         WriteInt32(writer, response.StreamReceiveWindowBytes);
         WriteInt32(writer, response.ConnectionReceiveWindowBytes);
+        WriteGuid(writer, response.ServerInstanceId);
+        WriteGuid(writer, response.RegistryEpoch);
         if (response.CompressionProfile is null)
         {
             WriteByte(writer, 0);
@@ -146,11 +148,14 @@ public static partial class ProtocolV2PayloadCodec
             !reader.TryReadLittleEndian(out long capabilitiesBits) ||
             !reader.TryReadLittleEndian(out int maxFrame) ||
             !reader.TryReadLittleEndian(out int streamWindow) ||
-            !reader.TryReadLittleEndian(out int connectionWindow) ||
-            !reader.TryRead(out var profileLength))
+            !reader.TryReadLittleEndian(out int connectionWindow))
         {
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload is truncated.");
         }
+        var serverInstanceId = ReadGuid(ref reader);
+        var registryEpoch = ReadGuid(ref reader);
+        if (!reader.TryRead(out var profileLength))
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse compression length is truncated.");
         if (reader.Remaining != profileLength)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length does not match the frame.");
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
@@ -164,9 +169,25 @@ public static partial class ProtocolV2PayloadCodec
             maxFrame,
             streamWindow,
             connectionWindow,
+            serverInstanceId, registryEpoch,
             profile);
         ValidateInboundCompressionSelection(response);
         return response;
+    }
+
+    private static void WriteGuid(IBufferWriter<byte> writer, Guid value)
+    {
+        if (value == Guid.Empty) throw new ArgumentException("Server identity cannot be empty.");
+        value.TryWriteBytes(writer.GetSpan(16)); writer.Advance(16);
+    }
+    private static Guid ReadGuid(ref SequenceReader<byte> reader)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        if (!reader.TryCopyTo(bytes)) throw ProtocolV2FrameParser.Violation("Server identity is truncated.");
+        reader.Advance(16);
+        var value = new Guid(bytes);
+        if (value == Guid.Empty) throw ProtocolV2FrameParser.Violation("Server identity cannot be empty.");
+        return value;
     }
 
     private static void ValidateRecognizedCapabilities(

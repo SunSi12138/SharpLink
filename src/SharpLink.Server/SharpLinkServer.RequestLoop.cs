@@ -183,7 +183,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-                                            ResolveRawRequestClientStreamCount(payload));
+                                            0);
                                     }
                                     else
                                     {
@@ -268,6 +268,17 @@ internal sealed partial class SharpLinkServer
                                         appliedResponseCompressionGeneration,
                                         ct).ConfigureAwait(false);
                                     break;
+                                case ProtocolV2FrameType.BindContract:
+                                    await HandleBindContractAsync(connection, header.RequestId, payload, ct).ConfigureAwait(false);
+                                    break;
+                                case ProtocolV2FrameType.BindingRelease:
+                                    connection.Bindings.Release(ContractBindingWire.ReadRelease(payload));
+                                    break;
+                                case ProtocolV2FrameType.BindAck:
+                                case ProtocolV2FrameType.BindingInvalidated:
+                                case ProtocolV2FrameType.RequestAccepted:
+                                case ProtocolV2FrameType.OneWayInputRequest:
+                                    throw ContractBindingWire.Violation("Unexpected binding frame direction or N1 shape.");
                                 case ProtocolV2FrameType.Request:
                                     {
                                         var requestId = unchecked((long)header.RequestId);
@@ -387,8 +398,16 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        ServerBindingRequest? binding = null;
         try
         {
+            try { binding = connection.Bindings.Capture(requestId, payload, flags, _bindingQuota, _callAdmission, connection); }
+            catch (SharpLinkException exception) when (exception.Code != SharpLinkErrorCode.ProtocolViolation)
+            {
+                if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
+                    await connection.Session.SendRpcErrorWithBackpressureAsync(requestId, exception, connection.ConnectionToken).ConfigureAwait(false);
+                return;
+            }
             if (!TryAcceptRequest(connection, requestId))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
@@ -398,7 +417,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        binding.Method.ClientStreamCount);
                     return;
                 }
 
@@ -464,17 +483,17 @@ internal sealed partial class SharpLinkServer
             if (!dispatchTask.IsCompletedSuccessfully)
                 await dispatchTask.ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) { }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        { connection.Session.NotifyDisconnected(exception); }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed) { }
+        catch (SharpLinkException exception)
         {
+            if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
+                await connection.Session.SendRpcErrorWithBackpressureAsync(requestId, exception, connection.ConnectionToken).ConfigureAwait(false);
         }
-        catch (SharpLinkException exception) when (
-            exception.Code == SharpLinkErrorCode.ConnectionClosed)
-        {
-        }
-        catch (Exception ex)
-        {
-            LogRpcDispatchUnhandledException(_logger, ex);
-        }
+        catch (Exception ex) { LogRpcDispatchUnhandledException(_logger, ex); }
+        finally { binding?.ReleaseUntransferred(); }
     }
 
     private async Task AwaitDispatchAsync(ValueTask dispatchTask, long requestId)

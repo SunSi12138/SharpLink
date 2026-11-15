@@ -169,8 +169,11 @@ internal static class ProtocolV2Negotiator
 
     internal static ProtocolV2ServerNegotiation NegotiateServer(
         in ProtocolV2HandshakeRequest offer,
-        in ProtocolV2NegotiationPolicy serverPolicy)
+        in ProtocolV2NegotiationPolicy serverPolicy,
+        Guid serverInstanceId, Guid registryEpoch)
     {
+        if (serverInstanceId == Guid.Empty || registryEpoch == Guid.Empty)
+            throw new ArgumentException("A real server and registry identity are required.");
         ValidatePeerOffer(offer);
 
         var unsupportedRequired = offer.RequiredCapabilities & ~serverPolicy.SupportedCapabilities;
@@ -182,6 +185,8 @@ internal static class ProtocolV2Negotiator
         }
 
         var negotiatedCapabilities = offer.SupportedCapabilities & serverPolicy.SupportedCapabilities;
+        if ((negotiatedCapabilities & ProtocolV2Capabilities.ContractManifest) == 0)
+            throw Failure(SharpLinkErrorCode.Unimplemented, "Wire6 requires ContractManifest capability.");
         SharpLinkCompressionProviderBinding? compressionBinding = null;
         if ((negotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0)
         {
@@ -217,6 +222,7 @@ internal static class ProtocolV2Negotiator
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
+            serverInstanceId, registryEpoch,
             compressionBinding?.WireProfile);
         var options = new NegotiatedSessionOptions(
             minorVersion,
@@ -224,6 +230,7 @@ internal static class ProtocolV2Negotiator
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
+            serverInstanceId, registryEpoch,
             compressionBinding);
         return new ProtocolV2ServerNegotiation(response, options);
     }
@@ -253,6 +260,8 @@ internal static class ProtocolV2Negotiator
                 SharpLinkErrorCode.Unimplemented,
                 $"Server requires unsupported protocol minor version {response.MinorVersion}.");
         }
+        if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.ContractManifest) == 0)
+            throw Failure(SharpLinkErrorCode.ProtocolViolation, "Wire6 requires ContractManifest capability.");
         if ((response.NegotiatedCapabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server negotiated unknown capabilities.");
         if ((response.NegotiatedCapabilities & ~offer.SupportedCapabilities) != 0)
@@ -301,6 +310,7 @@ internal static class ProtocolV2Negotiator
             response.MaxFramePayloadBytes,
             response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes,
+            response.ServerInstanceId, response.RegistryEpoch,
             compressionBinding);
     }
 

@@ -262,6 +262,26 @@ internal sealed partial class SharpLinkClient
         }
     }
 
+    private BoundContractTarget GetReadyBoundTarget(ResolvedCallControl control, RpcMethodDescriptor method,
+        EndpointRetrySelectionState? retrySelection, AttemptOutcomeState? attemptOutcome)
+    {
+        if (control.Site is null) throw ContractBindingWire.Error(ContractBindStatus.UnsupportedShape);
+        if (!control.Site.HasReadyTarget) throw ContractBindingWire.Error(ContractBindStatus.NoBoundRoute);
+        if (_cluster is null)
+        {
+            if (attemptOutcome is not null && _fixedEndpoint is not null)
+            {
+                var candidate = new SharpLinkEndpointCandidate(_fixedEndpoint, ReadyConnectionCount, ActiveClientCallCount, generation: 0);
+                if (!attemptOutcome.TryAcquire(candidate))
+                    throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
+            }
+            return control.Site.SelectFixedTarget();
+        }
+        var connection = GetReadyConnection(method, retrySelection, attemptOutcome);
+        try { return control.Site.FindTarget(connection); }
+        catch { connection.ReleaseCallAdmissionReservation(); throw; }
+    }
+
     private bool RemoveReadyConnection(ClientConnection connection)
     {
         lock (_poolGate)

@@ -13,10 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    public const ushort MinorVersion = 6;
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    public const ushort MinimumCompatibleMinorVersion = 6;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -55,7 +55,19 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
     ResponseCompressionPreferenceAck = 15,
     /// <summary>Requests blue-green replacement of this healthy physical session.</summary>
-    SessionRefreshRequested = 16
+    SessionRefreshRequested = 16,
+    /// <summary>Requests a Session-scoped contract binding.</summary>
+    BindContract = 17,
+    /// <summary>Completes a binding operation.</summary>
+    BindAck = 18,
+    /// <summary>Retires complete binding tokens.</summary>
+    BindingInvalidated = 19,
+    /// <summary>Releases one complete binding token.</summary>
+    BindingRelease = 20,
+    /// <summary>Grants input producer start.</summary>
+    RequestAccepted = 21,
+    /// <summary>Starts a counted OneWay input request.</summary>
+    OneWayInputRequest = 22
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -156,6 +168,8 @@ public readonly record struct ProtocolV2HandshakeRequest(
 /// <param name="MaxFramePayloadBytes">The largest frame payload accepted on the connection.</param>
 /// <param name="StreamReceiveWindowBytes">The negotiated initial receive window for each stream.</param>
 /// <param name="ConnectionReceiveWindowBytes">The negotiated aggregate receive window for the connection.</param>
+/// <param name="ServerInstanceId">The server authority captured by this data Session.</param>
+/// <param name="RegistryEpoch">The registry lifetime captured by this data Session.</param>
 /// <param name="CompressionProfile">The selected compression profile, or <see langword="null"/> when compression is disabled.</param>
 public readonly record struct ProtocolV2HandshakeResponse(
     ushort MinorVersion,
@@ -163,6 +177,8 @@ public readonly record struct ProtocolV2HandshakeResponse(
     int MaxFramePayloadBytes,
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
+    Guid ServerInstanceId,
+    Guid RegistryEpoch,
     string? CompressionProfile = null);
 
 /// <summary>Updates the client preference governing future server response-compression decisions.</summary>

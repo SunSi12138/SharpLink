@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal static class ProtocolV2ContractManifestCodec
 {
-    private const int HeaderBytes = sizeof(long) + sizeof(int);
+    private const int HeaderBytes = sizeof(long) + sizeof(int) + 32;
     private const int EntryBytes = sizeof(long) + sizeof(ulong) + sizeof(ulong);
 
     internal static void Write(
@@ -20,6 +20,8 @@ internal static class ProtocolV2ContractManifestCodec
         var span = writer.GetSpan(payloadBytes);
         BinaryPrimitives.WriteInt64LittleEndian(span, manifest.Generation);
         BinaryPrimitives.WriteInt32LittleEndian(span[sizeof(long)..], manifest.OrderedContracts.Count);
+        manifest.ServerInstanceId.TryWriteBytes(span.Slice(12, 16));
+        manifest.RegistryEpoch.TryWriteBytes(span.Slice(28, 16));
         var offset = HeaderBytes;
         for (var index = 0; index < manifest.OrderedContracts.Count; index++)
         {
@@ -44,6 +46,12 @@ internal static class ProtocolV2ContractManifestCodec
             throw ProtocolV2FrameParser.Violation("ContractManifest payload is truncated.");
         }
 
+        Span<byte> identity = stackalloc byte[32];
+        if (!reader.TryCopyTo(identity)) throw ProtocolV2FrameParser.Violation("Manifest identity is truncated.");
+        reader.Advance(32);
+        var serverInstanceId = new Guid(identity[..16]);
+        var registryEpoch = new Guid(identity[16..]);
+        if (serverInstanceId == Guid.Empty || registryEpoch == Guid.Empty) throw ProtocolV2FrameParser.Violation("Manifest identity is empty.");
         var entries = new KeyValuePair<long, RpcHash128>[count];
         long previousContractId = 0;
         for (var index = 0; index < count; index++)
@@ -62,7 +70,7 @@ internal static class ProtocolV2ContractManifestCodec
             entries[index] = new KeyValuePair<long, RpcHash128>(contractId, hash);
             previousContractId = contractId;
         }
-        return new ProtocolV2ContractManifest(generation, entries);
+        return new ProtocolV2ContractManifest(serverInstanceId, registryEpoch, generation, entries);
     }
 
     internal static void ValidatePayloadShape(

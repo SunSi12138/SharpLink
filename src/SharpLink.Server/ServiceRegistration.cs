@@ -77,6 +77,43 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     private readonly Lock? _singletonGate;
     private readonly bool _hasModule;
     private int _disposed;
+    private readonly Lock _bindingMetadataGate = new();
+    private TaskCompletionSource? _bindingMetadataDrained;
+    private int _bindingMetadataReaders;
+    private bool _bindingMetadataClosed;
+
+    internal BindingMetadataRead AcquireBindingMetadataRead()
+    {
+        var read = new BindingMetadataRead(this);
+        lock (_bindingMetadataGate)
+        {
+            if (_bindingMetadataClosed) throw ContractBindingWire.Error(ContractBindStatus.Retired);
+            _bindingMetadataDrained ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _bindingMetadataReaders++;
+        }
+        return read;
+    }
+    internal sealed class BindingMetadataRead(ServiceRegistration registration) : IDisposable
+    {
+        private ServiceRegistration? _registration = registration;
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _registration, null);
+            if (owner is null) return;
+            TaskCompletionSource? drained = null;
+            lock (owner._bindingMetadataGate)
+                if (--owner._bindingMetadataReaders == 0 && owner._bindingMetadataClosed) drained = owner._bindingMetadataDrained;
+            drained?.TrySetResult();
+        }
+    }
+    private Task CloseBindingMetadata()
+    {
+        lock (_bindingMetadataGate)
+        {
+            _bindingMetadataClosed = true;
+            return _bindingMetadataReaders == 0 ? Task.CompletedTask : _bindingMetadataDrained!.Task;
+        }
+    }
 
     private ServiceRegistration(
         Type contractType,
@@ -106,6 +143,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         _singletonGate = lifetime == SharpLinkServiceLifetime.Singleton ? new Lock() : null;
     }
 
+    internal long BindingRegistrationId { get; set; }
     internal Type ContractType { get; }
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
@@ -322,6 +360,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await CloseBindingMetadata().ConfigureAwait(false);
         // Scoped registrations never own a singleton and never enter GetOrCreateSingleton.
         var singletonGate = _singletonGate;
         if (singletonGate is null)

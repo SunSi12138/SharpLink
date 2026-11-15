@@ -9,6 +9,7 @@ namespace SharpLink.Runtime;
 internal sealed class ProtocolV2ContractManifest
 {
     internal ProtocolV2ContractManifest(
+        Guid serverInstanceId, Guid registryEpoch,
         long generation,
         IEnumerable<KeyValuePair<long, RpcHash128>> contracts)
     {
@@ -29,11 +30,16 @@ internal sealed class ProtocolV2ContractManifest
                 throw new ArgumentException($"Contract manifest contains duplicate contract ID {pair.Key}.", nameof(contracts));
         }
 
+        if (serverInstanceId == Guid.Empty || registryEpoch == Guid.Empty)
+            throw new ArgumentException("Manifest identity must be nonempty.");
+        ServerInstanceId = serverInstanceId; RegistryEpoch = registryEpoch;
         Generation = generation;
         Contracts = dictionary.ToFrozenDictionary();
         OrderedContracts = ordered;
     }
 
+    internal Guid ServerInstanceId { get; }
+    internal Guid RegistryEpoch { get; }
     internal long Generation { get; }
 
     internal FrozenDictionary<long, RpcHash128> Contracts { get; }

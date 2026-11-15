@@ -24,7 +24,7 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
             var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
+                connection, requestId, payload, flags, admittedCallState?.Deadline ?? default);
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -83,7 +83,20 @@ internal sealed partial class SharpLinkServer
                 return responseSend;
             }
 
-            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);
+            try { ClaimBoundBusinessStart(request.Binding); }
+            catch (SharpLinkException rejection)
+            {
+                if (admittedCallState is null) throw;
+                try
+                {
+                    return PublishAdmissionError(session, requestId, admittedCallState, rejection, connection.ConnectionToken);
+                }
+                finally
+                {
+                    ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                }
+            }
+            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit, capturedPermit: request.Binding);
             if (admission != ServerCallAdmissionResult.Acquired || requestPermit is null)
             {
                 if (admittedCallState is not null)
@@ -107,6 +120,7 @@ internal sealed partial class SharpLinkServer
                 return session.SendRpcErrorWithBackpressureAsync(
                     requestId, rejection, connection.ConnectionToken);
             }
+            requestPermit.AttachBinding(request.Binding);
             var requestOwner = requestPermit;
 
             if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
@@ -174,7 +188,7 @@ internal sealed partial class SharpLinkServer
                         retainedAdmissionPayload?.Dispose();
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
-                            session, payload, flags, request.RpcDeadline);
+                            connection, requestId, payload, flags, request.RpcDeadline);
                     }
                     else
                     {

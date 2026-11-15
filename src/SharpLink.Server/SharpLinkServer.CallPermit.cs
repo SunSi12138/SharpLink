@@ -11,8 +11,9 @@ internal sealed partial class SharpLinkServer
     internal ServerCallAdmissionResult TryReserveCall(
         ServerConnectionState connection,
         bool mayDecode,
-        out ServerRequestPermit? permit)
-        => _callAdmission.TryReserveCall(connection, testHooks: null, mayDecode, out permit);
+        out ServerRequestPermit? permit,
+        ServerRequestPermit? capturedPermit = null)
+        => _callAdmission.TryReserveCall(connection, testHooks: null, mayDecode, out permit, capturedPermit);
 
     internal ServerCallAdmissionResult TryReserveCall(
         ServerConnectionState connection,

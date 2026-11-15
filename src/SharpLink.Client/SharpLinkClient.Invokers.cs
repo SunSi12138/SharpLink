@@ -2,8 +2,8 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
+    internal ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
+        ContractSite site, RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
@@ -12,10 +12,11 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        site.Validate(method, RpcMethodKind.Unary);
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: true, interceptors);
+            method, metadata, includeClientDefault: true, interceptors) with { Site = site };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -35,8 +36,8 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
-        RpcMethodDescriptor method,
+    internal ValueTask InvokeOneWayAsync<TRequest, TStreams>(
+        ContractSite site, RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
         in TStreams streams,
@@ -45,10 +46,11 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
+        site.Validate(method, RpcMethodKind.OneWay);
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors);
+            method, metadata, includeClientDefault: false, interceptors) with { Site = site };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -372,13 +374,15 @@ internal sealed partial class SharpLinkClient
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
         ClientConnection? connection = null;
+        BoundContractTarget? boundTarget = null;
         var reservationOwned = false;
         try
         {
             // Connection selection is the first step that can block, so the pre-registration
             // checkpoint below is the first place a fresh sample carries new information. A sample
             // here would only repeat the stage-local validation the call control already did.
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            boundTarget = GetReadyBoundTarget(control, method, retrySelection: null, outcome);
+            connection = boundTarget.Connection;
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             var operation = connection.PendingCalls.Rent(
@@ -393,7 +397,7 @@ internal sealed partial class SharpLinkClient
             reservationOwned = false;
             return StartUnaryCall(
                 connection,
-                method.ContractId,
+                unchecked((long)boundTarget!.Token),
                 method.MethodId,
                 requestId,
                 method.HasResponsePayload,
@@ -537,11 +541,13 @@ internal sealed partial class SharpLinkClient
             SharpLinkTelemetry.RecordClientAttempt();
 
         ClientConnection? connection = null;
+        BoundContractTarget? boundTarget = null;
         var reservationOwned = false;
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            boundTarget = GetReadyBoundTarget(control, method, retrySelection: null, outcome);
+            connection = boundTarget.Connection;
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -613,7 +619,7 @@ internal sealed partial class SharpLinkClient
             {
                 var emission = SendRpcCall(
                     connection.Session,
-                    method.ContractId,
+                    unchecked((long)boundTarget!.Token),
                     method.MethodId,
                     requestId,
                     flags,
@@ -667,11 +673,13 @@ internal sealed partial class SharpLinkClient
             SharpLinkTelemetry.RecordClientAttempt();
 
         ClientConnection? connection = null;
+        BoundContractTarget? boundTarget = null;
         var reservationOwned = false;
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            boundTarget = GetReadyBoundTarget(control, method, retrySelection: null, outcome);
+            connection = boundTarget.Connection;
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -760,13 +768,15 @@ internal sealed partial class SharpLinkClient
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
         ClientConnection? connection = null;
+        BoundContractTarget? boundTarget = null;
         var reservationOwned = false;
         long requestId;
         RpcRequestOperation<TResponse> operation;
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            boundTarget = GetReadyBoundTarget(control, method, retrySelection: null, outcome);
+            connection = boundTarget.Connection;
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             operation = connection.PendingCalls.Rent(
@@ -977,12 +987,14 @@ internal sealed partial class SharpLinkClient
         IPendingCallCompletionObserver? completionObserver = terminalSignal;
         completionObserver ??= outcome;
         ClientConnection? connection = null;
+        BoundContractTarget? boundTarget = null;
         var reservationOwned = false;
         var requestId = 0L;
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            boundTarget = GetReadyBoundTarget(control, method, retrySelection: null, outcome);
+            connection = boundTarget.Connection;
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             requestId = connection.PendingCalls.RegisterStream(

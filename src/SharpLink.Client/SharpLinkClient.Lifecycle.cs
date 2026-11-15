@@ -325,45 +325,6 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public T Get<T>() where T : IService
-    {
-        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
-        {
-            ValidateRemoteContractAssembly(registration);
-            var existing = Volatile.Read(ref registration.Proxy);
-            if (existing is not null)
-                return (T)existing;
-
-            var channel = registration.Module is null
-                ? (IRpcChannel)this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            var created = registration.Descriptor.ProxyFactory(channel, registration.Codecs);
-            var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
-            return (T)(published ?? created);
-        }
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
-    }
-
-    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-    {
-        ArgumentNullException.ThrowIfNull(metadata);
-        if (metadata.Count == 0)
-            return Get<T>();
-
-        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
-        {
-            ValidateRemoteContractAssembly(registration);
-            IRpcChannel channel = registration.Module is null
-                ? this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            channel = new SharpLinkMetadataRpcChannel(channel, metadata);
-            return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
-        }
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
-    }
-
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null
@@ -581,6 +542,17 @@ internal sealed partial class SharpLinkClient
                             case ProtocolV2FrameType.HealthResponse:
                                 DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                                 break;
+                            case ProtocolV2FrameType.BindAck:
+                                connection.Bindings.ReceiveAck(header.RequestId, ContractBindingWire.ReadAck(payload));
+                                break;
+                            case ProtocolV2FrameType.BindingInvalidated:
+                                connection.Bindings.Invalidate(ContractBindingWire.ReadInvalidated(payload));
+                                break;
+                            case ProtocolV2FrameType.BindContract:
+                            case ProtocolV2FrameType.BindingRelease:
+                            case ProtocolV2FrameType.RequestAccepted:
+                            case ProtocolV2FrameType.OneWayInputRequest:
+                                throw ContractBindingWire.Violation("Unexpected binding frame direction or N1 shape.");
                             case ProtocolV2FrameType.ContractManifest:
                                 PublishRemoteContractManifest(
                                     session,

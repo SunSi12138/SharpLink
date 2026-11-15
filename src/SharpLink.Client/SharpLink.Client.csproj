@@ -5,6 +5,7 @@
     </ItemGroup>
     <ItemGroup>
       <InternalsVisibleTo Include="SharpLink.UnitTests" />
+      <InternalsVisibleTo Include="SharpLink.N1.StaticBindEvidence" />
       <InternalsVisibleTo Include="SharpLink.IntegrationTests" />
     </ItemGroup>
 </Project>

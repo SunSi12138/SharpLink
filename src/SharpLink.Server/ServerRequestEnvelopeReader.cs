@@ -36,7 +36,10 @@ internal static class ServerRequestEnvelopeReader
                 }
             }
         }
-        return Read(session, decodedPayload, flags, maxMetadataBytes, timeProvider, original.RpcDeadline);
+        var decoded = Read(session, decodedPayload, flags, maxMetadataBytes, timeProvider, original.RpcDeadline);
+        if (decoded.BindingToken != original.BindingToken || decoded.MethodHash != original.MethodHash)
+            throw ContractBindingWire.Violation("Decoded request changed its bound routing identity.");
+        return decoded with { Binding = original.Binding };
     }
 
     internal static ServerRequestEnvelope Read(
@@ -49,7 +52,7 @@ internal static class ServerRequestEnvelopeReader
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long interfaceHash) ||
+        if (!reader.TryReadLittleEndian(out long bindingTokenBits) ||
             !reader.TryReadLittleEndian(out long methodHash))
         {
             throw new SharpLinkProtocolViolationException(
@@ -99,7 +102,7 @@ internal static class ServerRequestEnvelopeReader
         }
 
         return new ServerRequestEnvelope(
-            interfaceHash,
+            unchecked((ulong)bindingTokenBits),
             methodHash,
             reader.UnreadSequence,
             deadline,
@@ -108,8 +111,13 @@ internal static class ServerRequestEnvelopeReader
 }
 
 internal readonly record struct ServerRequestEnvelope(
-    long InterfaceHash,
+    ulong BindingToken,
     long MethodHash,
     ReadOnlySequence<byte> Arguments,
     RpcDeadline RpcDeadline,
-    SharpLinkMetadata? Metadata);
+    SharpLinkMetadata? Metadata)
+{
+    internal ServerBindingRequest Binding { get; init; } = null!;
+    internal long InterfaceHash => Binding.Method.ContractId;
+    internal RpcMethodDescriptor Method => Binding.Method;
+}

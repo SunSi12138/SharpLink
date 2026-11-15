@@ -2,6 +2,8 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
+    internal Guid BindingServerInstanceId => Volatile.Read(ref _protocolState).Options?.ServerInstanceId ?? throw new InvalidOperationException("Handshake has not completed.");
+    internal Guid BindingRegistryEpoch => Volatile.Read(ref _protocolState).Options?.RegistryEpoch ?? throw new InvalidOperationException("Handshake has not completed.");
     internal bool TryCompleteHandshake(NegotiatedSessionOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

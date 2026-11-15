@@ -115,7 +115,8 @@ internal sealed class ServerCallAdmission
         ServerConnectionState connection,
         ServerRequestPermitTestHooks? testHooks,
         bool mayDecode,
-        out ServerRequestPermit? permit)
+        out ServerRequestPermit? permit,
+        ServerRequestPermit? capturedPermit = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         var admission = TryAcquireCall(connection);
@@ -127,7 +128,9 @@ internal sealed class ServerCallAdmission
 
         try
         {
-            permit = new ServerRequestPermit(this, connection, testHooks, mayDecode);
+            if (capturedPermit is not null)
+            { capturedPermit.AttachBackingCapacity(this, connection, mayDecode); permit = capturedPermit; }
+            else permit = new ServerRequestPermit(this, connection, testHooks, mayDecode);
             return ServerCallAdmissionResult.Acquired;
         }
         catch
@@ -177,10 +180,11 @@ internal sealed class ServerCallAdmission
 
 /// <summary>
 /// Unique owner for one accepted request's call capacity and optional decode resources.
-/// A Reserved permit already owns local/global call capacity; activation is only a lifecycle phase
-/// transition, preserving the existing drain-safe accounting until the two-phase lifecycle changes.
+/// Ordinary construction owns local/global call capacity. A bound request is constructed earlier
+/// with physical protection only, and receives the same backing capacity after admission. The
+/// request is still one object and one release authority across queue, decode and physical cleanup.
 /// </summary>
-internal sealed class ServerRequestPermit : IDisposable
+internal class ServerRequestPermit : IDisposable
 {
     private const int Reserved = 0;
     private const int Activating = 1;
@@ -194,12 +198,27 @@ internal sealed class ServerRequestPermit : IDisposable
     private readonly Lock? _resourceGate;
     private ServerDecodePermit? _decodePermit;
     private int _state = Reserved;
+    private int _capacityOwned;
+    internal void AttachBackingCapacity(ServerCallAdmission admission, ServerConnectionState connection, bool mayDecode)
+    {
+        if (!ReferenceEquals(_admission, admission) || !ReferenceEquals(_connection, connection) || (_resourceGate is not null) != mayDecode)
+            throw new InvalidOperationException("The physical request permit belongs to a different admission, Session, or decode shape.");
+        if (Volatile.Read(ref _state) != Reserved || Interlocked.CompareExchange(ref _capacityOwned, 1, 0) != 0)
+            throw new InvalidOperationException("The captured request cannot accept call capacity twice or after release.");
+    }
+    internal void AttachBinding(ServerBindingRequest binding)
+    {
+        if (!ReferenceEquals(this, binding)) throw new InvalidOperationException("Binding protection must be the original request permit.");
+        binding.TransferToPermit();
+    }
+    protected virtual void ReleaseBindingProtection() { }
 
     internal ServerRequestPermit(
         ServerCallAdmission admission,
         ServerConnectionState connection,
         ServerRequestPermitTestHooks? testHooks,
-        bool mayDecode = true)
+        bool mayDecode = true,
+        bool capacityOwned = true)
     {
         // The wire compression flag fixes resource capability before publication. A
         // plain request cannot later attach decode resources or upgrade this mode.
@@ -207,9 +226,10 @@ internal sealed class ServerRequestPermit : IDisposable
         _admission = admission ?? throw new ArgumentNullException(nameof(admission));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _testHooks = testHooks;
+        _capacityOwned = capacityOwned ? 1 : 0;
     }
 
-    internal bool IsReserved => Volatile.Read(ref _state) == Reserved;
+    internal bool IsReserved => Volatile.Read(ref _state) == Reserved && Volatile.Read(ref _capacityOwned) != 0;
 
     internal bool IsActive => Volatile.Read(ref _state) == Active;
 
@@ -325,6 +345,7 @@ internal sealed class ServerRequestPermit : IDisposable
 
     internal void Activate()
     {
+        if (Volatile.Read(ref _capacityOwned) == 0) throw new InvalidOperationException("A protected queued request owns no business call capacity.");
         if (_resourceGate is null)
         {
             var previous = Interlocked.CompareExchange(ref _state, Active, Reserved);
@@ -425,12 +446,13 @@ internal sealed class ServerRequestPermit : IDisposable
             }
             finally
             {
-                _admission.ReleaseCall(_connection);
+                if (Interlocked.Exchange(ref _capacityOwned, 0) != 0) _admission.ReleaseCall(_connection);
             }
         }
         finally
         {
-            Volatile.Write(ref _state, Disposed);
+            try { ReleaseBindingProtection(); }
+            finally { Volatile.Write(ref _state, Disposed); }
         }
     }
 }

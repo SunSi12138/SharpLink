@@ -94,7 +94,7 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <remarks>
     /// A missing contract waits for manifest propagation; an advertised different hash fails closed
     /// immediately. This is a point-in-time observation, not a lease: reconnect, replacement or
-    /// unregister can change availability before a subsequent synchronous Get. Manifest generations
+    /// unregister can change availability before subsequent contract preparation. Manifest generations
     /// are ordered within each connection, never across connections. The wait does not acquire a
     /// proxy or retain a contract Type/Assembly and does not retry RPC payloads. Cancellation affects
     /// only this wait. Custom implementations must override this member to support the barrier.
@@ -440,10 +440,14 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
 
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
-    TContract Get<TContract>() where TContract : IService;
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService;
 
-    /// <summary>Creates a generated proxy that attaches one immutable metadata snapshot to every invocation.</summary>
-    /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
-    /// <param name="metadata">Envelope metadata attached without adding a business-contract parameter.</param>
-    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+    /// <summary>Gets the client-owned runtime context.</summary>
+    IRpcRuntimeContext RuntimeContext { get; }
+    /// <summary>Captures an exact registered local contract.</summary>
+    RpcLocalContract GetLocalContract<TContract>() where TContract : IService;
+    /// <summary>Captures an exact contract owned by the same registered Assembly object.</summary>
+    RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId);
+    /// <summary>Creates the canonical site for an exact local contract.</summary>
+    IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null);
 }

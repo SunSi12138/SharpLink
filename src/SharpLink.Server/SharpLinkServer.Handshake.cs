@@ -50,7 +50,7 @@ internal sealed partial class SharpLinkServer
                         {
                             negotiation = ProtocolV2Negotiator.NegotiateServer(
                                 request,
-                                negotiationPolicy);
+                                negotiationPolicy, _desiredSessionServerInstanceId, _bindingRegistryEpoch);
                             authResult = await _authentication.AuthenticateAsync(
                                 new SharpLinkAuthenticationRequest(
                                     session.Id,

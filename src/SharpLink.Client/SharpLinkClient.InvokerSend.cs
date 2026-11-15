@@ -4,7 +4,7 @@ internal sealed partial class SharpLinkClient
 {
     private ValueTask SendRpcCall<TRequest>(
         RpcSession session,
-        long contractId,
+        long bindingId,
         long methodId,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -50,7 +50,7 @@ internal sealed partial class SharpLinkClient
             {
                 var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
                 var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
+                BinaryPrimitives.WriteInt64LittleEndian(span, bindingId);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
                 if (deadline.HasValue)
                     BinaryPrimitives.WriteInt64LittleEndian(

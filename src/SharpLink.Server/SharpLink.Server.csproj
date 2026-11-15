@@ -11,6 +11,7 @@
     <ItemGroup>
       <InternalsVisibleTo Include="SharpLink.Hosting" />
       <InternalsVisibleTo Include="SharpLink.UnitTests" />
+      <InternalsVisibleTo Include="SharpLink.N1.StaticBindEvidence" />
       <InternalsVisibleTo Include="SharpLink.Benchmarks" />
       <InternalsVisibleTo Include="SharpLink.ChaosTests" />
     </ItemGroup>

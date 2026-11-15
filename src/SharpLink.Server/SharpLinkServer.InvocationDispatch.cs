@@ -21,7 +21,7 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
             var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
+                connection, requestId, payload, flags, admittedCallState?.Deadline ?? default);
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -41,25 +41,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
-            }
+            var serviceInfo = request.Binding.Service;
             if (!serviceInfo.AcceptsCalls)
             {
                 ValueTask responseSend;
@@ -90,8 +72,9 @@ internal sealed partial class SharpLinkServer
                     serviceInfo.ModuleCancellation,
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
+                request.Binding.RegisterWaiting(admittedCallState);
                 ownsAdmissionProgramUse = false;
-                var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+                var descriptor = request.Method;
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
@@ -180,7 +163,20 @@ internal sealed partial class SharpLinkServer
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
             }
 
-            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);
+            try { ClaimBoundBusinessStart(request.Binding); }
+            catch (SharpLinkException rejection)
+            {
+                if (admittedCallState is null) throw;
+                try
+                {
+                    return PublishAdmissionError(session, requestId, admittedCallState, rejection, connection.ConnectionToken);
+                }
+                finally
+                {
+                    ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                }
+            }
+            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit, capturedPermit: request.Binding);
             if (admission != ServerCallAdmissionResult.Acquired || requestPermit is null)
             {
                 if (admittedCallState is not null)
@@ -204,6 +200,7 @@ internal sealed partial class SharpLinkServer
                 return session.SendRpcErrorWithBackpressureAsync(
                     requestId, rejection, connection.ConnectionToken);
             }
+            requestPermit.AttachBinding(request.Binding);
             var requestOwner = requestPermit;
 
             if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
@@ -271,7 +268,7 @@ internal sealed partial class SharpLinkServer
                         retainedAdmissionPayload?.Dispose();
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
-                            session, payload, flags, request.RpcDeadline);
+                            connection, requestId, payload, flags, request.RpcDeadline);
                     }
                     else
                     {
@@ -368,7 +365,7 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
         IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -422,7 +419,7 @@ internal sealed partial class SharpLinkServer
                         callContext,
                         session,
                         stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -455,7 +452,7 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
         IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -528,7 +525,7 @@ internal sealed partial class SharpLinkServer
                         callContext,
                         session,
                         stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);

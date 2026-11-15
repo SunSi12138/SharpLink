@@ -235,10 +235,12 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         ClientConnection? connection = null;
+        BoundContractTarget? boundTarget = null;
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, selection, outcome);
+            boundTarget = GetReadyBoundTarget(control, method, selection, outcome);
+            connection = boundTarget.Connection;
             try
             {
                 EnsureLogicalCallProgress(control);
@@ -271,7 +273,7 @@ internal sealed partial class SharpLinkClient
 
             return StartUnaryCall(
                 connection,
-                contractId,
+                unchecked((long)boundTarget!.Token),
                 methodId,
                 requestId,
                 hasResponsePayload,

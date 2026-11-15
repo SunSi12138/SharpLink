@@ -43,6 +43,8 @@ internal sealed class ClientConnection :
         long endpointGeneration = 0)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        BindingGeneration = client.NextBindingSessionGeneration();
+        Bindings = new(client, this);
         Session = session ?? throw new ArgumentNullException(nameof(session));
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
         ArgumentNullException.ThrowIfNull(runtimeContext);
@@ -58,6 +60,8 @@ internal sealed class ClientConnection :
         EndpointGeneration = endpointGeneration;
     }
 
+    internal long BindingGeneration { get; }
+    internal ClientBindingSession Bindings { get; }
     public RpcSession Session { get; }
     public PendingRequestTable PendingCalls { get; }
     public string? EndpointId { get; }
@@ -308,6 +312,7 @@ internal sealed class ClientConnection :
     {
         ArgumentNullException.ThrowIfNull(exception);
         ObserveFatalFailureForAdmission();
+        Bindings.Close(exception);
         var previousState = Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed);
         if (previousState == (int)ClientConnectionState.Closed)
             return;
@@ -620,6 +625,7 @@ internal sealed class ClientConnection :
         catch (Exception exception) { (failures ??= []).Add(exception); }
         try { await Session.DisposeAsync().ConfigureAwait(false); }
         catch (Exception exception) { (failures ??= []).Add(exception); }
+        finally { Bindings.CompletePhysicalClose(); }
         ThrowCleanupFailures(failures);
     }
 

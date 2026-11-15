@@ -131,6 +131,12 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
         (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
+        (byte)ProtocolV2FrameType.BindContract => ProtocolV2FrameType.BindContract,
+        (byte)ProtocolV2FrameType.BindAck => ProtocolV2FrameType.BindAck,
+        (byte)ProtocolV2FrameType.BindingInvalidated => ProtocolV2FrameType.BindingInvalidated,
+        (byte)ProtocolV2FrameType.BindingRelease => ProtocolV2FrameType.BindingRelease,
+        (byte)ProtocolV2FrameType.RequestAccepted => ProtocolV2FrameType.RequestAccepted,
+        (byte)ProtocolV2FrameType.OneWayInputRequest => ProtocolV2FrameType.OneWayInputRequest,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -155,7 +161,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.ContractManifest or
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
             ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-            ProtocolV2FrameType.SessionRefreshRequested;
+            ProtocolV2FrameType.SessionRefreshRequested or
+            ProtocolV2FrameType.BindingInvalidated or ProtocolV2FrameType.BindingRelease;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -225,7 +232,7 @@ public static class ProtocolV2FrameParser
                     ProtocolV2PayloadCodec.ValidateErrorPayload(payload, limits.MaxErrorMessageBytes);
                 else
                 {
-                    if (payload.Length < 23 || payload.Length > 87)
+                    if (payload.Length < 55 || payload.Length > 119)
                         throw Violation("HandshakeResponse payload has an invalid length.");
                 }
                 break;
@@ -304,6 +311,15 @@ public static class ProtocolV2FrameParser
             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                 _ = ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload);
                 break;
+            case ProtocolV2FrameType.BindContract: _ = ContractBindingWire.ReadRequest(payload); break;
+            case ProtocolV2FrameType.BindAck: _ = ContractBindingWire.ReadAck(payload); break;
+            case ProtocolV2FrameType.BindingRelease: _ = ContractBindingWire.ReadRelease(payload); break;
+            case ProtocolV2FrameType.BindingInvalidated: _ = ContractBindingWire.ReadInvalidated(payload); break;
+            case ProtocolV2FrameType.RequestAccepted:
+                if (!payload.IsEmpty) throw Violation("RequestAccepted must be empty.");
+                break;
+            case ProtocolV2FrameType.OneWayInputRequest:
+                throw Violation("OneWay input is not implemented in the non-release N1 slice.");
             case ProtocolV2FrameType.SessionRefreshRequested:
                 _ = ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload);
                 break;

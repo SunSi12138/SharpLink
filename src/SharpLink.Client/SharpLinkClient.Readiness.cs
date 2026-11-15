@@ -64,6 +64,7 @@ internal sealed partial class SharpLinkClient
         }
         changed?.TrySetResult();
         PulseRemoteContractWaiters();
+        ScheduleContractSiteRefresh();
     }
 
     private async ValueTask<SharpLinkClientReadinessSnapshot> WaitForReadinessCoreAsync(

@@ -25,8 +25,6 @@ public interface IRpcGeneratedServerBridge
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
-        bool payloadNullable,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken);
 }

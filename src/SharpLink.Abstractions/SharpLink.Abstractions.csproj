@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <InternalsVisibleTo Include="SharpLink.Runtime" />
+    <InternalsVisibleTo Include="SharpLink.Client" />
+    <InternalsVisibleTo Include="SharpLink.Server" />
   </ItemGroup>
 </Project>

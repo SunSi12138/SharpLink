@@ -9,8 +9,12 @@ internal sealed class NegotiatedSessionOptions
         int maxFramePayloadBytes,
         int streamReceiveWindowBytes,
         int connectionReceiveWindowBytes,
+        Guid serverInstanceId, Guid registryEpoch,
         SharpLinkCompressionProviderBinding? compressionBinding = null)
     {
+        if (serverInstanceId == Guid.Empty || registryEpoch == Guid.Empty)
+            throw new ArgumentException("Negotiated server identity must be nonempty.");
+        ServerInstanceId = serverInstanceId; RegistryEpoch = registryEpoch;
         ProtocolMinorVersion = protocolMinorVersion;
         Capabilities = capabilities;
         MaxFramePayloadBytes = maxFramePayloadBytes;
@@ -19,6 +23,8 @@ internal sealed class NegotiatedSessionOptions
         CompressionBinding = compressionBinding;
     }
 
+    internal Guid ServerInstanceId { get; }
+    internal Guid RegistryEpoch { get; }
     internal ushort ProtocolMinorVersion { get; }
 
     internal ProtocolV2Capabilities Capabilities { get; }
@@ -75,7 +81,10 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ContractManifest or
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-                    ProtocolV2FrameType.SessionRefreshRequested,
+                    ProtocolV2FrameType.SessionRefreshRequested or
+                    ProtocolV2FrameType.BindContract or ProtocolV2FrameType.BindAck or
+                    ProtocolV2FrameType.BindingRelease or ProtocolV2FrameType.BindingInvalidated or
+                    ProtocolV2FrameType.RequestAccepted or ProtocolV2FrameType.OneWayInputRequest,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

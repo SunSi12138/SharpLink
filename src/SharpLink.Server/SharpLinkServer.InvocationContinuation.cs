@@ -98,7 +98,7 @@ internal sealed partial class SharpLinkServer
 
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
-            serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+            request.Method.SupportsCancellation;
         callState ??= CreateTrackedCallState(
             connection,
             requestId,
@@ -122,13 +122,13 @@ internal sealed partial class SharpLinkServer
         if (!hasReturnPayload)
         {
             var callContext = CreateCallContext(
-                connection, serviceInfo.Stub, request.MethodHash, requestId,
+                connection, request.Method, requestId,
                 request.RpcDeadline, request.Metadata, invokeToken);
             try
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(
-                    serviceInfo, connection, session, request.MethodHash, requestId,
+                    serviceInfo, connection, session, request.Method, requestId,
                     request.Arguments, output: null, invokeToken, callContext);
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
@@ -144,7 +144,7 @@ internal sealed partial class SharpLinkServer
                         connection,
                         callContext,
                         serviceInfo.Stub,
-                        request.MethodHash,
+                        request.Method,
                         invokeToken,
                         requestOwner);
                 }
@@ -212,7 +212,7 @@ internal sealed partial class SharpLinkServer
                             callContext,
                             session,
                             serviceInfo.Stub,
-                            request.MethodHash,
+                            request.Method,
                             requestId,
                             invokeToken),
                         connection.ConnectionToken);
@@ -237,13 +237,13 @@ internal sealed partial class SharpLinkServer
         var token = writer.BeginPacket(
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
-            connection, serviceInfo.Stub, request.MethodHash, requestId,
+            connection, request.Method, requestId,
             request.RpcDeadline, request.Metadata, invokeToken);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);
             var invokeTask = InvokeServiceAsync(
-                serviceInfo, connection, session, request.MethodHash, requestId,
+                serviceInfo, connection, session, request.Method, requestId,
                 request.Arguments, writer, invokeToken, responseCallContext);
             if (!invokeTask.IsCompletedSuccessfully)
             {
@@ -261,7 +261,7 @@ internal sealed partial class SharpLinkServer
                     connection,
                     responseCallContext,
                     serviceInfo.Stub,
-                    request.MethodHash,
+                    request.Method,
                     invokeToken,
                     requestOwner);
             }
@@ -356,7 +356,7 @@ internal sealed partial class SharpLinkServer
                         responseCallContext,
                         session,
                         serviceInfo.Stub,
-                        request.MethodHash,
+                        request.Method,
                         requestId,
                         invokeToken),
                     connection.ConnectionToken);

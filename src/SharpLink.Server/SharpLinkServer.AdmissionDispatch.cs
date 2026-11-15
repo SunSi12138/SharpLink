@@ -22,17 +22,8 @@ internal sealed partial class SharpLinkServer
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
-            {
-                if (admittedCallState is not null)
-                {
-                    DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
-                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
-                    return ValueTask.CompletedTask;
-                }
-                return TerminateUnresolvableOneWayRequest(session, requestId);
-            }
+                connection, requestId, payload, flags, admittedCallState?.Deadline ?? default);
+            var serviceInfo = request.Binding.Service;
 
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
             // client streams still needs a receive route so the peer can finish sending and recover
@@ -40,16 +31,7 @@ internal sealed partial class SharpLinkServer
             // be resolved on the immediate path, terminate the connection rather than guess a stream
             // count; an admission-resume path already owns the exact reserved stream count and can
             // safely drain those routes instead.
-            if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor))
-            {
-                if (admittedCallState is not null)
-                {
-                    DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
-                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
-                    return ValueTask.CompletedTask;
-                }
-                return TerminateUnresolvableOneWayRequest(session, requestId);
-            }
+            var descriptor = request.Method;
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 DrainRejectedOneWayStreams(
@@ -85,6 +67,7 @@ internal sealed partial class SharpLinkServer
                     serviceInfo.ModuleCancellation,
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
+                request.Binding.RegisterWaiting(admittedCallState);
                 ownsAdmissionProgramUse = false;
                 var admissionController = admissionProgram.Controller;
                 ValueTask<AdmissionDecision> admissionTask;
@@ -155,7 +138,22 @@ internal sealed partial class SharpLinkServer
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
             }
 
-            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);
+            try { ClaimBoundBusinessStart(request.Binding); }
+            catch (SharpLinkException rejection)
+            {
+                if (admittedCallState is null) throw;
+                try
+                {
+                    LogOnewayRpcDispatchFailed(_logger, admittedCallState.Reason == ServerCallCancellationReason.None
+                        ? rejection : MapServerCancellationException(admittedCallState, request.RpcDeadline));
+                    return ValueTask.CompletedTask;
+                }
+                finally
+                {
+                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
+                }
+            }
+            var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit, capturedPermit: request.Binding);
             if (admission != ServerCallAdmissionResult.Acquired || requestPermit is null)
             {
                 DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
@@ -171,6 +169,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return ValueTask.CompletedTask;
             }
+            requestPermit.AttachBinding(request.Binding);
             var requestOwner = requestPermit;
 
             IRpcByteBufferWriter? decodedRequestOwner = null;
@@ -224,7 +223,7 @@ internal sealed partial class SharpLinkServer
                         retainedAdmissionPayload?.Dispose();
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
-                            session, payload, flags, request.RpcDeadline);
+                            connection, requestId, payload, flags, request.RpcDeadline);
                     }
                     else
                     {
@@ -332,7 +331,7 @@ internal sealed partial class SharpLinkServer
 
             var supportsCooperativeCancellation =
                 (isCancellable || serviceInfo.Module is not null) &&
-                serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+                request.Method.SupportsCancellation;
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,
@@ -354,7 +353,7 @@ internal sealed partial class SharpLinkServer
                 : serverLoopToken;
 
             var callContext = CreateCallContext(
-                connection, serviceInfo.Stub, request.MethodHash, requestId,
+                connection, request.Method, requestId,
                 request.RpcDeadline, request.Metadata, invokeToken);
             try
             {
@@ -373,7 +372,7 @@ internal sealed partial class SharpLinkServer
                     serviceInfo,
                     connection,
                     session,
-                    request.MethodHash,
+                    request.Method,
                     requestId,
                     request.Arguments,
                     output: null,
@@ -409,7 +408,7 @@ internal sealed partial class SharpLinkServer
                     callContext,
                     session,
                     serviceInfo.Stub,
-                    request.MethodHash,
+                    request.Method,
                     descriptor.ClientStreamCount,
                     invokeToken,
                     requestOwner));
@@ -420,7 +419,7 @@ internal sealed partial class SharpLinkServer
                 if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                        ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
+                        ex, callContext, session, serviceInfo.Stub, request.Method, requestId, invokeToken));
                 }
                 ReleaseOneWayDispatchResources(
                     callState,

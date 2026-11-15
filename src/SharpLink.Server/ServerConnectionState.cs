@@ -60,6 +60,7 @@ internal sealed class ServerConnectionState
 #endif
     }
 
+    internal ServerBindingSession Bindings { get; } = new();
     internal RpcSession Session { get; }
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
@@ -327,6 +328,7 @@ internal sealed class ServerConnectionState
 
     internal ValueTask CloseAsync()
     {
+        Bindings.Close();
         if (Interlocked.Exchange(ref _closeStarted, 1) != 0)
             return new ValueTask(_sessionCompleted.Task);
 

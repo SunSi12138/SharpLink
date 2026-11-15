@@ -28,6 +28,7 @@ public readonly record struct RpcMethodDescriptor
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
     private const byte HasMethodTimeoutValueFlag = 1 << 5;
+    private const byte SupportsCancellationFlag = 1 << 6;
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>
@@ -125,6 +126,13 @@ public readonly record struct RpcMethodDescriptor
     {
         get => (_flags & ResponseNullableFlag) != 0;
         init => _flags = SetFlag(_flags, ResponseNullableFlag, value);
+    }
+
+    /// <summary>Gets whether the method consumes cancellation or stream lifetime cancellation.</summary>
+    public bool SupportsCancellation
+    {
+        get => (_flags & SupportsCancellationFlag) != 0;
+        init => _flags = SetFlag(_flags, SupportsCancellationFlag, value);
     }
 
     private readonly byte _flags;
@@ -265,10 +273,13 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
 }
 
 /// <summary>Client channel consumed by generated proxies.</summary>
-public interface IRpcChannel
+public interface IRpcContractChannel
 {
-    /// <summary>Gets the runtime context owned by this channel.</summary>
+    /// <summary>Gets the runtime context used by this contract site.</summary>
     IRpcRuntimeContext RuntimeContext { get; }
+
+    /// <summary>Waits for a confirmed target using one finite readiness budget.</summary>
+    ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 
     /// <summary>Invokes a unary RPC.</summary>
     ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
