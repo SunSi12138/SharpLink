@@ -190,6 +190,9 @@ internal sealed class FrameworkTaskSupervisor
         return DrainCoreAsync(signal);
     }
 
+    internal NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot> CaptureSnapshotNonBlocking()
+        => NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot>.Capture(_gate, CaptureSnapshot);
+
     internal FrameworkTaskSupervisorSnapshot CaptureSnapshot()
     {
         lock (_gate)

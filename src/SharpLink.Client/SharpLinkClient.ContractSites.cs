@@ -449,6 +449,8 @@ internal sealed partial class SharpLinkClient
             cancellationToken.ThrowIfCancellationRequested();
             EnsureCapturedLocalAvailable();
         }
+        internal ContractBindingSiteSample CaptureTraceNonBlocking()
+            => new(Key.LocalGeneration, Key.ContractId, NonBlockingDiagnostic<ContractBindingSiteTrace>.Capture(_gate, CaptureTrace));
         internal ContractBindingSiteTrace CaptureTrace()
         {
             lock (_gate) return new(Key.LocalGeneration, Key.ContractId, _registrationIdentity.IsAvailable, Committed,

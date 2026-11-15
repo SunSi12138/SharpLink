@@ -28,6 +28,14 @@ internal static partial class Program
         catch (TException exception) { Check(true, name); return exception; }
         throw new InvalidOperationException("ASSERT expected " + typeof(TException).Name + ": " + name);
     }
+    private static int? ReceivedUnpublishedAcksNonBlocking(ISharpLinkClient client)
+    {
+        var sessions = ((SharpLinkClient)client).CaptureContractBindingTrace().ReadySessions.Value;
+        if (sessions is null || sessions.Any(static session => session.Snapshot.Value is null)) return null;
+        return sessions.Sum(static session => session.Snapshot.Value!.Operations.Count(static operation => !operation.Published && operation.AckStatus.HasValue));
+    }
+    private static string BindingObservation(ISharpLinkClient client)
+        => System.Text.Json.JsonSerializer.Serialize(((SharpLinkClient)client).CaptureContractBindingTrace());
     private static async Task UntilAsync(Func<bool> condition, string name, Func<string>? observe = null)
     {
         var start = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -170,9 +178,9 @@ internal static partial class Program
         try
         {
             await gate.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
-            await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ReceivedUnpublishedAcks == 1, "one-real-ack-still-before-publication-return", () => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ToString()).ConfigureAwait(false);
+            await UntilAsync(() => ReceivedUnpublishedAcksNonBlocking(client) == 1, "one-real-ack-still-before-publication-return", () => BindingObservation(client)).ConfigureAwait(false);
             await prepare.GuardedWaitAsync(Guard).ConfigureAwait(false);
-            Check(((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 1, "partial-pool-prepare-does-not-wait-for-other-bind");
+            Check(((SharpLinkClient)client).BindingQuota.Operations == 1, "partial-pool-prepare-does-not-wait-for-other-bind");
             blocked = proxy.Service.EchoAsync(new() { Value = 101 }, default).AsTask();
             await ProbeService.BlockEntered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
             Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "partial-pool-normal-picker-uses-confirmed-session");
@@ -185,8 +193,8 @@ internal static partial class Program
         }
         finally { gate.Release(); ProbeService.BlockRelease.TrySetResult(); }
         if (blocked is not null) Check(await blocked.GuardedWaitAsync(Guard).ConfigureAwait(false) == 108, "partial-pool-active-call-completes");
-        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics() is { Operations: 0, PublishedTargets: 2 },
-            "held-peer-bind-eventually-publishes-complete-pair", () => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ToString()).ConfigureAwait(false);
+        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingTrace().Ledger is { Operations: 0, PublishedTargets: 2 },
+            "held-peer-bind-eventually-publishes-complete-pair", () => BindingObservation(client)).ConfigureAwait(false);
         Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "both-pool-targets-usable-after-publication");
     }
     private static async Task CancelWaiterAsync(Harness harness)
@@ -201,7 +209,7 @@ internal static partial class Program
             await harness.ServerGate!.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
             cancellation.Cancel();
             _ = await ThrowsAsync<OperationCanceledException>(() => first, "prepare-cancel-is-waiter-local").ConfigureAwait(false);
-            Check(!second.IsCompleted && ((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 1, "shared-bind-remains-live");
+            Check(!second.IsCompleted && ((SharpLinkClient)client).BindingQuota.Operations == 1, "shared-bind-remains-live");
         }
         finally { harness.ServerGate!.Release(); }
         await second.GuardedWaitAsync(Guard).ConfigureAwait(false);
@@ -278,12 +286,12 @@ internal static partial class Program
         try
         {
             var rejected = await ThrowsAsync<SharpLinkException>(() => channels[0].PrepareAsync(TimeSpan.FromSeconds(5)).AsTask(), "65th-prepare-waiter-refused").ConfigureAwait(false);
-            Check(rejected.DetailCode == 60104 && ((SharpLinkClient)client).CaptureContractBindingDiagnostics().PrepareWaiters == 64, "waiter-hard-bound-and-reservation");
+            Check(rejected.DetailCode == 60104 && ((SharpLinkClient)client).CaptureContractBindingTrace().Ledger.PrepareWaiters == 64, "waiter-hard-bound-and-reservation");
         }
         finally { cancel.Cancel(); }
         foreach (var waiter in waiters) _ = await ThrowsAsync<OperationCanceledException>(() => waiter, "bounded-waiter-cancel-return").ConfigureAwait(false);
         await client.StopAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
-        var snapshot = ((SharpLinkClient)client).CaptureContractBindingDiagnostics();
+        var snapshot = ((SharpLinkClient)client).CaptureContractBindingTrace().Ledger;
         Check(snapshot.PrepareWaiters == 0 && snapshot.DemandSites == 0 && snapshot.Bindings == 0 && snapshot.Operations == 0, "stopped-client-demand-waiter-quota-zero");
         GC.KeepAlive(channels);
     }
@@ -349,7 +357,7 @@ internal static partial class Program
         var error = await ThrowsAsync<SharpLinkException>(() => preparation.GuardedWaitAsync(TimeSpan.FromSeconds(13)), "bind-original-ten-second-timeout").ConfigureAwait(false);
         Check(error.Code == SharpLinkErrorCode.DeadlineExceeded, "bind-timeout-cause");
         harness.ServerGate.Release();
-        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 0, "timed-out-operation-physical-return").ConfigureAwait(false);
+        await UntilAsync(() => ((SharpLinkClient)client).BindingQuota.Operations == 0, "timed-out-operation-physical-return").ConfigureAwait(false);
     }
 
     private sealed class Harness : IAsyncDisposable
@@ -418,10 +426,10 @@ internal static partial class Program
                 FailureDiagnostics.Write(phase, new
                 {
                     clients = _clients.Select(static client => ((SharpLinkClient)client).CaptureContractBindingTrace()).ToArray(),
-                    serverLedger = Diagnostics, serverTasks = ((SharpLinkServer)_server).FrameworkTaskSnapshotForDiagnostics,
-                    extraServers = _extraServers.Select(static server => new { ledger = ((SharpLinkServer)server).CaptureContractBindingDiagnostics(), tasks = ((SharpLinkServer)server).FrameworkTaskSnapshotForDiagnostics }).ToArray(),
-                    frameGates = Gates.Distinct().Select(static gate => new { held = gate.HeldSessionId, entered = gate.Entered.Task.Status, flushes = gate.CaptureFlushes(), frames = FailureDiagnostics.CaptureFrames(gate) }).ToArray(),
-                    frameworkFaults = _diagnostics.Capture()
+                    serverLedger = Diagnostics, serverTasks = ((SharpLinkServer)_server).FrameworkTasksNonBlockingForDiagnostics,
+                    extraServers = _extraServers.Select(static server => new { ledger = ((SharpLinkServer)server).CaptureContractBindingDiagnostics(), tasks = ((SharpLinkServer)server).FrameworkTasksNonBlockingForDiagnostics }).ToArray(),
+                    frameGates = Gates.Distinct().Select(static gate => gate.CaptureFailureNonBlocking()).ToArray(),
+                    frameworkFaults = _diagnostics.CaptureNonBlocking()
                 });
             }
             catch (Exception diagnosticFailure)

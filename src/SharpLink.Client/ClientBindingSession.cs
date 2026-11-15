@@ -127,7 +127,11 @@ internal sealed class ClientBindingSession
             operation.Publication.TrySetResult();
             lock (_gate)
             {
-                if (failure is not null && _client.BindingTraceEnabled) _firstFailedOperation ??= CaptureOperation(operation);
+                if (failure is not null && _client.BindingTraceEnabled)
+                {
+                    try { _firstFailedOperation ??= CaptureOperation(operation); }
+                    catch { _client.RecordBindingDiagnosticFailure(); }
+                }
                 _operations.Remove(operation.Key);
                 if (!adopted) { _reservations--; _client.BindingQuota.ReturnBinding(); }
             }
@@ -234,26 +238,29 @@ internal sealed class ClientBindingSession
 
     internal void Close(Exception exception)
     {
-        ContractBindingSessionTrace? trace = null;
         lock (_gate)
         {
             if (_closed) return; _closed = true;
-            if (_client.BindingTraceEnabled) trace = CaptureTrace(exception); // Capture actual pre-cancellation phases before their waiters resume.
             foreach (var operation in _operations.Values) operation.Ack.TrySetException(exception);
-            // Confirmed entries are detached only after the actual Session drain in DisposeAsync.
+            // Original waiter publication precedes every best-effort diagnostic.
         }
-        if (trace is not null) _client.RecordBindingClosure(trace);
+        if (!_client.BindingTraceEnabled) return;
+        try { _client.RecordBindingClosure(CaptureTraceNonBlocking(exception)); }
+        catch { _client.RecordBindingDiagnosticFailure(); }
     }
     private ContractBindingOperationTrace CaptureOperation(BindOperation operation)
         => new(operation.Id, operation.Key.ContractId, operation.Phase, operation.PreviousPublication.Status,
             operation.Send?.Status, operation.Published, operation.Ack.Task.Status,
             operation.Ack.Task.IsCompletedSuccessfully ? (int)operation.Ack.Task.Result.Status : null,
-            operation.Result.Task.Status, operation.Deadline.GetRemaining(_client.BindingTimeProvider).Ticks,
+            operation.Result.Task.Status, operation.Deadline.Timestamp,
             operation.FailureType, operation.FailureCode, operation.FailureDetail);
-    internal ContractBindingSessionTrace CaptureTrace(Exception? closeReason = null)
+    internal ContractBindingSessionSample CaptureTraceNonBlocking(Exception? closeReason = null)
+        => new(_connection.Session.Id, _connection.BindingGeneration,
+            NonBlockingDiagnostic<ContractBindingSessionTrace>.Capture(_gate, () => CaptureTrace(closeReason)));
+    private ContractBindingSessionTrace CaptureTrace(Exception? closeReason = null)
     {
         lock (_gate) return new(_connection.Session.Id, _connection.BindingGeneration, _connection.Session.ProtocolPhase,
-            _connection.Session.CaptureSupportSnapshot(), _connection.Session.HasPendingSendPumpIdleWait,
+            _connection.Session.QueuedSendBytes, _connection.Session.HasPendingSendPumpIdleWait,
             _connection.Session.IsConnected, _connection.CanAcceptCalls, _closed, _lastIssued, _reservations, _maintenanceOperations,
             _publicationTail.Status, _operations.Values.Select(CaptureOperation).ToArray(),
             _confirmed.OfType<CompletedBinding>().Select(static completed => completed.Ack.Token).ToArray(), _firstFailedOperation,

@@ -21,6 +21,7 @@ internal sealed class FailureDiagnosticLoggerFactory : ILoggerFactory
     public ILogger CreateLogger(string categoryName) => new DiagnosticLogger(this, categoryName);
     public void AddProvider(ILoggerProvider provider) => throw new NotSupportedException();
     public void Dispose() { }
+    internal NonBlockingDiagnostic<object> CaptureNonBlocking() => NonBlockingDiagnostic<object>.Capture(_gate, Capture);
     internal object Capture()
     {
         lock (_gate) return new { total = _sequence, retained = _records.OrderBy(static record => record.Sequence).ToArray(),
@@ -64,5 +65,5 @@ internal static class FailureDiagnostics
                 : frame.Header.Type == ProtocolV2FrameType.Request && frame.Payload.Length >= 16
                     ? BinaryPrimitives.ReadUInt64LittleEndian(frame.Payload) : null)).ToArray();
     internal static void Write(string phase, object snapshot)
-        => Console.Error.WriteLine("N1_FAILURE_SNAPSHOT " + JsonSerializer.Serialize(new { phase, observedUtc = DateTimeOffset.UtcNow, snapshot }));
+        => Console.Error.WriteLine("N1_FAILURE_SNAPSHOT " + JsonSerializer.Serialize(new { phase, observedUtc = DateTimeOffset.UtcNow, observedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp(), timestampFrequency = System.Diagnostics.Stopwatch.Frequency, snapshot }));
 }

@@ -87,6 +87,7 @@ internal static partial class Program
         {
             if (args.Length == 1 && args[0] == "components") Components();
             else if (args.Length == 1 && args[0] == "selection-components") SelectionComponents();
+            else if (args.Length == 1 && args[0] == "contention-components") await ContentionComponentsAsync().ConfigureAwait(false);
             else if (args.Length == 1 && args[0] == "cluster-stop-components") await ClusterStopComponentsAsync().ConfigureAwait(false);
             else if (args.Length == 1 && args[0] == "diagnostic-components") await DiagnosticComponentsAsync().ConfigureAwait(false);
             else if (args.Length == 1 && args[0] == "publication-components") await PublicationComponentsAsync().ConfigureAwait(false);

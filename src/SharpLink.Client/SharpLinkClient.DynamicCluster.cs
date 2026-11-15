@@ -70,6 +70,9 @@ internal sealed partial class SharpLinkClient
         public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
             => _current.UpdateEndpointSelector(selector);
 
+        public NonBlockingDiagnostic<ClientConnection[]> CaptureReadyConnectionsNonBlocking()
+            => NonBlockingDiagnostic<ClientConnection[]>.Capture(_gate, CaptureReadyConnections);
+
         public ClientConnection[] CaptureReadyConnections()
         {
             lock (_gate)

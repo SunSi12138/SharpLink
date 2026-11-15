@@ -34,7 +34,7 @@ var result = await proxy.Service.MyUnaryAsync(request, cancellationToken);
 
 V1源码/协议已独立批准并执行唯一一次 [Linux TCP run43693296449](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449)：首case初始同site Prepare5秒DeadlineExceeded；只有连接前fail-fast，零RPCcase完成，后7case未执行。client.Stop另遇3秒guard，实际source Task仍未完成；server最终三项ledger为0不能证明client清理。N1功能资格未通过。完整原始证据保留在`artifacts/n1-static-bind/hosted-once/`；运行绑定source be24fda4，所有临时ref/workflow已精确清理，没有重跑。
 
-本轮沿factory→handshake/readiness→refresh/Bind→queue/flush→Ack/confirmation→target及Stop源码审计，未取得能唯一解释首错的确定性反例；不以猜测修产品。V2增加有界失败相位诊断与9项纯组件；另以6项纯控制修复cluster Stop遗漏site归还/关闭Bind工作准入，以及显式Stop早于Seal时refresh预期ConnectionClosed的误记；两者不解释V1首错，见[因果审计](validation/issue-775-n1-prepare-failure-audit.md)。现有trace没有首错当刻的Bind/flush/Ack/target数据，无法把deadline更窄归因。新[协议V2](validation/issue-775-n1-static-bind-protocol.md)保留原八case/全部预算，下一门仍是独立源码/协议审核，任何第二次hosted必须root重新决策；V1授权已消耗。
+本轮沿factory→handshake/readiness→refresh/Bind→queue/flush→Ack/confirmation→target及Stop源码审计，未取得能唯一解释首错的确定性反例；不以猜测修产品。V2增加失败相位诊断与9项纯组件；续审修正为逐段零等待TryEnter、显式contended/failed/null，另10项纯争用/失败控制证明gate未释放时返回且cleanup继续。Close先发布原Ack信号再作best-effort诊断，不等待或依赖采样；另以6项纯控制修复cluster Stop遗漏site归还/关闭Bind工作准入，以及显式Stop早于Seal时refresh预期ConnectionClosed的误记；两者不解释V1首错，见[因果审计](validation/issue-775-n1-prepare-failure-audit.md)。现有trace没有首错当刻的Bind/flush/Ack/target数据，无法把deadline更窄归因。新[协议V2](validation/issue-775-n1-static-bind-protocol.md)保留原八case/全部预算，下一门仍是独立源码/协议审核，任何第二次hosted必须root重新决策；V1授权已消耗。
 
 ## 不能从本切片推出的结论
 

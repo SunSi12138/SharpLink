@@ -73,7 +73,8 @@ internal static partial class Program
             var concrete = (SharpLinkClient)client; concrete.EnableContractBindingTraceForDiagnostics();
             var proxy = client.CreateProxy<IProbe>();
             var trace = concrete.CaptureContractBindingTrace();
-            Check(trace.ReadySessions.Length == 0 && trace.ClosedSessions.Length == 0 && trace.Sites.Length == 1 && trace.Sites[0].Targets.Length == 0,
+            Check(trace.ReadySessions.Value is { Length: 0 } && trace.ClosedSessions.Value is { Length: 0 } && trace.Sites.Value is { Length: 1 } &&
+                (trace.Sites.Value[0].Snapshot.Value?.Targets.Length == 0 || trace.Sites.Value[0].Snapshot is { State: "contended", Value: null }),
                 "diagnostic-unconnected-site-does-not-invent-session-or-binding");
             GC.KeepAlive(proxy);
         }

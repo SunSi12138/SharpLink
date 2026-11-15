@@ -33,8 +33,10 @@
 
 ## V2只为下一次同预算判别补足信息
 
-失败前与cleanup失败后各采一次：真实readiness/Session phase、queue字节/idle、site refresh资格数与阶段、原Bind的predecessor/send/Ack/result Task状态、deadline剩余、confirmation/token/targets、Stop实际await段及原framework任务状态。fixture保留有限的已有error类型/code/detail/stack，不格式化消息/state；frame只输出header/长度/control token。outbound观测是flush前staged bytes，不能冒充已上网；另采真实inner flush Task的状态。
+失败前与cleanup失败后各采一次：真实readiness/Session phase、queue字节/idle、site refresh资格数与阶段、原Bind的predecessor/send/Ack/result Task状态、deadline诊断投影、confirmation/token/targets、Stop实际await段及原framework任务状态。fixture保留有限的已有error类型/code/detail/stack，不格式化消息/state；frame只输出header/长度/control token。outbound观测是flush前staged bytes，不能冒充已上网；另采真实inner flush Task的状态。
 
 closure历史限前3与最新1个Session，logger限前32与最新32条，每条最多4层cause及4096字符stack，帧和flush Session inventory各最多512。诊断不持Codec/Type/业务payload/凭据或异常对象根，不在普通业务调用上新增快照/日志。各记录是其采样时刻的事实，不能拼成跨组件原子快照，也不证明旧signal先后。
+
+独立续审指出原同步诊断可能等source gate阻止cleanup，已改为逐段零等待TryEnter，未知值显式contended/null；Close先signal原Ack再诊断，history记录争用/失败不阻止cleanup。没有遗留采样Task。新增10项纯争用/失败控制通过（实际site-index和原supervisor gate持有期间返回，随后清理正常）；这不是首Prepare根因。
 
 新增9项纯诊断控制通过：脱敏、界限/首尾保留、header-only、managed Pipe真实pending/完成flush透传、未连接site与Stop阶段。诊断构建通过；没有第二次hosted或本机RPC。后续仍须独立审核实际source及[协议V2](issue-775-n1-static-bind-protocol.md)，由root另决是否运行。功能资格未通过，成本资格仍HOLD。

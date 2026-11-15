@@ -279,6 +279,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     internal ServerStopDiagnosticSnapshot? LastStopDiagnostics
         => _lifecycle.LastStopDiagnostics;
 
+    internal NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot> FrameworkTasksNonBlockingForDiagnostics
+        => _frameworkTasks.CaptureSnapshotNonBlocking();
+
     internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
         => _frameworkTasks.CaptureSnapshot();
 

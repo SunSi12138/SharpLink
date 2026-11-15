@@ -30,6 +30,11 @@ internal sealed class TransportFrameGate(ProtocolV2FrameType type, bool afterFlu
             _flushes[session] = new(phase, source, failure?.GetType().FullName);
         }
     }
+    internal NonBlockingDiagnostic<object> CaptureFailureNonBlocking()
+        => NonBlockingDiagnostic<object>.Capture(_gate, () => new
+        {
+            held = HeldSessionId, entered = Entered.Task.Status, flushes = CaptureFlushes(), frames = FailureDiagnostics.CaptureFrames(this)
+        });
     internal object CaptureFlushes()
     { lock (_gate) return new { dropped = _droppedFlushObservations, sessions = _flushes.Select(static pair => new { session = pair.Key, pair.Value.Phase, sourceStatus = pair.Value.Source?.Status, pair.Value.FailureType }).ToArray() }; }
     private int _claimed;

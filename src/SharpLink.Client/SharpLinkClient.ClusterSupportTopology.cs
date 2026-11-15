@@ -6,6 +6,9 @@ internal sealed partial class SharpLinkClient
 {
     private sealed partial class StaticClusterRuntime
     {
+        public NonBlockingDiagnostic<ClientConnection[]> CaptureReadyConnectionsNonBlocking()
+            => NonBlockingDiagnostic<ClientConnection[]>.Capture(_gate, CaptureReadyConnections);
+
         public ClientConnection[] CaptureReadyConnections()
         {
             lock (_gate)
