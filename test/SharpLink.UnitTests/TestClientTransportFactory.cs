@@ -69,6 +69,7 @@ internal sealed class TestTransportConnection : ITransportConnection
     public PipeWriter Output => _output;
     public EndPoint? LocalEndPoint => null;
     public EndPoint? RemoteEndPoint => null;
+    internal Task OutputCompletion => _observeOutputTask;
 
     internal void RunOnNextOutputBufferRequest(Action callback)
         => _output.RunOnNextBufferRequest(callback);
