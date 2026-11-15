@@ -123,9 +123,15 @@ public sealed class GeneratedOutputFailureCleanupTests
         catch (Exception error) { RecordFailure("cleanup-returned", error); }
         if (logical is not null)
         {
-            try { await logical; }
-            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
-            catch (Exception error) { RecordFailure("cleanup-logical", error); }
+            if (!logical.IsCompleted)
+                RecordFailure("cleanup-logical-pending", new InvalidOperationException(
+                    "The logical invocation is still pending; independent physical cleanup must continue."));
+            else
+            {
+                try { await logical; }
+                catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
+                catch (Exception error) { RecordFailure("cleanup-logical", error); }
+            }
         }
         try
         {
@@ -215,6 +221,76 @@ public sealed class GeneratedOutputFailureCleanupTests
             "the unexpected logical fault must be reported without skipping either real join");
         Ensure(gateDisposals == 1 && cancellation.DisposeCount == 1,
             "successful physical cleanup must release the original CTS and gate once");
+        await work.Task;
+    }
+
+    [Test]
+    public async Task PendingLogicalMustNotBlockPhysicalCleanupOrReplaceOracleFailure()
+    {
+        var tail = new GeneratedOutputPhysicalTail();
+        var work = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellation = new EofCleanupCancellation();
+        tail.Add(work.Task);
+        tail.Seal(cancellation);
+        var release = new ManualResetEventSlim();
+        var releaseCalls = 0;
+        var gateDisposals = 0;
+        var invocationThread = new Thread(() =>
+        {
+            try
+            {
+                if (release.Wait(TimeSpan.FromSeconds(5))) work.TrySetResult();
+                else work.TrySetException(new TimeoutException("pending cleanup control gate was not released"));
+            }
+            catch (Exception error) { work.TrySetException(error); }
+        })
+        { IsBackground = true };
+        invocationThread.Start();
+        ExceptionDispatchInfo oracleFailure;
+        try { throw new TimeoutException("original logical observation failure"); }
+        catch (Exception error) { oracleFailure = ExceptionDispatchInfo.Capture(error); }
+        var originalStack = oracleFailure.SourceException.StackTrace!;
+        var logical = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var returned = Task.FromResult(logical.Task);
+        var events = new List<string>();
+        Ensure(returned.IsCompletedSuccessfully && !logical.Task.IsCompleted,
+            "the control must supply an already-returned but still-pending logical task");
+        var finishing = FinishEofAsync(returned, tail, invocationThread, () =>
+        {
+            releaseCalls++;
+            release.Set();
+        }, () =>
+        {
+            Ensure(!invocationThread.IsAlive && tail.JoinAsync().IsCompleted && cancellation.DisposeCount == 1,
+                "pending logical work cannot prevent independent physical resources from exiting");
+            release.Dispose();
+            gateDisposals++;
+        }, events.Add, oracleFailure);
+        Exception? actual = null;
+        var logicalPendingAtDelivery = false;
+        try
+        {
+            try { await finishing.WaitAsync(TimeSpan.FromSeconds(5 + 5 + 2)); }
+            catch (Exception error) { actual = error; }
+            logicalPendingAtDelivery = !logical.Task.IsCompleted;
+        }
+        finally
+        {
+            // Release ran synchronously before FinishEofAsync could return its Task.
+            // Unblock only this synthetic logical gate, then finish the same cleanup task.
+            logical.TrySetResult();
+            try { await finishing; }
+            catch (Exception error) { events.Add("cleanup-delivered:" + error); }
+            Console.WriteLine($"EOF_CLEANUP_PENDING_V1 logicalPendingAtDelivery={logicalPendingAtDelivery}; " + string.Join("; ", events));
+        }
+        Ensure(actual is not null && ReferenceEquals(actual, oracleFailure.SourceException) &&
+            actual.StackTrace!.StartsWith(originalStack, StringComparison.Ordinal),
+            "pending logical work must not replace the first oracle exception or its original stack");
+        Ensure(logicalPendingAtDelivery && events.Any(item => item.Contains("cleanup-failure:cleanup-logical-pending:", StringComparison.Ordinal)) &&
+            events.Contains("physical-join-exited") && events.Contains("invocation-thread-joined"),
+            "the original error and both real joins must finish while the logical task remains pending");
+        Ensure(releaseCalls == 1 && gateDisposals == 1 && cancellation.DisposeCount == 1,
+            "pending logical work must still release the original physical resources once");
         await work.Task;
     }
 
