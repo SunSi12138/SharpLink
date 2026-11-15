@@ -178,7 +178,8 @@ public sealed class GeneratedOutputFailureCleanupTests
                 else work.TrySetException(new TimeoutException("cleanup control gate was not released"));
             }
             catch (Exception error) { work.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         invocationThread.Start();
         ExceptionDispatchInfo oracleFailure;
         try { throw new InvalidOperationException("original EOF oracle failure"); }
