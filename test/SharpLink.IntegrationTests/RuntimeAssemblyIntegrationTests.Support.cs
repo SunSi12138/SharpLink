@@ -388,6 +388,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal ISharpLinkClient Client { get; }
         internal int Port { get; }
 
+        internal async Task ConnectClientAsync() => await Client.ConnectAsync();
+
         internal void ExpectServerStopFailure(string message)
             => _expectedServerStopFailure = message;
 
@@ -397,7 +399,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             ISharpLinkCompressionProvider? compressionProvider = null,
             bool sharedMemory = false,
             TimeProvider? clientTimeProvider = null,
-            TimeSpan? requestTimeout = null)
+            TimeSpan? requestTimeout = null,
+            bool connectClient = true)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
@@ -430,7 +433,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             if (compressionProvider is not null)
                 clientBuilder.UseRuntime(options => options.Compression.Providers.Add(compressionProvider));
             var client = clientBuilder.Build();
-            await client.ConnectAsync();
+            if (connectClient)
+                await client.ConnectAsync();
             return new DynamicHarness(server, client, port, serverCancellation, serverTask, serviceProvider);
         }
 

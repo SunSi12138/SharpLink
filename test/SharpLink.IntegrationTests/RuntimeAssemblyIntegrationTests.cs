@@ -274,13 +274,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .GetAwaiter()
             .GetResult();
 
-    private static async Task RegisterAllAsync(DynamicHarness harness, PluginBundle plugin)
+    private static async Task RegisterAllAsync(
+        DynamicHarness harness,
+        PluginBundle plugin,
+        bool waitForRemoteManifest = true)
     {
         var client = harness.Client.RegisterAssembly(plugin.ContractAssembly);
         Ensure(client.Succeeded, $"client contract registration: {client.Error}");
         Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded, "server contract registration");
         Ensure(harness.Server.RegisterAssembly(plugin.ServiceAssembly).Succeeded, "server service registration");
-        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        if (waitForRemoteManifest)
+            await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
     }
 
     private static void EnsureReplacementReleased(

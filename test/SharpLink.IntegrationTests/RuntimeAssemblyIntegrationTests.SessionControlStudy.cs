@@ -1,6 +1,9 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace SharpLink.IntegrationTests;
+
+internal readonly record struct CollectibleRetirement(WeakReference Weak, string OldSessionId);
 
 /// <summary>
 /// Issue #998 G3 core cases for the isolated session-pinned-snapshot prototype (variant S).
@@ -11,13 +14,411 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
+    public async Task Study_F03_SameContractSameHashReplacementMustChangeSession()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F03");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        using var plugin = PluginBundle.Load("study-f03");
+        plugin.ResetServiceState();
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+        var clientModule = GetDynamicModule(harness.Client, plugin.ContractAssembly);
+        var oldContract = clientModule.Manifest.Contracts.Single(candidate =>
+            ReferenceEquals(candidate.ContractType, plugin.ContractType));
+        var oldHash = clientModule.Manifest.RpcAssemblyHash;
+
+        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var replacementAssembly = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+        var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+        replacementType.GetMethod("Reset")!.Invoke(null, null);
+        try
+        {
+            var before = await InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None);
+            Ensure(before == 2 && plugin.GetStaticInt("Created") == 1,
+                "pre-replacement call enters R1");
+
+            var replaced = await server.ReplaceAssemblyAsync(
+                plugin.ServiceAssembly,
+                replacementAssembly,
+                TimeSpan.FromSeconds(5));
+            Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+                $"same-hash replacement succeeds: {replaced.Error}");
+            attempt.Emit("replacement-committed", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["oldHash"] = oldHash.ToString(),
+                ["referencesReleased"] = replaced.ReferencesReleased
+            });
+
+            await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+            var newSessionIds = SessionControlStudySupport.ReadySessionIds(harness.Client);
+            attempt.Emit("session-replaced", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["newSessionIds"] = newSessionIds
+            });
+
+            var fresh = await InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UnaryAsync", 10, CancellationToken.None);
+            Ensure(fresh == 11, $"fresh call after session replacement enters R2, observed {fresh}");
+            Ensure(plugin.GetStaticInt("Created") == 1,
+                "retired R1 does not receive the fresh call");
+            Ensure((int)replacementType.GetProperty("Created")!.GetValue(null)! == 1,
+                "fresh call after session replacement enters R2 exactly once");
+
+            var replacementModule = GetDynamicModule(server, replacementAssembly);
+            // The contract assembly is the same object; this is a service-implementation-only
+            // replacement. RpcAssemblyHash belongs to the contract owner and is unchanged even
+            // when the service module itself reports a different module hash.
+            attempt.Emit("fresh-call-completed", new Dictionary<string, object?>
+            {
+                ["value"] = fresh,
+                ["oldR1Created"] = plugin.GetStaticInt("Created"),
+                ["newR2Created"] = (int)replacementType.GetProperty("Created")!.GetValue(null)!,
+                ["contractId"] = oldContract.ContractId,
+                ["contractHash"] = oldHash.ToString(),
+                ["serviceModuleHash"] = replacementModule.Manifest.RpcAssemblyHash.ToString()
+            });
+            attempt.Complete("PASS");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            replacementContext.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task Study_F18_RetiredServiceAlcMustNotBeRootedBySessions()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F18");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        using var plugin = PluginBundle.Load("study-f18", loadService: false);
+        Ensure(harness.Client.RegisterAssembly(plugin.ContractAssembly).Succeeded,
+            "collectible client contract registers");
+        Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded,
+            "collectible server contract registers");
+        var servicePath = Path.Combine(
+            Path.GetDirectoryName(plugin.ContractAssembly.Location)!,
+            "SharpLink.DynamicPlugin.Services.dll");
+        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var replacementAssembly = replacementContext.LoadFromAssemblyPath(servicePath);
+        var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+        replacementType.GetMethod("Reset")!.Invoke(null, null);
+        var server = (SharpLinkServer)harness.Server;
+        try
+        {
+            var retirement = await RetireIdleCollectibleServiceAsync(
+                harness, plugin, servicePath, replacementAssembly);
+            for (var attemptIndex = 0; attemptIndex < 30 && retirement.Weak.IsAlive; attemptIndex++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                await Task.Delay(20);
+            }
+
+            attempt.Emit("collectible-check", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = retirement.OldSessionId,
+                ["newSessionIds"] = SessionControlStudySupport.ReadySessionIds(harness.Client),
+                ["originalAlive"] = retirement.Weak.IsAlive,
+                ["retiredServerConnections"] = ServerRegistryTestAccessor.RetiredConnectionCount(server)
+            });
+            Ensure(!retirement.Weak.IsAlive,
+                "retired service ALC must be collectible after the old session retires; " +
+                "the study covers the idle replacement path, not a held streaming enumerator");
+            attempt.Complete("PASS", "idle replacement path only; held-stream F18 subcase is NOT_RUN");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+                _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+                _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            }
+            catch (Exception cleanupException)
+            {
+                attempt.Emit("cleanup-failed", new Dictionary<string, object?>
+                {
+                    ["type"] = cleanupException.GetType().FullName,
+                    ["message"] = cleanupException.Message
+                });
+            }
+            replacementContext.Unload();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<CollectibleRetirement> RetireIdleCollectibleServiceAsync(
+        DynamicHarness harness,
+        PluginBundle plugin,
+        string servicePath,
+        Assembly replacementAssembly)
+    {
+        var server = (SharpLinkServer)harness.Server;
+        var originalContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var originalAssembly = originalContext.LoadFromAssemblyPath(servicePath);
+        Ensure(server.RegisterAssembly(originalAssembly).Succeeded,
+            "collectible original service registers");
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+
+        Ensure(await InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2,
+            "original collectible service serves a call before retirement");
+        var replaced = await server.ReplaceAssemblyAsync(
+            originalAssembly,
+            replacementAssembly,
+            TimeSpan.FromSeconds(5));
+        Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+            $"collectible service replacement releases old module: {replaced.Error}");
+        await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+            harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+
+        var weak = new WeakReference(originalContext, trackResurrection: false);
+        originalContext.Unload();
+        return new CollectibleRetirement(weak, oldSessionId);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task Study_F10_TwoIndependentSessionsMustBothMoveToNewSnapshot()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F10");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        ISharpLinkClient? secondClient = SharpClientBuilder.Create().DisableRequestTimeout()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+            .UseTcp(IPAddress.Loopback.ToString(), harness.Port)
+            .Build();
+        using var plugin = PluginBundle.Load("study-f10");
+        plugin.ResetServiceState();
+        try
+        {
+            await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+            Ensure(secondClient.RegisterAssembly(plugin.ContractAssembly).Succeeded,
+                "second client registers the dynamic contract");
+            await harness.ConnectClientAsync();
+            await secondClient.ConnectAsync();
+            await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+            await WaitForRemoteContractManifestAsync(secondClient, plugin.ContractType);
+
+            var server = (SharpLinkServer)harness.Server;
+            var proxy1 = GetProxy(harness.Client, plugin.ContractType);
+            var proxy2 = GetProxy(secondClient, plugin.ContractType);
+            var oldSessions = SessionControlStudySupport.ReadySessionIds(harness.Client)
+                .Concat(SessionControlStudySupport.ReadySessionIds(secondClient))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            Ensure(oldSessions.Length == 2, "two independent physical sessions are ready");
+
+            var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+            var replacementAssembly = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+            var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+            replacementType.GetMethod("Reset")!.Invoke(null, null);
+            try
+            {
+                var replaced = await server.ReplaceAssemblyAsync(
+                    plugin.ServiceAssembly,
+                    replacementAssembly,
+                    TimeSpan.FromSeconds(5));
+                Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+                    $"replacement succeeds with two sessions: {replaced.Error}");
+                await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                    harness.Client, oldSessions[0], TimeSpan.FromSeconds(10));
+                await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                    secondClient, oldSessions[1], TimeSpan.FromSeconds(10));
+                var newSessions = SessionControlStudySupport.ReadySessionIds(harness.Client)
+                    .Concat(SessionControlStudySupport.ReadySessionIds(secondClient))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                Ensure(newSessions.Length == 2, "both clients publish a replacement Ready session");
+                Ensure(newSessions.Intersect(oldSessions, StringComparer.Ordinal).Any() == false,
+                    "S does not reuse an old physical session for either client");
+                attempt.Emit("two-sessions-replaced", new Dictionary<string, object?>
+                {
+                    ["oldSessions"] = oldSessions,
+                    ["newSessions"] = newSessions,
+                    ["notifications"] = server.PinnedSessionRetirementNotificationCountForTesting
+                });
+
+                Ensure(await InvokeValueTaskAsync<int>(
+                        proxy1, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2,
+                    "first session executes R2");
+                Ensure(await InvokeValueTaskAsync<int>(
+                        proxy2, plugin.ContractType, "UnaryAsync", 10, CancellationToken.None) == 11,
+                    "second session executes R2");
+                Ensure((int)replacementType.GetProperty("Created")!.GetValue(null)! >= 1,
+                    "R2 user code is entered after both session replacements");
+                attempt.Complete("PASS");
+            }
+            finally
+            {
+                _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+                _ = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+                replacementContext.Unload();
+            }
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                if (secondClient is not null)
+                {
+                    try { _ = await secondClient.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2)); }
+                    catch (Exception) { }
+                    await secondClient.DisposeAsync();
+                }
+                _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+                _ = await harness.Server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            }
+            catch (Exception cleanupException)
+            {
+                attempt.Emit("cleanup-failed", new Dictionary<string, object?>
+                {
+                    ["type"] = cleanupException.GetType().FullName,
+                    ["message"] = cleanupException.Message
+                });
+            }
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task Study_F09_UnrelatedServiceOnSameSessionIsCollateralInS()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F09");
+        var control = new ManifestReadinessControl { Operation = _ => ValueTask.FromResult(7) };
+        await using var harness = await DynamicHarness.CreateAsync(control: control, connectClient: false);
+        using var plugin = PluginBundle.Load("study-f09");
+        plugin.ResetServiceState();
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var unrelated = harness.Client.Get<IManifestReadinessControl>();
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+
+        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var replacementAssembly = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+        var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+        replacementType.GetMethod("Reset")!.Invoke(null, null);
+        try
+        {
+            Ensure(await unrelated.ChangeAsync(1, CancellationToken.None) == 7,
+                "unrelated B service works before replacement on the shared session");
+            attempt.Emit("unrelated-b-before-cut", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["value"] = 7
+            });
+
+            var replaced = await server.ReplaceAssemblyAsync(
+                plugin.ServiceAssembly,
+                replacementAssembly,
+                TimeSpan.FromSeconds(5));
+            Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+                $"service A replacement succeeds: {replaced.Error}");
+            await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+            var newSessionIds = SessionControlStudySupport.ReadySessionIds(harness.Client);
+            Ensure(newSessionIds.Length == 1 && newSessionIds[0] != oldSessionId,
+                "S replaces the whole physical session that hosted A and B");
+            attempt.Emit("unrelated-b-session-collateral", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["newSessionIds"] = newSessionIds,
+                ["foreignServiceInterrupted"] = true,
+                ["reason"] = "S retires the entire session, not just A"
+            });
+
+            Ensure(await unrelated.ChangeAsync(2, CancellationToken.None) == 7,
+                "unrelated B is not misrouted after the session change");
+            Ensure(await InvokeValueTaskAsync<int>(
+                    proxy, plugin.ContractType, "UnaryAsync", 20, CancellationToken.None) == 21,
+                "replacement A remains correct on the new session");
+            attempt.Emit("unrelated-b-after-cut", new Dictionary<string, object?>
+            {
+                ["value"] = 7,
+                ["newSessionIds"] = newSessionIds
+            });
+            attempt.Complete("PASS", "B remains functional but its physical session was replaced");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            replacementContext.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F05");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
         using var plugin = PluginBundle.Load("study-f05");
         plugin.ResetServiceState();
-        await using var harness = await DynamicHarness.CreateAsync();
-        await RegisterAllAsync(harness, plugin);
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
         var server = (SharpLinkServer)harness.Server;
         var proxy = GetProxy(harness.Client, plugin.ContractType);
         var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
@@ -188,10 +589,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     public async Task Study_F06_AdmittedOldCallMustCompleteAfterCut()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F06");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
         using var plugin = PluginBundle.Load("study-f06");
         plugin.ResetServiceState();
-        await using var harness = await DynamicHarness.CreateAsync();
-        await RegisterAllAsync(harness, plugin);
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
         var server = (SharpLinkServer)harness.Server;
         var proxy = GetProxy(harness.Client, plugin.ContractType);
         var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
@@ -301,10 +704,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     public async Task Study_F07_QueuedRequestLosingToCutMustEnterNeitherR1NorR2()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F07");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
         using var plugin = PluginBundle.Load("study-f07");
         plugin.ResetServiceState();
-        await using var harness = await DynamicHarness.CreateAsync();
-        await RegisterAllAsync(harness, plugin);
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
         var server = (SharpLinkServer)harness.Server;
         var proxy = GetProxy(harness.Client, plugin.ContractType);
         var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
