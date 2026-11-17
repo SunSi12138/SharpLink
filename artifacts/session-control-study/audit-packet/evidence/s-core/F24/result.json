@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "study": "issue-775-session-control-alternative",
+  "variant": "S",
+  "case": "F24",
+  "sourceSha": "9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4",
+  "baseSha": "2948de82fff77d66fce51ecec9a5783b6ef3cb62",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "runtime": "10.0.15",
+  "transport": "tcp",
+  "attempt": 1,
+  "status": "PASS",
+  "detail": "five replacements, reconnect each cycle, client Stop quiesces",
+  "eventCount": 7,
+  "evidencePaths": [
+    "events.jsonl",
+    "result.json"
+  ]
+}

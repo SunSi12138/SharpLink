@@ -227,6 +227,82 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task Study_F24_FiveReplacementsThenStopMustQuiesce()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F24");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        using var plugin = PluginBundle.Load("study-f24");
+        plugin.ResetServiceState();
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+        var currentAssembly = plugin.ServiceAssembly;
+        var contexts = new List<SharedContractServiceLoadContext>();
+        try
+        {
+            for (var cycle = 1; cycle <= 5; cycle++)
+            {
+                var context = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+                contexts.Add(context);
+                var nextAssembly = context.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+                var nextType = nextAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+                nextType.GetMethod("Reset")!.Invoke(null, null);
+                var replaced = await server.ReplaceAssemblyAsync(
+                    currentAssembly, nextAssembly, TimeSpan.FromSeconds(5));
+                Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+                    $"F24 cycle {cycle} replacement releases the old module: {replaced.Error}");
+                await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                    harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+                oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+                var value = await InvokeValueTaskAsync<int>(
+                    proxy, plugin.ContractType, "UnaryAsync", cycle, CancellationToken.None);
+                Ensure(value == cycle + 1, $"F24 cycle {cycle} routes to the current registration");
+                currentAssembly = nextAssembly;
+                attempt.Emit("f24-cycle", new Dictionary<string, object?>
+                {
+                    ["cycle"] = cycle,
+                    ["sessionId"] = oldSessionId,
+                    ["value"] = value
+                });
+            }
+
+            await harness.Client.StopAsync();
+            Ensure(SessionControlStudySupport.ReadySessionIds(harness.Client).Length == 0,
+                "F24 client Stop must leave no Ready session");
+            await WaitUntilAsync(() => ServerRegistryTestAccessor.ActiveConnectionCount(server) == 0);
+            attempt.Emit("f24-stopped", new Dictionary<string, object?>
+            {
+                ["serverActiveConnections"] = ServerRegistryTestAccessor.ActiveConnectionCount(server),
+                ["clientReadySessions"] = SessionControlStudySupport.ReadySessionIds(harness.Client).Length
+            });
+            attempt.Complete("PASS", "five replacements, reconnect each cycle, client Stop quiesces");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            try { await harness.Client.StopAsync(); } catch (Exception) { }
+            _ = await server.UnregisterAssemblyAsync(currentAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            foreach (var context in contexts)
+                context.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task Study_F20_WithheldRetirementNoticeMustNotRecoverByItself()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F20");

@@ -149,7 +149,7 @@ If `SessionRefresh` was not negotiated, the method silently skips the connection
 
 ## 3.7 What the source does not prove
 
-- It does not prove F01/F02, F11's late/out-of-order notification subcase, F20 duplicate/reorder, F12–F17/F19–F24, nor the Unregister/server-stream tails of F18. F04 is now covered as a fail-closed case, and F18b covers a held duplex Replace, not every stream-owner case.
+- It does not prove F01/F02, F11's late/out-of-order notification subcase, F20 duplicate/reorder, F12–F17/F19/F21–F23, nor the Unregister/server-stream tails of F18. F04 is now covered as a fail-closed case, F18b covers a held duplex Replace, and F24 covers five cycles plus Stop public counters, but not every stream-owner/task census case.
 - It does not prove control-frame loss/reorder/duplicate safety; the implementation has no recovery for loss.
 - It does not provide the N0 exact token, receipt, group queue-only cut, or physical-entry handoff.
 - It does not produce performance evidence. No claim of hot-path improvement is made.

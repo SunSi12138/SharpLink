@@ -1,0 +1,7 @@
+{"seq":1,"case":"F24","variant":"S","event":"attempt-started","monotonicMs":1.186,"utc":"2026-11-17T07:11:46.7636416\u002B00:00","payload":{"variant":"S","sourceSha":"9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4","baseSha":"2948de82fff77d66fce51ecec9a5783b6ef3cb62","transport":"tcp","os":"Microsoft Windows NT 10.0.26200.0","runtime":"10.0.15"}}
+{"seq":2,"case":"F24","variant":"S","event":"f24-cycle","monotonicMs":488.992,"utc":"2026-11-17T07:11:47.2514209\u002B00:00","payload":{"cycle":1,"sessionId":"21102a5a7ccc49ce8fc46e087edde196","value":2}}
+{"seq":3,"case":"F24","variant":"S","event":"f24-cycle","monotonicMs":542.579,"utc":"2026-11-17T07:11:47.3050081\u002B00:00","payload":{"cycle":2,"sessionId":"329005cfd501468fa90b1e8ed8f7e088","value":3}}
+{"seq":4,"case":"F24","variant":"S","event":"f24-cycle","monotonicMs":611.956,"utc":"2026-11-17T07:11:47.3743852\u002B00:00","payload":{"cycle":3,"sessionId":"b9015f24f2fc4e649305634bc6abd94f","value":4}}
+{"seq":5,"case":"F24","variant":"S","event":"f24-cycle","monotonicMs":643.712,"utc":"2026-11-17T07:11:47.4061411\u002B00:00","payload":{"cycle":4,"sessionId":"52998e9a0e434bdb9c70cc9e74de4e8b","value":5}}
+{"seq":6,"case":"F24","variant":"S","event":"f24-cycle","monotonicMs":705.94,"utc":"2026-11-17T07:11:47.4683686\u002B00:00","payload":{"cycle":5,"sessionId":"e663bb75274c4313825c0dd0820ccea6","value":6}}
+{"seq":7,"case":"F24","variant":"S","event":"f24-stopped","monotonicMs":714.597,"utc":"2026-11-17T07:11:47.4770259\u002B00:00","payload":{"serverActiveConnections":0,"clientReadySessions":0}}

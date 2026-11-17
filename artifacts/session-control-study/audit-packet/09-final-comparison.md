@@ -26,8 +26,8 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 | Long stream / ALC | existing P behavior; not isolated | physical owner retained until exit | idle and held-duplex F18 pass; Unregister/server-stream tails not run | not implemented | designed |
 | Control frame | manifest broadcast only | Bind/Invalidated/Release/RequestAccepted | one `SessionRefreshRequested`; no ack/resend | freeze/resume frames not implemented | N0 controls |
 | Hot-path change | 1 live registry lookup | exact slot/token lookup (designed) | 1 pinned-dictionary lookup; no per-RPC allocation added | would add gate/queue checks | exact N0 path |
-| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,868 test/model insertions | 0 | 0 |
-| Correctness evidence | full P baseline + C-NEG | none | 13 core/F04/F08/F11/F20 cases PASS/PARTIAL, including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
+| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,944 test/model insertions | 0 | 0 |
+| Correctness evidence | full P baseline + C-NEG | none | 13 cases PASS/PARTIAL (core, F04, F08, F11, F20, F24), including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
 | Performance evidence | none | none | none | none | none |
 | Verdict | baseline / unsafe under F05 | reference design, not implemented | **NO-GO research prototype** | **NOT_IMPLEMENTED / NO-GO** | **NOT_IMPLEMENTED** |
 
@@ -48,6 +48,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 13. F04 is fail-closed: after a changed-hash contract replacement, the old client gets `Unavailable` and R2 is not entered. However, no replacement session becomes Ready within 2 s, so the old client cannot recover without a new application deployment. This is an availability cost, not a retargeting failure.
 14. F11 performs three sequential replacements, each creating a new physical session and routing a fresh call to the new registration. It does **not** exercise late or out-of-order old notifications.
 15. F20 withholds the retirement notice: the old session remains, a fresh call returns `Unavailable`, R2 is not entered, and releasing the notice recovers. This simulates loss, not a real dropped frame; duplicate/reorder are not tested.
+16. F24 performs five replacements/reconnects and then client Stop; public counters quiesce to `serverActiveConnections=0` and `clientReadySessions=0`. This is not a full framework-task/snapshot/ALC census.
 
 ## 9.4 Source-based analysis (not measured)
 

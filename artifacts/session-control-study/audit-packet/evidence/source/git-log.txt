@@ -1,3 +1,5 @@
+9ad6fe74 research(998): add five-cycle replacement and Stop quiescence control
+4bf45ee9 research(998): add F20 simulated notice-loss evidence and final packet
 29cf85de research(998): add withheld retirement notice control
 283226f6 research(998): add F11 rapid-replacement evidence and final packet
 7d21b89a research(998): add three-cycle rapid replacement control

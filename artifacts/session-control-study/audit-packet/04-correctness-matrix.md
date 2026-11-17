@@ -10,7 +10,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 |---|---|---|---|
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
-| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11 + F18/F18b/F20; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
+| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11/F24 + F18/F18b/F20; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
 | N | none | none | NOT_IMPLEMENTED |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
@@ -42,7 +42,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | F21 bounded tables / Stop | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F22 static Unary/OneWay TCP/SHM | NOT_RUN (full suite TCP passed; SHM environment-failed) | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F23 old wire/API identity mixed | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN (no wire change in S) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
-| F24 repeated replace/reconnect then Stop | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
+| F24 repeated replace/reconnect then Stop | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS (bounded counters)` — `Study_F24...` performs 5 replacements/reconnects, then client Stop; `serverActiveConnections=0`, `clientReadySessions=0`. This does not prove full framework-task/ALC census | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 
 ## 4.3 S core gate decision
 

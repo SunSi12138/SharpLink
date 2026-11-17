@@ -16,8 +16,8 @@ https://github.com/SunSi12138/SharpLink/tree/study/998-session-control
 - S 初始原型：`58c280f4ef02c0620d510cc1a78139f2ec5e80ce`
 - S 测试矩阵：`5b8d5fd269cf7d1e48172be1e1d07e13593d74d1`
 - S 最终产品源码：`525a5aed918516ac1214a91c99fbb3fbb3a746e9`
-- S 最终测试/证据提交：`29cf85de0dfb7871483cdd807a37fae24a1d60e6`
-  https://github.com/SunSi12138/SharpLink/commit/29cf85de0dfb7871483cdd807a37fae24a1d60e6
+- S 最终测试/证据提交：`9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4`
+  https://github.com/SunSi12138/SharpLink/commit/9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4
 
 源代码与 Diff 链接：
 - https://github.com/SunSi12138/SharpLink/compare/2948de82fff77d66fce51ecec9a5783b6ef3cb62...525a5aed918516ac1214a91c99fbb3fbb3a746e9
@@ -40,7 +40,7 @@ GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没�
    检查是否严格按照 Issue #998 的 G0–G7 阶段、门禁、预注册条件和停止规则执行，是否存在跳过、补跑、修改门槛或选择性报告。特别核查：
    - 是否真的以 `dev @ 2948de82` 为基线；
    - 是否只改了研究分支；
-   - 是否在 S 未完成 F01/F02、F11 late-ack、F12–F17/F19–F24 等义务时停止性能阶段；
+   - 是否在 S 未完成 F01/F02、F11 late-ack、F12–F17/F19/F21–F23 等义务时停止性能阶段；
    - 失败 attempt 是否被保留；
    - 是否把测试自身错误误算成产品通过/失败。
 
@@ -66,7 +66,7 @@ GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没�
 4. **证据审计**
    逐项核实 SHA、测试 UID、实际命令、退出码、工件和事件时间线。重点核查：
    - `525a5aed` 是否确为最终 S；
-   - 七个必需核心 case、F18b、F04、F08、F11、F20 是否对应 `attempt-final-4f92` / `attempt-canonical-4f92` / `attempt-final-33fb` / `attempt-final-948f` / `attempt-final-7d21` / `attempt-final-29cf`；
+   - 七个必需核心 case、F18b、F04、F08、F11、F20、F24 是否对应 `attempt-final-4f92` / `attempt-canonical-4f92` / `attempt-final-33fb` / `attempt-final-948f` / `attempt-final-7d21` / `attempt-final-29cf` / `attempt-final-9ad6`；
    - 失败 attempt 是否未被覆盖；
    - C-NEG 事件 `stale request → value=2, R1=0, R2=1` 是否真实；
    - P 的 528/482/46/0、Unit 2255/2229/26/0、Generator 295/294/1/0、Load 77/73/4/0 是否被正确引用；

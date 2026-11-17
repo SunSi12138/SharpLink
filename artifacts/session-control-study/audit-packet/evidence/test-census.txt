@@ -1,6 +1,6 @@
-S discovered UIDs: 540
+S discovered UIDs: 541
 P discovered UIDs: 529
 P Integration full-suite total: 528
-S study test methods added: 12 (F04/F08/F11/F18b/F20 included)
+S study test methods added: 13 (F04/F08/F11/F18b/F20/F24 included)
 S product source SHA: 525a5aed918516ac1214a91c99fbb3fbb3a746e9
-S final test/evidence commit: 29cf85de0dfb7871483cdd807a37fae24a1d60e6
+S final test/evidence commit: 9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4

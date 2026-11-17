@@ -127,6 +127,20 @@ Canonical evidence: `evidence/s-core/F20/events.jsonl` (test commit `29cf85de`, 
 
 This is a **simulated** loss: the real frame is not sent while the barrier is held. It shows that no self-recovery occurs without the notice. Actual frame loss/duplication/reordering is `NOT_RUN`.
 
+## F24 — five replacements/reconnects then client Stop
+
+Canonical evidence: `evidence/s-core/F24/events.jsonl` (test commit `9ad6fe74`, attempt `attempt-final-9ad6`).
+
+| Cycle | Time (ms) | Session after replacement | Call result |
+|---:|---:|---|---:|
+| 1 | 488.992 | `2110…` | 2 |
+| 2 | 542.579 | `3290…` | 3 |
+| 3 | 611.956 | `b901…` | 4 |
+| 4 | 643.712 | `5299…` | 5 |
+| 5 | 705.940 | `e663…` | 6 |
+
+At `f24-stopped` (714.597 ms): `serverActiveConnections=0`, `clientReadySessions=0`. This proves the two public counters quiesce after five replacements and client Stop. It does not provide a full framework-task, snapshot-table, operation-table or ALC census; those are `NOT_RUN`.
+
 ## F13 — not run
 
 No Freeze/Resume implementation exists. There is no timeline to present. Marking this `NOT_RUN` is mandatory; it must not be inferred from F05/F07.

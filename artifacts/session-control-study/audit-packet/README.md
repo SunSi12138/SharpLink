@@ -24,7 +24,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 ## Quick result
 
 - P baseline: C-NEG proves stale-request retargeting after Replace commit and before manifest notification.
-- S: closes the narrow TCP/Replace window in the exercised core cases (including F18b held-duplex ALC retention/release, F08 start-claim vs cut, F04 changed-hash fail-closed, F11 three replacement cycles, and F20 simulated notice loss), but is **NO-GO as an N0 substitute**: existing dynamic-registration tests fail, unrelated services lose their session, and the refresh frame is single-shot. Full F01–F24 is not complete.
+- S: closes the narrow TCP/Replace window in the exercised core cases (including F18b held-duplex ALC retention/release, F08 start-claim vs cut, F04 changed-hash fail-closed, F11 three replacement cycles, F20 simulated notice loss, and F24 five-cycle Stop), but is **NO-GO as an N0 substitute**: existing dynamic-registration tests fail, unrelated services lose their session, and the refresh frame is single-shot. Full F01–F24 is not complete.
 - N: `NOT_IMPLEMENTED`.
 - Q/H: `NOT_IMPLEMENTED`.
 - Performance: `NOT_RUN`; no A/A or paired samples.
@@ -44,7 +44,7 @@ Then run the compiled TUnit executable directly (not `dotnet test`, which fails 
 
 - Branch: https://github.com/SunSi12138/SharpLink/tree/study/998-session-control
 - Baseline: `2948de82fff77d66fce51ecec9a5783b6ef3cb62`
-- Final S test/evidence commit: `29cf85de0dfb7871483cdd807a37fae24a1d60e6`
+- Final S test/evidence commit: `9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4`
 - Final S product source: `525a5aed918516ac1214a91c99fbb3fbb3a746e9`
 
 This packet is not an approval to merge any candidate.
