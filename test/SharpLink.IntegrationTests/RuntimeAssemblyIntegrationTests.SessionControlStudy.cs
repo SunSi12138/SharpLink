@@ -227,6 +227,110 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task Study_F20_WithheldRetirementNoticeMustNotRecoverByItself()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F20");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        using var plugin = PluginBundle.Load("study-f20");
+        plugin.ResetServiceState();
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+
+        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var replacementAssembly = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+        var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+        replacementType.GetMethod("Reset")!.Invoke(null, null);
+        var cutCommitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNotification = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var isS = SessionControlStudySupport.TryInstallSNotificationHooks(
+            server, cutCommitted, releaseNotification);
+        Ensure(isS, "F20 requires the S notification hook");
+
+        Task<SharpLinkAssemblyReplacementResult>? replace = null;
+        try
+        {
+            replace = server.ReplaceAssemblyAsync(
+                plugin.ServiceAssembly,
+                replacementAssembly,
+                TimeSpan.FromSeconds(5)).AsTask();
+            await cutCommitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            attempt.Emit("retirement-notice-withheld", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId
+            });
+
+            // The barrier is held, so any client recovery would be an unexpected
+            // side effect rather than a delivered retirement notice.
+            await Task.Delay(300);
+            var sessionsWhileWithheld = SessionControlStudySupport.ReadySessionIds(harness.Client);
+            Ensure(sessionsWhileWithheld.Contains(oldSessionId, StringComparer.Ordinal),
+                "the old session must remain while the notice is withheld");
+            Ensure(sessionsWhileWithheld.Length == 1,
+                "no replacement session may appear from a notice that was never sent");
+
+            var outcome = "response";
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                _ = await InvokeValueTaskAsync<int>(
+                    proxy, plugin.ContractType, "UnaryAsync", 1, timeout.Token);
+            }
+            catch (SharpLinkException exception)
+            {
+                outcome = exception.Code.ToString();
+            }
+            Ensure(outcome == "Unavailable",
+                $"a fresh call on the old session must fail while the notice is withheld, observed {outcome}");
+            Ensure((int)replacementType.GetProperty("Created")!.GetValue(null)! == 0,
+                "R2 must not be entered while the old session is still pinned");
+            attempt.Emit("withheld-notice-observations", new Dictionary<string, object?>
+            {
+                ["sessions"] = sessionsWhileWithheld,
+                ["outcome"] = outcome,
+                ["newR2Created"] = (int)replacementType.GetProperty("Created")!.GetValue(null)!
+            });
+
+            releaseNotification.TrySetResult();
+            await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+            var fresh = await InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UnaryAsync", 10, CancellationToken.None);
+            Ensure(fresh == 11, "releasing the withheld notice allows recovery to R2");
+            attempt.Complete("PASS", "simulated notice loss; duplicate/reorder NOT_RUN");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            releaseNotification.TrySetResult();
+            SessionControlStudySupport.ClearSNotificationHooks(server);
+            if (replace is not null)
+            {
+                try { _ = await replace.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { }
+            }
+            _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            replacementContext.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task Study_F11_ThreeRapidReplacementsMustRetireEachSession()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F11");
