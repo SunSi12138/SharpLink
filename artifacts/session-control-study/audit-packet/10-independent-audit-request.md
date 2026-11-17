@@ -17,9 +17,10 @@ Status: **PENDING_INDEPENDENT_AUDIT**. The experimenter’s conclusions must not
 | S initial prototype | https://github.com/SunSi12138/SharpLink/commit/58c280f4ef02c0620d510cc1a78139f2ec5e80ce |
 | S test matrix commit | https://github.com/SunSi12138/SharpLink/commit/5b8d5fd269cf7d1e48172be1e1d07e13593d74d1 |
 | S final product source | `525a5aed918516ac1214a91c99fbb3fbb3a746e9` |
-| S final test/evidence commit | `4f927b40ddac622d76cba45d23b173aa0c9da31c` |
+| S final test/evidence commit | `33fb48c232e7bf3843dbb3ab34420e97ca6435ff` |
+| F18b test commit | `4f927b40ddac622d76cba45d23b173aa0c9da31c` |
 | Final S product commit URL | https://github.com/SunSi12138/SharpLink/commit/525a5aed918516ac1214a91c99fbb3fbb3a746e9 |
-| Final test commit URL | https://github.com/SunSi12138/SharpLink/commit/4f927b40ddac622d76cba45d23b173aa0c9da31c |
+| Final test commit URL | https://github.com/SunSi12138/SharpLink/commit/33fb48c232e7bf3843dbb3ab34420e97ca6435ff |
 | S vs baseline compare | https://github.com/SunSi12138/SharpLink/compare/2948de82fff77d66fce51ecec9a5783b6ef3cb62...525a5aed918516ac1214a91c99fbb3fbb3a746e9 |
 
 The branch contains only source/tests/model changes. No `dev` branch commit was made and no PR was opened.
@@ -73,13 +74,14 @@ The key commands are in `02-execution-ledger.md`. Summary:
 | P all 14 `QueuedSelectionRetirement...` rows | 0 (14/14) |
 | P `QueuedSelectionShouldNotRoot...` | 0 (1/1) |
 | C-NEG on P | 0 (test passed by detecting the deliberate hazard) |
-| S core cases at `4f927b40` (product `525a5aed`) | 0 each (F03/F05/F06/F07/F09/F10/F18/F18b) |
+| S core cases at `4f927b40` (F03/F05/F06/F07/F09/F10/F18/F18b) | 0 each |
+| S F08 at `33fb48c2` | 0 |
 | S full integration suite | **INCOMPLETE/HANG**: 63 unique failure names observed, no final summary; force-stopped after >13 min without output; see `evidence/full-suite/` |
 
 ## 10.5 Most important failures and risks
 
 1. **C-NEG hazard is real on P.** After Replace commit, before the client manifest notification, a stale request executes R2 (`value=2`, R1 Created=0, R2 Created=1). This is not an inference.
-2. **S is narrow, not general.** Seven core cases pass (including F18b held duplex), but F08, F01/F02/F04 and F11–F17/F19–F24 are not implemented or not run.
+2. **S is narrow, not general.** Seven required core cases, F18b held duplex, and F08 pass, but F01/F02/F04 and F11–F17/F19–F24 are not implemented or not run.
 3. **S breaks existing dynamic registration.** `IndependentControlReply...` returns `Service ... is not implemented`; `QueuedSelection...` times out. The session snapshot is frozen before the dynamic service is registered.
 4. **S causes whole-session collateral.** F09 moves unrelated B to a new physical session.
 5. **S control frame is single-shot.** No ack/retry/reconciliation; a lost refresh can leave the old session pinned to a draining R and permanently `Unavailable`.
@@ -98,7 +100,7 @@ Please do not simply accept the author’s summary. Independently verify:
 4. **S retirement**: Is `RetirePinnedSessionsAsync` guaranteed to run for every affected session? What happens if `SessionRefresh` is not negotiated, the send queue is full, the frame is lost, or the client ignores it? Is the synthetic generation safe against ABA/dedup?
 5. **Dynamic registration**: Reproduce the two existing-test failures on S. Are they genuine behavioral regressions or test-harness artifacts? If genuine, can S ever satisfy #775’s same-session multi-service expectation?
 6. **F18**: Verify the held-duplex F18b events at `evidence/s-core/F18b/` and determine whether they truly hold a real stream, keep the old session/ALC alive, block replacement, and then collect after release. Also check the Unregister, server-stream `MoveNext`/`Dispose`, producer/CTS and codec/facts gaps that remain.
-7. **Evidence**: Re-run at least F05/F06/F07/F18/F18b from `4f927b40` and compare event order to the packet. Check that the C-NEG test is on P code, not S, and that its “PASS” is the expected hazard.
+7. **Evidence**: Re-run at least F05/F06/F07/F18/F18b from `4f927b40` and F08 from `33fb48c2`; compare event order to the packet. Check that the C-NEG test is on P code, not S, and that its “PASS” is the expected hazard.
 8. **Performance**: Is there any hidden or partial performance data? If not, confirm `INCONCLUSIVE`. If yes, test the A/A noise, pairing, sample completeness and cross-arm comparability.
 9. **Architecture**: Does S truly avoid a per-request token, or does it merely move identity to the physical session? Does this satisfy #775’s exact-registration/receipt/queue-cut obligations, or is it a different, incompatible design?
 10. **Conclusion**: Is `NO-GO for S as an N0 substitute` supported? Is `INCONCLUSIVE` the correct overall experiment result? What is the minimal next experiment that would change the decision?

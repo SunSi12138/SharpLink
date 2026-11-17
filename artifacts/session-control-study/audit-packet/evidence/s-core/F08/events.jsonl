@@ -1,0 +1,4 @@
+{"seq":1,"case":"F08","variant":"S","event":"attempt-started","monotonicMs":1.222,"utc":"2026-11-17T06:56:38.3349165\u002B00:00","payload":{"variant":"S","sourceSha":"33fb48c232e7bf3843dbb3ab34420e97ca6435ff","baseSha":"2948de82fff77d66fce51ecec9a5783b6ef3cb62","transport":"tcp","os":"Microsoft Windows NT 10.0.26200.0","runtime":"10.0.15"}}
+{"seq":2,"case":"F08","variant":"S","event":"start-claim-held-before-handler","monotonicMs":401.783,"utc":"2026-11-17T06:56:38.7354485\u002B00:00","payload":{"oldSessionId":"45fab25c3baa4900888f6e070b20e315","callCompleted":false}}
+{"seq":3,"case":"F08","variant":"S","event":"cut-after-start-claim","monotonicMs":414.808,"utc":"2026-11-17T06:56:38.7484740\u002B00:00","payload":{"callCompleted":false,"oldR1Created":1}}
+{"seq":4,"case":"F08","variant":"S","event":"start-claim-call-completed","monotonicMs":429.212,"utc":"2026-11-17T06:56:38.7628777\u002B00:00","payload":{"value":2,"oldR1Created":1}}

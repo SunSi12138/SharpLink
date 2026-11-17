@@ -10,7 +10,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 |---|---|---|---|
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
-| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F05/F06/F07/F09/F10 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
+| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F05/F06/F07/F08/F09/F10 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
 | N | none | none | NOT_IMPLEMENTED |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
@@ -26,7 +26,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | F05 cut then held notification | `FAIL` — C-NEG hazard: stale request returns R2 value 2, R2 Created=1 | NOT_IMPLEMENTED | **PASS (hazard detected)** — `C_NEG_...`, R1=0/R2=1 | `PASS` — `Study_F05...`, stale `Unavailable`, R1=0/R2=0, cut hook held | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F06 admitted old call completes after cut | NOT_RUN (existing P behavior not isolated) | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F06...`, blocked call returns 42 after cut | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F07 queued request vs cut | `PASS` — all 14 `QueuedSelectionRetirement...` rows | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F07...`, queued `Unavailable`, R1=0/R2=0 | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
-| F08 start claim wins cut | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN (F06 covers a blocked admitted call; F08 scheduling control not implemented) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
+| F08 start claim wins cut | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F08...` uses a real server interceptor to hold the handler after admission; cut occurs, call remains pending, release returns R1 result 2 | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F09 unrelated B on same session | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS with cost` — `Study_F09...`, B still answers 7 but both A and B move to a new session; `foreignServiceInterrupted=true` | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F10 two sessions / delayed notifications | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F10...`, both old sessions replaced, 2 notifications, both R2 calls correct | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F11 rapid R1→R2→R3 / late ack | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
@@ -46,7 +46,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 
 ## 4.3 S core gate decision
 
-#998 requires F03/F05/F06/F07/F09/F10/F18 before performance. At the final test commit `4f927b40`, all seven executed cases pass for the **TCP/Replace** slice (F18 via idle + held-duplex). However, the required full F01–F24 matrix is not implemented:
+#998 requires F03/F05/F06/F07/F09/F10/F18 before performance. At test commit `4f927b40`, all seven core cases pass for the **TCP/Replace** slice (F18 via idle + held-duplex); at `33fb48c2`, F08 also passes. However, the required full F01–F24 matrix is not implemented:
 
 ```text
 S core gate (TCP/Replace):   PASS
@@ -54,7 +54,7 @@ S full F01–F24 gate:         FAIL / INCOMPLETE
 S performance:               NOT_RUN (full matrix gate not met)
 ```
 
-F18's Unregister subcase, F08 and the streaming/physical-tail cases remain unrun. No performance comparison is valid for S.
+F18's Unregister subcase, and the F11–F17/F19–F24 streaming/physical-tail cases remain unrun. F08 is now covered, but the full matrix is still not complete. No performance comparison is valid for S.
 
 ## 4.4 C-NEG expected-failure check
 
@@ -68,7 +68,7 @@ This is the required negative control. Evidence: `evidence/c-neg/`.
 
 ## 4.5 Evidence pointers
 
-- S canonical events: `evidence/s-core/F03/events.jsonl` through `F18/events.jsonl`, plus `evidence/s-core/F18b/events.jsonl`; runner stdout in the same directories.
+- S canonical events: `evidence/s-core/F03/events.jsonl` through `F18/events.jsonl`, plus `F18b/events.jsonl` and `F08/events.jsonl`; runner stdout in the same directories.
 - S failed/mixed attempts: `evidence/s-core/failures/` (stdout logs), `evidence/s-core/F03-failed-attempt-2/`, `evidence/s-core/F18b-mixed-attempt/`.
 - S full-suite partial log: `evidence/full-suite/stdout.log` and `evidence/full-suite/failure-names.txt`.
 - S regression logs: `evidence/regressions/`.

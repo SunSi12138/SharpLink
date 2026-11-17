@@ -75,6 +75,19 @@ Canonical evidence: `evidence/s-core/F06/events.jsonl`.
 
 The monotonic order proves the cut happened **after** the call had already entered business and that the result was not lost. It does not instrument the exact `TryAcquire` instant; “entered business” is the observable start claim.
 
+## F08 — start claim wins, handler scheduling held
+
+Canonical evidence: `evidence/s-core/F08/events.jsonl` (test commit `33fb48c2`, attempt `attempt-final-33fb`).
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | server interceptor entered | 401.783 | call has passed admission and is held before the generated handler |
+| 2 | cut committed | 414.808 | call not completed; R1 service already activated (`oldR1Created=1`) |
+| 3 | interceptor released | after 414.808 | handler runs |
+| 4 | call completed | 429.212 | returns 2 from R1 |
+
+This demonstrates that a call that already won the start claim/completed activation is not cancelled by the cut; it completes after the handler gate is released. It does **not** prove the scheduling pause is before all user code: the dynamic singleton constructor already ran (`oldR1Created=1`). The cut still cannot convert it into a new admission.
+
 ## F13 — not run
 
 No Freeze/Resume implementation exists. There is no timeline to present. Marking this `NOT_RUN` is mandatory; it must not be inferred from F05/F07.

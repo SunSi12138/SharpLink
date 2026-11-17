@@ -106,6 +106,7 @@ Commits:
 | `5b8d5fd269cf7d1e48172be1e1d07e13593d74d1` | F03/F09/F10/F18 + test harness fixes |
 | `525a5aed918516ac1214a91c99fbb3fbb3a746e9` | final S product: cut before new snapshot publication; unregister retirement |
 | `4f927b40ddac622d76cba45d23b173aa0c9da31c` | test-only: held-duplex ALC release control (F18b) |
+| `33fb48c232e7bf3843dbb3ab34420e97ca6435ff` | test-only: start-claim vs cut control with handler gate (F08) |
 
 Important first failures (all preserved):
 
@@ -118,7 +119,7 @@ Important first failures (all preserved):
 | F18 | `attempt-1` | FAIL | test held the old collectible `Assembly`/`AssemblyLoadContext` local, rooting the ALC |
 | F18 | `attempt-2`/`attempt-final-1` | PASS | idle replacement only; held-stream subcase NOT_RUN |
 
-Final S core results at test commit `4f927b40` (product source `525a5aed`):
+Final S core results at test commit `4f927b40` / `33fb48c2` (product source `525a5aed`):
 
 | Case | Test method | Attempt | Status | Exit |
 |---|---|---|---|---:|
@@ -126,12 +127,13 @@ Final S core results at test commit `4f927b40` (product source `525a5aed`):
 | F05 | `Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2` | `attempt-final-4f92` | PASS | 0 |
 | F06 | `Study_F06_AdmittedOldCallMustCompleteAfterCut` | `attempt-final-4f92` | PASS | 0 |
 | F07 | `Study_F07_QueuedRequestLosingToCutMustEnterNeitherR1NorR2` | `attempt-final-4f92` | PASS | 0 |
+| F08 | `Study_F08_StartClaimWinsCutWithHandlerSchedulingHeld` | `attempt-final-33fb` | PASS | 0 |
 | F09 | `Study_F09_UnrelatedServiceOnSameSessionIsCollateralInS` | `attempt-final-4f92` | PASS (records collateral cost) | 0 |
 | F10 | `Study_F10_TwoIndependentSessionsMustBothMoveToNewSnapshot` | `attempt-final-4f92` | PASS | 0 |
 | F18 | `Study_F18_RetiredServiceAlcMustNotBeRootedBySessions` | `attempt-final-4f92` | PASS (idle) | 0 |
 | F18b | `Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc` | `attempt-canonical-4f92` | PASS (held duplex) | 0 |
 
-F18b is the held-stream control that was missing earlier: it holds a real duplex enumerator across the cut, verifies the old session/ALC is retained and the replacement is blocked, then releases the stream and verifies the old ALC is collectible. The first F18b directory (`attempt-final-4f92`) accidentally contains two identical runs and is preserved as `F18b-mixed-attempt`; the canonical evidence is `attempt-canonical-4f92`.
+F18b is the held-stream control that was missing earlier: it holds a real duplex enumerator across the cut, verifies the old session/ALC is retained and the replacement is blocked, then releases the stream and verifies the old ALC is collectible. F08 uses a real server interceptor to hold the handler after admission; the cut occurs while the call is pending, and release returns the original R1 result 2. The first F18b directory (`attempt-final-4f92`) accidentally contains two identical runs and is preserved as `F18b-mixed-attempt`; the canonical evidence is `attempt-canonical-4f92`.
 
 ### Full S integration suite at `525a5aed`
 

@@ -118,6 +118,115 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task Study_F08_StartClaimWinsCutWithHandlerSchedulingHeld()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F08");
+        var gate = new StartClaimGateInterceptor();
+        await using var harness = await DynamicHarness.CreateAsync(
+            connectClient: false, serverInterceptor: gate);
+        using var plugin = PluginBundle.Load("study-f08");
+        plugin.ResetServiceState();
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+
+        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var replacementAssembly = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+        var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+        replacementType.GetMethod("Reset")!.Invoke(null, null);
+        var cutCommitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNotification = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        releaseNotification.TrySetResult();
+        var isS = SessionControlStudySupport.TryInstallSNotificationHooks(
+            server, cutCommitted, releaseNotification);
+        Ensure(isS, "F08 requires the S cut hook");
+
+        Task<int>? call = null;
+        Task<SharpLinkAssemblyReplacementResult>? replace = null;
+        try
+        {
+            call = InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None).AsTask();
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            attempt.Emit("start-claim-held-before-handler", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["callCompleted"] = call.IsCompleted
+            });
+
+            replace = server.ReplaceAssemblyAsync(
+                plugin.ServiceAssembly,
+                replacementAssembly,
+                TimeSpan.FromSeconds(10)).AsTask();
+            await cutCommitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(!call.IsCompleted,
+                "the call that won the start claim must remain pending while the handler gate is held");
+            attempt.Emit("cut-after-start-claim", new Dictionary<string, object?>
+            {
+                ["callCompleted"] = call.IsCompleted,
+                ["oldR1Created"] = plugin.GetStaticInt("Created")
+            });
+
+            gate.Release.TrySetResult();
+            var value = await call.WaitAsync(TimeSpan.FromSeconds(10));
+            Ensure(value == 2, "the admitted old call completes with its original R1 result");
+            Ensure(plugin.GetStaticInt("Created") == 1,
+                "the old call enters R1 exactly once after the scheduling gate is released");
+            attempt.Emit("start-claim-call-completed", new Dictionary<string, object?>
+            {
+                ["value"] = value,
+                ["oldR1Created"] = plugin.GetStaticInt("Created")
+            });
+
+            var replaced = await replace.WaitAsync(TimeSpan.FromSeconds(10));
+            Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+                $"replacement completes after the start-claim call: {replaced.Error}");
+            await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+            var fresh = await InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UnaryAsync", 10, CancellationToken.None);
+            Ensure(fresh == 11, "fresh call after session replacement enters R2");
+            Ensure((int)replacementType.GetProperty("Created")!.GetValue(null)! == 1,
+                "fresh call enters R2 exactly once");
+            attempt.Complete("PASS");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            gate.Release.TrySetResult();
+            if (call is not null)
+            {
+                try { _ = await call.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { }
+            }
+            if (replace is not null)
+            {
+                try { _ = await replace.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { }
+            }
+            SessionControlStudySupport.ClearSNotificationHooks(server);
+            _ = await server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            replacementContext.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F18b");
