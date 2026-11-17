@@ -90,7 +90,7 @@ GitHub Actions 链接：**#998 的 S 实验没有 Actions run**，全部在本�
    - 它是否满足 N0 的 exact RID/receipt/queue-only cut 义务。
 
 7. **N1 审计**
-   `SharpLink-775-N1-Implementation` 的 `131df413` 是静态 Unary/无输入 OneWay 的 wire6 检查点，不是 N0；其唯一 hosted run 43693296449 在首 Prepare 5 秒失败，V2 没有第二次运行授权。请核查：
+   `SharpLink-775-N1-Implementation` 的 `131df413` 是静态 Unary/无输入 OneWay 的 wire6 检查点，不是 N0；其唯一 hosted run 43693296449 在首 Prepare 5 秒失败，V2 没有第二次运行授权。请先按 `13-n1-v2-audit-prep.md` 核查：
    - `study/998-n1-review @ e901bcfc` 是否只改了 `global.json`；
    - 63 项 V2 pure component 是否确实只覆盖纯组件，不能冒充 RPC/ALC/owner；
    - 为什么本机只运行 components、不运行 rpc（协议禁止本机 RPC，且无第二次 hosted 授权）；

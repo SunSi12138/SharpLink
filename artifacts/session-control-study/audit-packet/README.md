@@ -20,6 +20,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 | `10-independent-audit-request.md` | detailed external audit instructions |
 | `11-scope-closure.md` | executed scope, hard blockers and future work order |
 | `12-n1-candidate-review.md` | N1 static-bind candidate source, V1 failure and V2 pure-component check |
+| `13-n1-v2-audit-prep.md` | V1→V2 diff review checklist; no second run authorized |
 | `AUDIT-REQUEST.md` | copy-paste audit request with real data |
 | `evidence/` | raw events/results/logs, diffs, discovery censuses, hashes |
 

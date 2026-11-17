@@ -55,6 +55,7 @@ artifacts/session-control-study/audit-packet/
   10-independent-audit-request.md
   11-scope-closure.md
   12-n1-candidate-review.md
+  13-n1-v2-audit-prep.md
   evidence/
     g1-model/
     c-neg/
@@ -103,7 +104,7 @@ The key commands are in `02-execution-ledger.md`. Summary:
 4. **S causes whole-session collateral.** F09 moves unrelated B to a new physical session.
 5. **S control frame is single-shot.** No ack/retry/reconciliation; a lost refresh can leave the old session pinned to a draining R and permanently `Unavailable`.
 6. **F18 is partial.** F18 idle and F18b held-duplex pass; Unregister, server-stream `MoveNext`/`Dispose`, producer/CTS tails and codec/facts roots are not tested.
-7. **N1 is not a qualified N.** N1 `131df413` implements a static wire-6 binding checkpoint, but the only hosted run failed at the first Prepare (`DeadlineExceeded`, 36 checks, no RPC case) and V2 has no second-run authorization. The 63 V2 pure checks passed locally, but no RPC/ALC/owner case was executed. N1 is `NOT_QUALIFIED`, not N0.
+7. **N1 is not a qualified N.** N1 `131df413` implements a static wire-6 binding checkpoint, but the only hosted run failed at the first Prepare (`DeadlineExceeded`, 36 checks, no RPC case) and V2 has no second-run authorization. The 63 V2 pure checks passed locally, but no RPC/ALC/owner case was executed. N1 is `NOT_QUALIFIED`, not N0. See `13-n1-v2-audit-prep.md` for the V1→V2 review checklist.
 8. **No performance evidence.** A/A, ABBA/BAAB, TCP/SHM comparison and all counters are `NOT_RUN`.
 9. **Environment limits.** SharedMemory, TLS PFX and UDS fail on this host; 46 integration / 26 unit / 1 generator / 4 load baseline failures are preserved.
 10. **Toolchain deviation.** `global.json` is `10.0.404`, not the requested `10.0.102` (both S and N1 review branches).
@@ -122,7 +123,7 @@ Please do not simply accept the author’s summary. Independently verify:
 8. **Performance**: Is there any hidden or partial performance data? If not, confirm `INCONCLUSIVE`. If yes, test the A/A noise, pairing, sample completeness and cross-arm comparability.
 9. **Architecture**: Does S truly avoid a per-request token, or does it merely move identity to the physical session? Does this satisfy #775’s exact-registration/receipt/queue-cut obligations, or is it a different, incompatible design?
 10. **Conclusion**: Is `NO-GO for S as an N0 substitute` supported? Is `INCONCLUSIVE` the correct overall experiment result? What is the minimal next experiment that would change the decision?
-11. **N1**: Independently verify that `131df413`/`e901bcfc` is a static-only checkpoint, that V1 `43693296449` failed at the first Prepare, and that the 63 pure-component checks do not constitute RPC qualification. Decide whether a second hosted run should be authorized; do not accept local RPC as a substitute.
+11. **N1**: Independently verify that `131df413`/`e901bcfc` is a static-only checkpoint, that V1 `43693296449` failed at the first Prepare, and that the 63 pure-component checks do not constitute RPC qualification. Use `13-n1-v2-audit-prep.md` for the V1→V2 diff questions. Decide whether a second hosted run should be authorized; do not accept local RPC as a substitute.
 
 ## 10.7 Decision requested from the auditor
 

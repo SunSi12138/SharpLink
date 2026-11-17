@@ -1,0 +1,1163 @@
+diff --git a/doc/issue-775-n1-static-bind-checkpoint.md b/doc/issue-775-n1-static-bind-checkpoint.md
+index facbb60d..2bf4eccf 100644
+--- a/doc/issue-775-n1-static-bind-checkpoint.md
++++ b/doc/issue-775-n1-static-bind-checkpoint.md
+@@ -30,9 +30,11 @@ var result = await proxy.Service.MyUnaryAsync(request, cancellationToken);
+ 
+ ## 已有证据与下一门
+ 
+-本机只运行 basic build、纯非 RPC components 和精确负编译 oracle。SDK10.0.115/runtime10.0.15；Client/Server/Generator/Hosting/GenerationControl 及实际 generated evidence consumer 编译通过。原23项组件证据复用；本轮新增11项真实无关 publication/MC guard与4项共享Picker kernel纯组件通过。MC factory一次捕获实际child route及其metadata上限；Stop清route后仅保留弱Type-key的scalar上限，metadata结构错误仍先于终态且不保留业务owner。组件检查确认32B无引用 facts、full ticks/null/负值、wire payload、65536 binding /1024 operation ledger 硬界与归还、API6/full resolver 与 generated facts。旧 Stub 负编译精确命中 required resolver 和四个新签名的五条 CS0535。
++本机只运行 basic build、纯非 RPC components 和精确负编译 oracle。SDK10.0.115/runtime10.0.15；Client/Server/Generator/Hosting/GenerationControl 及实际 generated evidence consumer 编译通过。原23项组件证据复用；V1修订新增的11项真实无关 publication/MC guard与4项共享Picker kernel纯组件通过。MC factory一次捕获实际child route及其metadata上限；Stop清route后仅保留弱Type-key的scalar上限，metadata结构错误仍先于终态且不保留业务owner。组件检查确认32B无引用 facts、full ticks/null/负值、wire payload、65536 binding /1024 operation ledger 硬界与归还、API6/full resolver 与 generated facts。旧 Stub 负编译精确命中 required resolver 和四个新签名的五条 CS0535。
+ 
+-实际 TCP、队列 cut、early/late Ack、取消/断线、物理 quota 归还只写入了[有界 hosted 协议](validation/issue-775-n1-static-bind-protocol.md)，**尚未运行**。下一门是未参与设计者的独立源码/协议审核；通过后还须 root 明确授权一次 hosted run。
++V1源码/协议已独立批准并执行唯一一次 [Linux TCP run43693296449](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449)：首case初始同site Prepare5秒DeadlineExceeded；只有连接前fail-fast，零RPCcase完成，后7case未执行。client.Stop另遇3秒guard，实际source Task仍未完成；server最终三项ledger为0不能证明client清理。N1功能资格未通过。完整原始证据保留在`artifacts/n1-static-bind/hosted-once/`；运行绑定source be24fda4，所有临时ref/workflow已精确清理，没有重跑。
++
++本轮沿factory→handshake/readiness→refresh/Bind→queue/flush→Ack/confirmation→target及Stop源码审计，未取得能唯一解释首错的确定性反例；不以猜测修产品。V2增加失败相位诊断与9项纯组件；续审修正为逐段零等待TryEnter、显式contended/failed/null，另10项纯争用/失败控制证明gate未释放时返回且cleanup继续。Close先发布原Ack信号再作best-effort诊断，不等待或依赖采样；另以6项纯控制修复cluster Stop遗漏site归还/关闭Bind工作准入，以及显式Stop早于Seal时refresh预期ConnectionClosed的误记；两者不解释V1首错，见[因果审计](validation/issue-775-n1-prepare-failure-audit.md)。现有trace没有首错当刻的Bind/flush/Ack/target数据，无法把deadline更窄归因。新[协议V2](validation/issue-775-n1-static-bind-protocol.md)保留原八case/全部预算，下一门仍是独立源码/协议审核，任何第二次hosted必须root重新决策；V1授权已消耗。
+ 
+ ## 不能从本切片推出的结论
+ 
+diff --git a/doc/validation/issue-775-n1-prepare-failure-audit.md b/doc/validation/issue-775-n1-prepare-failure-audit.md
+new file mode 100644
+index 00000000..5d490605
+--- /dev/null
++++ b/doc/validation/issue-775-n1-prepare-failure-audit.md
+@@ -0,0 +1,42 @@
++# N1 首次 Prepare 失败：已知边界与下一判别
++
++## V1 确认失败，没有完成 RPC case
++
++唯一运行是 [43693296449 / job132748271127](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449)，attempt1；审定 source `be24fda408118e5a9155174b8ac3c6b794e46aa9`，tool commit `021f6b84a55c95db5eb525af51bd54a5bc207536` 只加 workflow，parent 为 source。SDK10.0.115、实际 runtime10.0.15、UID V1 与退出1均已核对。
++
++原23项组件、11项 publication/MC 控制与连接前两项 guard 共36项通过；首case在第一次 `proxy.PrepareAsync(5秒)` 得到 DeadlineExceeded，尚未取得 Unary 返回，后7case未执行。cleanup另遇 client.Stop 的3秒 guard：恢复时原 Task 为 WaitingForActivation，独立 WaitAsync promise 已 fault；server最终 binding/operation/protected 三项为0。client清理没有被证明完成。
++
++13文件 artifact、完整 job log、run/jobs/artifacts JSON、可用 run/job HTML、环境与冻结协议均在本地 `artifacts/n1-static-bind/hosted-once/`。该 artifact 没有首错时的各 Session frame/op/flush/Ack/target 清单；不能从缺少日志推出“没发 Bind”“没收 Ack”或“transport Ready 一直保持”。V1授权已消耗，V2没有运行授权。
++
++## 因果审计没有唯一定位首个 Prepare 的内部原因
++
++以下核对以 V1 实际 source 为对象，后续诊断不改这些 RPC 规则。
++
++1. **factory 与原 site**：generated ProxyFactory 得到 ContractChannel；Service 与 Prepare 共用其 canonical site。构造提交后触发 refresh；无 route 调用在序列化前拒绝，V1两项前置控制确已通过。不存在旧 ContractId facade 或另一个 Prepare site。
++2. **Connect 与握手**：`ConnectOneAsync` 先完成真实 handshake，验证成功 response、`TryCompleteHandshake` 和同 Session Manifest，随后创建 ClientConnection、发布 ready snapshot、启动 reader/heartbeat。`ConnectAsync` 返回说明其初始化任务完成，不保证此前 Session 到 Prepare 时仍 Ready；后续断线、协议失败或重连必须另看当时的 Session 状态。
++3. **资格与 refresh**：Manifest/readiness/factory/Prepare 调度同一个 one-running/one-dirty refresh。它捕获实际 ready connections，按同 Session Manifest/hash 冷资格决定 Bind；每 Session 返回共享 Bind Task。Prepare在原5秒内等待 site 的 `_changed`，不取消原10秒 Bind。没有 eligible target 时得到 deadline，与“Bind 从未启动”并不等价。
++4. **原 queue/flush**：`ClientBindingSession` 先预留绑定/op并关联 Publishing，然后等待 predecessor，调用 `ContractBindingWire.SendAndFlushWithinBudgetAsync`；该函数仍走原 normal queue、真实 pump 与 flush completion。早到 Ack 不能越过 publication；10秒包含所有等待。不确定失败先发布原 cause，再取消并 join 原 Session/pump/send，不能提前归还 quota。
++5. **server 与 Ack**：真实 reader解析 Bind；同静态R的临时 metadata reader保护冷 resolver/full facts，构造 immutable table、安装完整 token，真实 Ack 再走 queue/flush。错误hash/facts等能结构化拒绝，但 V1 首错没有足够相位数据判断是否走到这里。
++6. **confirmation 与 target**：client reader按真实 Session分派 Ack；original deadline、完整 token/watermark与receipt通过后完成 BoundTarget Task。refresh按完成顺序批量发布 qualified snapshot。Prepare读取同 site 的实际confirmed target；成功条件检查、signal捕获与publication都在原site gate协调，未见可从现有trace唯一推出的lost-wakeup反例。
++7. **Stop关联**：fixed Stop关闭本地准入/site，取消lifetime，Fail每个connection使 Bind Ack waiter退出，再await Session物理Dispose、registry和framework drain。原Task可能停在connection/pump/transport cleanup，也可能在framework任务收尾；V1单个Stop guard状态不能区分，更不能据此改变3秒边界或断言owner泄漏。未修改上述物理join顺序。
++
++因此没有按猜测修复首个 Prepare，亦未修改RPC期限、优先序、quota或重新运行。下一次若获授权，应先用失败时的实际状态区分：未进入refresh/没有qualified Session、predecessor阻塞、send queue/inner flush阻塞、已收Ack尚未publication、confirmation失败、confirmed却未同site发布。
++
++## 已证明并修复两个相邻 Stop 问题
++
++这两项不解释首跑的 fixed-pool 初始 Prepare；它们属于同一 N1 的控制生命周期和限额归还。
++
++- **cluster未清site/关闭Bind工作准入**：旧 `StopStaticClusterCoreAsync` 没有fixed Stop的 `_poolStopping` / `StopContractSitesLocked` 步骤。纯组件创建实际两endpoint client但不Connect，持有真实proxy，先作25毫秒empty Prepare以排除未退出refresh，再Stop；原subject确定在site归还断言失败。修后沿原 `_poolGate` 关闭工作准入、清site并seal；不持该gate运行cluster callbacks或Dispose。旧key不能依赖GC才归还。
++- **显式Stop早于supervisor Seal的预期refresh退出**：第一版纯控制另实见 Refresh 的 ConnectionClosed 先被supervisor记录，使Stop重抛。`_stopStarted` 在Stop入口已置位，而BeginShutdown/Seal随后才发生。现在仅在显式Stop已开始且异常为ConnectionClosed时，把该控制任务视为正常退出；仍唤醒原waiters并记录error。非Stop的ConnectionClosed、DeadlineExceeded和非预期错误仍fault，不吞业务结果或物理cleanup错误。
++
++失败前输出保留在 `cluster-stop-before-fix.txt`、`cluster-stop-settled-before-fix.txt`。修后6项纯控制通过，包含上述实际site、finite Prepare、归还及窄filter反例；没有网络/RPC/ALC。原23+11+4与负编译沿未变subject复用。
++
++## V2只为下一次同预算判别补足信息
++
++失败前与cleanup失败后各采一次：真实readiness/Session phase、queue字节/idle、site refresh资格数与阶段、原Bind的predecessor/send/Ack/result Task状态、deadline诊断投影、confirmation/token/targets、Stop实际await段及原framework任务状态。fixture保留有限的已有error类型/code/detail/stack，不格式化消息/state；frame只输出header/长度/control token。outbound观测是flush前staged bytes，不能冒充已上网；另采真实inner flush Task的状态。
++
++closure历史限前3与最新1个Session，logger限前32与最新32条，每条最多4层cause及4096字符stack，帧和flush Session inventory各最多512。诊断不持Codec/Type/业务payload/凭据或异常对象根，不在普通业务调用上新增快照/日志。各记录是其采样时刻的事实，不能拼成跨组件原子快照，也不证明旧signal先后。
++
++独立续审指出原同步诊断可能等source gate阻止cleanup，已改为逐段零等待TryEnter，未知值显式contended/null；Close先signal原Ack再诊断，history记录争用/失败不阻止cleanup。没有遗留采样Task。新增10项纯争用/失败控制通过（实际site-index和原supervisor gate持有期间返回，随后清理正常）；这不是首Prepare根因。
++
++新增9项纯诊断控制通过：脱敏、界限/首尾保留、header-only、managed Pipe真实pending/完成flush透传、未连接site与Stop阶段。诊断构建通过；没有第二次hosted或本机RPC。后续仍须独立审核实际source及[协议V2](issue-775-n1-static-bind-protocol.md)，由root另决是否运行。功能资格未通过，成本资格仍HOLD。
+diff --git a/doc/validation/issue-775-n1-static-bind-protocol.md b/doc/validation/issue-775-n1-static-bind-protocol.md
+index 2a248a0d..3e90e870 100644
+--- a/doc/validation/issue-775-n1-static-bind-protocol.md
++++ b/doc/validation/issue-775-n1-static-bind-protocol.md
+@@ -1,11 +1,11 @@
+-# N1-STATIC-BIND-20261115-V1：一次 Linux TCP 协议
++# N1-STATIC-BIND-20261115-V2：一次 Linux TCP 协议
+ 
+-状态：源码/协议修订待独立续审（已正常纳入dev2948de82，成本资格HOLD）；未获 root 明确开跑授权。这个文件和 `test/SharpLink.N1.StaticBindEvidence` 必须作为同一个源码 subject 审核。actual base/head 写入交接记录；执行时 `N1_SOURCE_SHA` 必须等于 checkout 的完整 `git rev-parse HEAD`，不按分支名漂移。
++状态：V2诊断修订待独立审核；没有第二次运行授权，成本资格HOLD。V1（source `be24fda408118e5a9155174b8ac3c6b794e46aa9`）已消耗唯一一次授权：[run43693296449](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449) 首case初始Prepare5秒失败，零RPCcase完成，并附client.Stop3秒guard。V1冻结协议、13文件artifact与首错trace保留在该source及本地`artifacts/n1-static-bind/hosted-once/`，不以V2覆盖其结果。这个文件和 `test/SharpLink.N1.StaticBindEvidence` 必须作为同一个源码 subject 审核。actual base/head 写入交接记录；执行时 `N1_SOURCE_SHA` 必须等于 checkout 的完整 `git rev-parse HEAD`，不按分支名漂移。
+ 
+ ## 执行边界
+ 
+ - 一个 GitHub-hosted Linux x64 job，SDK **10.0.115** / runtime **10.0.15**。不执行本机 RPC/ALC/分配/性能；无矩阵、重跑、压力/性能或 GC 实验。
+-- 整个 job hard **15分钟**，RPC 程序只执行一次：`dotnet --fx-version 10.0.15 test/SharpLink.N1.StaticBindEvidence/bin/Release/net10.0/SharpLink.N1.StaticBindEvidence.dll rpc N1-STATIC-BIND-20261115-V1`。入口脚本 `eng/run-775-n1-static-bind.sh` 要求 GitHub/Linux、精确 source 与显式协议 UID，并用 `--fx-version 10.0.15` pin；RPC 入口再次核实 actual `Environment.Version == 10.0.15`，不是仅列出已装 runtime。
++- 整个 job hard **15分钟**，RPC 程序只执行一次：`dotnet --fx-version 10.0.15 test/SharpLink.N1.StaticBindEvidence/bin/Release/net10.0/SharpLink.N1.StaticBindEvidence.dll rpc N1-STATIC-BIND-20261115-V2`。入口脚本 `eng/run-775-n1-static-bind.sh` 要求 GitHub/Linux、精确 source 与显式协议 UID，并用 `--fx-version 10.0.15` pin；RPC 入口再次核实 actual `Environment.Version == 10.0.15`，不是仅列出已装 runtime。
+ - 实际 loopback TCP；generated normal client 与 actual server。transport decorator 只观察/冻结真实 bytes/flush，不制造 Ack、token 或 completion，不反射改产品表。raw peer 也只通过真实 TCP 发协议帧。
+ - 接入原 send queue 默认8MiB/frame4MiB、默认流窗口与 capacity。单 endpoint pool1，配对 case pool2；client unary默认2秒，OneWay不继承它。固定 reconnect50毫秒/jitter1；只有 timeout case reconnect固定30秒，防止把新 Session 的成功误作旧 operation 成功。
+ - readiness budgets：普通 Prepare5秒；timeout case13秒。每 Bind原10秒。fixture事件/读写 guard3秒；client Stop guard3秒；server graceful Stop3秒、外层guard4秒。不因失败延长这些数值。timeout case在真实 Bind send flush 前冻结1秒，再让 actual server Ack 停在其 flush 前，保证先消耗原 client operation budget。
+@@ -23,6 +23,17 @@
+ 7. **site-waiter-hard-bounds**：未连接client持64个不同完整receipt-key channel，第65site Capacity60104。64个有限Prepare占64waiter，第65waiter Capacity；取消这些waiter后逐个观察退出。Stop后site/waiter/binding/operation均0。无无限budget。
+ 8. **operation-timeout-physical-close**：13秒Prepare，Bind仍是原10秒；前述1秒send gate与actual Ack gate使旧operation超时。预期DeadlineExceeded；该Session物理drain后operation quota归还。不会采用随后放行的旧Ack。
+ 
++## V2诊断及相邻Stop修复，不修改八case与预算
++
++- 源码审计及确定反例见[Prepare失败审计](issue-775-n1-prepare-failure-audit.md)。本轮另外修复cluster Stop没有清site/关闭Bind工作准入，以及显式Stop早于Seal时refresh的预期ConnectionClosed被误记framework故障；6项纯控制证明原site归还和窄异常过滤。它们不解释V1的fixed初始Prepare，不声称首错已修。
++- 失败采样的每个gate段用零等待TryEnter；site index/history/site/binding/topology/supervisor以及fixture frame/logger分别报告available/contended/failed。拿不到的site/target计数为null，不能把未知写成0；即使单个gate争用，仍保留其Session/contract scalar身份。Until predicate/guard observation也使用这些非阻塞观测或原atomic计数；未知只是不满足predicate，仍按原3秒guard报告INCONCLUSIVE。没有Task.Run采样或超时后仍持owner的任务；回调失败释放已取得的gate。原deadline只读scalar诊断投影，不调用TimeProvider或transport安全getter。
++- Close先完成原Ack waiter信号、释放原binding gate，才作best-effort的非阻塞采样和history记录；诊断throw/争用只记failed/drop计数，不拦原物理cleanup。新增10项纯争用控制验证实际site-index/supervisor gate未释放时返回、单段失败以及后续cleanup，未建立假Session/Ack。
++- 每case在第一错误后、cleanup前输出一次 `N1_FAILURE_SNAPSHOT`；cleanup失败后再采一次。每份只是恢复时的逐项采样，不是跨组件原子快照或原signal时间证明；诊断捕获自身失败单列`N1_DIAGNOSTIC_CAPTURE_FAILURE`，仍保留原错并尝试cleanup。
++- client内部只读trace含真实readiness与Session protocol phase/connected/admission、队列字节/idle wait、实际Bind op predecessor/send/Ack/result Task状态、原deadline诊断投影、confirmation与同site targets。可区分未issue、前序未发布、queue/flush、已收Ack未publication、confirmed未target；错误仅保留类型/code/detail。开启诊断的fixture额外保留前3与最新1个Session closure采样、每Session首个失败op；这些是closure时的历史值，不是当前仍live的owner。
++- Stop采样显示实际await阶段（取消、connection Fail/Dispose、registry/framework drain或资源清理）及相关Session。并读原FrameworkTaskSupervisor的有界active/failure计数；fixture logger保留前32/最新32条已有warning/error的event/type/code/detail/最多4096字符stack，最多4层cause，绝不格式化state或exception消息。
++- transport decorator仍只操作真实Socket/Pipe。原512帧界内只输出header/correlation/长度/control token，不输出payload/auth/metadata；outbound记录在transport flush前，仅代表staged bytes，inbound记录在consume边界。新增每Session最后一次实际inner flush Task状态/阶段（最多512Session），不生成Ack/业务completion，不用诊断信号代替正常Picker/Session或延长guard。默认未指定gate的case使用同种passive recorder，以留下首个Bind的双向轨迹。
++- 本机仅新增9项纯诊断组件（脱敏、64条界与首/尾保留、header-only、managed Pipe实际flush Task透传、未连接site/实际Stop阶段），无本机RPC。原23+11+4及负编译不因添加诊断重复；hosted仍只先执行原23+11与原八case，首错停止。V2不是V1授权的续跑或重试。
++
+ ## 有效性、停止与离线消费
+ 
+ - **PASS** 必须：精确 source/UID/environment均成立，八个case全部结束，程序退出0、`N1_RESULT success` 与 `result.json outcome=PASS` 一致；cleanup完成。组件/源码不能代替实际RPC oracle。
+diff --git a/eng/run-775-n1-static-bind.sh b/eng/run-775-n1-static-bind.sh
+index 7624444d..eb30b3e2 100644
+--- a/eng/run-775-n1-static-bind.sh
++++ b/eng/run-775-n1-static-bind.sh
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
+-uid=N1-STATIC-BIND-20261115-V1
++uid=N1-STATIC-BIND-20261115-V2
+ [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == Linux ]] || { echo 'FIXTURE: GitHub Linux only' >&2; exit 2; }
+ [[ "${N1_RUN_UID:-}" == "$uid" ]] || { echo 'FIXTURE: explicit reviewed UID required' >&2; exit 2; }
+ [[ -n "${N1_SOURCE_SHA:-}" && "$(git rev-parse HEAD)" == "$N1_SOURCE_SHA" ]] || { echo 'FIXTURE: source subject mismatch' >&2; exit 2; }
+diff --git a/src/SharpLink.Client/ClientBindingSession.cs b/src/SharpLink.Client/ClientBindingSession.cs
+index dbcbac7f..45cb19f3 100644
+--- a/src/SharpLink.Client/ClientBindingSession.cs
++++ b/src/SharpLink.Client/ClientBindingSession.cs
+@@ -13,6 +13,7 @@ internal sealed class ClientBindingSession
+     private ulong _lastIssued;
+     private int _reservations, _maintenanceOperations;
+     private bool _closed;
++    private ContractBindingOperationTrace? _firstFailedOperation;
+     private sealed record CompletedBinding(ulong Operation, ContractSiteKey Key, ContractBindAck Ack)
+     { internal bool Retiring; internal RpcDeadline ReleaseDeadline; }
+     private sealed class BindOperation(ulong id, ContractSiteKey key, RpcDeadline deadline)
+@@ -20,6 +21,11 @@ internal sealed class ClientBindingSession
+         internal Task PreviousPublication { get; set; } = Task.CompletedTask;
+         internal TaskCompletionSource Publication { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+         internal bool Published;
++        internal string Phase = "Reserved";
++        internal Task? Send;
++        internal string? FailureType;
++        internal SharpLinkErrorCode? FailureCode;
++        internal ushort? FailureDetail;
+         internal ulong Id { get; } = id;
+         internal ContractSiteKey Key { get; } = key;
+         internal RpcDeadline Deadline { get; } = deadline;
+@@ -67,16 +73,20 @@ internal sealed class ClientBindingSession
+         Exception? failure = null;
+         try
+         {
++            lock (_gate) operation.Phase = "PreviousPublication";
+             if (!await SharpLinkTimer.WaitAsync(operation.PreviousPublication, operation.Deadline, _client.BindingTimeProvider).ConfigureAwait(false)) throw Deadline();
+             if (operation.Deadline.IsExpired(_client.BindingTimeProvider)) throw Deadline();
+             var key = operation.Key;
+             // Once sending begins, cancellation/unknown enqueue outcome is reconciled by closing this Session.
+             exposed = true;
+             sendOwnsReconciliation = true;
+-            await ContractBindingWire.SendAndFlushWithinBudgetAsync(_connection.Session, ProtocolV2FrameType.BindContract, operation.Id,
+-                ContractBindingWire.WriteRequest(new(key.ContractId, key.Hash, key.Requirement, key.Receipt)), operation.Deadline, _client.BindingTimeProvider, CancellationToken.None).ConfigureAwait(false);
++            lock (_gate) operation.Phase = "SendQueueFlush";
++            var send = ContractBindingWire.SendAndFlushWithinBudgetAsync(_connection.Session, ProtocolV2FrameType.BindContract, operation.Id,
++                ContractBindingWire.WriteRequest(new(key.ContractId, key.Hash, key.Requirement, key.Receipt)), operation.Deadline, _client.BindingTimeProvider, CancellationToken.None).AsTask();
++            lock (_gate) operation.Send = send;
++            await send.ConfigureAwait(false);
+             sendOwnsReconciliation = false;
+-            lock (_gate) operation.Published = true;
++            lock (_gate) { operation.Published = true; operation.Phase = "AwaitAck"; }
+             operation.Publication.TrySetResult();
+             if (!await SharpLinkTimer.WaitAsync(operation.Ack.Task, operation.Deadline, _client.BindingTimeProvider).ConfigureAwait(false)) throw Deadline();
+             var ack = await operation.Ack.Task.ConfigureAwait(false);
+@@ -88,14 +98,21 @@ internal sealed class ClientBindingSession
+                 if (_closed || !_connection.CanAcceptCalls || incarnation <= _retired[slot])
+                     throw ContractBindingWire.Error(ContractBindStatus.Retired);
+                 if (_confirmed[slot] is not null) throw ContractBindingWire.Violation("BindAck reused a live slot.");
++                operation.Phase = "Confirming";
+                 ValidateReceipt(operation.Key, ack);
+                 _confirmed[slot] = new(operation.Id, operation.Key, ack); adopted = true;
+             }
++            lock (_gate) operation.Phase = "Confirmed";
+             operation.Result.TrySetResult(new(_connection, _connection.BindingGeneration, ack.Token));
+         }
+         catch (Exception exception)
+         {
+             failure = exception is OperationCanceledException ? Deadline() : exception;
++            lock (_gate)
++            {
++                operation.Phase = "FailureOrReconciliation"; operation.FailureType = failure.GetType().FullName;
++                if (failure is SharpLinkException rpc) { operation.FailureCode = rpc.Code; operation.FailureDetail = rpc.DetailCode; }
++            }
+             if (exposed && !sendOwnsReconciliation && !(operation.Ack.Task.IsCompletedSuccessfully && operation.Ack.Task.Result.Status != ContractBindStatus.Success))
+             {
+                 _connection.Session.NotifyDisconnected(failure);
+@@ -110,6 +127,11 @@ internal sealed class ClientBindingSession
+             operation.Publication.TrySetResult();
+             lock (_gate)
+             {
++                if (failure is not null && _client.BindingTraceEnabled)
++                {
++                    try { _firstFailedOperation ??= CaptureOperation(operation); }
++                    catch { _client.RecordBindingDiagnosticFailure(); }
++                }
+                 _operations.Remove(operation.Key);
+                 if (!adopted) { _reservations--; _client.BindingQuota.ReturnBinding(); }
+             }
+@@ -220,8 +242,29 @@ internal sealed class ClientBindingSession
+         {
+             if (_closed) return; _closed = true;
+             foreach (var operation in _operations.Values) operation.Ack.TrySetException(exception);
+-            // Confirmed entries are detached only after the actual Session drain in DisposeAsync.
++            // Original waiter publication precedes every best-effort diagnostic.
+         }
++        if (!_client.BindingTraceEnabled) return;
++        try { _client.RecordBindingClosure(CaptureTraceNonBlocking(exception)); }
++        catch { _client.RecordBindingDiagnosticFailure(); }
++    }
++    private ContractBindingOperationTrace CaptureOperation(BindOperation operation)
++        => new(operation.Id, operation.Key.ContractId, operation.Phase, operation.PreviousPublication.Status,
++            operation.Send?.Status, operation.Published, operation.Ack.Task.Status,
++            operation.Ack.Task.IsCompletedSuccessfully ? (int)operation.Ack.Task.Result.Status : null,
++            operation.Result.Task.Status, operation.Deadline.Timestamp,
++            operation.FailureType, operation.FailureCode, operation.FailureDetail);
++    internal ContractBindingSessionSample CaptureTraceNonBlocking(Exception? closeReason = null)
++        => new(_connection.Session.Id, _connection.BindingGeneration,
++            NonBlockingDiagnostic<ContractBindingSessionTrace>.Capture(_gate, () => CaptureTrace(closeReason)));
++    private ContractBindingSessionTrace CaptureTrace(Exception? closeReason = null)
++    {
++        lock (_gate) return new(_connection.Session.Id, _connection.BindingGeneration, _connection.Session.ProtocolPhase,
++            _connection.Session.QueuedSendBytes, _connection.Session.HasPendingSendPumpIdleWait,
++            _connection.Session.IsConnected, _connection.CanAcceptCalls, _closed, _lastIssued, _reservations, _maintenanceOperations,
++            _publicationTail.Status, _operations.Values.Select(CaptureOperation).ToArray(),
++            _confirmed.OfType<CompletedBinding>().Select(static completed => completed.Ack.Token).ToArray(), _firstFailedOperation,
++            closeReason?.GetType().FullName, (closeReason as SharpLinkException)?.Code, (closeReason as SharpLinkException)?.DetailCode);
+     }
+     internal void CompletePhysicalClose()
+     {
+diff --git a/src/SharpLink.Client/ContractBindingTrace.cs b/src/SharpLink.Client/ContractBindingTrace.cs
+new file mode 100644
+index 00000000..5f413563
+--- /dev/null
++++ b/src/SharpLink.Client/ContractBindingTrace.cs
+@@ -0,0 +1,84 @@
++namespace SharpLink.Client;
++
++// Failure-time, control-only snapshots. Unknown/contended sections are never reported as zero.
++internal sealed record ContractBindingOperationTrace(ulong Operation, long ContractId, string Phase,
++    TaskStatus PreviousPublication, TaskStatus? Send, bool Published, TaskStatus Ack, int? AckStatus,
++    TaskStatus Result, long DeadlineTimestamp, string? FailureType, SharpLinkErrorCode? FailureCode, ushort? FailureDetail);
++internal sealed record ContractBindingSessionSample(string Session, long SessionGeneration, NonBlockingDiagnostic<ContractBindingSessionTrace> Snapshot);
++internal sealed record ContractBindingSiteSample(long LocalGeneration, long ContractId, NonBlockingDiagnostic<ContractBindingSiteTrace> Snapshot);
++internal sealed record ContractBindingTargetTrace(string Session, long SessionGeneration, ulong Token);
++internal sealed record ContractBindingSessionTrace(string Session, long SessionGeneration, RpcSessionProtocolPhase ProtocolPhase,
++    long SendQueuedBytes, bool SendPumpIdleWait, bool Connected, bool CanAcceptCalls, bool Closed, ulong LastIssued, int Reservations, int MaintenanceOperations,
++    TaskStatus PublicationTail, ContractBindingOperationTrace[] Operations, ulong[] ConfirmedTokens,
++    ContractBindingOperationTrace? FirstFailedOperation, string? CloseReasonType, SharpLinkErrorCode? CloseCode, ushort? CloseDetail);
++internal sealed record ContractBindingSiteTrace(long LocalGeneration, long ContractId, bool LocalAvailable,
++    bool Committed, bool Running, bool Dirty, bool Stopped, string RefreshPhase, int CapturedConnections, int QualifiedConnections, string? ErrorType,
++    SharpLinkErrorCode? ErrorCode, ushort? ErrorDetail, ContractBindingTargetTrace[] Targets);
++internal sealed record ContractBindingLedgerTrace(int Bindings, int Operations, int PrepareWaiters,
++    int? DemandSites, int? PublishedTargets, int DroppedClosures, int DiagnosticFailures);
++internal sealed record ContractBindingClientTrace(SharpLinkClientReadinessSnapshot Readiness,
++    string StopPhase, string? StoppingSession, TaskStatus? ConnectTask, TaskStatus? StopTask,
++    ContractBindingLedgerTrace Ledger,
++    NonBlockingDiagnostic<ContractBindingSessionSample[]> ReadySessions,
++    NonBlockingDiagnostic<ContractBindingSessionSample[]> ClosedSessions,
++    NonBlockingDiagnostic<ContractBindingSiteSample[]> Sites,
++    NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot> FrameworkTasks);
++
++internal sealed partial class SharpLinkClient
++{
++    private string _bindingStopPhase = "NotStarted";
++    private string? _bindingStopSession;
++    private void TraceBindingStop(string phase, string? session = null)
++    {
++        if (!BindingTraceEnabled) return;
++        Volatile.Write(ref _bindingStopSession, session); Volatile.Write(ref _bindingStopPhase, phase);
++    }
++    private bool _bindingTraceEnabled;
++    internal bool BindingTraceEnabled => Volatile.Read(ref _bindingTraceEnabled);
++    internal void EnableContractBindingTraceForDiagnostics() => Volatile.Write(ref _bindingTraceEnabled, true);
++    private readonly Lock _bindingTraceGate = new();
++    private int _droppedBindingClosures, _bindingDiagnosticFailures;
++    // Keep the first three closure samples and the latest one. No sample retains the live Session.
++    private readonly List<ContractBindingSessionSample> _closedBindingTraces = [];
++    internal void RecordBindingDiagnosticFailure() => Interlocked.Increment(ref _bindingDiagnosticFailures);
++    internal void RecordBindingClosure(ContractBindingSessionSample trace)
++    {
++        if (!_bindingTraceGate.TryEnter()) { Interlocked.Increment(ref _droppedBindingClosures); return; }
++        try
++        {
++            if (_closedBindingTraces.Count < 4) _closedBindingTraces.Add(trace);
++            else _closedBindingTraces[3] = trace;
++        }
++        finally { _bindingTraceGate.Exit(); }
++    }
++    // Pure contention control: holds the actual index gate, not a simulated routing table.
++    internal void HoldContractSiteIndexForDiagnosticTest(Action body)
++    {
++        if (!_contractSiteGate.TryEnter()) throw new InvalidOperationException("Diagnostic test gate is already held.");
++        try { body(); } finally { _contractSiteGate.Exit(); }
++    }
++    private sealed record SiteIndexTrace(int Count, ContractSite[] Sites);
++    internal ContractBindingClientTrace CaptureContractBindingTrace()
++    {
++        var closed = NonBlockingDiagnostic<ContractBindingSessionSample[]>.Capture(
++            _bindingTraceGate, () => _closedBindingTraces.ToArray());
++        var index = NonBlockingDiagnostic<SiteIndexTrace>.Capture(_contractSiteGate, () => new(_contractSites.Count,
++            _contractSites.Values.Select(weak => weak.TryGetTarget(out var site) ? site : null).OfType<ContractSite>().ToArray()));
++        var capturedSites = index.Value?.Sites;
++        var sites = capturedSites is not null
++            ? NonBlockingDiagnostic<ContractBindingSiteSample[]>.Available(capturedSites.Select(static site => site.CaptureTraceNonBlocking()).ToArray())
++            : new(index.State, null, index.FailureType);
++        var connections = _cluster?.CaptureReadyConnectionsNonBlocking()
++            ?? NonBlockingDiagnostic<ClientConnection[]>.Available(Volatile.Read(ref _readyConnections));
++        var sessions = connections.Value is { } ready
++            ? NonBlockingDiagnostic<ContractBindingSessionSample[]>.Available(ready.Select(static connection => connection.Bindings.CaptureTraceNonBlocking()).ToArray())
++            : new(connections.State, null, connections.FailureType);
++        int? publishedTargets = sites.Value is { } sampled && sampled.All(static site => site.Snapshot.Value is not null)
++            ? sampled.Sum(static site => site.Snapshot.Value!.Targets.Length) : null;
++        return new(GetReadinessSnapshot(), Volatile.Read(ref _bindingStopPhase), Volatile.Read(ref _bindingStopSession),
++            _connectTask?.Status, _stopTask?.Status,
++            new(_contractBindingQuota.Bindings, _contractBindingQuota.Operations, Volatile.Read(ref _prepareWaiters),
++                index.Value?.Count, publishedTargets, Volatile.Read(ref _droppedBindingClosures), Volatile.Read(ref _bindingDiagnosticFailures)),
++            sessions, closed, sites, _frameworkTasks.CaptureSnapshotNonBlocking());
++    }
++}
+diff --git a/src/SharpLink.Client/SharpLinkClient.ClusterSupportTopology.cs b/src/SharpLink.Client/SharpLinkClient.ClusterSupportTopology.cs
+index a71422dc..9d910359 100644
+--- a/src/SharpLink.Client/SharpLinkClient.ClusterSupportTopology.cs
++++ b/src/SharpLink.Client/SharpLinkClient.ClusterSupportTopology.cs
+@@ -6,6 +6,9 @@ internal sealed partial class SharpLinkClient
+ {
+     private sealed partial class StaticClusterRuntime
+     {
++        public NonBlockingDiagnostic<ClientConnection[]> CaptureReadyConnectionsNonBlocking()
++            => NonBlockingDiagnostic<ClientConnection[]>.Capture(_gate, CaptureReadyConnections);
++
+         public ClientConnection[] CaptureReadyConnections()
+         {
+             lock (_gate)
+diff --git a/src/SharpLink.Client/SharpLinkClient.ContractSites.cs b/src/SharpLink.Client/SharpLinkClient.ContractSites.cs
+index 418a775a..fda5479c 100644
+--- a/src/SharpLink.Client/SharpLinkClient.ContractSites.cs
++++ b/src/SharpLink.Client/SharpLinkClient.ContractSites.cs
+@@ -221,6 +221,8 @@ internal sealed partial class SharpLinkClient
+         if (options.MetadataBytes > limit)
+             throw new ArgumentOutOfRangeException(nameof(options), "Metadata exceeds the configured limit.");
+     }
++    internal static bool IsExpectedContractRefreshStopExit(bool stopStarted, Exception exception)
++        => stopStarted && exception is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
+     private void StopContractSitesLocked()
+     {
+         lock (_contractSiteGate)
+@@ -258,6 +260,8 @@ internal sealed partial class SharpLinkClient
+         private ContractTargetSnapshot _targets = ContractTargetSnapshot.Empty;
+         private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+         private bool _running, _dirty, _stopped;
++        private string _refreshPhase = "NotStarted";
++        private int _capturedConnections, _qualifiedConnections;
+         private Exception? _refreshError;
+         internal ContractSite(SharpLinkClient client, RpcLocalContract local, ContractSiteKey key, ClientProxyRegistration registration, FrozenDictionary<long, RpcMethodDescriptor> localMethods)
+         { _client = client; _local = local; Key = key; Registration = registration; _registrationIdentity = registration.Identity; _localMethods = localMethods; }
+@@ -300,8 +304,11 @@ internal sealed partial class SharpLinkClient
+             catch (Exception exception)
+             {
+                 TaskCompletionSource changed;
+-                lock (_gate) { _refreshError = exception; _running = false; _dirty = false; changed = _changed; }
++                lock (_gate) { _refreshError = exception; _running = false; _dirty = false; _refreshPhase = "Faulted"; changed = _changed; }
+                 changed.TrySetResult();
++                // Explicit Stop can cut this task before the supervisor is sealed. It is a
++                // control lifetime exit, not an unexpected framework fault or a business result.
++                if (IsExpectedContractRefreshStopExit(Volatile.Read(ref _client._stopStarted) != 0, exception)) return;
+                 throw;
+             }
+         }
+@@ -309,12 +316,13 @@ internal sealed partial class SharpLinkClient
+         {
+             while (true)
+             {
+-                lock (_gate) _dirty = false;
++                lock (_gate) { _dirty = false; _refreshPhase = "CaptureConnections"; _capturedConnections = 0; _qualifiedConnections = 0; }
+                 var targets = new List<BoundContractTarget>(); Exception? error = null;
+                 try
+                 {
+                     EnsureCapturedLocalAvailable();
+                     var connections = _client.CaptureBindingConnections();
++                    lock (_gate) { _capturedConnections = connections.Length; _refreshPhase = "QualifyAndStartBinds"; }
+                     if (connections.Length > 1024) throw ContractBindingWire.Error(ContractBindStatus.Capacity);
+                     var pending = new List<(ClientConnection Connection, Task<BoundContractTarget> Bind)>(connections.Length);
+                     foreach (var connection in connections)
+@@ -323,7 +331,10 @@ internal sealed partial class SharpLinkClient
+                         try
+                         {
+                             if (_client.QualifyBindingConnection(Key, connection))
++                            {
+                                 pending.Add((connection, connection.Bindings.BindAsync(Key)));
++                                lock (_gate) _qualifiedConnections++;
++                            }
+                         }
+                         catch (Exception exception) { error ??= exception; }
+                     }
+@@ -332,6 +343,7 @@ internal sealed partial class SharpLinkClient
+                         // Any confirmed Session is eligible immediately; a slow peer must not hide
+                         // another peer's real Ack. Drain all currently-complete results in one batch
+                         // and publish one coherent target/connection snapshot for the normal Picker.
++                        lock (_gate) _refreshPhase = "AwaitBinds";
+                         _ = await Task.WhenAny(pending.Select(static item => item.Bind)).ConfigureAwait(false);
+                         for (var index = pending.Count - 1; index >= 0; index--)
+                         {
+@@ -370,6 +382,7 @@ internal sealed partial class SharpLinkClient
+             {
+                 if (_targets.HasSameRouting(nextTargets)) nextTargets = _targets;
+                 _targets = _stopped ? ContractTargetSnapshot.Empty : nextTargets;
++                _refreshPhase = finishing ? "Finished" : "PublishingBatch";
+                 _refreshError = error; changed = _changed; _changed = nextChanged;
+                 again = _dirty && !_stopped;
+                 if (finishing && !again) _running = false;
+@@ -436,6 +449,15 @@ internal sealed partial class SharpLinkClient
+             cancellationToken.ThrowIfCancellationRequested();
+             EnsureCapturedLocalAvailable();
+         }
++        internal ContractBindingSiteSample CaptureTraceNonBlocking()
++            => new(Key.LocalGeneration, Key.ContractId, NonBlockingDiagnostic<ContractBindingSiteTrace>.Capture(_gate, CaptureTrace));
++        internal ContractBindingSiteTrace CaptureTrace()
++        {
++            lock (_gate) return new(Key.LocalGeneration, Key.ContractId, _registrationIdentity.IsAvailable, Committed,
++                _running, _dirty, _stopped, _refreshPhase, _capturedConnections, _qualifiedConnections, _refreshError?.GetType().FullName,
++                (_refreshError as SharpLinkException)?.Code, (_refreshError as SharpLinkException)?.DetailCode,
++                _targets.Targets.Select(static target => new ContractBindingTargetTrace(target.Connection.Session.Id, target.SessionGeneration, target.Token)).ToArray());
++        }
+         internal int PublishedTargetCount => Volatile.Read(ref _targets).Targets.Length;
+         private bool IsReady()
+         {
+diff --git a/src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs b/src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs
+index be0746e6..20ddc8d3 100644
+--- a/src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs
++++ b/src/SharpLink.Client/SharpLinkClient.DynamicCluster.cs
+@@ -70,6 +70,9 @@ internal sealed partial class SharpLinkClient
+         public void UpdateEndpointSelector(ISharpLinkEndpointSelector selector)
+             => _current.UpdateEndpointSelector(selector);
+ 
++        public NonBlockingDiagnostic<ClientConnection[]> CaptureReadyConnectionsNonBlocking()
++            => NonBlockingDiagnostic<ClientConnection[]>.Capture(_gate, CaptureReadyConnections);
++
+         public ClientConnection[] CaptureReadyConnections()
+         {
+             lock (_gate)
+diff --git a/src/SharpLink.Client/SharpLinkClient.EndpointCluster.cs b/src/SharpLink.Client/SharpLinkClient.EndpointCluster.cs
+index 591e671f..346b2078 100644
+--- a/src/SharpLink.Client/SharpLinkClient.EndpointCluster.cs
++++ b/src/SharpLink.Client/SharpLinkClient.EndpointCluster.cs
+@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkClient
+         void UpdateLoadBalancing(SharpLinkLoadBalancingStrategy strategy);
+         void UpdateEndpointSelector(ISharpLinkEndpointSelector selector);
+         ClientConnection[] CaptureReadyConnections();
++        NonBlockingDiagnostic<ClientConnection[]> CaptureReadyConnectionsNonBlocking();
+         SupportTopologyCapture CaptureSupportTopology(
+             SharpLinkClientSupportSnapshotOptions options,
+             long? failureEndpointKey);
+diff --git a/src/SharpLink.Client/SharpLinkClient.cs b/src/SharpLink.Client/SharpLinkClient.cs
+index f27bf004..befa76c0 100644
+--- a/src/SharpLink.Client/SharpLinkClient.cs
++++ b/src/SharpLink.Client/SharpLinkClient.cs
+@@ -159,6 +159,7 @@ internal sealed partial class SharpLinkClient :
+ 
+     private async Task StopCoreAsync()
+     {
++        TraceBindingStop("Starting");
+         if (_cluster is not null)
+         {
+             await StopStaticClusterCoreAsync().ConfigureAwait(false);
+@@ -176,6 +177,7 @@ internal sealed partial class SharpLinkClient :
+             // Serializes Seal with connection publication, retirement, and cleanup registration.
+             _frameworkTasks.Seal();
+         }
++        TraceBindingStop("CancelLifetime");
+         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+         PulseReadySignal();
+@@ -190,17 +192,22 @@ internal sealed partial class SharpLinkClient :
+         }
+         for (var index = 0; index < connections.Length; index++)
+         {
++            TraceBindingStop("FailConnection", connections[index].Session.Id);
+             try { connections[index].Fail(stoppingException); }
+             catch (Exception exception) { cleanupFailures.Add(exception); }
++            TraceBindingStop("DisposeConnection", connections[index].Session.Id);
+             try { await connections[index].DisposeAsync().ConfigureAwait(false); }
+             catch (Exception exception) { cleanupFailures.Add(exception); }
+         }
+ 
++        TraceBindingStop("DrainAssemblyRegistry");
+         cleanupFailures.AddRange(await _assemblyRegistry.DrainForShutdownAsync().ConfigureAwait(false));
+ 
++        TraceBindingStop("DrainFrameworkTasks");
+         try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+ 
++        TraceBindingStop("DisposeTransportFactory");
+         try { await transportFactory.DisposeAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+         try { _reconnectSignal.Dispose(); }
+@@ -210,6 +217,7 @@ internal sealed partial class SharpLinkClient :
+         try { _runtimeContext.Dispose(); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+         TransitionTo(SharpLinkConnectionState.Stopped);
++        TraceBindingStop("Stopped");
+         ThrowStopCleanupFailures(cleanupFailures);
+     }
+ 
+@@ -220,17 +228,27 @@ internal sealed partial class SharpLinkClient :
+             TransitionTo(SharpLinkConnectionState.Draining);
+         _assemblyRegistry.BeginShutdown();
+         _cluster!.BeginStop();
+-        _frameworkTasks.Seal();
++        lock (_poolGate)
++        {
++            _poolStopping = true;
++            StopContractSitesLocked();
++            _frameworkTasks.Seal();
++        }
++        TraceBindingStop("CancelLifetime");
+         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+         PulseReadySignal();
++        TraceBindingStop("StopCluster");
+         try { await _cluster.StopAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+ 
++        TraceBindingStop("DrainAssemblyRegistry");
+         cleanupFailures.AddRange(await _assemblyRegistry.DrainForShutdownAsync().ConfigureAwait(false));
+ 
++        TraceBindingStop("DrainFrameworkTasks");
+         try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
++        TraceBindingStop("DisposeClusterResources");
+         try { await _cluster.DisposeResourcesAsync().ConfigureAwait(false); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+ 
+@@ -241,6 +259,7 @@ internal sealed partial class SharpLinkClient :
+         try { _runtimeContext.Dispose(); }
+         catch (Exception exception) { cleanupFailures.Add(exception); }
+         TransitionTo(SharpLinkConnectionState.Stopped);
++        TraceBindingStop("Stopped");
+         ThrowStopCleanupFailures(cleanupFailures);
+     }
+ 
+diff --git a/src/SharpLink.Runtime/FrameworkTaskSupervisor.cs b/src/SharpLink.Runtime/FrameworkTaskSupervisor.cs
+index 01f35e7d..bf17bbdd 100644
+--- a/src/SharpLink.Runtime/FrameworkTaskSupervisor.cs
++++ b/src/SharpLink.Runtime/FrameworkTaskSupervisor.cs
+@@ -190,6 +190,9 @@ internal sealed class FrameworkTaskSupervisor
+         return DrainCoreAsync(signal);
+     }
+ 
++    internal NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot> CaptureSnapshotNonBlocking()
++        => NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot>.Capture(_gate, CaptureSnapshot);
++
+     internal FrameworkTaskSupervisorSnapshot CaptureSnapshot()
+     {
+         lock (_gate)
+diff --git a/src/SharpLink.Runtime/NonBlockingDiagnostic.cs b/src/SharpLink.Runtime/NonBlockingDiagnostic.cs
+new file mode 100644
+index 00000000..a02d3e5a
+--- /dev/null
++++ b/src/SharpLink.Runtime/NonBlockingDiagnostic.cs
+@@ -0,0 +1,24 @@
++namespace SharpLink.Runtime;
++
++// A diagnostic may miss a contested section; it must never become another lifetime owner.
++internal sealed record NonBlockingDiagnostic<T>(string State, T? Value, string? FailureType = null) where T : class
++{
++    internal static NonBlockingDiagnostic<T> Available(T value) => new("available", value);
++    internal static NonBlockingDiagnostic<T> Capture(Lock gate, Func<T> capture)
++    {
++        if (!gate.TryEnter()) return new("contended", null);
++        try { return CaptureEntered(capture); }
++        finally { gate.Exit(); }
++    }
++    internal static NonBlockingDiagnostic<T> Capture(object gate, Func<T> capture)
++    {
++        if (!Monitor.TryEnter(gate)) return new("contended", null);
++        try { return CaptureEntered(capture); }
++        finally { Monitor.Exit(gate); }
++    }
++    private static NonBlockingDiagnostic<T> CaptureEntered(Func<T> capture)
++    {
++        try { return Available(capture()); }
++        catch (Exception failure) { return new("failed", null, failure.GetType().FullName); }
++    }
++}
+diff --git a/src/SharpLink.Server/SharpLinkServer.cs b/src/SharpLink.Server/SharpLinkServer.cs
+index 68f6dbbb..591276a8 100644
+--- a/src/SharpLink.Server/SharpLinkServer.cs
++++ b/src/SharpLink.Server/SharpLinkServer.cs
+@@ -279,6 +279,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
+     internal ServerStopDiagnosticSnapshot? LastStopDiagnostics
+         => _lifecycle.LastStopDiagnostics;
+ 
++    internal NonBlockingDiagnostic<FrameworkTaskSupervisorSnapshot> FrameworkTasksNonBlockingForDiagnostics
++        => _frameworkTasks.CaptureSnapshotNonBlocking();
++
+     internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
+         => _frameworkTasks.CaptureSnapshot();
+ 
+diff --git a/test/SharpLink.N1.StaticBindEvidence/ContentionComponents.cs b/test/SharpLink.N1.StaticBindEvidence/ContentionComponents.cs
+new file mode 100644
+index 00000000..c0d8531a
+--- /dev/null
++++ b/test/SharpLink.N1.StaticBindEvidence/ContentionComponents.cs
+@@ -0,0 +1,106 @@
++using System;
++using System.Threading;
++using System.Threading.Tasks;
++using SharpLink.Client;
++using SharpLink.Runtime;
++
++namespace SharpLink.N1.StaticBindEvidence;
++internal static partial class Program
++{
++    private static async Task ContentionComponentsAsync()
++    {
++        var gate = new Lock();
++        var failed = NonBlockingDiagnostic<object>.Capture(gate, static () => throw new InvalidOperationException("capture failed"));
++        Check(failed.State == "failed" && failed.Value is null && failed.FailureType == typeof(InvalidOperationException).FullName,
++            "diagnostic-callback-failure-is-explicit-not-zero");
++        Check(NonBlockingDiagnostic<object>.Capture(gate, static () => new object()).State == "available",
++            "diagnostic-failure-releases-its-acquired-gate");
++        var monitor = new object(); var invoked = false;
++        WithHeldDiagnosticGate(body => { lock (monitor) body(); }, () =>
++        {
++            var sample = NonBlockingDiagnostic<object>.Capture(monitor, () => { invoked = true; return new object(); });
++            Check(sample.State == "contended" && sample.Value is null && !invoked,
++                "diagnostic-monitor-contention-does-not-invoke-capture");
++        });
++        var client = SharpClientBuilder.Create().DisableRequestTimeout().UseTcp("127.0.0.1", 1).Build();
++        Exception? primary = null;
++        try
++        {
++            var concrete = (SharpLinkClient)client; concrete.EnableContractBindingTraceForDiagnostics();
++            var proxy = client.CreateProxy<IProbe>();
++            WithHeldDiagnosticGate(concrete.HoldContractSiteIndexForDiagnosticTest, () =>
++            {
++                var sample = concrete.CaptureContractBindingTrace();
++                Check(sample.Sites.State == "contended" && sample.Sites.Value is null && sample.Ledger.DemandSites is null && sample.Ledger.PublishedTargets is null,
++                    "actual-site-index-contention-reports-unavailable-not-zero");
++                Check(sample.ReadySessions.State == "available" && sample.ReadySessions.Value is { Length: 0 },
++                    "diagnostic-uncontended-sections-survive-contested-site-index");
++            });
++            GC.KeepAlive(proxy);
++        }
++        catch (Exception exception) { primary = exception; }
++        try { await client.StopAsync().ConfigureAwait(false); }
++        catch (Exception cleanup) { primary = primary is null ? cleanup : new AggregateException(primary, cleanup); }
++        if (primary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primary).Throw();
++        Check(((SharpLinkClient)client).CaptureContractBindingTrace().StopPhase == "Stopped",
++            "actual-client-cleanup-continues-after-contended-snapshot");
++
++        var supervisor = new FrameworkTaskSupervisor();
++        using var held = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
++        var source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        supervisor.Seal();
++        supervisor.Track(source.Task, "pure-supervisor-contention", TaskObservationMode.FrameworkOwned, _ =>
++        {
++            held.Set(); if (!release.Wait(Guard)) throw new TimeoutException("component holder guard");
++            return true;
++        });
++        Exception? completionFailure = null;
++        var completion = new Thread(() => { try { source.TrySetException(new InvalidOperationException("expected sealed task")); } catch (Exception error) { completionFailure = error; } }) { IsBackground = true };
++        completion.Start();
++        try
++        {
++            if (!held.Wait(Guard)) throw new TimeoutException("component supervisor gate was not entered");
++            Check(supervisor.CaptureSnapshotNonBlocking().State == "contended" && !release.IsSet,
++                "actual-supervisor-contention-returns-before-owner-release");
++        }
++        catch (Exception exception) { primary = exception; }
++        finally
++        {
++            release.Set();
++            if (!completion.Join(Guard)) primary = primary is null ? new TimeoutException("component completion join") : new AggregateException(primary, new TimeoutException("component completion join"));
++        }
++        // The RCAA continuation may be scheduled separately; join its actual supervisor lifetime.
++        try { await supervisor.DrainAsync().GuardedWaitAsync(Guard).ConfigureAwait(false); }
++        catch (Exception cleanup) { primary = primary is null ? cleanup : new AggregateException(primary, cleanup); }
++        if (completionFailure is not null) primary = primary is null ? completionFailure : new AggregateException(primary, completionFailure);
++        if (primary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primary).Throw();
++        Check(supervisor.CaptureSnapshotNonBlocking().Value?.IsDrained == true, "supervisor-cleanup-continues-without-abandoned-capture-task");
++    }
++
++    private static void WithHeldDiagnosticGate(Action<Action> hold, Action capture)
++    {
++        using var held = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
++        using var exited = new ManualResetEventSlim(); Exception? primary = null, holderFailure = null;
++        var holder = new Thread(() =>
++        {
++            try { hold(() => { held.Set(); if (!release.Wait(Guard)) throw new TimeoutException("component holder guard"); }); }
++            catch (Exception failure) { holderFailure = failure; }
++            finally { exited.Set(); }
++        }) { IsBackground = true };
++        holder.Start();
++        try
++        {
++            if (!held.Wait(Guard)) throw new TimeoutException("component gate was not entered");
++            capture();
++            Check(!exited.IsSet, "diagnostic-returned-while-real-gate-owner-still-held");
++        }
++        catch (Exception failure) { primary = failure; }
++        finally
++        {
++            release.Set();
++            if (!holder.Join(Guard)) primary = primary is null ? new TimeoutException("component holder join") : new AggregateException(primary, new TimeoutException("component holder join"));
++        }
++        if (holderFailure is not null) primary = primary is null ? holderFailure : new AggregateException(primary, holderFailure);
++        if (primary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primary).Throw();
++    }
++}
+diff --git a/test/SharpLink.N1.StaticBindEvidence/DiagnosticComponents.cs b/test/SharpLink.N1.StaticBindEvidence/DiagnosticComponents.cs
+new file mode 100644
+index 00000000..034373c5
+--- /dev/null
++++ b/test/SharpLink.N1.StaticBindEvidence/DiagnosticComponents.cs
+@@ -0,0 +1,117 @@
++using System;
++using System.Buffers;
++using System.Buffers.Binary;
++using System.Linq;
++using System.Text;
++using System.Text.Json;
++using System.Threading.Tasks;
++using Microsoft.Extensions.Logging;
++using SharpLink.Abstractions;
++using SharpLink.Client;
++using SharpLink.Runtime;
++
++namespace SharpLink.N1.StaticBindEvidence;
++internal static partial class Program
++{
++    private static async Task DiagnosticComponentsAsync()
++    {
++        const string secret = "DO-NOT-LOG-payload-or-credential";
++        using var logs = new FailureDiagnosticLoggerFactory();
++        var logger = logs.CreateLogger("N1.fixture");
++        logger.Log(LogLevel.Error, new EventId(775), secret, new InvalidOperationException(secret),
++            static (state, error) => throw new InvalidOperationException("Formatter must never execute."));
++        var first = JsonSerializer.Serialize(logs.Capture());
++        Check(!first.Contains(secret, StringComparison.Ordinal) && first.Contains(nameof(InvalidOperationException), StringComparison.Ordinal),
++            "diagnostic-fault-type-retained-without-message-or-state");
++        for (var i = 0; i < 99; i++) logger.LogWarning(secret);
++        using (var document = JsonDocument.Parse(JsonSerializer.Serialize(logs.Capture())))
++        {
++            var root = document.RootElement; var records = root.GetProperty("retained");
++            Check(root.GetProperty("total").GetInt32() == 100 && records.GetArrayLength() == 64 && root.GetProperty("dropped").GetInt32() == 36,
++                "diagnostic-fault-history-bounded64");
++            Check(records[0].GetProperty("Sequence").GetInt32() == 1 && records[63].GetProperty("Sequence").GetInt32() == 100,
++                "diagnostic-history-retains-first-and-latest");
++        }
++        var gate = new TransportFrameGate((ProtocolV2FrameType)255, false);
++        var payload = new byte[16 + Encoding.UTF8.GetByteCount(secret)];
++        BinaryPrimitives.WriteUInt64LittleEndian(payload, (1UL << 32) | 1);
++        Encoding.UTF8.GetBytes(secret).CopyTo(payload, 16);
++        _ = gate.Observe("actual-observer-component", true, new(ProtocolV2FrameType.Request, ProtocolV2FrameFlags.None, 1), new ReadOnlySequence<byte>(payload));
++        var frames = FailureDiagnostics.CaptureFrames(gate);
++        Check(frames.Length == 1 && frames[0].BindingToken == (1UL << 32 | 1) && frames[0].PayloadBytes == payload.Length,
++            "diagnostic-frame-keeps-control-token-and-size");
++        Check(!JsonSerializer.Serialize(frames).Contains(secret, StringComparison.Ordinal), "diagnostic-frame-excludes-business-bytes");
++        // A one-byte managed Pipe is a pure transport-decorator control, not an RPC Session/frame.
++        var pipe = new System.IO.Pipelines.Pipe(new System.IO.Pipelines.PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 1, useSynchronizationContext: false));
++        var flushGate = new TransportFrameGate((ProtocolV2FrameType)255, false);
++        var decorated = new GatedPipeWriter(pipe.Writer, flushGate, "managed-pipe-component");
++        Exception? pipePrimary = null;
++        try
++        {
++            decorated.GetSpan(1)[0] = 1; decorated.Advance(1);
++            var flush = decorated.FlushAsync().AsTask();
++            using (var pending = JsonDocument.Parse(JsonSerializer.Serialize(flushGate.CaptureFlushes())))
++                Check(pending.RootElement.GetProperty("sessions")[0].GetProperty("Phase").GetString() == "AwaitInnerFlush" && !flush.IsCompleted,
++                    "diagnostic-decorator-observes-actual-pending-inner-flush");
++            var read = await pipe.Reader.ReadAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
++            pipe.Reader.AdvanceTo(read.Buffer.End);
++            _ = await flush.GuardedWaitAsync(Guard).ConfigureAwait(false);
++            using (var done = JsonDocument.Parse(JsonSerializer.Serialize(flushGate.CaptureFlushes())))
++                Check(done.RootElement.GetProperty("sessions")[0].GetProperty("Phase").GetString() == "Returned" && done.RootElement.GetProperty("sessions")[0].GetProperty("sourceStatus").GetInt32() == (int)TaskStatus.RanToCompletion,
++                    "diagnostic-decorator-forwards-actual-flush-result");
++        }
++        catch (Exception exception) { pipePrimary = exception; }
++        try { await pipe.Reader.CompleteAsync().ConfigureAwait(false); }
++        catch (Exception cleanup) { pipePrimary = pipePrimary is null ? cleanup : new AggregateException(pipePrimary, cleanup); }
++        try { await decorated.CompleteAsync().ConfigureAwait(false); }
++        catch (Exception cleanup) { pipePrimary = pipePrimary is null ? cleanup : new AggregateException(pipePrimary, cleanup); }
++        if (pipePrimary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(pipePrimary).Throw();
++        var client = SharpClientBuilder.Create().DisableRequestTimeout().UseTcp("127.0.0.1", 1).Build();
++        Exception? primary = null;
++        try
++        {
++            var concrete = (SharpLinkClient)client; concrete.EnableContractBindingTraceForDiagnostics();
++            var proxy = client.CreateProxy<IProbe>();
++            var trace = concrete.CaptureContractBindingTrace();
++            Check(trace.ReadySessions.Value is { Length: 0 } && trace.ClosedSessions.Value is { Length: 0 } && trace.Sites.Value is { Length: 1 } &&
++                (trace.Sites.Value[0].Snapshot.Value?.Targets.Length == 0 || trace.Sites.Value[0].Snapshot is { State: "contended", Value: null }),
++                "diagnostic-unconnected-site-does-not-invent-session-or-binding");
++            GC.KeepAlive(proxy);
++        }
++        catch (Exception exception) { primary = exception; }
++        try { await client.StopAsync().ConfigureAwait(false); }
++        catch (Exception cleanup) { primary = primary is null ? cleanup : new AggregateException(primary, cleanup); }
++        if (primary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primary).Throw();
++        Check(((SharpLinkClient)client).CaptureContractBindingTrace().StopPhase == "Stopped", "diagnostic-stop-phase-tracks-actual-no-rpc-cleanup");
++    }
++    private static async Task ClusterStopComponentsAsync()
++    {
++        var closed = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "control lifetime ended");
++        Check(SharpLinkClient.IsExpectedContractRefreshStopExit(true, closed) && !SharpLinkClient.IsExpectedContractRefreshStopExit(false, closed),
++            "refresh-connectionclosed-is-expected-only-after-explicit-stop");
++        Check(!SharpLinkClient.IsExpectedContractRefreshStopExit(true, new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "original budget")) &&
++            !SharpLinkClient.IsExpectedContractRefreshStopExit(true, new InvalidOperationException("unexpected")),
++            "refresh-stop-filter-retains-deadline-and-unexpected-source-faults");
++        var endpoints = new[] { new SharpLinkEndpoint { Id = "A", Address = new SharpLinkTcpAddress("127.0.0.1", 1) },
++            new SharpLinkEndpoint { Id = "B", Address = new SharpLinkTcpAddress("127.0.0.1", 2) } };
++        var client = SharpClientBuilder.Create().DisableRequestTimeout().UseEndpoints(endpoints,
++            endpoint => new SocketClientTransportFactory(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, ((SharpLinkTcpAddress)endpoint.Address).Port))).Build();
++        Exception? primary = null; RpcProxy<IProbe>? proxy = null;
++        try
++        {
++            proxy = client.CreateProxy<IProbe>();
++            Check(((SharpLinkClient)client).CaptureContractBindingDiagnostics().DemandSites == 1, "cluster-stop-control-holds-real-unconnected-site");
++            var empty = await ThrowsAsync<SharpLinkException>(() => proxy.PrepareAsync(TimeSpan.FromMilliseconds(25)).AsTask(), "cluster-stop-empty-prepare-before-stop").ConfigureAwait(false);
++            Check(empty.Code == SharpLinkErrorCode.DeadlineExceeded, "cluster-stop-control-remains-pure-no-connect");
++        }
++        catch (Exception exception) { primary = exception; }
++        try { await client.StopAsync().ConfigureAwait(false); }
++        catch (Exception cleanup) { primary = primary is null ? cleanup : new AggregateException(primary, cleanup); }
++        if (primary is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primary).Throw();
++        var ledger = ((SharpLinkClient)client).CaptureContractBindingDiagnostics();
++        Check(ledger.DemandSites == 0 && ledger.PrepareWaiters == 0 && ledger.Bindings == 0 && ledger.Operations == 0,
++            "cluster-stop-returns-original-site-and-waiter-ledger-without-gc");
++        GC.KeepAlive(proxy);
++    }
++
++}
+diff --git a/test/SharpLink.N1.StaticBindEvidence/FailureDiagnostics.cs b/test/SharpLink.N1.StaticBindEvidence/FailureDiagnostics.cs
+new file mode 100644
+index 00000000..e2c4c335
+--- /dev/null
++++ b/test/SharpLink.N1.StaticBindEvidence/FailureDiagnostics.cs
+@@ -0,0 +1,69 @@
++using System;
++using System.Buffers.Binary;
++using System.Collections.Generic;
++using System.Linq;
++using System.Text.Json;
++using Microsoft.Extensions.Logging;
++using SharpLink.Abstractions;
++using SharpLink.Client;
++using SharpLink.Runtime;
++
++namespace SharpLink.N1.StaticBindEvidence;
++
++internal sealed record FixtureFailureShape(string Type, SharpLinkErrorCode? Code, ushort? Detail, string? Stack);
++internal sealed record FixtureLogRecord(long Sequence, string Category, LogLevel Level, int Event,
++    FixtureFailureShape[] Exceptions);
++internal sealed class FailureDiagnosticLoggerFactory : ILoggerFactory
++{
++    private readonly object _gate = new();
++    private readonly List<FixtureLogRecord> _records = [];
++    private long _sequence;
++    public ILogger CreateLogger(string categoryName) => new DiagnosticLogger(this, categoryName);
++    public void AddProvider(ILoggerProvider provider) => throw new NotSupportedException();
++    public void Dispose() { }
++    internal NonBlockingDiagnostic<object> CaptureNonBlocking() => NonBlockingDiagnostic<object>.Capture(_gate, Capture);
++    internal object Capture()
++    {
++        lock (_gate) return new { total = _sequence, retained = _records.OrderBy(static record => record.Sequence).ToArray(),
++            dropped = Math.Max(0, _sequence - _records.Count) };
++    }
++    private void Record(string category, LogLevel level, EventId eventId, Exception? exception)
++    {
++        // Never format state, exception.Message or exception.ToString(): these can contain credentials or payloads.
++        var errors = new List<FixtureFailureShape>(4);
++        for (var current = exception; current is not null && errors.Count != 4; current = current.InnerException)
++        {
++            var rpc = current as SharpLinkException; var stack = current.StackTrace;
++            errors.Add(new(current.GetType().FullName!, rpc?.Code, rpc?.DetailCode,
++                stack is { Length: > 4096 } ? stack[..4096] : stack));
++        }
++        lock (_gate)
++        {
++            var record = new FixtureLogRecord(++_sequence, category, level, eventId.Id, [.. errors]);
++            if (_records.Count < 64) _records.Add(record);
++            else _records[32 + (int)((_sequence - 65) % 32)] = record; // first32 + last32
++        }
++    }
++    private sealed class DiagnosticLogger(FailureDiagnosticLoggerFactory owner, string category) : ILogger
++    {
++        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
++        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
++        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
++        { if (IsEnabled(logLevel)) owner.Record(category, logLevel, eventId, exception); }
++    }
++}
++
++internal sealed record FixtureFrameTrace(string Session, bool Outbound, ProtocolV2FrameType Type,
++    ProtocolV2FrameFlags Flags, ulong Correlation, int PayloadBytes, ulong? BindingToken);
++internal static class FailureDiagnostics
++{
++    internal static FixtureFrameTrace[] CaptureFrames(TransportFrameGate gate)
++        => gate.Frames.Select(static frame => new FixtureFrameTrace(frame.SessionId, frame.Outbound,
++            frame.Header.Type, frame.Header.Flags, frame.Header.RequestId, frame.Payload.Length,
++            frame.Header.Type == ProtocolV2FrameType.BindAck && frame.Payload.Length == 40
++                ? BinaryPrimitives.ReadUInt64LittleEndian(frame.Payload.AsSpan(16))
++                : frame.Header.Type == ProtocolV2FrameType.Request && frame.Payload.Length >= 16
++                    ? BinaryPrimitives.ReadUInt64LittleEndian(frame.Payload) : null)).ToArray();
++    internal static void Write(string phase, object snapshot)
++        => Console.Error.WriteLine("N1_FAILURE_SNAPSHOT " + JsonSerializer.Serialize(new { phase, observedUtc = DateTimeOffset.UtcNow, observedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp(), timestampFrequency = System.Diagnostics.Stopwatch.Frequency, snapshot }));
++}
+diff --git a/test/SharpLink.N1.StaticBindEvidence/Program.cs b/test/SharpLink.N1.StaticBindEvidence/Program.cs
+index aece231b..4eebdbb6 100644
+--- a/test/SharpLink.N1.StaticBindEvidence/Program.cs
++++ b/test/SharpLink.N1.StaticBindEvidence/Program.cs
+@@ -87,8 +87,11 @@ internal static partial class Program
+         {
+             if (args.Length == 1 && args[0] == "components") Components();
+             else if (args.Length == 1 && args[0] == "selection-components") SelectionComponents();
++            else if (args.Length == 1 && args[0] == "contention-components") await ContentionComponentsAsync().ConfigureAwait(false);
++            else if (args.Length == 1 && args[0] == "cluster-stop-components") await ClusterStopComponentsAsync().ConfigureAwait(false);
++            else if (args.Length == 1 && args[0] == "diagnostic-components") await DiagnosticComponentsAsync().ConfigureAwait(false);
+             else if (args.Length == 1 && args[0] == "publication-components") await PublicationComponentsAsync().ConfigureAwait(false);
+-            else if (args.Length == 2 && args[0] == "rpc" && args[1] == "N1-STATIC-BIND-20261115-V1")
++            else if (args.Length == 2 && args[0] == "rpc" && args[1] == "N1-STATIC-BIND-20261115-V2")
+                 await RunRpcAsync().ConfigureAwait(false);
+             else throw new ArgumentException("Use components, or the exact reviewed hosted protocol UID.");
+             WriteResult(args, null);
+@@ -109,7 +112,7 @@ internal static partial class Program
+         var classification = primary is TimeoutException ? "guard" : primary?.Message.StartsWith("FIXTURE", StringComparison.Ordinal) == true ? "fixture" : "source";
+         File.WriteAllText(path, JsonSerializer.Serialize(new
+         {
+-            uid = "N1-STATIC-BIND-20261115-V1", mode = args.FirstOrDefault(), source = Environment.GetEnvironmentVariable("N1_SOURCE_SHA"),
++            uid = "N1-STATIC-BIND-20261115-V2", mode = args.FirstOrDefault(), source = Environment.GetEnvironmentVariable("N1_SOURCE_SHA"),
+             outcome = failure is null ? "PASS" : primary is TimeoutException ? "INCONCLUSIVE" : "FAIL", classification = failure is null ? null : classification,
+             checks = _checks, runtime = Environment.Version.ToString(), os = Environment.OSVersion.ToString(), firstFailure = failure?.ToString()
+         }, new JsonSerializerOptions { WriteIndented = true }));
+diff --git a/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs b/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs
+index 3217b14c..95e244f3 100644
+--- a/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs
++++ b/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs
+@@ -28,6 +28,14 @@ internal static partial class Program
+         catch (TException exception) { Check(true, name); return exception; }
+         throw new InvalidOperationException("ASSERT expected " + typeof(TException).Name + ": " + name);
+     }
++    private static int? ReceivedUnpublishedAcksNonBlocking(ISharpLinkClient client)
++    {
++        var sessions = ((SharpLinkClient)client).CaptureContractBindingTrace().ReadySessions.Value;
++        if (sessions is null || sessions.Any(static session => session.Snapshot.Value is null)) return null;
++        return sessions.Sum(static session => session.Snapshot.Value!.Operations.Count(static operation => !operation.Published && operation.AckStatus.HasValue));
++    }
++    private static string BindingObservation(ISharpLinkClient client)
++        => System.Text.Json.JsonSerializer.Serialize(((SharpLinkClient)client).CaptureContractBindingTrace());
+     private static async Task UntilAsync(Func<bool> condition, string name, Func<string>? observe = null)
+     {
+         var start = System.Diagnostics.Stopwatch.GetTimestamp();
+@@ -64,11 +72,11 @@ internal static partial class Program
+         Console.WriteLine("N1_CASE_BEGIN " + name);
+         Harness? harness = null; Exception? first = null;
+         try { harness = await Harness.CreateAsync(serverGate, queued).ConfigureAwait(false); await body(harness).ConfigureAwait(false); }
+-        catch (Exception exception) { first = exception; }
++        catch (Exception exception) { first = exception; harness?.CaptureFailure("primary-before-cleanup"); }
+         if (harness is not null)
+         {
+             try { await harness.DisposeAsync().ConfigureAwait(false); }
+-            catch (Exception cleanup) { first = first is null ? cleanup : new AggregateException(first, cleanup); }
++            catch (Exception cleanup) { first = first is null ? cleanup : new AggregateException(first, cleanup); harness.CaptureFailure("cleanup-failed"); }
+         }
+         if (first is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
+         Console.WriteLine("N1_CASE_END " + name);
+@@ -170,9 +178,9 @@ internal static partial class Program
+         try
+         {
+             await gate.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
+-            await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ReceivedUnpublishedAcks == 1, "one-real-ack-still-before-publication-return", () => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ToString()).ConfigureAwait(false);
++            await UntilAsync(() => ReceivedUnpublishedAcksNonBlocking(client) == 1, "one-real-ack-still-before-publication-return", () => BindingObservation(client)).ConfigureAwait(false);
+             await prepare.GuardedWaitAsync(Guard).ConfigureAwait(false);
+-            Check(((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 1, "partial-pool-prepare-does-not-wait-for-other-bind");
++            Check(((SharpLinkClient)client).BindingQuota.Operations == 1, "partial-pool-prepare-does-not-wait-for-other-bind");
+             blocked = proxy.Service.EchoAsync(new() { Value = 101 }, default).AsTask();
+             await ProbeService.BlockEntered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
+             Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "partial-pool-normal-picker-uses-confirmed-session");
+@@ -185,8 +193,8 @@ internal static partial class Program
+         }
+         finally { gate.Release(); ProbeService.BlockRelease.TrySetResult(); }
+         if (blocked is not null) Check(await blocked.GuardedWaitAsync(Guard).ConfigureAwait(false) == 108, "partial-pool-active-call-completes");
+-        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics() is { Operations: 0, PublishedTargets: 2 },
+-            "held-peer-bind-eventually-publishes-complete-pair", () => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().ToString()).ConfigureAwait(false);
++        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingTrace().Ledger is { Operations: 0, PublishedTargets: 2 },
++            "held-peer-bind-eventually-publishes-complete-pair", () => BindingObservation(client)).ConfigureAwait(false);
+         Check(await proxy.Service.EchoAsync(new() { Value = 4 }, default).ConfigureAwait(false) == 11, "both-pool-targets-usable-after-publication");
+     }
+     private static async Task CancelWaiterAsync(Harness harness)
+@@ -201,7 +209,7 @@ internal static partial class Program
+             await harness.ServerGate!.Entered.Task.GuardedWaitAsync(Guard).ConfigureAwait(false);
+             cancellation.Cancel();
+             _ = await ThrowsAsync<OperationCanceledException>(() => first, "prepare-cancel-is-waiter-local").ConfigureAwait(false);
+-            Check(!second.IsCompleted && ((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 1, "shared-bind-remains-live");
++            Check(!second.IsCompleted && ((SharpLinkClient)client).BindingQuota.Operations == 1, "shared-bind-remains-live");
+         }
+         finally { harness.ServerGate!.Release(); }
+         await second.GuardedWaitAsync(Guard).ConfigureAwait(false);
+@@ -278,12 +286,12 @@ internal static partial class Program
+         try
+         {
+             var rejected = await ThrowsAsync<SharpLinkException>(() => channels[0].PrepareAsync(TimeSpan.FromSeconds(5)).AsTask(), "65th-prepare-waiter-refused").ConfigureAwait(false);
+-            Check(rejected.DetailCode == 60104 && ((SharpLinkClient)client).CaptureContractBindingDiagnostics().PrepareWaiters == 64, "waiter-hard-bound-and-reservation");
++            Check(rejected.DetailCode == 60104 && ((SharpLinkClient)client).CaptureContractBindingTrace().Ledger.PrepareWaiters == 64, "waiter-hard-bound-and-reservation");
+         }
+         finally { cancel.Cancel(); }
+         foreach (var waiter in waiters) _ = await ThrowsAsync<OperationCanceledException>(() => waiter, "bounded-waiter-cancel-return").ConfigureAwait(false);
+         await client.StopAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
+-        var snapshot = ((SharpLinkClient)client).CaptureContractBindingDiagnostics();
++        var snapshot = ((SharpLinkClient)client).CaptureContractBindingTrace().Ledger;
+         Check(snapshot.PrepareWaiters == 0 && snapshot.DemandSites == 0 && snapshot.Bindings == 0 && snapshot.Operations == 0, "stopped-client-demand-waiter-quota-zero");
+         GC.KeepAlive(channels);
+     }
+@@ -349,12 +357,13 @@ internal static partial class Program
+         var error = await ThrowsAsync<SharpLinkException>(() => preparation.GuardedWaitAsync(TimeSpan.FromSeconds(13)), "bind-original-ten-second-timeout").ConfigureAwait(false);
+         Check(error.Code == SharpLinkErrorCode.DeadlineExceeded, "bind-timeout-cause");
+         harness.ServerGate.Release();
+-        await UntilAsync(() => ((SharpLinkClient)client).CaptureContractBindingDiagnostics().Operations == 0, "timed-out-operation-physical-return").ConfigureAwait(false);
++        await UntilAsync(() => ((SharpLinkClient)client).BindingQuota.Operations == 0, "timed-out-operation-physical-return").ConfigureAwait(false);
+     }
+ 
+     private sealed class Harness : IAsyncDisposable
+     {
+         private readonly ISharpLinkServer _server;
++        private readonly FailureDiagnosticLoggerFactory _diagnostics;
+         private readonly List<ISharpLinkClient> _clients = [];
+         private readonly List<ISharpLinkServer> _extraServers = [];
+         internal readonly List<TransportFrameGate> Gates = [];
+@@ -362,10 +371,12 @@ internal static partial class Program
+         internal int Port { get; }
+         internal int QueuedCalls => ((SharpLinkServer)_server).AdmissionStateKernelForTests!.QueuedCalls;
+         internal ContractBindingDiagnosticSnapshot Diagnostics => ((SharpLinkServer)_server).CaptureContractBindingDiagnostics();
+-        private Harness(ISharpLinkServer server, int port, TransportFrameGate? gate) { _server = server; Port = port; ServerGate = gate; if (gate is not null) Gates.Add(gate); }
++        private Harness(ISharpLinkServer server, int port, TransportFrameGate? gate, FailureDiagnosticLoggerFactory diagnostics) { _diagnostics = diagnostics; _server = server; Port = port; ServerGate = gate; if (gate is not null) Gates.Add(gate); }
+         internal static async Task<Harness> CreateAsync(TransportFrameGate? gate, bool queued)
+         {
+-            var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
++            var diagnostics = new FailureDiagnosticLoggerFactory();
++            var builder = SharpLinkServerBuilder.Create().UseLoggerFactory(diagnostics).UseTcp(0, IPAddress.Loopback);
++            gate ??= new TransportFrameGate((ProtocolV2FrameType)255, false);
+             if (queued) builder.UseAdmissionControl(options =>
+             {
+                 options.Global.UseConcurrency(1); options.MaxQueuedCalls = 1;
+@@ -374,7 +385,7 @@ internal static partial class Program
+             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
+             if (gate is not null) builder.UseTransport(new GatedListener(builder.Transport!, gate));
+             var server = builder.Build();
+-            try { await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); return new(server, port, gate); }
++            try { await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false); return new(server, port, gate, diagnostics); }
+             catch (Exception primary)
+             {
+                 gate?.Release();
+@@ -385,28 +396,44 @@ internal static partial class Program
+         }
+         internal ISharpLinkClient Client(TransportFrameGate? gate = null, int connections = 1, TimeSpan? reconnectDelay = null)
+         {
+-            var builder = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(2))
++            var builder = SharpClientBuilder.Create().UseLoggerFactory(_diagnostics).UseRequestTimeout(TimeSpan.FromSeconds(2))
+                 .UseConnectionPool(options => { options.MinConnections = connections; options.MaxConnections = connections; });
+             var delay = reconnectDelay ?? TimeSpan.FromMilliseconds(50);
+             builder.UseReconnectPolicy(new(delay, delay, 1, 1, 1, TimeSpan.Zero));
+-            if (gate is null) builder.UseTcp(IPAddress.Loopback.ToString(), Port);
+-            else { Gates.Add(gate); builder.UseTransport(new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, Port)), gate)); }
+-            var client = builder.Build(); _clients.Add(client); return client;
++            gate ??= new TransportFrameGate((ProtocolV2FrameType)255, false);
++            Gates.Add(gate); builder.UseTransport(new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, Port)), gate));
++            var client = builder.Build(); ((SharpLinkClient)client).EnableContractBindingTraceForDiagnostics(); _clients.Add(client); return client;
+         }
+         internal async Task<ISharpLinkClient> ClusterClientAsync(TransportFrameGate records, ISharpLinkEndpointSelector selector)
+         {
+-            var builder = SharpLinkServerBuilder.Create().DisableAutomaticServiceRegistration().UseTcp(0, IPAddress.Loopback);
++            var builder = SharpLinkServerBuilder.Create().UseLoggerFactory(_diagnostics).DisableAutomaticServiceRegistration().UseTcp(0, IPAddress.Loopback);
+             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port; var server = builder.Build(); _extraServers.Add(server);
+             await server.StartAsync().AsTask().GuardedWaitAsync(Guard).ConfigureAwait(false);
+             Gates.Add(records);
+             var endpoints = new[] { new SharpLinkEndpoint { Id = "A", Address = new SharpLinkTcpAddress("127.0.0.1", Port) },
+                 new SharpLinkEndpoint { Id = "B", Address = new SharpLinkTcpAddress("127.0.0.1", port) } };
+-            var client = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(2))
++            var client = SharpClientBuilder.Create().UseLoggerFactory(_diagnostics).UseRequestTimeout(TimeSpan.FromSeconds(2))
+                 .UseEndpoints(endpoints, endpoint => new GatedClientFactory(new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, ((SharpLinkTcpAddress)endpoint.Address).Port)), records))
+                 .UseCluster(options => { options.MinReadyEndpoints = 2; options.MaxConnections = 2; options.MaxConnectionsPerEndpoint = 1; })
+                 .UseEndpointSelector(selector)
+                 .UseReconnectPolicy(new(TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50), 1, 1, 1, TimeSpan.Zero)).Build();
+-            _clients.Add(client); return client;
++            ((SharpLinkClient)client).EnableContractBindingTraceForDiagnostics(); _clients.Add(client); return client;
++        }
++        internal void CaptureFailure(string phase)
++        {
++            try
++            {
++                FailureDiagnostics.Write(phase, new
++                {
++                    clients = _clients.Select(static client => ((SharpLinkClient)client).CaptureContractBindingTrace()).ToArray(),
++                    serverLedger = Diagnostics, serverTasks = ((SharpLinkServer)_server).FrameworkTasksNonBlockingForDiagnostics,
++                    extraServers = _extraServers.Select(static server => new { ledger = ((SharpLinkServer)server).CaptureContractBindingDiagnostics(), tasks = ((SharpLinkServer)server).FrameworkTasksNonBlockingForDiagnostics }).ToArray(),
++                    frameGates = Gates.Distinct().Select(static gate => gate.CaptureFailureNonBlocking()).ToArray(),
++                    frameworkFaults = _diagnostics.CaptureNonBlocking()
++                });
++            }
++            catch (Exception diagnosticFailure)
++            { Console.Error.WriteLine("N1_DIAGNOSTIC_CAPTURE_FAILURE phase=" + phase + " type=" + diagnosticFailure.GetType().FullName); }
+         }
+         public async ValueTask DisposeAsync()
+         {
+diff --git a/test/SharpLink.N1.StaticBindEvidence/TransportFrameGate.cs b/test/SharpLink.N1.StaticBindEvidence/TransportFrameGate.cs
+index ac116766..29171d97 100644
+--- a/test/SharpLink.N1.StaticBindEvidence/TransportFrameGate.cs
++++ b/test/SharpLink.N1.StaticBindEvidence/TransportFrameGate.cs
+@@ -19,6 +19,24 @@ internal sealed class TransportFrameGate(ProtocolV2FrameType type, bool afterFlu
+     private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+     private readonly object _gate = new();
+     private readonly List<ObservedFrame> _frames = [];
++    private sealed record FlushObservation(string Phase, Task? Source, string? FailureType);
++    private readonly Dictionary<string, FlushObservation> _flushes = [];
++    private int _droppedFlushObservations;
++    internal void RecordFlush(string session, string phase, Task? source = null, Exception? failure = null)
++    {
++        lock (_gate)
++        {
++            if (!_flushes.ContainsKey(session) && _flushes.Count >= 512) { _droppedFlushObservations++; return; }
++            _flushes[session] = new(phase, source, failure?.GetType().FullName);
++        }
++    }
++    internal NonBlockingDiagnostic<object> CaptureFailureNonBlocking()
++        => NonBlockingDiagnostic<object>.Capture(_gate, () => new
++        {
++            held = HeldSessionId, entered = Entered.Task.Status, flushes = CaptureFlushes(), frames = FailureDiagnostics.CaptureFrames(this)
++        });
++    internal object CaptureFlushes()
++    { lock (_gate) return new { dropped = _droppedFlushObservations, sessions = _flushes.Select(static pair => new { session = pair.Key, pair.Value.Phase, sourceStatus = pair.Value.Source?.Status, pair.Value.FailureType }).ToArray() }; }
+     private int _claimed;
+     private string? _heldSessionId;
+     internal string? HeldSessionId => Volatile.Read(ref _heldSessionId);
+@@ -65,10 +83,25 @@ internal sealed class GatedPipeWriter(PipeWriter inner, TransportFrameGate gate,
+     private async ValueTask<FlushResult> FlushCoreAsync(CancellationToken cancellationToken)
+     {
+         var shouldGate = _gateThisFlush; _gateThisFlush = false;
+-        if (shouldGate && !gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+-        var result = await inner.FlushAsync(cancellationToken).ConfigureAwait(false);
+-        if (shouldGate && gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+-        return result;
++        Task<FlushResult>? actualFlush = null;
++        try
++        {
++            gate.RecordFlush(sessionId, "BeforeFlushGate");
++            if (shouldGate && !gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
++            var flush = inner.FlushAsync(cancellationToken);
++            FlushResult result;
++            if (flush.IsCompletedSuccessfully) result = flush.Result;
++            else
++            {
++                actualFlush = flush.AsTask(); gate.RecordFlush(sessionId, "AwaitInnerFlush", actualFlush);
++                result = await actualFlush.ConfigureAwait(false);
++            }
++            gate.RecordFlush(sessionId, "AfterInnerFlush", actualFlush);
++            if (shouldGate && gate.AfterFlush) await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
++            gate.RecordFlush(sessionId, "Returned", actualFlush);
++            return result;
++        }
++        catch (Exception failure) { gate.RecordFlush(sessionId, "Faulted", actualFlush, failure); throw; }
+     }
+ }
+ internal sealed class GatedConnection : ITransportConnection

@@ -23,7 +23,7 @@ Status: **NOT_QUALIFIED / PENDING_INDEPENDENT_AUDIT**. This is a source review a
 Observed in source:
 
 - wire 6 / floor 6; API6 exact identity `sharplink-3.0-api6-contract-channel-v1`;
-- `BindContract=17`, `BindAck=18`, `BindingInvalidated=19`, `RequestAccepted=21`; `BindingRelease=20` and `OneWayInputRequest=22` are not present in the inspected symbol set;
+- `BindContract=17`, `BindAck=18`, `BindingInvalidated=19`, `BindingRelease=20`, `RequestAccepted=21`, `OneWayInputRequest=22` are present in the wire enum; the static Unary/no-input OneWay checkpoint does not implement the full stream/OneWay-input behavior behind them;
 - 32B scalar `RpcMethodDescriptor` / full method facts;
 - `ContractBindRequest`/`ContractBindAck` 40B (no receipt) / 112B (receipt), acceptance token `(incarnation<<32)|slot`, 65536 binding / 1024 operation hard quotas;
 - per-Session binding table, immutable method table, per-operation predecessor, queue/flush/Ack/confirmation, early Ack staging, physical protection;
@@ -68,7 +68,7 @@ Total: **63 checks, all exit 0**. Logs and `n1-result.json` per mode are in `evi
 
 ## 12.6 Required next step for N
 
-1. Independently review N1 V2 source/protocol and authorize (or reject) a second hosted run; do not run locally.
+1. Independently review N1 V2 source/protocol using `13-n1-v2-audit-prep.md` and authorize (or reject) a second hosted run; do not run locally.
 2. If authorized, run the exact 8-case protocol with SDK 10.0.115/runtime 10.0.15 and preserve first-failure diagnostics.
 3. Only after N1 passes all 8 static cases, extend to the N0 group/receipt/dynamic/five-family obligations; static N1 alone is not a substitute.
 4. Then re-run the #998 correctness matrix and only then consider performance.
