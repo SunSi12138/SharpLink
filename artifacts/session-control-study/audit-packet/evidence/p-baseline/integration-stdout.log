@@ -1,0 +1,650 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 OneByteFlowWindowsShouldResumeBothStreamDirections(True) (36ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.IntegrationBehaviorTests.TestHarness.CreateAsync(Nullable`1 requestTimeout, Action`1 runtimeConfigure, Action`1 poolConfigure, Boolean disableRequestTimeout, Boolean useSharedMemory, Action`1 serverRuntimeConfigure, Action`1 clientRuntimeConfigure, Action`1 serverConfigure, ISharpLinkClientInterceptor clientInterceptor) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\IntegrationBehaviorTests.cs:447
+    在 SharpLink.IntegrationTests.IntegrationBehaviorTests.OneByteFlowWindowsShouldResumeBothStreamDirections(Boolean useSharedMemory) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\IntegrationBehaviorTests.FlowAndLifecycle.cs:10
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 ConnectionPoolShouldExpandOnceUnderConcurrentPressure(True) (3ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.IntegrationBehaviorTests.TestHarness.CreateAsync(Nullable`1 requestTimeout, Action`1 runtimeConfigure, Action`1 poolConfigure, Boolean disableRequestTimeout, Boolean useSharedMemory, Action`1 serverRuntimeConfigure, Action`1 clientRuntimeConfigure, Action`1 serverConfigure, ISharpLinkClientInterceptor clientInterceptor) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\IntegrationBehaviorTests.cs:447
+    在 SharpLink.IntegrationTests.IntegrationBehaviorTests.ConnectionPoolShouldExpandOnceUnderConcurrentPressure(Boolean useSharedMemory) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\IntegrationBehaviorTests.FlowAndLifecycle.cs:30
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 BasicRpcAndStreamingShouldWork(True) (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.IntegrationBehaviorTests.TestHarness.CreateAsync(Nullable`1 requestTimeout, Action`1 runtimeConfigure, Action`1 poolConfigure, Boolean disableRequestTimeout, Boolean useSharedMemory, Action`1 serverRuntimeConfigure, Action`1 clientRuntimeConfigure, Action`1 serverConfigure, ISharpLinkClientInterceptor clientInterceptor) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\IntegrationBehaviorTests.cs:447
+    在 SharpLink.IntegrationTests.IntegrationBehaviorTests.BasicRpcAndStreamingShouldWork(Boolean useSharedMemory) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\IntegrationBehaviorTests.CoreAndCompression.cs:88
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 GeneratedProxyCallsShouldWorkWithRealRpcService(True) (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.RpcChannelCallShapeIntegrationTests.CallShapeHarness.CreateAsync(Boolean useSharedMemory) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RpcChannelCallShapeIntegrationTests.cs:263
+    在 SharpLink.IntegrationTests.RpcChannelCallShapeIntegrationTests.GeneratedProxyCallsShouldWorkWithRealRpcService(Boolean useSharedMemory) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RpcChannelCallShapeIntegrationTests.cs:12
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryAccumulatedSpillShouldNotRecopyPendingBytes (4ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryAccumulatedSpillShouldNotRecopyPendingBytes() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.Spill.cs:28
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryAuthenticationShouldStayIsolatedAcrossMultipleClients (10s 012ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.Server.SharpLinkServer.RunAcceptLoopAsync(TaskCompletionSource`1 acceptStarted, TaskCompletionSource`1 running, CancellationToken acceptToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\SharpLinkServer.RunLoop.cs:34
+    在 SharpLink.Server.SharpLinkServer.RunAcceptLoopAsync(TaskCompletionSource`1 acceptStarted, TaskCompletionSource`1 running, CancellationToken acceptToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\SharpLinkServer.RunLoop.cs:91
+    在 SharpLink.Server.SharpLinkServer.ServerLifecycleCoordinator.ObserveAcceptLoopAsync(Task acceptTask, CancellationToken acceptToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\ServerLifecycleCoordinator.cs:222
+    在 SharpLink.Server.SharpLinkServer.ServerLifecycleCoordinator.CompleteFaultedStopAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\ServerLifecycleCoordinator.cs:306
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryAuthenticationShouldStayIsolatedAcrossMultipleClients() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:435
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\53a078fc7ff24f07bdd4a23422058fce.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 SharedMemoryHandshakeShouldRejectMismatchedAcknowledgementNonceAndCleanMapping (5ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHandshakeShouldRejectMismatchedAcknowledgementNonceAndCleanMapping() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:297
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHandshakeShouldRejectMismatchedAcknowledgementNonceAndCleanMapping() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:324
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHandshakeShouldRejectMismatchedAcknowledgementNonceAndCleanMapping() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:324
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 SharedMemoryListenerIdleTimeShouldNotConsumeHandshakeTimeout (312ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryListenerIdleTimeShouldNotConsumeHandshakeTimeout() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:264
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryListenerIdleTimeShouldNotConsumeHandshakeTimeout() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:265
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryListenerIdleTimeShouldNotConsumeHandshakeTimeout() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:265
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryShouldWorkAcrossIndependentProcesses (289ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] Exception: assert failed: child client exit:  AOT_SMOKE_CLIENT_FAIL: SharpLink.Abstractions.SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+   ---> System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+     at System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+     at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+     at SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:line 555
+     at SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:line 55
+     --- End of inner exception stack trace ---
+     at SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:line 97
+     at SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:line 107
+     at SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:line 56
+     at SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:line 84
+     at SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:line 190
+     at SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:line 161
+     at SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:line 46
+     at SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:line 71
+     at SharpLink.AotSmoke.Program.VerifyClientAsync(ISharpLinkClient client, CancellationToken cancellationToken) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.AotSmoke\Program.cs:line 202
+     at SharpLink.AotSmoke.Program.RunClientOnlyAsync(String name) in C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.AotSmoke\Program.cs:line 180
+  
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.Ensure(Boolean condition, String name) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:796
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryShouldWorkAcrossIndependentProcesses() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:32
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 SharedMemoryCancelPendingReadShouldNotPoisonTheNextRead (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryCancelPendingReadShouldNotPoisonTheNextRead() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:50
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryRawDuplexShouldPreserveOneMillionRecordsAcrossWraps (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryRawDuplexShouldPreserveOneMillionRecordsAcrossWraps() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:39
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryRawDuplexShouldPreserveOneMillionRecordsAcrossWraps() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:44
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryRawDuplexShouldPreserveOneMillionRecordsAcrossWraps() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:44
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryFullRingFlushCancellationShouldResumeWithoutLostWakeup (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryFullRingFlushCancellationShouldResumeWithoutLostWakeup() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:77
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryCapacityMismatchShouldNegotiateSmallerRing (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryCapacityMismatchShouldNegotiateSmallerRing() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:104
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryCapacityMismatchShouldNegotiateSmallerRing() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:111
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryCapacityMismatchShouldNegotiateSmallerRing() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:111
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryClientProcessKillShouldCloseControlChannel (101ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryClientProcessKillShouldCloseControlChannel() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:83
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryClientProcessKillShouldCloseControlChannel() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:87
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\6f7b306e9cc449cb94c8fa7c079b38ef.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 SharedMemoryServerProcessKillShouldCloseControlChannelAndAllowRestart (155ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryServerProcessKillShouldCloseControlChannelAndAllowRestart() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:61
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryServerProcessKillShouldCloseControlChannelAndAllowRestart() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:72
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryListenerShouldRejectBadHandshakesAndAcceptNextClient (105ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryListenerShouldRejectBadHandshakesAndAcceptNextClient() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:239
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryListenerShouldRejectBadHandshakesAndAcceptNextClient() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:240
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryListenerShouldRejectBadHandshakesAndAcceptNextClient() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.ProcessAndHandshake.cs:240
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryConnectionDisposeShouldDiscardSpillWhenPeerIsNotReading (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryConnectionDisposeShouldDiscardSpillWhenPeerIsNotReading() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:121
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemorySegmentedStagingShouldPreservePartialConsumptionAcrossAppends (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemorySegmentedStagingShouldPreservePartialConsumptionAcrossAppends() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:525
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryServerUnexpectedDisconnectShouldFailFastPendingCall (11ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHarness.CreateAsync(String name) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:857
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryServerUnexpectedDisconnectShouldFailFastPendingCall() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:565
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryEvidenceShouldDistinguishDirectAndWrapSpillBytes (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryEvidenceShouldDistinguishDirectAndWrapSpillBytes() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:237
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryPayloadLargerThanRingShouldRoundTrip (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHarness.CreateAsync(String name) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:857
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryPayloadLargerThanRingShouldRoundTrip() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:507
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryHeartbeatShouldKeepAnIdleConnectionReady (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHarness.CreateAsync(String name) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:857
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHeartbeatShouldKeepAnIdleConnectionReady() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:465
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryConcurrentCloseShouldBeIdempotentOnBothSides (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryConcurrentCloseShouldBeIdempotentOnBothSides() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:447
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryReaderCompleteAsyncShouldWaitForOutstandingReadRelease (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryReaderCompleteAsyncShouldWaitForOutstandingReadRelease() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:416
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryConnectionDisposeShouldBeIdempotent (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryConnectionDisposeShouldBeIdempotent() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:404
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryWriterShouldNotifyOnlyAfterReaderRegistersAsWaiting (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryWriterShouldNotifyOnlyAfterReaderRegistersAsWaiting() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:357
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryWriterShouldRefreshPeerCursorOnlyWhenCachedSpaceIsInsufficient (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryWriterShouldRefreshPeerCursorOnlyWhenCachedSpaceIsInsufficient() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:293
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryClientShouldReconnectAfterServerRestart (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHarness.CreateAsync(String name) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:857
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryClientShouldReconnectAfterServerRestart() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:580
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryOversizedSpillRequestShouldFailWithoutAllocation (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryOversizedSpillRequestShouldFailWithoutAllocation() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:182
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryWriterCompleteAsyncShouldDiscardSpillWhenPeerIsNotReading (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:689
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.CreateRawPairAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:697
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryWriterCompleteAsyncShouldDiscardSpillWhenPeerIsNotReading() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:152
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 SharedMemoryConnectAndBasicRpcShouldWork (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory server closed the transport handshake before it completed.
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:97
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:107
+    在 SharpLink.Client.SharpLinkClient.ConnectTransportAsync(IClientTransportFactory factory, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.MultiClusterDialConcurrency.cs:56
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:84
+    在 SharpLink.Client.SharpLinkClient.RethrowAfterFailedConnectionCleanupAsync(Exception primaryException, ITransportConnection transport, ClientConnection clientConnection, RpcSession session) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:190
+    在 SharpLink.Client.SharpLinkClient.ConnectOneAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:161
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Lifecycle.cs:46
+    在 SharpLink.Client.SharpLinkClient.ConnectInitialAsync(CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryHarness.CreateAsync(String name) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:857
+    在 SharpLink.IntegrationTests.SharedMemoryTransportConnectionIntegrationTests.SharedMemoryConnectAndBasicRpcShouldWork() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\SharedMemoryTransportConnectionIntegrationTests.cs:477
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.IO.EndOfStreamException: Unable to read beyond the end of the stream.
+    在 System.IO.Stream.ReadAtLeastAsyncCore(Memory`1 buffer, Int32 minimumBytes, Boolean throwOnEndOfStream, CancellationToken cancellationToken)
+    在 System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+    在 SharpLink.Runtime.SharedMemoryHandshake.ReadServerResponseAsync(PipeStream stream, Byte[] expectedNonce, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:555
+    在 SharpLink.Runtime.SharedMemoryClientTransportFactory.ConnectAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:55
+失败 StaticUdsEndpointsShouldServeRpc (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SocketException: 以一种访问权限不允许的方式做了一个访问套接字的尝试。
+    在 System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+    在 System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout, Action`2 permissionHardeningOverride) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:198
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:162
+    在 SharpLink.Server.TransportExtensions.UseUds(SharpLinkServerBuilder builder, String socketPath, Int32 backlog) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\TransportExtensions.cs:96
+    在 SharpLink.IntegrationTests.StaticEndpointIntegrationTests.TcpServerScope.StartUdsAsync(String path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\StaticEndpointIntegrationTests.cs:735
+    在 SharpLink.IntegrationTests.StaticEndpointIntegrationTests.StaticUdsEndpointsShouldServeRpc() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\StaticEndpointIntegrationTests.cs:244
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 StaticSharedMemoryEndpointsShouldServeRpc (3ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.Server.SharpLinkServer.RunAcceptLoopAsync(TaskCompletionSource`1 acceptStarted, TaskCompletionSource`1 running, CancellationToken acceptToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\SharpLinkServer.RunLoop.cs:34
+    在 SharpLink.Server.SharpLinkServer.RunAcceptLoopAsync(TaskCompletionSource`1 acceptStarted, TaskCompletionSource`1 running, CancellationToken acceptToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\SharpLinkServer.RunLoop.cs:91
+    在 SharpLink.Server.SharpLinkServer.ServerLifecycleCoordinator.ObserveAcceptLoopAsync(Task acceptTask, CancellationToken acceptToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\ServerLifecycleCoordinator.cs:222
+    在 SharpLink.IntegrationTests.ServerLifecycleTestExtensions.RunUntilStoppedCoreAsync(ISharpLinkServer server, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\ServerLifecycleTestExtensions.cs:25
+    在 SharpLink.Server.SharpLinkServer.ServerLifecycleCoordinator.CompleteFaultedStopAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\ServerLifecycleCoordinator.cs:306
+    在 SharpLink.IntegrationTests.StaticEndpointIntegrationTests.TcpServerScope.StopAsync(TimeSpan gracefulTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\StaticEndpointIntegrationTests.cs:746
+    在 SharpLink.IntegrationTests.StaticEndpointIntegrationTests.TcpServerScope.DisposeAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\StaticEndpointIntegrationTests.cs:753
+    在 SharpLink.IntegrationTests.StaticEndpointIntegrationTests.StaticSharedMemoryEndpointsShouldServeRpc() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\StaticEndpointIntegrationTests.cs:234
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\67023319990e477cab6b1fa2470cb7da.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.AsyncWindowsFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 MutualTlsShouldRejectMissingOrUnexpectedAndAcceptExpectedClientCertificate (162ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.MutualTlsShouldRejectMissingOrUnexpectedAndAcceptExpectedClientCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:122
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 TlsShouldRejectWrongHostname (88ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.TlsShouldRejectWrongHostname() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:88
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 TlsShouldRejectExpiredCertificate (90ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.TlsShouldRejectExpiredCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:109
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 TlsShouldRejectUntrustedCertificateByDefault (131ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.TlsShouldRejectUntrustedCertificateByDefault() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:97
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 StaticTlsEndpointsShouldUseEndpointAuthorityAndIsolateFailure (77ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.StaticTlsEndpointsShouldUseEndpointAuthorityAndIsolateFailure() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:228
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 RuntimeMultiClusterAddAndReplaceShouldPreserveTlsAndAuthenticationConfiguration (96ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.RuntimeMultiClusterAddAndReplaceShouldPreserveTlsAndAuthenticationConfiguration() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:14
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 TlsShouldProtectAllRpcShapesAndReconnect (103ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.TlsShouldProtectAllRpcShapesAndReconnect() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:68
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 MutualTlsShouldPreserveClientCertificateContext (107ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.CreateCertificate(String subjectName, Boolean serverAuthentication, Nullable`1 notBefore, Nullable`1 notAfter) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:381
+    在 SharpLink.IntegrationTests.TlsTransportIntegrationTests.MutualTlsShouldPreserveClientCertificateContext() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TlsTransportIntegrationTests.cs:173
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 UdsClientDisposeShouldFailFastPendingCall (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SocketException: 以一种访问权限不允许的方式做了一个访问套接字的尝试。
+    在 System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+    在 System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout, Action`2 permissionHardeningOverride) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:198
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:162
+    在 SharpLink.Server.TransportExtensions.UseUds(SharpLinkServerBuilder builder, String socketPath, Int32 backlog) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\TransportExtensions.cs:96
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.TransportHarness.CreateAsync(TransportKind kind, TransportEndpoint endpoint) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.cs:353
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.UdsClientDisposeShouldFailFastPendingCall() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.Lifecycle.cs:141
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 UdsConnectAndBasicRpcShouldWork (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SocketException: 以一种访问权限不允许的方式做了一个访问套接字的尝试。
+    在 System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+    在 System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout, Action`2 permissionHardeningOverride) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:198
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:162
+    在 SharpLink.Server.TransportExtensions.UseUds(SharpLinkServerBuilder builder, String socketPath, Int32 backlog) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\TransportExtensions.cs:96
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.TransportHarness.CreateAsync(TransportKind kind, TransportEndpoint endpoint) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.cs:353
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.UdsConnectAndBasicRpcShouldWork() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.Lifecycle.cs:31
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 UdsServerUnexpectedDisconnectShouldFailFastPendingCall (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SocketException: 以一种访问权限不允许的方式做了一个访问套接字的尝试。
+    在 System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+    在 System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout, Action`2 permissionHardeningOverride) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:198
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:162
+    在 SharpLink.Server.TransportExtensions.UseUds(SharpLinkServerBuilder builder, String socketPath, Int32 backlog) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\TransportExtensions.cs:96
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.TransportHarness.CreateAsync(TransportKind kind, TransportEndpoint endpoint) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.cs:353
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.UdsServerUnexpectedDisconnectShouldFailFastPendingCall() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.Lifecycle.cs:99
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 UdsShouldReconnectWithNewClientInstanceAfterDisconnect (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SocketException: 以一种访问权限不允许的方式做了一个访问套接字的尝试。
+    在 System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+    在 System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout, Action`2 permissionHardeningOverride) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:198
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:162
+    在 SharpLink.Server.TransportExtensions.UseUds(SharpLinkServerBuilder builder, String socketPath, Int32 backlog) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Server\TransportExtensions.cs:96
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.TransportHarness.CreateAsync(TransportKind kind, TransportEndpoint endpoint) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.cs:353
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.VerifyReconnectWithNewClientInstanceAsync(TransportKind kind) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.cs:176
+    在 SharpLink.IntegrationTests.TransportConnectionIntegrationTests.UdsShouldReconnectWithNewClientInstanceAfterDisconnect() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportConnectionIntegrationTests.Lifecycle.cs:322
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 UdsListenerShouldDeleteOnlyItsBoundPathOnDispose (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sl-other-3d2597d29fad42c0b9d464c51ab8bcf9.txt' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.File.OpenHandle(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize)
+    在 System.IO.File.WriteToFileAsync(String path, FileMode mode, ReadOnlyMemory`1 contents, Encoding encoding, CancellationToken cancellationToken)
+    在 SharpLink.IntegrationTests.TransportFactoryLifecycleTests.UdsListenerShouldDeleteOnlyItsBoundPathOnDispose() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\TransportFactoryLifecycleTests.cs:80
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\TestResults\SharpLink.IntegrationTests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\SharpLink.IntegrationTests.dll (net10.0|x64)
+  总计: 528
+  失败: 46
+  成功: 482
+  已跳过: 0
+  持续时间: 2m 09s 173ms
+integration_exit=2

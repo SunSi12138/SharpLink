@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "study": "issue-775-session-control-alternative",
+  "variant": "S",
+  "case": "F03",
+  "sourceSha": "58c280f4ef02c0620d510cc1a78139f2ec5e80ce",
+  "baseSha": "2948de82fff77d66fce51ecec9a5783b6ef3cb62",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "runtime": "10.0.15",
+  "transport": "tcp",
+  "attempt": 1,
+  "status": "FAIL",
+  "detail": "assert failed: F03 replacement keeps the same assembly hash",
+  "eventCount": 4,
+  "evidencePaths": [
+    "events.jsonl",
+    "result.json"
+  ]
+}

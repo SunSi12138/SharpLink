@@ -1,0 +1,4 @@
+{"seq":1,"case":"F06","variant":"S","event":"attempt-started","monotonicMs":1.698,"utc":"2026-11-17T06:41:01.3473278\u002B00:00","payload":{"variant":"S","sourceSha":"525a5aed918516ac1214a91c99fbb3fbb3a746e9","baseSha":"2948de82fff77d66fce51ecec9a5783b6ef3cb62","transport":"tcp","os":"Microsoft Windows NT 10.0.26200.0","runtime":"10.0.15"}}
+{"seq":2,"case":"F06","variant":"S","event":"old-call-entered-business","monotonicMs":233.994,"utc":"2026-11-17T06:41:01.5795953\u002B00:00","payload":{"oldSessionId":"eda82c2bbc73457ca5967d453cbfb5b6","blockStarted":true}}
+{"seq":3,"case":"F06","variant":"S","event":"cut-observed-with-active-old-call","monotonicMs":246.973,"utc":"2026-11-17T06:41:01.5925736\u002B00:00","payload":{"callCompleted":false,"oldSessionId":"eda82c2bbc73457ca5967d453cbfb5b6"}}
+{"seq":4,"case":"F06","variant":"S","event":"old-call-completed","monotonicMs":253.712,"utc":"2026-11-17T06:41:01.5993131\u002B00:00","payload":{"value":42,"oldCreated":1}}

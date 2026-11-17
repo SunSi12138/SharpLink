@@ -1,0 +1,359 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 ReaderOrUnderlyingConnectionClosureShouldExcludeThePendingArm(True) (52ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.Benchmarks.AllocationReadProbe.ObservedListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Benchmarks\AllocationReadProbe.cs:30
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:194
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:210
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ReaderOrUnderlyingConnectionClosureShouldExcludeThePendingArm(Boolean closeConnection) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:107
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\284d2bb64f6b47109e6e35f7f14160a0.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 ObservationShouldTrackRealDataAndPendingReadCancellationAcrossFreshArms (52ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.Benchmarks.AllocationReadProbe.ObservedListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Benchmarks\AllocationReadProbe.cs:30
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:194
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:210
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservationShouldTrackRealDataAndPendingReadCancellationAcrossFreshArms() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:12
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\a42eb3eed8ae48d3a80b0510d9735858.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 TokenCancellationShouldReleaseTheArmAndAllowARealReadToRearm (52ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.Benchmarks.AllocationReadProbe.ObservedListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Benchmarks\AllocationReadProbe.cs:30
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:194
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:210
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.TokenCancellationShouldReleaseTheArmAndAllowARealReadToRearm() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:67
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\28b9ae03aab44b53a66f65cbac285058.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 ReaderOrUnderlyingConnectionClosureShouldExcludeThePendingArm(False) (52ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Shared-memory transport could not create a same-user mapping.
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:246
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:258
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:168
+    在 SharpLink.Benchmarks.AllocationReadProbe.ObservedListener.AcceptAsync(CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Benchmarks\AllocationReadProbe.cs:30
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:194
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ObservedPair.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:210
+    在 SharpLink.UnitTests.Runtime.AllocationReadProbeTests.ReaderOrUnderlyingConnectionClosureShouldExcludeThePendingArm(Boolean closeConnection) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\AllocationReadProbeTests.cs:107
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  --->  System.UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\31b7dc1239db4ab9918a29924552992b.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.Runtime.SharedMemoryServerTransportListener.AcceptConnectionAsync(SharedMemoryResolvedOptions resolved, CancellationToken cancellationToken) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryTransport.cs:211
+失败 WaiterArmHintsShouldTolerateTransientCursorSnapshots (4ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\92c11e9f94124a088fefaaeef9adc7de.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryControlChannelTests.WaiterArmHintsShouldTolerateTransientCursorSnapshots() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryControlChannelTests.cs:222
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 RingCursorArithmeticShouldSurviveSignedOverflow (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\999693a3dcb14acf91cb39934508ac87.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.RingCursorArithmeticShouldSurviveSignedOverflow() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:15
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 LayoutValidationShouldRejectNonceMismatch (2ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\7989057b3371478b8e637fbf82a64e3c.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.LayoutValidationShouldRejectNonceMismatch() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:31
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 ReaderCompletionShouldWaitForAPendingReadOperation (6ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\0a95b503184d4683a22d121a5e6ae589.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.PipelineHarness.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:158
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.ReaderCompletionShouldWaitForAPendingReadOperation() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:13
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 RejectedSecondReadShouldNotBreakTheActiveReadCancellation (7ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\4299ac0b827a4325bbf41e312162bd6e.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.PipelineHarness.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:158
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.RejectedSecondReadShouldNotBreakTheActiveReadCancellation() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:39
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 RejectedSecondReadShouldNotBreakTheActiveReadNotification (7ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\1bb6d6c8f5ed41b496fec531c9e2cc99.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.PipelineHarness.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:158
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.RejectedSecondReadShouldNotBreakTheActiveReadNotification() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:63
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 WriterCompletionShouldJoinAnActiveFlushBeforeReturning (8ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\96945f864a1743618d5002038e5258df.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.PipelineHarness.CreateAsync() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:158
+    在 SharpLink.UnitTests.Runtime.SharedMemoryPipelineLifecycleTests.WriterCompletionShouldJoinAnActiveFlushBeforeReturning() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryPipelineLifecycleTests.cs:93
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 PublicTransportInputsShouldPreserveLongSequentialBidirectionalReads(tls) (440ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:391
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateAsync(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:310
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.PublicTransportInputsShouldPreserveLongSequentialBidirectionalReads(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:19
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 PublicTransportInputShouldRecoverAfterRepeatedTokenCancellation(tls) (455ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:391
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateAsync(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:310
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.PublicTransportInputShouldRecoverAfterRepeatedTokenCancellation(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:45
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 PublicTransportPeerCloseShouldCompletePendingReadWithoutPayload(tls) (457ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:391
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateAsync(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:310
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.PublicTransportPeerCloseShouldCompletePendingReadWithoutPayload(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:144
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 PublicTransportCanceledResultShouldRetainOwnershipUntilAdvanced(tls) (456ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:391
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateAsync(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:310
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.PublicTransportCanceledResultShouldRetainOwnershipUntilAdvanced(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:73
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 PublicTransportDisposalShouldWaitForRetainedReadAfterPeerClose(tls) (456ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:391
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.TransportPair.CreateAsync(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:310
+    在 SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderTransportTests.PublicTransportDisposalShouldWaitForRetainedReadAfterPeerClose(String transport) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\ReadOwnershipPipeReaderTransportTests.cs:104
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 FileSystemUdsListenerShouldStillBindOnWindows (3ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SocketException: 以一种访问权限不允许的方式做了一个访问套接字的尝试。
+    在 System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+    在 System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+    在 System.Net.Sockets.Socket.Bind(EndPoint localEP)
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout, Action`2 permissionHardeningOverride) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:198
+    在 SharpLink.Runtime.SocketServerTransportListener..ctor(EndPoint localEndPoint, Int32 backlog, SocketTransportOptions options, SslServerAuthenticationOptions tlsOptions, Nullable`1 tlsHandshakeTimeout) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SocketTransportV2.cs:162
+    在 SharpLink.UnitTests.Runtime.UnixSocketPermissionTests.FileSystemUdsListenerShouldStillBindOnWindows() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\UnixSocketPermissionTests.cs:123
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 TlsHandshakeLimitRejectsTheSecondConnectionWhileTheFirstStalls (108ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] CryptographicException: 拒绝访问。
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(ReadOnlySpan`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.ImportPfx(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(BagState& bagState, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ReadOnlyMemory`1 data, ReadOnlySpan`1 password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(Byte[] data, String password, X509KeyStorageFlags keyStorageFlags, Pkcs12LoaderLimits loaderLimits)
+    在 SharpLink.UnitTests.Server.ConnectionAdmissionTests.CreateCertificate() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Server\ConnectionAdmissionTests.cs:929
+    在 SharpLink.UnitTests.Server.ConnectionAdmissionTests.TlsHandshakeLimitRejectsTheSecondConnectionWhileTheFirstStalls() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Server\ConnectionAdmissionTests.cs:488
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 ConcurrentMappingCreationShouldNotUnlinkLivePeers (5ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\f43e04713665447b9633a179e195650c.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.<>c__DisplayClass2_0.<ConcurrentMappingCreationShouldNotUnlinkLivePeers>b__1() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:50
+    在 System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+    --- End of stack trace from previous location ---
+    在 System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+    在 System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+    --- End of stack trace from previous location ---
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.ConcurrentMappingCreationShouldNotUnlinkLivePeers() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:56
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.ConcurrentMappingCreationShouldNotUnlinkLivePeers() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:65
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 OpeningInvalidMappingShouldReleaseMappedView (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\18cda47ced444d9d90fb879d5fd9698b.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.OpeningInvalidMappingShouldReleaseMappedView() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:79
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 CreatingMappingShouldRemoveExclusivelyOpenableStaleFiles (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\c03be8119fd5481ea8c8be3d49f89484.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.File.OpenHandle(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize)
+    在 System.IO.File.<WriteAllBytesAsync>g__Core|103_0(String path, ReadOnlyMemory`1 bytes, CancellationToken cancellationToken)
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.CreatingMappingShouldRemoveExclusivelyOpenableStaleFiles() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:203
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 MappingFileShouldDisappearAfterBothSidesClose (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\eaaa0c5ffb7a4db3b6269e87bf49302e.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.MappingFileShouldDisappearAfterBothSidesClose() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:113
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 DisposingOneMappingShouldPreservePeerMemoryAndInvalidateOwnedMemory(True) (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\e9a9640e80d147658051ff3f7387d974.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.DisposingOneMappingShouldPreservePeerMemoryAndInvalidateOwnedMemory(Boolean closeServerFirst) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:139
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 DisposingOneMappingShouldPreservePeerMemoryAndInvalidateOwnedMemory(False) (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\e61d7748b4494f1e8d9f7d850df6e645.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.DisposingOneMappingShouldPreservePeerMemoryAndInvalidateOwnedMemory(Boolean closeServerFirst) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:139
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 CreatingMappingShouldPreserveFreshPeerFiles (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\b79a177235174d10a3dd6ef9f25227cb.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.File.OpenHandle(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize)
+    在 System.IO.File.<WriteAllBytesAsync>g__Core|103_0(String path, ReadOnlyMemory`1 bytes, CancellationToken cancellationToken)
+    在 SharpLink.UnitTests.Runtime.SharedMemoryLayoutTests.CreatingMappingShouldPreserveFreshPeerFiles() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\SharedMemoryLayoutTests.cs:219
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 SharedMemoryConnectionShouldReleaseMappingAfterControlCleanupFailure (1ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-shm-bbd4be9d178508a3\1a080cad888f4951a009577c17417372.shm' is denied.
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+    在 Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options, Int64 preallocationSize)
+    在 System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize, FileOptions options)
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServerCore(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:68
+    在 SharpLink.Runtime.SharedMemoryMapping.CreateServer(Int32 capacity, ReadOnlySpan`1 nonce, String& path) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\src\SharpLink.Runtime\Transport\SharedMemoryMapping.cs:46
+    在 SharpLink.UnitTests.Runtime.TransportCleanupTests.SharedMemoryConnectionShouldReleaseMappingAfterControlCleanupFailure() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\Runtime\TransportCleanupTests.cs:100
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\bin\Release\net10.0\TestResults\SharpLink.UnitTests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.UnitTests\bin\Release\net10.0\SharpLink.UnitTests.dll (net10.0|x64)
+  总计: 2255
+  失败: 26
+  成功: 2229
+  已跳过: 0
+  持续时间: 38s 171ms

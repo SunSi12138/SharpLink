@@ -1,0 +1,22 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.IntegrationTests\bin\Release\net10.0\TestResults\SharpLink.IntegrationTests-windows-net10.0-report.html
+
+测试运行摘要: 已通过! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.IntegrationTests\bin\Release\net10.0\SharpLink.IntegrationTests.dll (net10.0|x64)
+  总计: 1
+  失败: 0
+  成功: 1
+  已跳过: 0
+  持续时间: 538ms

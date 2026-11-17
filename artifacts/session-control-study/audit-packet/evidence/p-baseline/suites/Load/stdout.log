@@ -1,0 +1,50 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 ValidFormalLoadAndStreamReportsShouldPassDirectoryValidation (118ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-report-validation-9dbd0b0e6f7c4ba3818d4dfa0c1c0ebb' is denied.
+    在 System.IO.FileSystem.CreateDirectory(String fullPath, Byte[] securityDescriptor)
+    在 System.IO.Directory.CreateDirectory(String path)
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.CreateTemporaryDirectory() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:196
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.ValidFormalLoadAndStreamReportsShouldPassDirectoryValidation() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:15
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 MissingExpectedReportsInEitherDirectoryShouldFailCompletion (65ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-report-validation-e842b2a5acf541d9b77c46c97d7c16d2' is denied.
+    在 System.IO.FileSystem.CreateDirectory(String fullPath, Byte[] securityDescriptor)
+    在 System.IO.Directory.CreateDirectory(String path)
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.CreateTemporaryDirectory() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:196
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.MissingExpectedReportsInEitherDirectoryShouldFailCompletion() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:130
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 BrokenMatrixReportShouldExposeEveryCompletionContractViolation (128ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-report-validation-9f4ca4ff8be741fa99029a12f0db18fa' is denied.
+    在 System.IO.FileSystem.CreateDirectory(String fullPath, Byte[] securityDescriptor)
+    在 System.IO.Directory.CreateDirectory(String path)
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.CreateTemporaryDirectory() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:196
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.BrokenMatrixReportShouldExposeEveryCompletionContractViolation() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:45
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+失败 MissingRequiredFieldShouldBecomeAValidationFailureInsteadOfEscaping (64ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] UnauthorizedAccessException: Access to the path 'C:\Users\sunsi\AppData\Local\Temp\sharplink-report-validation-6e7f65e505fe4466ac68d19d3ef73381' is denied.
+    在 System.IO.FileSystem.CreateDirectory(String fullPath, Byte[] securityDescriptor)
+    在 System.IO.Directory.CreateDirectory(String path)
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.CreateTemporaryDirectory() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:196
+    在 SharpLink.LoadTest.Tests.PerformanceReportValidatorTests.MissingRequiredFieldShouldBecomeAValidationFailureInsteadOfEscaping() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\PerformanceReportValidatorTests.cs:105
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\bin\Release\net10.0\TestResults\SharpLink.LoadTest.Tests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.LoadTest.Tests\bin\Release\net10.0\SharpLink.LoadTest.Tests.dll (net10.0|x64)
+  总计: 77
+  失败: 4
+  成功: 73
+  已跳过: 0
+  持续时间: 535ms

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "study": "issue-775-session-control-alternative",
+  "variant": "S",
+  "case": "F18",
+  "sourceSha": "UNKNOWN",
+  "baseSha": "2948de82fff77d66fce51ecec9a5783b6ef3cb62",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "runtime": "10.0.15",
+  "transport": "tcp",
+  "attempt": 1,
+  "status": "PASS",
+  "detail": "idle replacement path only; held-stream F18 subcase is NOT_RUN",
+  "eventCount": 2,
+  "evidencePaths": [
+    "events.jsonl",
+    "result.json"
+  ]
+}

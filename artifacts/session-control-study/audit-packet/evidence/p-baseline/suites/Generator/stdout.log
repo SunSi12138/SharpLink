@@ -1,0 +1,27 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 ConfiguredManifestOutputShouldWriteTheExactJsonArtifact (139ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] Exception: configured Manifest artifact exists
+    在 SharpLink.Generator.Tests.RpcAnalyzerTests.Ensure(Boolean condition, String message) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Generator.Tests\RpcAnalyzerTestSupport.cs:485
+    在 SharpLink.Generator.Tests.RpcAnalyzerTests.ConfiguredManifestOutputShouldWriteTheExactJsonArtifact() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Generator.Tests\ContractManifestGeneratorTests.cs:708
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Generator.Tests\bin\Release\net10.0\TestResults\SharpLink.Generator.Tests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink-P\test\SharpLink.Generator.Tests\bin\Release\net10.0\SharpLink.Generator.Tests.dll (net10.0|x64)
+  总计: 295
+  失败: 1
+  成功: 294
+  已跳过: 0
+  持续时间: 4s 602ms

@@ -1,0 +1,8 @@
+525a5aed (HEAD -> study/998-session-control) research(998): cut old admission before publishing S snapshot and retire on unregister
+5b8d5fd2 research(998): extend session-pinned core matrix and preserve first failures
+58c280f4 research(998): add session-pinned snapshot prototype and deterministic core cases
+b499d2cf chore(study): use installed .NET SDK 10.0.404 for issue 998
+2948de82 (origin/dev, dev) fix: preserve codec publication across metadata reentrancy (#985)
+3a57eb40 test: observe EOF logical and physical completion independently (#991)
+0ff57325 test: preserve readiness checks during pending cluster retirement (#990)
+97a67f9f docs: freeze issue 775 contract-channel adoption contract (#989)

@@ -1,0 +1,33 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 IndependentControlReplyMustNotAcknowledgeDelayedDataManifest (268ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] SharpLinkException: Service 5605908966493612427 is not implemented.
+    在 SharpLink.Client.RpcRequestOperation`1.GetResult(Int16 token) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\RpcRequestOperation.cs:58
+    在 SharpLink.Client.SharpLinkClient.ObserveCallAsync[T](ValueTask`1 invocation, CallScope scope) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Telemetry.cs:155
+    在 SharpLink.Client.SharpLinkClient.AwaitLogicalInvocationAsync[T](ValueTask`1 invocation) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.Invokers.cs:241
+    在 SharpLink.Client.SharpLinkModuleRpcChannel.AwaitAsync[T](ValueTask`1 call, SharpLinkDynamicModuleLease lease, CombinedCancellation combined) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\src\SharpLink.Client\SharpLinkClient.DynamicChannel.cs:112
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.IndependentControlReplyMustNotAcknowledgeDelayedDataManifest() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.RemoteContractReadiness.cs:129
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.IndependentControlReplyMustNotAcknowledgeDelayedDataManifest() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.RemoteContractReadiness.cs:136
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.IndependentControlReplyMustNotAcknowledgeDelayedDataManifest() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.RemoteContractReadiness.cs:136
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\TestResults\SharpLink.IntegrationTests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\SharpLink.IntegrationTests.dll (net10.0|x64)
+  总计: 1
+  失败: 1
+  成功: 0
+  已跳过: 0
+  持续时间: 466ms
+test_exit=2

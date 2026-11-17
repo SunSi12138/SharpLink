@@ -1,0 +1,4 @@
+{"seq":1,"case":"F07","variant":"S","event":"attempt-started","monotonicMs":1.491,"utc":"2026-11-17T06:41:02.0872560\u002B00:00","payload":{"variant":"S","sourceSha":"525a5aed918516ac1214a91c99fbb3fbb3a746e9","baseSha":"2948de82fff77d66fce51ecec9a5783b6ef3cb62","transport":"tcp","os":"Microsoft Windows NT 10.0.26200.0","runtime":"10.0.15"}}
+{"seq":2,"case":"F07","variant":"S","event":"request-queued","monotonicMs":241.234,"utc":"2026-11-17T06:41:02.3269752\u002B00:00","payload":{"queuedCalls":1,"activePermits":1,"oldSessionId":"aecbc959e8b14905955c2269fec43adb"}}
+{"seq":3,"case":"F07","variant":"S","event":"cut-before-permit-release","monotonicMs":254.494,"utc":"2026-11-17T06:41:02.3402342\u002B00:00","payload":{"queuedCalls":1,"oldCreated":0,"newCreated":0}}
+{"seq":4,"case":"F07","variant":"S","event":"queued-request-rejected","monotonicMs":263.073,"utc":"2026-11-17T06:41:02.3488126\u002B00:00","payload":{"code":"Unavailable","detail":0}}

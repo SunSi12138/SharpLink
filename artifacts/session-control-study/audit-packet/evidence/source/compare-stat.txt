@@ -1,0 +1,19 @@
+ eng/session-control-study/C-NEG/C_NEG_Test.cs      | 116 +++
+ eng/session-control-study/Model/Model.csproj       |   8 +
+ eng/session-control-study/Model/Program.cs         |  85 +++
+ global.json                                        |   2 +-
+ src/SharpLink.Server/ServerConnectionState.cs      |  30 +-
+ .../SharpLinkServer.AdmissionDispatch.cs           |   2 +-
+ .../SharpLinkServer.AssemblyDrain.cs               |   6 +
+ .../SharpLinkServer.AssemblyRegistration.cs        |  16 +-
+ .../SharpLinkServer.ConnectionLifecycle.cs         |   9 +-
+ .../SharpLinkServer.ContractManifest.cs            |   5 +-
+ .../SharpLinkServer.InvocationDispatch.cs          |   2 +-
+ .../SharpLinkServer.PreAdmissionStreams.cs         |   6 +-
+ .../SharpLinkServer.RequestLoop.cs                 |   4 +-
+ .../SharpLinkServer.SessionControlStudy.cs         |  65 ++
+ ...AssemblyIntegrationTests.SessionControlStudy.cs | 837 +++++++++++++++++++++
+ .../RuntimeAssemblyIntegrationTests.Support.cs     |   8 +-
+ .../RuntimeAssemblyIntegrationTests.cs             |   8 +-
+ .../SessionControlStudySupport.cs                  | 191 +++++
+ 18 files changed, 1383 insertions(+), 17 deletions(-)

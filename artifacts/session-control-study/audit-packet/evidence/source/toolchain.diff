@@ -1,0 +1,12 @@
+diff --git a/global.json b/global.json
+index e9ed1033..aa15617d 100644
+--- a/global.json
++++ b/global.json
+@@ -1,6 +1,6 @@
+ {
+   "sdk": {
+-    "version": "10.0.102",
++    "version": "10.0.404",
+     "rollForward": "latestPatch",
+     "allowPrerelease": false
+   },

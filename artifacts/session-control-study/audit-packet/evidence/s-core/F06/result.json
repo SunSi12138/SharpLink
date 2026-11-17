@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "study": "issue-775-session-control-alternative",
+  "variant": "S",
+  "case": "F06",
+  "sourceSha": "525a5aed918516ac1214a91c99fbb3fbb3a746e9",
+  "baseSha": "2948de82fff77d66fce51ecec9a5783b6ef3cb62",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "runtime": "10.0.15",
+  "transport": "tcp",
+  "attempt": 1,
+  "status": "PASS",
+  "detail": null,
+  "eventCount": 4,
+  "evidencePaths": [
+    "events.jsonl",
+    "result.json"
+  ]
+}

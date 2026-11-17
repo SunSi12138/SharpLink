@@ -1,0 +1,322 @@
+diff --git a/src/SharpLink.Server/ServerConnectionState.cs b/src/SharpLink.Server/ServerConnectionState.cs
+index 036afa1d..7cc46924 100644
+--- a/src/SharpLink.Server/ServerConnectionState.cs
++++ b/src/SharpLink.Server/ServerConnectionState.cs
+@@ -21,6 +21,7 @@ internal sealed class ServerConnectionState
+     private readonly TaskCompletionSource _sessionLoopCompleted =
+         new(TaskCreationOptions.RunContinuationsAsynchronously);
+     private readonly ConcurrentDictionary<ServiceRegistration, ConnectionServiceEntry> _services = [];
++    private FrozenDictionary<long, ServiceRegistration>? _pinnedContractServices;
+     private SharpLinkAuthenticationContext? _authenticationContext;
+     private SharpLinkCallContextSnapshot? _defaultCallContext;
+     private long _lastAcceptedRequestId;
+@@ -62,6 +63,27 @@ internal sealed class ServerConnectionState
+ 
+     internal RpcSession Session { get; }
+ 
++    /// <summary>
++    /// Immutable service table captured at the Ready/manifest ordering boundary. The study variant
++    /// S routes ordinary requests from this snapshot, never from the live registry.
++    /// </summary>
++    internal FrozenDictionary<long, ServiceRegistration> PinnedContractServices
++        => Volatile.Read(ref _pinnedContractServices) ??
++            throw new InvalidOperationException("The connection has no pinned contract snapshot.");
++
++    internal bool PinsModule(SharpLinkDynamicModule module)
++    {
++        var pinned = Volatile.Read(ref _pinnedContractServices);
++        if (pinned is null)
++            return false;
++        foreach (var service in pinned.Values)
++        {
++            if (ReferenceEquals(service.Module, module))
++                return true;
++        }
++        return false;
++    }
++
+     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
+ 
+     internal SharpLinkAuthenticationContext? AuthenticationContext
+@@ -143,9 +165,13 @@ internal sealed class ServerConnectionState
+             _sessionLoopCompleted.TrySetResult();
+     }
+ 
+-    internal bool MarkReady(SharpLinkAuthenticationContext? authenticationContext)
++    internal bool MarkReady(
++        SharpLinkAuthenticationContext? authenticationContext,
++        FrozenDictionary<long, ServiceRegistration> pinnedContractServices)
+     {
++        ArgumentNullException.ThrowIfNull(pinnedContractServices);
+         var defaultCallContext = new SharpLinkCallContextSnapshot(Session.Id, authenticationContext);
++        Volatile.Write(ref _pinnedContractServices, pinnedContractServices);
+         Volatile.Write(ref _authenticationContext, authenticationContext);
+         Volatile.Write(ref _defaultCallContext, defaultCallContext);
+         if (Interlocked.CompareExchange(
+@@ -157,6 +183,7 @@ internal sealed class ServerConnectionState
+             return true;
+         }
+ 
++        Volatile.Write(ref _pinnedContractServices, null);
+         Volatile.Write(ref _authenticationContext, null);
+         Volatile.Write(ref _defaultCallContext, null);
+         return false;
+@@ -383,6 +410,7 @@ internal sealed class ServerConnectionState
+             if (ActiveCalls == 0)
+                 _callsDrained.TrySetResult();
+             Interlocked.Exchange(ref _lifecycleState, (int)ServerConnectionLifecycleState.Closed);
++            Volatile.Write(ref _pinnedContractServices, null);
+             Volatile.Write(ref _authenticationContext, null);
+             Volatile.Write(ref _defaultCallContext, null);
+             _serviceCleanupTask = CleanupServicesWhenCallsDrainAsync();
+diff --git a/src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs b/src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs
+index 90787c62..2fe7d65b 100644
+--- a/src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs
++++ b/src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs
+@@ -23,7 +23,7 @@ internal sealed partial class SharpLinkServer
+             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
+             var request = ReadRequestEnvelope(
+                 session, payload, flags, admittedCallState?.Deadline ?? default);
+-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
++            if (!connection.PinnedContractServices.TryGetValue(request.InterfaceHash, out var serviceInfo))
+             {
+                 if (admittedCallState is not null)
+                 {
+diff --git a/src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs b/src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs
+index c6d104df..f67f389d 100644
+--- a/src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs
++++ b/src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs
+@@ -12,6 +12,8 @@ internal sealed partial class SharpLinkServer
+         ArgumentNullException.ThrowIfNull(assembly);
+         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+         Task<SharpLinkAssemblyUnregisterResult> operation;
++        var cutCommitted = false;
++        SharpLinkDynamicModule? moduleToRetire = null;
+         lock (_registryGate)
+         {
+             if (_unregisterOperations.TryGetValue(assembly, out operation!))
+@@ -29,6 +31,8 @@ internal sealed partial class SharpLinkServer
+                 // Keep active RPC codecs alive, but invalidate admission candidates now.
+                 _registryGeneration++;
+                 _runtimeContext.InvalidateGeneratedCodecPublication();
++                cutCommitted = true;
++                moduleToRetire = module;
+             }
+             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                 TaskCreationOptions.RunContinuationsAsynchronously);
+@@ -40,6 +44,8 @@ internal sealed partial class SharpLinkServer
+                 "DynamicAssemblyUnregister",
+                 TaskObservationMode.ExternallyObserved);
+         }
++        if (cutCommitted)
++            OnPinnedGroupCutCommitted(moduleToRetire!);
+         return WaitForUnregisterAsync(operation, cancellationToken);
+     }
+ 
+diff --git a/src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs b/src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs
+index 1912b543..61827601 100644
+--- a/src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs
++++ b/src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs
+@@ -304,10 +304,21 @@ internal sealed partial class SharpLinkServer
+                             _detachedModuleServices.Add(oldModule, detachedServices);
+                             _unregisterOperations.Add(oldAssembly, drainOperation);
+                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
++                            // Study variant S requires the old group admission cutoff to precede
++                            // publication of the new registry snapshot. This is the single
++                            // linearization point for a request that arrives on an old session:
++                            // TryAcquire observes Draining and rejects it before user code.
++                            if (!oldModule.TryBeginDraining())
++                            {
++                                rollbackError = CreateError(
++                                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
++                                    "The old Assembly object was not running at the replacement cut.",
++                                    newAssembly);
++                                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
++                            }
+                             Volatile.Write(ref _services, candidate.Services);
+                             _registryGeneration++;
+                             ScheduleContractManifestPublish();
+-                            oldModule.TryBeginDraining();
+                             published = true;
+                             break;
+                         }
+@@ -351,6 +362,9 @@ internal sealed partial class SharpLinkServer
+             }
+         }
+ 
++        if (published)
++            OnPinnedGroupCutCommitted(oldModule!);
++
+         TrackFrameworkTask(
+             drainOperation!,
+             "DynamicAssemblyReplacementDrain",
+diff --git a/src/SharpLink.Server/SharpLinkServer.ConnectionLifecycle.cs b/src/SharpLink.Server/SharpLinkServer.ConnectionLifecycle.cs
+index d992f39c..100b8065 100644
+--- a/src/SharpLink.Server/SharpLinkServer.ConnectionLifecycle.cs
++++ b/src/SharpLink.Server/SharpLinkServer.ConnectionLifecycle.cs
+@@ -159,14 +159,17 @@ internal sealed partial class SharpLinkServer
+                         connection.MarkDraining();
+                         return;
+                     }
+-                    if (!connection.MarkReady(authResult.Context))
++                    var pinnedServices = Volatile.Read(ref _services);
++                    if (!connection.MarkReady(authResult.Context, pinnedServices))
+                         return;
+-                    session.SendContractManifest(CreateContractManifestSnapshotLocked());
++                    session.SendContractManifest(CreateContractManifestSnapshotLocked(pinnedServices));
+                 }
+ 
+                 await session.FlushSendQueueAsync(ct).ConfigureAwait(false);
+             }
+-            else if (!connection.MarkReady(authResult.Context))
++            else if (!connection.MarkReady(
++                         authResult.Context,
++                         Volatile.Read(ref _services)))
+             {
+                 return;
+             }
+diff --git a/src/SharpLink.Server/SharpLinkServer.ContractManifest.cs b/src/SharpLink.Server/SharpLinkServer.ContractManifest.cs
+index aa91c3f2..17cbe429 100644
+--- a/src/SharpLink.Server/SharpLinkServer.ContractManifest.cs
++++ b/src/SharpLink.Server/SharpLinkServer.ContractManifest.cs
+@@ -15,9 +15,12 @@ internal sealed partial class SharpLinkServer
+     }
+ 
+     private ProtocolV2ContractManifest CreateContractManifestSnapshotLocked()
++        => CreateContractManifestSnapshotLocked(Volatile.Read(ref _services));
++
++    private ProtocolV2ContractManifest CreateContractManifestSnapshotLocked(
++        FrozenDictionary<long, ServiceRegistration> services)
+     {
+         var modules = _dynamicModules.Values.ToArray();
+-        var services = Volatile.Read(ref _services);
+         var entries = new KeyValuePair<long, RpcHash128>[services.Count];
+         var index = 0;
+         foreach (var service in services.OrderBy(static pair => pair.Key))
+diff --git a/src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs b/src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs
+index cce7be85..a994da1b 100644
+--- a/src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs
++++ b/src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs
+@@ -41,7 +41,7 @@ internal sealed partial class SharpLinkServer
+                 }
+                 return responseSend;
+             }
+-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
++            if (!connection.PinnedContractServices.TryGetValue(request.InterfaceHash, out var serviceInfo))
+             {
+                 ValueTask responseSend;
+                 try
+diff --git a/src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs b/src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs
+index 94ba0a15..816cf756 100644
+--- a/src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs
++++ b/src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs
+@@ -235,12 +235,14 @@ internal sealed partial class SharpLinkServer
+             session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
+     }
+ 
+-    private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
++    private static int ResolveRawRequestClientStreamCount(
++        ServerConnectionState connection,
++        ReadOnlySequence<byte> payload)
+     {
+         var reader = new SequenceReader<byte>(payload);
+         if (!reader.TryReadLittleEndian(out long contractId) ||
+             !reader.TryReadLittleEndian(out long methodId) ||
+-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
++            !connection.PinnedContractServices.TryGetValue(contractId, out var registration) ||
+             !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
+         {
+             return UnresolvedClientStreamCount;
+diff --git a/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs b/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs
+index a94e0943..6cf11666 100644
+--- a/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs
++++ b/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs
+@@ -183,7 +183,7 @@ internal sealed partial class SharpLinkServer
+                                         DrainRejectedOneWayStreams(
+                                             session,
+                                             failedRequestId,
+-                                            ResolveRawRequestClientStreamCount(payload));
++                                            ResolveRawRequestClientStreamCount(connection, payload));
+                                     }
+                                     else
+                                     {
+@@ -398,7 +398,7 @@ internal sealed partial class SharpLinkServer
+                     DrainRejectedOneWayStreams(
+                         connection.Session,
+                         requestId,
+-                        ResolveRawRequestClientStreamCount(payload));
++                        ResolveRawRequestClientStreamCount(connection, payload));
+                     return;
+                 }
+ 
+diff --git a/src/SharpLink.Server/SharpLinkServer.SessionControlStudy.cs b/src/SharpLink.Server/SharpLinkServer.SessionControlStudy.cs
+new file mode 100644
+index 00000000..a852de14
+--- /dev/null
++++ b/src/SharpLink.Server/SharpLinkServer.SessionControlStudy.cs
+@@ -0,0 +1,65 @@
++namespace SharpLink.Server;
++
++internal sealed partial class SharpLinkServer
++{
++    // Variant S test-only observation points. Both are null in an ordinary server process.
++    internal Action? PinnedSessionCutCommittedForTesting { get; set; }
++    internal Func<Task>? PinnedSessionRetirementNotificationBarrierForTesting { get; set; }
++    internal Action<RpcSession>? PinnedSessionRetirementNotificationSentForTesting { get; set; }
++    internal int PinnedSessionRetirementNotificationCountForTesting
++        => Volatile.Read(ref _pinnedSessionRetirementNotificationCount);
++
++    private long _pinnedSessionRetirementGeneration;
++    private int _pinnedSessionRetirementNotificationCount;
++
++    /// <summary>
++    /// Called after the Replace commit and after the old module admission gate is closed, but
++    /// outside <c>_registryGate</c>. The study variant S has already published the new registry
++    /// and pinned old sessions to their bootstrap snapshot; this method only schedules the
++    /// control notification that makes the client establish a new physical Session.
++    /// </summary>
++    private void OnPinnedGroupCutCommitted(SharpLinkDynamicModule oldModule)
++    {
++        PinnedSessionCutCommittedForTesting?.Invoke();
++        TrackFrameworkTask(
++            RetirePinnedSessionsAsync(oldModule),
++            "PinnedSessionRetirement");
++    }
++
++    private async Task RetirePinnedSessionsAsync(SharpLinkDynamicModule oldModule)
++    {
++        if (PinnedSessionRetirementNotificationBarrierForTesting is { } barrier)
++            await barrier().ConfigureAwait(false);
++
++        var connections = _connectionRegistry.SnapshotActive();
++        for (var index = 0; index < connections.Length; index++)
++        {
++            var connection = connections[index];
++            if (connection.LifecycleState != ServerConnectionLifecycleState.Ready ||
++                !connection.PinsModule(oldModule))
++            {
++                continue;
++            }
++
++            if ((connection.Session.NegotiatedCapabilities & ProtocolV2Capabilities.SessionRefresh) == 0)
++                continue;
++
++            var generation = checked((ulong)Interlocked.Increment(
++                ref _pinnedSessionRetirementGeneration) + 1_000_000_000UL);
++            var request = new ProtocolV2SessionRefreshRequested(
++                _desiredSessionServerInstanceId,
++                generation);
++            try
++            {
++                await connection.Session.SendSessionRefreshRequestedWithBackpressureAsync(
++                    request,
++                    connection.ConnectionToken).ConfigureAwait(false);
++                Interlocked.Increment(ref _pinnedSessionRetirementNotificationCount);
++                PinnedSessionRetirementNotificationSentForTesting?.Invoke(connection.Session);
++            }
++            catch (Exception exception) when (IsExpectedSessionShutdownException(exception))
++            {
++            }
++        }
++    }
++}
