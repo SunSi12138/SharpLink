@@ -12,6 +12,8 @@ internal sealed partial class SharpLinkServer
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         Task<SharpLinkAssemblyUnregisterResult> operation;
+        var cutCommitted = false;
+        SharpLinkDynamicModule? moduleToRetire = null;
         lock (_registryGate)
         {
             if (_unregisterOperations.TryGetValue(assembly, out operation!))
@@ -29,6 +31,8 @@ internal sealed partial class SharpLinkServer
                 // Keep active RPC codecs alive, but invalidate admission candidates now.
                 _registryGeneration++;
                 _runtimeContext.InvalidateGeneratedCodecPublication();
+                cutCommitted = true;
+                moduleToRetire = module;
             }
             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -40,6 +44,8 @@ internal sealed partial class SharpLinkServer
                 "DynamicAssemblyUnregister",
                 TaskObservationMode.ExternallyObserved);
         }
+        if (cutCommitted)
+            OnPinnedGroupCutCommitted(moduleToRetire!);
         return WaitForUnregisterAsync(operation, cancellationToken);
     }
 

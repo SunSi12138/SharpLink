@@ -304,10 +304,21 @@ internal sealed partial class SharpLinkServer
                             _detachedModuleServices.Add(oldModule, detachedServices);
                             _unregisterOperations.Add(oldAssembly, drainOperation);
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            // Study variant S requires the old group admission cutoff to precede
+                            // publication of the new registry snapshot. This is the single
+                            // linearization point for a request that arrives on an old session:
+                            // TryAcquire observes Draining and rejects it before user code.
+                            if (!oldModule.TryBeginDraining())
+                            {
+                                rollbackError = CreateError(
+                                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                                    "The old Assembly object was not running at the replacement cut.",
+                                    newAssembly);
+                                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
+                            }
                             Volatile.Write(ref _services, candidate.Services);
                             _registryGeneration++;
                             ScheduleContractManifestPublish();
-                            oldModule.TryBeginDraining();
                             published = true;
                             break;
                         }
