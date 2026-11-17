@@ -49,6 +49,7 @@ artifacts/session-control-study/audit-packet/
   08-failures-and-limitations.md
   09-final-comparison.md
   10-independent-audit-request.md
+  11-scope-closure.md
   evidence/
     g1-model/
     c-neg/

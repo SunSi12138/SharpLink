@@ -18,6 +18,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 | `08-failures-and-limitations.md` | all environment, test-oracle and candidate failures |
 | `09-final-comparison.md` | P/N/S/Q/H comparison and decision |
 | `10-independent-audit-request.md` | detailed external audit instructions |
+| `11-scope-closure.md` | executed scope, hard blockers and future work order |
 | `AUDIT-REQUEST.md` | copy-paste audit request with real data |
 | `evidence/` | raw events/results/logs, diffs, discovery censuses, hashes |
 
