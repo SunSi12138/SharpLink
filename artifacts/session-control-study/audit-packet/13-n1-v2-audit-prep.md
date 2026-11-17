@@ -50,10 +50,22 @@ On SDK 10.0.404 (not the N1 protocol's 10.0.115), six pure modes passed:
 
 They cover wire shape, facts, quota hard limits, Picker preservation, nonblocking diagnostic gates, cluster Stop site return, publication isolation and generated API6/facts. They do **not** execute a single real TCP RPC, Bind/Ack/flush, server admission, Codec/activation, ALC or Stop owner.
 
+## 13.3A Desk-review observations (not independent findings)
+
+These are source observations for the auditor, not product verdicts.
+
+1. **Passive frame gate is not zero-cost.** `TransportFrameGate.Observe` (test fixture) copies every observed payload with `payload.ToArray()` and throws once `_frames.Count >= 512`. V2 adds `gate ??= new TransportFrameGate((ProtocolV2FrameType)255, false)` for cases that previously had no gate. The passive gate therefore records every frame and can hit the 512-frame cap, changing fixture memory/liveness and possibly turning a real RPC into a fixture failure. It is test-only, but it can distort the eight-case run; the first-failure snapshot must not be attributed to product code without separating this.
+2. **Stop filter is intentionally broad.** `IsExpectedContractRefreshStopExit` is `stopStarted && exception is SharpLinkException { Code: ConnectionClosed }` (`SharpLinkClient.ContractSites.cs:311`). It does not prove the `ConnectionClosed` was caused by Stop; any ConnectionClosed after Stop starts is filtered. The component control covers Deadline/unexpected faults, but not a genuine ConnectionClosed unrelated to Stop.
+3. **Stop lock order.** `StopStaticClusterCoreAsync` takes `_poolGate`, then calls `StopContractSitesLocked()` (site gate) and `_frameworkTasks.Seal()`. The diagnostic path captures sites while holding the site gate but releases it before capturing cluster/pool state, so no obvious site→pool inversion was found; this still needs an independent lock-order audit, especially because the stop path holds `_poolGate` across site stop and framework-task seal.
+4. **Diagnostic Lock reentrancy.** A local .NET 10 test confirms `System.Threading.Lock.TryEnter()` is reentrant (`nested TryEnter=True`). This removes one suspected self-deadlock in `NonBlockingDiagnostic.Capture(_gate, CaptureTrace)` followed by `lock (_gate)` inside `CaptureTrace`; it does not prove the rest of the diagnostic graph.
+5. **No budget/assertion change observed.** The V2 `RpcProtocol.cs` diff changes diagnostics and observation plumbing; the 2 s request timeout, 5 s Prepare, 10 s Bind, 13 s timeout Prepare, 3 s guards and 50 ms reconnect were not changed. The passive gate and trace are the main behavioral deltas in the fixture.
+6. **V1 remains unexplained.** None of the V2 changes target the first `PrepareAsync(5s)` deadline directly; a second hosted run would still be a diagnostic/discriminating run, not a repaired candidate.
+
+The independent auditor should decide whether (1) and (2) invalidate any V2 run or require a fixture/source correction before authorization.
+
 ## 13.4 Pre-audit questions
 
-1. **Nonblocking guarantee.** Inspect `NonBlockingDiagnostic<T>` and every `TryEnter` site. Is a contended gate guaranteed to return without waiting, and does a failed callback release every gate it acquired?
-2. **Close ordering.** Does `ClientBindingSession.Close` signal the original Ack waiter before diagnostics, and can a diagnostic throw or contention delay physical cleanup? The components claim yes; verify source, not just the test.
+1. **Nonblocking guarantee.** Inspect `NonBlockingDiagnostic<T>` and every `TryEnter` site. Is a contended gate guaranteed to return without waiting, and does a failed callback release every gate it acquired?2. **Close ordering.** Does `ClientBindingSession.Close` signal the original Ack waiter before diagnostics, and can a diagnostic throw or contention delay physical cleanup? The components claim yes; verify source, not just the test.
 3. **Stop filter.** Does `IsExpectedContractRefreshStopExit` apply only to a `ConnectionClosed` caused by an explicit Stop, and not swallow DeadlineExceeded, unexpected RPC failures or physical cleanup errors?
 4. **Cluster Stop.** Does the V2 cluster path close Bind work admission and return/seal sites without running callbacks while holding `_poolGate`? Are old keys unable to require GC?
 5. **Passive gate.** Is the `(ProtocolV2FrameType)255` gate passive for every case, and does it preserve exact staged/inbound byte order and actual inner flush completion?
