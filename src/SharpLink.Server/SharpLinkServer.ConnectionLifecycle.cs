@@ -159,14 +159,17 @@ internal sealed partial class SharpLinkServer
                         connection.MarkDraining();
                         return;
                     }
-                    if (!connection.MarkReady(authResult.Context))
+                    var pinnedServices = Volatile.Read(ref _services);
+                    if (!connection.MarkReady(authResult.Context, pinnedServices))
                         return;
-                    session.SendContractManifest(CreateContractManifestSnapshotLocked());
+                    session.SendContractManifest(CreateContractManifestSnapshotLocked(pinnedServices));
                 }
 
                 await session.FlushSendQueueAsync(ct).ConfigureAwait(false);
             }
-            else if (!connection.MarkReady(authResult.Context))
+            else if (!connection.MarkReady(
+                         authResult.Context,
+                         Volatile.Read(ref _services)))
             {
                 return;
             }

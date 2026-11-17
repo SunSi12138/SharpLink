@@ -15,9 +15,12 @@ internal sealed partial class SharpLinkServer
     }
 
     private ProtocolV2ContractManifest CreateContractManifestSnapshotLocked()
+        => CreateContractManifestSnapshotLocked(Volatile.Read(ref _services));
+
+    private ProtocolV2ContractManifest CreateContractManifestSnapshotLocked(
+        FrozenDictionary<long, ServiceRegistration> services)
     {
         var modules = _dynamicModules.Values.ToArray();
-        var services = Volatile.Read(ref _services);
         var entries = new KeyValuePair<long, RpcHash128>[services.Count];
         var index = 0;
         foreach (var service in services.OrderBy(static pair => pair.Key))

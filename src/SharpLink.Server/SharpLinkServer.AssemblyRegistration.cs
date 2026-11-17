@@ -351,6 +351,9 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        if (published)
+            OnPinnedGroupCutCommitted(oldModule!);
+
         TrackFrameworkTask(
             drainOperation!,
             "DynamicAssemblyReplacementDrain",

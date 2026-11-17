@@ -21,6 +21,7 @@ internal sealed class ServerConnectionState
     private readonly TaskCompletionSource _sessionLoopCompleted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<ServiceRegistration, ConnectionServiceEntry> _services = [];
+    private FrozenDictionary<long, ServiceRegistration>? _pinnedContractServices;
     private SharpLinkAuthenticationContext? _authenticationContext;
     private SharpLinkCallContextSnapshot? _defaultCallContext;
     private long _lastAcceptedRequestId;
@@ -61,6 +62,27 @@ internal sealed class ServerConnectionState
     }
 
     internal RpcSession Session { get; }
+
+    /// <summary>
+    /// Immutable service table captured at the Ready/manifest ordering boundary. The study variant
+    /// S routes ordinary requests from this snapshot, never from the live registry.
+    /// </summary>
+    internal FrozenDictionary<long, ServiceRegistration> PinnedContractServices
+        => Volatile.Read(ref _pinnedContractServices) ??
+            throw new InvalidOperationException("The connection has no pinned contract snapshot.");
+
+    internal bool PinsModule(SharpLinkDynamicModule module)
+    {
+        var pinned = Volatile.Read(ref _pinnedContractServices);
+        if (pinned is null)
+            return false;
+        foreach (var service in pinned.Values)
+        {
+            if (ReferenceEquals(service.Module, module))
+                return true;
+        }
+        return false;
+    }
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
@@ -143,9 +165,13 @@ internal sealed class ServerConnectionState
             _sessionLoopCompleted.TrySetResult();
     }
 
-    internal bool MarkReady(SharpLinkAuthenticationContext? authenticationContext)
+    internal bool MarkReady(
+        SharpLinkAuthenticationContext? authenticationContext,
+        FrozenDictionary<long, ServiceRegistration> pinnedContractServices)
     {
+        ArgumentNullException.ThrowIfNull(pinnedContractServices);
         var defaultCallContext = new SharpLinkCallContextSnapshot(Session.Id, authenticationContext);
+        Volatile.Write(ref _pinnedContractServices, pinnedContractServices);
         Volatile.Write(ref _authenticationContext, authenticationContext);
         Volatile.Write(ref _defaultCallContext, defaultCallContext);
         if (Interlocked.CompareExchange(
@@ -157,6 +183,7 @@ internal sealed class ServerConnectionState
             return true;
         }
 
+        Volatile.Write(ref _pinnedContractServices, null);
         Volatile.Write(ref _authenticationContext, null);
         Volatile.Write(ref _defaultCallContext, null);
         return false;
@@ -383,6 +410,7 @@ internal sealed class ServerConnectionState
             if (ActiveCalls == 0)
                 _callsDrained.TrySetResult();
             Interlocked.Exchange(ref _lifecycleState, (int)ServerConnectionLifecycleState.Closed);
+            Volatile.Write(ref _pinnedContractServices, null);
             Volatile.Write(ref _authenticationContext, null);
             Volatile.Write(ref _defaultCallContext, null);
             _serviceCleanupTask = CleanupServicesWhenCallsDrainAsync();

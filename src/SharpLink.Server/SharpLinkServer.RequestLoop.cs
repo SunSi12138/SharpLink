@@ -183,7 +183,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-                                            ResolveRawRequestClientStreamCount(payload));
+                                            ResolveRawRequestClientStreamCount(connection, payload));
                                     }
                                     else
                                     {
@@ -398,7 +398,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        ResolveRawRequestClientStreamCount(connection, payload));
                     return;
                 }
 
