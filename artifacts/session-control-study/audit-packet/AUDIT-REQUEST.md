@@ -18,12 +18,17 @@ https://github.com/SunSi12138/SharpLink/tree/study/998-session-control
 - S 最终产品源码：`525a5aed918516ac1214a91c99fbb3fbb3a746e9`
 - S 最终测试/证据提交：`9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4`
   https://github.com/SunSi12138/SharpLink/commit/9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4
+- N1 静态 Bind 源码：`131df413db8e222a335ad15561dd10612dece6a3`
+- N1 审查分支：`study/998-n1-review` @ `e901bcfc907831e7d9191afb8828507c20300f58`
+  https://github.com/SunSi12138/SharpLink/tree/study/998-n1-review
+- N1 V1 hosted run：https://github.com/SunSi12138/SharpLink/actions/runs/43693296449
+  job `132748271127`，attempt 1，首 Prepare 5 秒失败；不是 #998 S 的 CI。
 
 源代码与 Diff 链接：
 - https://github.com/SunSi12138/SharpLink/compare/2948de82fff77d66fce51ecec9a5783b6ef3cb62...525a5aed918516ac1214a91c99fbb3fbb3a746e9
 - 审计包内 `evidence/source/s-product.diff`、`s-tests.diff`、`C_NEG_Test.cs`、`RuntimeAssemblyIntegrationTests.SessionControlStudy.cs`
 
-GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没有 Actions run、job、attempt 或 artifact。不要把本地日志当成 CI 证据。
+GitHub Actions 链接：**#998 的 S 实验没有 Actions run**，全部在本机 Windows 执行。唯一存在的 Actions run 是历史 N1 V1：https://github.com/SunSi12138/SharpLink/actions/runs/43693296449（job 132748271127，attempt 1，首 Prepare 失败）；它不是 #998 S 的 CI，也不能当作 S 的 CI 覆盖。不要把本地日志冒充 CI 证据。
 
 原始证据工件位置：
 `artifacts/session-control-study/audit-packet/`
@@ -71,7 +76,7 @@ GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没�
    - C-NEG 事件 `stale request → value=2, R1=0, R2=1` 是否真实；
    - P 的 528/482/46/0、Unit 2255/2229/26/0、Generator 295/294/1/0、Load 77/73/4/0 是否被正确引用；
    - 46 个 Integration 失败是否全部可归因于 SharedMemory/TLS/UDS/临时路径 ACL；
-   - 没有 GitHub Actions 这一事实是否被隐瞒。
+   - #998 S 没有 Actions 这一事实是否被隐瞒；N1 V1 的 43693296449 是否被正确区分为历史失败而不是 S 的 CI。
 
 5. **性能审计**
    本实验**没有**运行 A/A、ABBA/BAAB、TCP/SharedMemory 性能矩阵；没有 CPU/op、B/op、P50/P99/P99.9 样本；没有正式性能结论。请核实是否存在未报告的隐藏性能数据。若没有，明确判为 `INCONCLUSIVE`；不要接受“S 更快/不退化”的任何说法。
@@ -84,7 +89,14 @@ GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没�
    - 长流是否延长旧 Session/ALC 生命周期；
    - 它是否满足 N0 的 exact RID/receipt/queue-only cut 义务。
 
-7. **结论复核**
+7. **N1 审计**
+   `SharpLink-775-N1-Implementation` 的 `131df413` 是静态 Unary/无输入 OneWay 的 wire6 检查点，不是 N0；其唯一 hosted run 43693296449 在首 Prepare 5 秒失败，V2 没有第二次运行授权。请核查：
+   - `study/998-n1-review @ e901bcfc` 是否只改了 `global.json`；
+   - 63 项 V2 pure component 是否确实只覆盖纯组件，不能冒充 RPC/ALC/owner；
+   - 为什么本机只运行 components、不运行 rpc（协议禁止本机 RPC，且无第二次 hosted 授权）；
+   - N1 是否仍应标为 `NOT_QUALIFIED` 而不是 N0 PASS。
+
+8. **结论复核**
    提出支持与反对实验结论的证据，列出 P0/P1/P2 问题、未证明的义务及下一步最小验证方案。特别判断：
    - “S 在窄 Replace 窗口能阻止 stale request 进入 R2”是否成立；
    - “S 作为 N0 替代方案 NO-GO”是否成立；

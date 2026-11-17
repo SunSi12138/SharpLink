@@ -2,6 +2,8 @@
 
 Legend: `PASS` = the stated oracle was executed and met; `FAIL` = executed and violated; `INCONCLUSIVE` = some evidence but not enough for the oracle; `NOT_IMPLEMENTED` = the arm does not implement the mechanism; `NOT_RUN` = no execution.
 
+The **N column is the N0 contract arm**, not the separate N1 static-bind checkpoint. N1 source `131df413` exists in the Desktop worktree and is reviewed in `12-n1-candidate-review.md`; it is `NOT_QUALIFIED` and no N RPC case was run under #998. The `NOT_IMPLEMENTED` cells for N therefore mean “no qualified N0 result”, not “no N1 source exists”.
+
 Important: the S test harness pre-registers dynamic services **before** the physical client connect so that a session can pin a non-empty snapshot. That is a legitimate S precondition, but it is not the current P user flow. The unchanged P tests that register after connect fail on S (section 4.1).
 
 ## 4.1 Executed arm summary
@@ -11,7 +13,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
 | S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11/F24 + F18/F18b/F20; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
-| N | none | none | NOT_IMPLEMENTED |
+| N | no N0 on dev; N1 static-bind checkpoint `131df413` exists separately | N1 V1 hosted FAIL; 63 V2 pure checks PASS locally, no RPC | **NOT_QUALIFIED**; not eligible for N column/performance |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
 

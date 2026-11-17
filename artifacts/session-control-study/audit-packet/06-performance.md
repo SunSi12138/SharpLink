@@ -13,7 +13,7 @@ ABBA/BAAB paired comparison: NOT_RUN
 Cross-arm conclusion: INCONCLUSIVE
 ```
 
-This is not a missing appendix; it is the required stop. #998 requires the core correctness set and then the full F01–F24 matrix before performance. S passes the narrow TCP/Replace core set at `4f927b40`, but the full matrix is not implemented. No eligible N candidate exists. The C-NEG arm is intentionally invalid and can never be a performance arm.
+This is not a missing appendix; it is the required stop. #998 requires the core correctness set and then the full F01–F24 matrix before performance. S passes the narrow TCP/Replace core set at `4f927b40`, but the full matrix is not implemented. The N1 static checkpoint exists at `131df413`, but its only hosted run failed at the first Prepare and V2 was not authorized/rerun; its 63 pure-component checks are not RPC evidence. No eligible N candidate exists for comparison. The C-NEG arm is intentionally invalid and can never be a performance arm.
 
 Note: at test commit `4f927b40`, the narrow TCP/Replace core set (F03/F05/F06/F07/F09/F10/F18, including a held-duplex F18b) passes; at `33fb48c2`, F08 passes; at `948fb44d`, F04 fails closed; at `7d21b89a`, F11 passes three sequential replacement cycles; at `29cf85de`, F20 simulates notice loss; at `9ad6fe74`, F24 quiesces public counters after five cycles and Stop. That does **not** satisfy the full F01–F24 gate: F01/F02, F11's late/out-of-order notification, F20 duplicate/reorder, F12–F17/F19 and F21–F23 remain not implemented or not run. Therefore performance is still correctly `NOT_RUN`.
 

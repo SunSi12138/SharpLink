@@ -1,0 +1,24 @@
+PASS facts-32B-scalar
+PASS facts-ticks-
+PASS facts-ticks-0
+PASS facts-ticks--1
+PASS facts-ticks-1
+PASS facts-ticks-10001
+PASS facts-ticks-9223372036854775807
+PASS bind-40B-roundtrip
+PASS bind-112B-roundtrip
+PASS ack-40B-roundtrip
+PASS reject-zero-incarnation
+PASS reject-trailing-bind
+PASS wire6-55B-real-identity-shape
+PASS wire6-44B-manifest-header
+PASS wire6-no-legacy-floor
+PASS cold-facts-reject-unary-input
+PASS endpoint-binding-hard-limit
+PASS endpoint-operation-hard-limit
+PASS quota-physical-return
+PASS generated-api6-exact-identity
+PASS generated-fullfacts-EchoAsync
+PASS generated-fullfacts-NotifyAsync
+PASS required-resolver-unknown-is-false
+N1_RESULT success checks=23

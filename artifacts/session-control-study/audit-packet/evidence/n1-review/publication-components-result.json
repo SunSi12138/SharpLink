@@ -1,0 +1,11 @@
+{
+  "uid": "N1-STATIC-BIND-20261115-V2",
+  "mode": "publication-components",
+  "source": "e901bcfc907831e7d9191afb8828507c20300f58",
+  "outcome": "PASS",
+  "classification": null,
+  "checks": 11,
+  "runtime": "10.0.15",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "firstFailure": null
+}

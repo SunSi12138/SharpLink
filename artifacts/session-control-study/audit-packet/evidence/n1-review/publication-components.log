@@ -1,0 +1,12 @@
+PASS unrelated-codec-real-publication
+PASS unrelated-publication-preserves-static-generation-and-canonical-site
+PASS old-static-proxy-still-valid-after-unrelated-publication
+PASS old-static-proxy-retains-no-route-not-local-retirement
+PASS old-static-channel-prepare-retains-original-local
+PASS unrelated-publication-does-not-turn-prepare-into-60002
+PASS coordinator-metadata-uses-captured-child-limit
+PASS coordinator-terminal-metadata-retains-weak-scalar-child-limit
+PASS coordinator-structure-before-terminal-enum
+PASS coordinator-structure-before-terminal-receipt
+PASS coordinator-valid-options-retain-terminal-guard
+N1_RESULT success checks=11

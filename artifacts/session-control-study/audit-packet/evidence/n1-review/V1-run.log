@@ -1,0 +1,59 @@
+PASS facts-32B-scalar
+PASS facts-ticks-
+PASS facts-ticks-0
+PASS facts-ticks--1
+PASS facts-ticks-1
+PASS facts-ticks-10001
+PASS facts-ticks-9223372036854775807
+PASS bind-40B-roundtrip
+PASS bind-112B-roundtrip
+PASS ack-40B-roundtrip
+PASS reject-zero-incarnation
+PASS reject-trailing-bind
+PASS wire6-55B-real-identity-shape
+PASS wire6-44B-manifest-header
+PASS wire6-no-legacy-floor
+PASS cold-facts-reject-unary-input
+PASS endpoint-binding-hard-limit
+PASS endpoint-operation-hard-limit
+PASS quota-physical-return
+PASS generated-api6-exact-identity
+PASS generated-fullfacts-EchoAsync
+PASS generated-fullfacts-NotifyAsync
+PASS required-resolver-unknown-is-false
+PASS unrelated-codec-real-publication
+PASS unrelated-publication-preserves-static-generation-and-canonical-site
+PASS old-static-proxy-still-valid-after-unrelated-publication
+PASS old-static-proxy-retains-no-route-not-local-retirement
+PASS old-static-channel-prepare-retains-original-local
+PASS unrelated-publication-does-not-turn-prepare-into-60002
+PASS coordinator-metadata-uses-captured-child-limit
+PASS coordinator-terminal-metadata-retains-weak-scalar-child-limit
+PASS coordinator-structure-before-terminal-enum
+PASS coordinator-structure-before-terminal-receipt
+PASS coordinator-valid-options-retain-terminal-guard
+N1_CASE_BEGIN generated-pool-session-pairing
+PASS before-connect-failfast
+PASS no-bound-route-before-business-codec
+N1_GUARD {"phase":"client.StopAsync().AsTask()","guardMs":3000,"elapsedMs":3001.6415,"source":{"status":"WaitingForActivation","IsCompleted":false,"IsCompletedSuccessfully":false,"IsCanceled":false,"actualFault":null},"waitPromise":{"status":"Faulted","IsCompleted":true},"outcome":"INCONCLUSIVE","classification":"guard"}
+N1_SERVER_FINAL ContractBindingDiagnosticSnapshot { Bindings = 0, Operations = 0, ProtectedRequests = 0, DemandSites = 0, PrepareWaiters = 0, ReceivedUnpublishedAcks = 0, PublishedTargets = 0 }
+N1_FIRST_FAILURE System.AggregateException: One or more errors occurred. (Request deadline exceeded.) (FIXTURE cleanup failures (FIXTURE guard: {"phase":"client.StopAsync().AsTask()","guardMs":3000,"elapsedMs":3001.6415,"source":{"status":"WaitingForActivation","IsCompleted":false,"IsCompletedSuccessfully":false,"IsCanceled":false,"actualFault":null},"waitPromise":{"status":"Faulted","IsCompleted":true},"outcome":"INCONCLUSIVE","classification":"guard"}))
+ ---> SharpLink.Abstractions.SharpLinkException: Request deadline exceeded.
+   at SharpLink.Client.SharpLinkClient.ContractSite.PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken) in /_/src/SharpLink.Client/SharpLinkClient.ContractSites.cs:line 423
+   at SharpLink.N1.StaticBindEvidence.Program.GeneratedAsync(Harness harness) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 85
+   at SharpLink.N1.StaticBindEvidence.Program.RunCaseAsync(String name, Func`2 body, TransportFrameGate serverGate, Boolean queued) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 66
+   --- End of inner exception stack trace ---
+   at SharpLink.N1.StaticBindEvidence.Program.RunCaseAsync(String name, Func`2 body, TransportFrameGate serverGate, Boolean queued) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 73
+   at SharpLink.N1.StaticBindEvidence.Program.RunRpcAsync() in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 53
+   at SharpLink.N1.StaticBindEvidence.Program.Main(String[] args) in /_/test/SharpLink.N1.StaticBindEvidence/Program.cs:line 92
+ ---> (Inner Exception #1) System.AggregateException: FIXTURE cleanup failures (FIXTURE guard: {"phase":"client.StopAsync().AsTask()","guardMs":3000,"elapsedMs":3001.6415,"source":{"status":"WaitingForActivation","IsCompleted":false,"IsCompletedSuccessfully":false,"IsCanceled":false,"actualFault":null},"waitPromise":{"status":"Faulted","IsCompleted":true},"outcome":"INCONCLUSIVE","classification":"guard"})
+ ---> SharpLink.N1.StaticBindEvidence.FixtureGuardException: FIXTURE guard: {"phase":"client.StopAsync().AsTask()","guardMs":3000,"elapsedMs":3001.6415,"source":{"status":"WaitingForActivation","IsCompleted":false,"IsCompletedSuccessfully":false,"IsCanceled":false,"actualFault":null},"waitPromise":{"status":"Faulted","IsCompleted":true},"outcome":"INCONCLUSIVE","classification":"guard"}
+ ---> System.TimeoutException: The operation has timed out.
+   at SharpLink.N1.StaticBindEvidence.FixtureGuard.GuardedWaitAsync(Task source, TimeSpan guard, String label) in /_/test/SharpLink.N1.StaticBindEvidence/FixtureGuard.cs:line 17
+   --- End of inner exception stack trace ---
+   at SharpLink.N1.StaticBindEvidence.FixtureGuard.GuardedWaitAsync(Task source, TimeSpan guard, String label) in /_/test/SharpLink.N1.StaticBindEvidence/FixtureGuard.cs:line 19
+   at SharpLink.N1.StaticBindEvidence.Program.Harness.DisposeAsync() in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 418
+   --- End of inner exception stack trace ---
+   at SharpLink.N1.StaticBindEvidence.Program.Harness.DisposeAsync() in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 438
+   at SharpLink.N1.StaticBindEvidence.Program.RunCaseAsync(String name, Func`2 body, TransportFrameGate serverGate, Boolean queued) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 70<---
+

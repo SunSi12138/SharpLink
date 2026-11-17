@@ -1,0 +1,5 @@
+PASS shared-picker-normalized-load-preserved
+PASS shared-picker-exclusion-index-preserved
+PASS shared-picker-least-pending-preserved
+PASS shared-picker-round-robin-cursor-preserved
+N1_RESULT success checks=4

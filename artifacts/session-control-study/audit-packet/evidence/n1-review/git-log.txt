@@ -1,0 +1,8 @@
+e901bcfc907831e7d9191afb8828507c20300f58	2026-11-17 15:31:23 +0800	study(998): use installed .NET SDK 10.0.404 for N1 component review
+131df413db8e222a335ad15561dd10612dece6a3	2026-11-15 16:59:19 +0800	fix(n1): keep failure sampling nonblocking and cleanup independent
+bc979fba710e3e5cbeceb8e569ca2ae76c203e43	2026-11-15 16:41:41 +0800	fix(n1): close cluster sites on stop and capture bounded failure phases
+be24fda408118e5a9155174b8ac3c6b794e46aa9	2026-11-15 16:01:21 +0800	test(n1): always stop publication guard coordinator
+0f9ad369157a32ef87a4a3a948e8f5fbd5029676	2026-11-15 15:44:29 +0800	fix(n1): preserve registration identity and publish qualified bound routes
+1847f69e9ae78371f27421783f0c617eea40dd02	2026-11-15 15:20:11 +0800	Merge commit '2948de82fff77d66fce51ecec9a5783b6ef3cb62' into codex/775-n1-static-bind
+2948de82fff77d66fce51ecec9a5783b6ef3cb62	2026-11-15 15:17:12 +0800	fix: preserve codec publication across metadata reentrancy (#985)
+f779ad19c3b9bf5e9c97149d1dd1d5710e4c5110	2026-11-15 14:59:48 +0800	fix: preserve N1 Prepare cancellation identity across shutdown

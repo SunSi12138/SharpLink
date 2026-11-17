@@ -1,0 +1,7 @@
+PASS refresh-connectionclosed-is-expected-only-after-explicit-stop
+PASS refresh-stop-filter-retains-deadline-and-unexpected-source-faults
+PASS cluster-stop-control-holds-real-unconnected-site
+PASS cluster-stop-empty-prepare-before-stop
+PASS cluster-stop-control-remains-pure-no-connect
+PASS cluster-stop-returns-original-site-and-waiter-ledger-without-gc
+N1_RESULT success checks=6

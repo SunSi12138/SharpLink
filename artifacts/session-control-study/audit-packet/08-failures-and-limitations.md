@@ -56,6 +56,7 @@ Corrected attempts are clearly named `attempt-final-4f92` / `attempt-canonical-4
 6. **AnonymousPipe.** `SessionRefresh` is not negotiated; retirement is silently skipped.
 7. **Full S suite hangs.** At `525a5aed`, the full Integration executable emitted 63 unique failure names and then stopped producing output for >13 minutes after `QueuedSelectionRetirementShouldPreserveEveryRpcShape(client-stream, True)`; it was force-stopped. No final total exists, so the run is `INCOMPLETE/HANG`, not a pass rate. Partial log: `evidence/full-suite/`.
 8. **Full F01–F24 not implemented.** F12–F17/F19/F21–F23 remain absent; F01/F02 are not implemented as S cases; F11 covers three sequential replacements but not late/out-of-order notifications; F20 covers simulated notice loss but not duplicate/reorder; F24 quiesces public counters after five cycles and Stop but is not a full task/ALC census. F04, F08 and a held-duplex F18b were added later and pass, but do not complete the matrix.
+9. **N1 is not a qualified N.** N1 `131df413` implements a static wire-6 checkpoint, but hosted run `43693296449` failed at the first Prepare (`DeadlineExceeded`; 36 checks; no RPC case) and V2 has no second-run authorization. The 63 V2 pure-component checks pass locally (SDK 10.0.404, not the protocol's 10.0.115) but no RPC was run. N1 is `NOT_QUALIFIED`, not N0.
 
 ## 8.4 Unimplemented arms and stages
 

@@ -1,0 +1,89 @@
+{
+  "run": 43693296449,
+  "job": 132748271127,
+  "C": "be24fda408118e5a9155174b8ac3c6b794e46aa9",
+  "T": "021f6b84a55c95db5eb525af51bd54a5bc207536",
+  "checks": {
+    "runTerminal": true,
+    "runFailure": true,
+    "oneAttempt": true,
+    "toolSha": true,
+    "oneJob": true,
+    "source": true,
+    "uid": true,
+    "runtime": true,
+    "exit1": true,
+    "resultFail": true,
+    "sdk": true,
+    "protocolZeroDelta": true,
+    "workflowExactT": true,
+    "toolOnlyPatchExact": true
+  },
+  "passes": 36,
+  "caseBegins": [
+    "generated-pool-session-pairing"
+  ],
+  "caseEnds": [],
+  "guardLines": [
+    "N1_GUARD {\"phase\":\"client.StopAsync().AsTask()\",\"guardMs\":3000,\"elapsedMs\":3001.6415,\"source\":{\"status\":\"WaitingForActivation\",\"IsCompleted\":false,\"IsCompletedSuccessfully\":false,\"IsCanceled\":false,\"actualFault\":null},\"waitPromise\":{\"status\":\"Faulted\",\"IsCompleted\":true},\"outcome\":\"INCONCLUSIVE\",\"classification\":\"guard\"}"
+  ],
+  "finalLines": [
+    "N1_SERVER_FINAL ContractBindingDiagnosticSnapshot { Bindings = 0, Operations = 0, ProtectedRequests = 0, DemandSites = 0, PrepareWaiters = 0, ReceivedUnpublishedAcks = 0, PublishedTargets = 0 }"
+  ],
+  "firstFailure": "System.AggregateException: One or more errors occurred. (Request deadline exceeded.) (FIXTURE cleanup failures (FIXTURE guard: {\"phase\":\"client.StopAsync().AsTask()\",\"guardMs\":3000,\"elapsedMs\":3001.6415,\"source\":{\"status\":\"WaitingForActivation\",\"IsCompleted\":false,\"IsCompletedSuccessfully\":false,\"IsCanceled\":false,\"actualFault\":null},\"waitPromise\":{\"status\":\"Faulted\",\"IsCompleted\":true},\"outcome\":\"INCONCLUSIVE\",\"classification\":\"guard\"}))\n ---> SharpLink.Abstractions.SharpLinkException: Request deadline exceeded.\n   at SharpLink.Client.SharpLinkClient.ContractSite.PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken) in /_/src/SharpLink.Client/SharpLinkClient.ContractSites.cs:line 423\n   at SharpLink.N1.StaticBindEvidence.Program.GeneratedAsync(Harness harness) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 85\n   at SharpLink.N1.StaticBindEvidence.Program.RunCaseAsync(String name, Func`2 body, TransportFrameGate serverGate, Boolean queued) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 66\n   --- End of inner exception stack trace ---\n   at SharpLink.N1.StaticBindEvidence.Program.RunCaseAsync(String name, Func`2 body, TransportFrameGate serverGate, Boolean queued) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 73\n   at SharpLink.N1.StaticBindEvidence.Program.RunRpcAsync() in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 53\n   at SharpLink.N1.StaticBindEvidence.Program.Main(String[] args) in /_/test/SharpLink.N1.StaticBindEvidence/Program.cs:line 92\n ---> (Inner Exception #1) System.AggregateException: FIXTURE cleanup failures (FIXTURE guard: {\"phase\":\"client.StopAsync().AsTask()\",\"guardMs\":3000,\"elapsedMs\":3001.6415,\"source\":{\"status\":\"WaitingForActivation\",\"IsCompleted\":false,\"IsCompletedSuccessfully\":false,\"IsCanceled\":false,\"actualFault\":null},\"waitPromise\":{\"status\":\"Faulted\",\"IsCompleted\":true},\"outcome\":\"INCONCLUSIVE\",\"classification\":\"guard\"})\n ---> SharpLink.N1.StaticBindEvidence.FixtureGuardException: FIXTURE guard: {\"phase\":\"client.StopAsync().AsTask()\",\"guardMs\":3000,\"elapsedMs\":3001.6415,\"source\":{\"status\":\"WaitingForActivation\",\"IsCompleted\":false,\"IsCompletedSuccessfully\":false,\"IsCanceled\":false,\"actualFault\":null},\"waitPromise\":{\"status\":\"Faulted\",\"IsCompleted\":true},\"outcome\":\"INCONCLUSIVE\",\"classification\":\"guard\"}\n ---> System.TimeoutException: The operation has timed out.\n   at SharpLink.N1.StaticBindEvidence.FixtureGuard.GuardedWaitAsync(Task source, TimeSpan guard, String label) in /_/test/SharpLink.N1.StaticBindEvidence/FixtureGuard.cs:line 17\n   --- End of inner exception stack trace ---\n   at SharpLink.N1.StaticBindEvidence.FixtureGuard.GuardedWaitAsync(Task source, TimeSpan guard, String label) in /_/test/SharpLink.N1.StaticBindEvidence/FixtureGuard.cs:line 19\n   at SharpLink.N1.StaticBindEvidence.Program.Harness.DisposeAsync() in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 418\n   --- End of inner exception stack trace ---\n   at SharpLink.N1.StaticBindEvidence.Program.Harness.DisposeAsync() in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 438\n   at SharpLink.N1.StaticBindEvidence.Program.RunCaseAsync(String name, Func`2 body, TransportFrameGate serverGate, Boolean queued) in /_/test/SharpLink.N1.StaticBindEvidence/RpcProtocol.cs:line 70<---\n",
+  "inventory": [
+    {
+      "name": "build.log",
+      "bytes": 2117
+    },
+    {
+      "name": "environment.txt",
+      "bytes": 3255
+    },
+    {
+      "name": "github-event.json",
+      "bytes": 12821
+    },
+    {
+      "name": "orchestration-stderr.log",
+      "bytes": 0
+    },
+    {
+      "name": "orchestration-stdout.log",
+      "bytes": 7373
+    },
+    {
+      "name": "protocol.md",
+      "bytes": 7115
+    },
+    {
+      "name": "result.json",
+      "bytes": 4213
+    },
+    {
+      "name": "run.log",
+      "bytes": 5256
+    },
+    {
+      "name": "script-exit-code.txt",
+      "bytes": 2
+    },
+    {
+      "name": "source-binding.txt",
+      "bytes": 211
+    },
+    {
+      "name": "tool-commit.txt",
+      "bytes": 288
+    },
+    {
+      "name": "tool-only.patch",
+      "bytes": 3199
+    },
+    {
+      "name": "workflow.yml",
+      "bytes": 2884
+    }
+  ],
+  "qualification": "FAIL: initial generated same-site Prepare deadline; no completed RPC case, client Stop guard unresolved; no retry"
+}

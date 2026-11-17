@@ -19,6 +19,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 | `09-final-comparison.md` | P/N/S/Q/H comparison and decision |
 | `10-independent-audit-request.md` | detailed external audit instructions |
 | `11-scope-closure.md` | executed scope, hard blockers and future work order |
+| `12-n1-candidate-review.md` | N1 static-bind candidate source, V1 failure and V2 pure-component check |
 | `AUDIT-REQUEST.md` | copy-paste audit request with real data |
 | `evidence/` | raw events/results/logs, diffs, discovery censuses, hashes |
 
@@ -26,7 +27,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 
 - P baseline: C-NEG proves stale-request retargeting after Replace commit and before manifest notification.
 - S: closes the narrow TCP/Replace window in the exercised core cases (including F18b held-duplex ALC retention/release, F08 start-claim vs cut, F04 changed-hash fail-closed, F11 three replacement cycles, F20 simulated notice loss, and F24 five-cycle Stop), but is **NO-GO as an N0 substitute**: existing dynamic-registration tests fail, unrelated services lose their session, and the refresh frame is single-shot. Full F01–F24 is not complete.
-- N: `NOT_IMPLEMENTED`.
+- N: `NOT_IMPLEMENTED` for N0. The separate N1 static checkpoint `131df413` is `NOT_QUALIFIED`: one hosted run failed at the first Prepare; 63 V2 pure checks pass locally, but no RPC was rerun.
 - Q/H: `NOT_IMPLEMENTED`.
 - Performance: `NOT_RUN`; no A/A or paired samples.
 - Overall: `INCONCLUSIVE`; no evidence to change #775’s N0 selection.
@@ -47,6 +48,7 @@ Then run the compiled TUnit executable directly (not `dotnet test`, which fails 
 - Baseline: `2948de82fff77d66fce51ecec9a5783b6ef3cb62`
 - Final S test/evidence commit: `9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4`
 - Final S product source: `525a5aed918516ac1214a91c99fbb3fbb3a746e9`
+- N1 static review branch: `study/998-n1-review` at `e901bcfc907831e7d9191afb8828507c20300f58`
 - Final all-study batch: 13/13 passed, 0 failed, 0 skipped in 4.8 s
 
 This packet is not an approval to merge any candidate.

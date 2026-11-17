@@ -1,0 +1,11 @@
+PASS diagnostic-callback-failure-is-explicit-not-zero
+PASS diagnostic-failure-releases-its-acquired-gate
+PASS diagnostic-monitor-contention-does-not-invoke-capture
+PASS diagnostic-returned-while-real-gate-owner-still-held
+PASS actual-site-index-contention-reports-unavailable-not-zero
+PASS diagnostic-uncontended-sections-survive-contested-site-index
+PASS diagnostic-returned-while-real-gate-owner-still-held
+PASS actual-client-cleanup-continues-after-contended-snapshot
+PASS actual-supervisor-contention-returns-before-owner-release
+PASS supervisor-cleanup-continues-without-abandoned-capture-task
+N1_RESULT success checks=10

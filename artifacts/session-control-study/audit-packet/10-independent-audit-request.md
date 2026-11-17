@@ -25,13 +25,17 @@ Status: **PENDING_INDEPENDENT_AUDIT**. The experimenter’s conclusions must not
 | F20 test commit | `29cf85de0dfb7871483cdd807a37fae24a1d60e6` |
 | Final S product commit URL | https://github.com/SunSi12138/SharpLink/commit/525a5aed918516ac1214a91c99fbb3fbb3a746e9 |
 | Final test commit URL | https://github.com/SunSi12138/SharpLink/commit/9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4 |
+| N1 static source | `131df413db8e222a335ad15561dd10612dece6a3` |
+| N1 review branch | https://github.com/SunSi12138/SharpLink/tree/study/998-n1-review |
+| N1 review head | `e901bcfc907831e7d9191afb8828507c20300f58` |
+| N1 V1 hosted run | https://github.com/SunSi12138/SharpLink/actions/runs/43693296449 (job 132748271127, attempt 1) |
 | S vs baseline compare | https://github.com/SunSi12138/SharpLink/compare/2948de82fff77d66fce51ecec9a5783b6ef3cb62...525a5aed918516ac1214a91c99fbb3fbb3a746e9 |
 
 The branch contains only source/tests/model changes. No `dev` branch commit was made and no PR was opened.
 
 ## 10.2 GitHub Actions
 
-There are **no GitHub Actions runs** for this study. All runs were local Windows executions. Do not accept a claim of CI coverage; there is none. The absence is itself an audit finding for the “Actions URL/job/attempt/artifact” requirement.
+There are **no GitHub Actions runs for the #998 S study**. All S/P runs were local Windows executions. The only Actions run in this packet is the historical **N1 V1** run `43693296449` (job `132748271127`, attempt 1), which failed at the first Prepare and is not this study's run. Do not accept a claim of CI coverage for S; the absence is itself an audit finding.
 
 ## 10.3 Audit packet and raw evidence
 
@@ -50,6 +54,7 @@ artifacts/session-control-study/audit-packet/
   09-final-comparison.md
   10-independent-audit-request.md
   11-scope-closure.md
+  12-n1-candidate-review.md
   evidence/
     g1-model/
     c-neg/
@@ -86,6 +91,8 @@ The key commands are in `02-execution-ledger.md`. Summary:
 | S F20 at `29cf85de` | 0 (simulated notice loss; duplicate/reorder NOT_RUN) |
 | S F24 at `9ad6fe74` | 0 (five cycles + Stop; public counters zero; full task/ALC census NOT_RUN) |
 | S all-study batch at `9ad6fe74` | 13/13 passed, 0 failed, 0 skipped; 4.8 s |
+| N1 build at `e901bcfc` | 0 (restore/build) |
+| N1 six pure-component modes | 0 each; 63 checks total; no RPC |
 | S full integration suite | **INCOMPLETE/HANG**: 63 unique failure names observed, no final summary; force-stopped after >13 min without output; see `evidence/full-suite/` |
 
 ## 10.5 Most important failures and risks
@@ -96,9 +103,10 @@ The key commands are in `02-execution-ledger.md`. Summary:
 4. **S causes whole-session collateral.** F09 moves unrelated B to a new physical session.
 5. **S control frame is single-shot.** No ack/retry/reconciliation; a lost refresh can leave the old session pinned to a draining R and permanently `Unavailable`.
 6. **F18 is partial.** F18 idle and F18b held-duplex pass; Unregister, server-stream `MoveNext`/`Dispose`, producer/CTS tails and codec/facts roots are not tested.
-7. **No performance evidence.** A/A, ABBA/BAAB, TCP/SHM comparison and all counters are `NOT_RUN`.
-8. **Environment limits.** SharedMemory, TLS PFX and UDS fail on this host; 46 integration / 26 unit / 1 generator / 4 load baseline failures are preserved.
-9. **Toolchain deviation.** `global.json` is `10.0.404`, not the requested `10.0.102`.
+7. **N1 is not a qualified N.** N1 `131df413` implements a static wire-6 binding checkpoint, but the only hosted run failed at the first Prepare (`DeadlineExceeded`, 36 checks, no RPC case) and V2 has no second-run authorization. The 63 V2 pure checks passed locally, but no RPC/ALC/owner case was executed. N1 is `NOT_QUALIFIED`, not N0.
+8. **No performance evidence.** A/A, ABBA/BAAB, TCP/SHM comparison and all counters are `NOT_RUN`.
+9. **Environment limits.** SharedMemory, TLS PFX and UDS fail on this host; 46 integration / 26 unit / 1 generator / 4 load baseline failures are preserved.
+10. **Toolchain deviation.** `global.json` is `10.0.404`, not the requested `10.0.102` (both S and N1 review branches).
 
 ## 10.6 Specific questions for the independent auditor
 
@@ -114,6 +122,7 @@ Please do not simply accept the author’s summary. Independently verify:
 8. **Performance**: Is there any hidden or partial performance data? If not, confirm `INCONCLUSIVE`. If yes, test the A/A noise, pairing, sample completeness and cross-arm comparability.
 9. **Architecture**: Does S truly avoid a per-request token, or does it merely move identity to the physical session? Does this satisfy #775’s exact-registration/receipt/queue-cut obligations, or is it a different, incompatible design?
 10. **Conclusion**: Is `NO-GO for S as an N0 substitute` supported? Is `INCONCLUSIVE` the correct overall experiment result? What is the minimal next experiment that would change the decision?
+11. **N1**: Independently verify that `131df413`/`e901bcfc` is a static-only checkpoint, that V1 `43693296449` failed at the first Prepare, and that the 63 pure-component checks do not constitute RPC qualification. Decide whether a second hosted run should be authorized; do not accept local RPC as a substitute.
 
 ## 10.7 Decision requested from the auditor
 

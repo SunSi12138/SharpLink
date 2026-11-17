@@ -1,0 +1,10 @@
+PASS diagnostic-fault-type-retained-without-message-or-state
+PASS diagnostic-fault-history-bounded64
+PASS diagnostic-history-retains-first-and-latest
+PASS diagnostic-frame-keeps-control-token-and-size
+PASS diagnostic-frame-excludes-business-bytes
+PASS diagnostic-decorator-observes-actual-pending-inner-flush
+PASS diagnostic-decorator-forwards-actual-flush-result
+PASS diagnostic-unconnected-site-does-not-invent-session-or-binding
+PASS diagnostic-stop-phase-tracks-actual-no-rpc-cleanup
+N1_RESULT success checks=9

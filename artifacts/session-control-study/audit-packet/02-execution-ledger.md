@@ -193,6 +193,18 @@ Observed: 1 total, 1 passed, exit 0. This “pass” means the test **successful
 
 Evidence: `SharpLink-P/artifacts/session-control-study/C-NEG/C-NEG-F05/attempt-1/` (copied into the audit packet as `evidence/c-neg/`).
 
+## N1 static-bind checkpoint (Desktop worktree)
+
+After the initial study closed, the user directed the existing N1 checkpoint to be used as the N starting point. Source:
+`C:\Users\sunsi\Desktop\SharpLink-775-N1-Implementation`, N1 HEAD `131df413db8e222a335ad15561dd10612dece6a3`, based on `dev @ 2948de82`. A review branch `study/998-n1-review` adds only SDK `10.0.404` (`e901bcfc`).
+
+- `dotnet restore` on `SharpLink.N1.StaticBindEvidence` exit 0.
+- `dotnet build ... -c Release` exit 0, 0 warnings/0 errors.
+- Six permitted pure-component modes (`components`, `selection-components`, `contention-components`, `cluster-stop-components`, `diagnostic-components`, `publication-components`) all exit 0: **63 checks**.
+- **No RPC was run.** The frozen N1 protocol forbids local RPC and V2 has no second hosted-run authorization.
+- V1 hosted run [#43693296449](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449) remains FAIL: 36 checks, first Prepare 5 s deadline, no RPC case completed, client Stop guard 3 s. Raw evidence is copied to `evidence/n1-review/`.
+- Result: N1 is **NOT_QUALIFIED**; it is not a replacement for the N0 arm and cannot enter performance.
+
 ## G4 — architecture review
 
 Performed after the final S behavior was observed. Result: **S is NO-GO as a same-session replacement for N0**. The detailed reasons are in `09-final-comparison.md` and `03-source-review.md`; the main ones are the permanent-`Unavailable` behavior when a refresh frame is lost, the lack of Register/Unregister parity, whole-session collateral loss, and the existing dynamic-registration regressions.

@@ -27,7 +27,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 | Control frame | manifest broadcast only | Bind/Invalidated/Release/RequestAccepted | one `SessionRefreshRequested`; no ack/resend | freeze/resume frames not implemented | N0 controls |
 | Hot-path change | 1 live registry lookup | exact slot/token lookup (designed) | 1 pinned-dictionary lookup; no per-RPC allocation added | would add gate/queue checks | exact N0 path |
 | Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,944 test/model insertions | 0 | 0 |
-| Correctness evidence | full P baseline + C-NEG | none | 13 cases PASS/PARTIAL (core, F04, F08, F11, F20, F24), including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
+| Correctness evidence | full P baseline + C-NEG | N1 static checkpoint exists; V1 hosted FAIL, V2 63 pure checks, no RPC | 13 cases PASS/PARTIAL (core, F04, F08, F11, F20, F24), including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
 | Performance evidence | none | none | none | none | none |
 | Verdict | baseline / unsafe under F05 | reference design, not implemented | **NO-GO research prototype** | **NOT_IMPLEMENTED / NO-GO** | **NOT_IMPLEMENTED** |
 
@@ -50,6 +50,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 15. F20 withholds the retirement notice: the old session remains, a fresh call returns `Unavailable`, R2 is not entered, and releasing the notice recovers. This simulates loss, not a real dropped frame; duplicate/reorder are not tested.
 16. F24 performs five replacements/reconnects and then client Stop; public counters quiesce to `serverActiveConnections=0` and `clientReadySessions=0`. This is not a full framework-task/snapshot/ALC census.
 17. At `9ad6fe74`, all 13 study tests pass in one process (`13/13`, 0 failed, 0 skipped), which is evidence of test isolation/order stability but not a substitute for the individual attempts.
+18. The separate N1 static-bind checkpoint (`131df413`) builds and its 63 pure-component checks pass locally, but the only hosted RPC run failed at the first Prepare and V2 has no second-run authorization. N1 remains `NOT_QUALIFIED`; it is not the N0 arm and no N RPC case was run.
 
 ## 9.4 Source-based analysis (not measured)
 
@@ -89,7 +90,8 @@ The apparent reduction in code is therefore a **transfer of complexity** to sess
 
 ```text
 S as an N0 substitute:       NO-GO
-N as a candidate:            NOT_IMPLEMENTED
+N (N0):                      NOT_IMPLEMENTED
+N1 static checkpoint:        NOT_QUALIFIED (V1 hosted FAIL; V2 components only)
 Q as a candidate:            NO-GO (unimplemented; no happens-before proof)
 H:                           NOT_IMPLEMENTED
 P baseline:                  unsafe under F05; not a candidate
