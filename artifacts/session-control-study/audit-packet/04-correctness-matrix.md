@@ -10,7 +10,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 |---|---|---|---|
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
-| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F05/F06/F07/F09/F10 + idle-F18; full suite in progress | **core gate NOT passed** (F18 held stream NOT_RUN; F01/F02 etc. NOT_RUN) |
+| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F05/F06/F07/F09/F10 + idle-F18; full suite INCOMPLETE/HANG | **core gate NOT passed** (F18 held stream NOT_RUN; F01/F02 etc. NOT_RUN) |
 | N | none | none | NOT_IMPLEMENTED |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
@@ -67,8 +67,9 @@ This is the required negative control. Evidence: `evidence/c-neg/`.
 
 ## 4.5 Evidence pointers
 
-- S canonical events: `evidence/s-core/F03/attempt-final-525/events.jsonl`, etc.
-- S failed attempts: `evidence/s-core/F03/attempt-1..2`, `F10/attempt-1`, `F18/attempt-1`.
+- S canonical events: `evidence/s-core/F03/events.jsonl`, `F05/events.jsonl`, `F06/events.jsonl`, `F07/events.jsonl`, `F09/events.jsonl`, `F10/events.jsonl`, `F18/events.jsonl`; runner stdout in the same directories.
+- S failed attempts: `evidence/s-core/F03-failed-attempt-1/`, `F03-failed-attempt-2/`, `F10-failed-attempt-1/`, `F18-failed-attempt-1/`.
+- S full-suite partial log: `evidence/full-suite/stdout.log` and `evidence/full-suite/failure-names.txt`.
 - S regression logs: `evidence/regressions/`.
 - P focused tests: `evidence/p-baseline/focused/`.
 - C-NEG: `evidence/c-neg/`.

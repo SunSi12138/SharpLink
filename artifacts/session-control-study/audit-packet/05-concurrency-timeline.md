@@ -6,7 +6,7 @@ The recorder does **not** currently emit a client-side “SessionRefreshRequeste
 
 ## F05 — stale request after the server cut, notification held
 
-Canonical evidence: `evidence/s-core/F05/attempt-final-525/events.jsonl` (S, `525a5aed`).
+Canonical evidence: `evidence/s-core/F05/events.jsonl` (S, `525a5aed`).
 
 | Order | Event | Time (ms) | Observed fact | Evidence quality |
 |---:|---|---:|---|---|
@@ -26,7 +26,7 @@ Canonical evidence: `evidence/s-core/F05/attempt-final-525/events.jsonl` (S, `52
 
 ## F07 — queued request loses to cut
 
-Canonical evidence: `evidence/s-core/F07/attempt-final-525/events.jsonl`.
+Canonical evidence: `evidence/s-core/F07/events.jsonl`.
 
 | Order | Event | Time (ms) | Observed fact |
 |---:|---|---:|---|
@@ -40,7 +40,7 @@ Canonical evidence: `evidence/s-core/F07/attempt-final-525/events.jsonl`.
 
 ## F09 — unrelated service collateral
 
-Canonical evidence: `evidence/s-core/F09/attempt-final-525/events.jsonl`.
+Canonical evidence: `evidence/s-core/F09/events.jsonl`.
 
 | Order | Event | Time (ms) | Observed fact |
 |---:|---|---:|---|
@@ -52,7 +52,7 @@ This records S's declared **whole-session collateral cost**: B remains functiona
 
 ## F10 — two independent sessions
 
-Canonical evidence: `evidence/s-core/F10/attempt-final-525/events.jsonl`.
+Canonical evidence: `evidence/s-core/F10/events.jsonl`.
 
 | Order | Event | Time (ms) | Observed fact |
 |---:|---|---:|---|
@@ -64,7 +64,7 @@ The test does not emit a per-call event for the two fresh calls, only the PASS r
 
 ## F06 — admitted old call survives cut
 
-Canonical evidence: `evidence/s-core/F06/attempt-final-525/events.jsonl`.
+Canonical evidence: `evidence/s-core/F06/events.jsonl`.
 
 | Order | Event | Time (ms) | Observed fact |
 |---:|---|---:|---|
@@ -81,7 +81,7 @@ No Freeze/Resume implementation exists. There is no timeline to present. Marking
 
 ## F18 — idle ALC
 
-Canonical evidence: `evidence/s-core/F18/attempt-final-525/events.jsonl`.
+Canonical evidence: `evidence/s-core/F18/events.jsonl`.
 
 | Event | Time (ms) | Observed fact |
 |---|---:|---|
@@ -93,3 +93,4 @@ This is only the idle replacement path. A held stream/enumerator was not run, so
 ## F01–F04, F08, F11–F17, F19–F24
 
 No event timelines exist. Do not construct them from source reasoning; the matrix marks them `NOT_RUN` or `NOT_IMPLEMENTED`.
+
