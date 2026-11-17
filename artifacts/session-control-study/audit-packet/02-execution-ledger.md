@@ -109,6 +109,7 @@ Commits:
 | `33fb48c232e7bf3843dbb3ab34420e97ca6435ff` | test-only: start-claim vs cut control with handler gate (F08) |
 | `948fb44d00748e2c8ba1813aa31c44d23616aa57` | test-only: changed-hash old-client fail-closed control (F04) |
 | `7d21b89a86d95f79b0c2d5397ca737bcadf668c6` | test-only: three-cycle rapid replacement control (F11) |
+| `29cf85de0dfb7871483cdd807a37fae24a1d60e6` | test-only: withheld retirement notice control (F20 simulated loss) |
 
 Important first failures (all preserved):
 
@@ -121,7 +122,7 @@ Important first failures (all preserved):
 | F18 | `attempt-1` | FAIL | test held the old collectible `Assembly`/`AssemblyLoadContext` local, rooting the ALC |
 | F18 | `attempt-2`/`attempt-final-1` | PASS | idle replacement only; held-stream subcase NOT_RUN |
 
-Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` / `7d21b89a` (product source `525a5aed`):
+Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` / `7d21b89a` / `29cf85de` (product source `525a5aed`):
 
 | Case | Test method | Attempt | Status | Exit |
 |---|---|---|---|---:|
@@ -136,6 +137,7 @@ Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` / `7d2
 | F11 | `Study_F11_ThreeRapidReplacementsMustRetireEachSession` | `attempt-final-7d21` | PASS (three sequential cycles; late ack NOT_RUN) | 0 |
 | F18 | `Study_F18_RetiredServiceAlcMustNotBeRootedBySessions` | `attempt-final-4f92` | PASS (idle) | 0 |
 | F18b | `Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc` | `attempt-canonical-4f92` | PASS (held duplex) | 0 |
+| F20 | `Study_F20_WithheldRetirementNoticeMustNotRecoverByItself` | `attempt-final-29cf` | PASS (simulated notice loss; duplicate/reorder NOT_RUN) | 0 |
 
 F18b is the held-stream control that was missing earlier: it holds a real duplex enumerator across the cut, verifies the old session/ALC is retained and the replacement is blocked, then releases the stream and verifies the old ALC is collectible. F08 uses a real server interceptor to hold the handler after admission; the cut occurs while the call is pending, and release returns the original R1 result 2. F04 replaces the contract assembly with a changed hash; the old client remains on the old session, no replacement session becomes Ready within 2 s, and its call fails `Unavailable` without entering R2. The first F18b directory (`attempt-final-4f92`) accidentally contains two identical runs and is preserved as `F18b-mixed-attempt`; the canonical evidence is `attempt-canonical-4f92`.
 

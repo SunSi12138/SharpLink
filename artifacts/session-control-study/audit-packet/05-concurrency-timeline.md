@@ -114,6 +114,19 @@ Canonical evidence: `evidence/s-core/F11/events.jsonl` (test commit `7d21b89a`, 
 
 Each cycle awaited the previous replacement and a new Ready session before the next call. This is **not** a late-Ack/out-of-order test: no old notification is delayed or replayed. F11's late-ack subcase remains `NOT_RUN`.
 
+## F20 — retirement notice withheld (simulated loss)
+
+Canonical evidence: `evidence/s-core/F20/events.jsonl` (test commit `29cf85de`, attempt `attempt-final-29cf`).
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | cut committed, notice barrier held | 374.370 | old session still Ready |
+| 2 | 300 ms observation window | ~705.822 | still only the old session; no accidental reconnect |
+| 3 | fresh call on old session | ~705.822 | `Unavailable`; R2 Created=0 |
+| 4 | notice released (test continuation) | after 705.822 | new session appears; fresh call to R2 succeeds |
+
+This is a **simulated** loss: the real frame is not sent while the barrier is held. It shows that no self-recovery occurs without the notice. Actual frame loss/duplication/reordering is `NOT_RUN`.
+
 ## F13 — not run
 
 No Freeze/Resume implementation exists. There is no timeline to present. Marking this `NOT_RUN` is mandatory; it must not be inferred from F05/F07.

@@ -10,7 +10,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 |---|---|---|---|
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
-| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
+| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11 + F18/F18b/F20; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
 | N | none | none | NOT_IMPLEMENTED |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
@@ -38,7 +38,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | F17 OneWay input | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F18 collectible ALC | `PASS` only for idle queued-selection fixture; held-stream not tested | NOT_IMPLEMENTED | NOT_RUN | **PASS for Replace** — `Study_F18...` idle replacement collects; `Study_F18b...` holds a real duplex enumerator across the cut, keeps the old session/ALC alive, releases it, then collects (`oldAlive=false`, retired connections 0). Unregister subcase NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F19 malformed/unauthorized identity | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
-| F20 control loss/duplicate/reorder | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN — source review shows a single send with no retry; no fault-injection run | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
+| F20 control loss/duplicate/reorder | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | **PARTIAL** — `Study_F20...` withholds the retirement notice; old session stays, fresh call `Unavailable`, R2=0; releasing the notice recovers. This simulates loss, not a real dropped frame; duplicate/reorder NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F21 bounded tables / Stop | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F22 static Unary/OneWay TCP/SHM | NOT_RUN (full suite TCP passed; SHM environment-failed) | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F23 old wire/API identity mixed | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN (no wire change in S) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
@@ -54,7 +54,7 @@ S full F01–F24 gate:         FAIL / INCOMPLETE
 S performance:               NOT_RUN (full matrix gate not met)
 ```
 
-F18's Unregister subcase, F11's late/out-of-order notification subcase, and the F12–F17/F19–F24 streaming/physical-tail cases remain unrun. F04, F08 and F11 sequential replacement are now covered, but the full matrix is still not complete. No performance comparison is valid for S.
+F18's Unregister subcase, F11's late/out-of-order notification subcase, F20's duplicate/reorder subcases, and the F12–F17/F19–F24 streaming/physical-tail cases remain unrun. F04, F08, F11 sequential replacement and a simulated F20 loss are now covered, but the full matrix is still not complete. No performance comparison is valid for S.
 
 ## 4.4 C-NEG expected-failure check
 

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "study": "issue-775-session-control-alternative",
+  "variant": "S",
+  "case": "F20",
+  "sourceSha": "29cf85de0dfb7871483cdd807a37fae24a1d60e6",
+  "baseSha": "2948de82fff77d66fce51ecec9a5783b6ef3cb62",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "runtime": "10.0.15",
+  "transport": "tcp",
+  "attempt": 1,
+  "status": "PASS",
+  "detail": "simulated notice loss; duplicate/reorder NOT_RUN",
+  "eventCount": 3,
+  "evidencePaths": [
+    "events.jsonl",
+    "result.json"
+  ]
+}
