@@ -1,16 +1,16 @@
  .../audit-packet/01-baseline.md                    |  120 +
- .../audit-packet/02-execution-ledger.md            |  190 +
- .../audit-packet/03-source-review.md               |  156 +
+ .../audit-packet/02-execution-ledger.md            |  192 +
+ .../audit-packet/03-source-review.md               |  155 +
  .../audit-packet/04-correctness-matrix.md          |   76 +
- .../audit-packet/05-concurrency-timeline.md        |  109 +
+ .../audit-packet/05-concurrency-timeline.md        |  122 +
  .../audit-packet/06-performance.md                 |   56 +
  .../audit-packet/07-resource-lifecycle.md          |   83 +
  .../audit-packet/08-failures-and-limitations.md    |   97 +
- .../audit-packet/09-final-comparison.md            |   94 +
- .../audit-packet/10-independent-audit-request.md   |  117 +
+ .../audit-packet/09-final-comparison.md            |   95 +
+ .../audit-packet/10-independent-audit-request.md   |  119 +
  .../audit-packet/AUDIT-REQUEST.md                  |  103 +
  .../session-control-study/audit-packet/README.md   |   50 +
- .../audit-packet/SHA256SUMS.txt                    |   79 +
+ .../audit-packet/SHA256SUMS.txt                    |   82 +
  .../audit-packet/evidence/c-neg/events.jsonl       |    5 +
  .../audit-packet/evidence/c-neg/result.json        |   19 +
  .../audit-packet/evidence/c-neg/stdout.log         |   23 +
@@ -46,6 +46,9 @@
  .../audit-packet/evidence/s-core/F07/events.jsonl  |    4 +
  .../audit-packet/evidence/s-core/F07/result.json   |   19 +
  .../evidence/s-core/F07/runner-stdout.log          |   22 +
+ .../audit-packet/evidence/s-core/F08/events.jsonl  |    4 +
+ .../audit-packet/evidence/s-core/F08/result.json   |   19 +
+ .../evidence/s-core/F08/runner-stdout.log          |   23 +
  .../audit-packet/evidence/s-core/F09/events.jsonl  |    4 +
  .../audit-packet/evidence/s-core/F09/result.json   |   19 +
  .../evidence/s-core/F09/runner-stdout.log          |   22 +
@@ -66,16 +69,16 @@
  .../failures/F10-attempt-1-second-client.log       |   30 +
  .../s-core/failures/F18-attempt-1-test-root.log    |   30 +
  .../evidence/s-core/failures/README.md             |   14 +
- .../audit-packet/evidence/s-test-discovery.json    | 9970 ++++++++++++++++++++
+ .../audit-packet/evidence/s-test-discovery.json    | 9988 ++++++++++++++++++++
  .../audit-packet/evidence/source/C_NEG_Test.cs     |  116 +
  .../audit-packet/evidence/source/Model-Program.cs  |   85 +
- ...AssemblyIntegrationTests.SessionControlStudy.cs | 1028 ++
- .../evidence/source/SessionControlStudySupport.cs  |  191 +
+ ...AssemblyIntegrationTests.SessionControlStudy.cs | 1137 +++
+ .../evidence/source/SessionControlStudySupport.cs  |  207 +
  .../audit-packet/evidence/source/binaries.sha256   |    7 +
- .../audit-packet/evidence/source/compare-stat.txt  |   93 +
- .../audit-packet/evidence/source/git-log.txt       |    8 +
+ .../audit-packet/evidence/source/compare-stat.txt  |   98 +
+ .../audit-packet/evidence/source/git-log.txt       |    9 +
  .../audit-packet/evidence/source/s-product.diff    |  322 +
- .../audit-packet/evidence/source/s-tests.diff      | 1515 +++
+ .../audit-packet/evidence/source/s-tests.diff      | 1650 ++++
  .../audit-packet/evidence/source/toolchain.diff    |   12 +
  .../audit-packet/evidence/test-census.txt          |    6 +
  eng/session-control-study/C-NEG/C_NEG_Test.cs      |  116 +
@@ -91,8 +94,8 @@
  .../SharpLinkServer.PreAdmissionStreams.cs         |    6 +-
  .../SharpLinkServer.RequestLoop.cs                 |    4 +-
  .../SharpLinkServer.SessionControlStudy.cs         |   65 +
- ...AssemblyIntegrationTests.SessionControlStudy.cs | 1137 +++
+ ...AssemblyIntegrationTests.SessionControlStudy.cs | 1259 +++
  .../RuntimeAssemblyIntegrationTests.Support.cs     |   11 +-
  .../RuntimeAssemblyIntegrationTests.cs             |    8 +-
  .../SessionControlStudySupport.cs                  |  207 +
- 97 files changed, 28851 insertions(+), 16 deletions(-)
+ 100 files changed, 29323 insertions(+), 16 deletions(-)

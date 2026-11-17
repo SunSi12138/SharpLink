@@ -227,6 +227,128 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task Study_F04_OldClientWithChangedContractHashMustNotEnterR2()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F04");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        using var oldPlugin = PluginBundle.Load("study-f04-old");
+        using var newPlugin = PluginBundle.Load("study-f04-new", replacement: true);
+        oldPlugin.ResetServiceState();
+        newPlugin.ResetServiceState();
+        Ensure(harness.Client.RegisterAssembly(oldPlugin.ContractAssembly).Succeeded,
+            "old client contract registers");
+        Ensure(harness.Server.RegisterAssembly(oldPlugin.ContractAssembly).Succeeded,
+            "old server contract registers");
+        Ensure(harness.Server.RegisterAssembly(oldPlugin.ServiceAssembly).Succeeded,
+            "old server service registers");
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, oldPlugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+        var oldModule = GetDynamicModule(harness.Client, oldPlugin.ContractAssembly);
+        var oldHash = oldModule.Manifest.RpcAssemblyHash;
+        try
+        {
+            Ensure(await InvokeValueTaskAsync<int>(
+                    oldProxy, oldPlugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2,
+                "old proxy works before replacement");
+            attempt.Emit("old-client-before-replacement", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["oldHash"] = oldHash.ToString()
+            });
+
+            Ensure((await server.UnregisterAssemblyAsync(
+                oldPlugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+                "old service unregisters before contract replacement");
+            var contractReplace = await server.ReplaceAssemblyAsync(
+                oldPlugin.ContractAssembly,
+                newPlugin.ContractAssembly,
+                TimeSpan.FromSeconds(2));
+            Ensure(contractReplace.Succeeded && contractReplace.ReferencesReleased,
+                $"contract replacement succeeds: {contractReplace.Error}");
+            Ensure(server.RegisterAssembly(newPlugin.ServiceAssembly).Succeeded,
+                "new service registers after contract replacement");
+            var replacementReady = false;
+            try
+            {
+                await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                    harness.Client, oldSessionId, TimeSpan.FromSeconds(2));
+                replacementReady = true;
+            }
+            catch (TimeoutException)
+            {
+            }
+            attempt.Emit("new-session-after-contract-replacement", new Dictionary<string, object?>
+            {
+                ["oldSessionId"] = oldSessionId,
+                ["replacementReady"] = replacementReady,
+                ["readySessionIds"] = SessionControlStudySupport.ReadySessionIds(harness.Client),
+                ["oldHash"] = oldHash.ToString()
+            });
+
+            var outcome = "response";
+            var value = 0;
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                value = await InvokeValueTaskAsync<int>(
+                    oldProxy, oldPlugin.ContractType, "UnaryAsync", 10, timeout.Token);
+            }
+            catch (SharpLinkException exception)
+            {
+                outcome = exception.Code.ToString();
+                attempt.Emit("old-client-rejected", new Dictionary<string, object?>
+                {
+                    ["code"] = exception.Code.ToString(),
+                    ["detail"] = exception.DetailCode
+                });
+            }
+            catch (Exception exception)
+            {
+                outcome = exception.GetType().Name;
+                attempt.Emit("old-client-failed", new Dictionary<string, object?>
+                {
+                    ["type"] = exception.GetType().FullName,
+                    ["message"] = exception.Message
+                });
+            }
+
+            var newCreated = newPlugin.GetStaticInt("Created");
+            attempt.Emit("old-client-after-replacement", new Dictionary<string, object?>
+            {
+                ["outcome"] = outcome,
+                ["value"] = value,
+                ["newServiceCreated"] = newCreated
+            });
+
+            Ensure(outcome != "response" || newCreated == 0,
+                "an old client with a changed contract hash must not enter R2; " +
+                $"observed outcome={outcome}, value={value}, newCreated={newCreated}");
+            attempt.Complete("PASS", "old client failed closed or did not enter R2");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            _ = await server.UnregisterAssemblyAsync(newPlugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(newPlugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(oldPlugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(oldPlugin.ContractAssembly, TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F18b");

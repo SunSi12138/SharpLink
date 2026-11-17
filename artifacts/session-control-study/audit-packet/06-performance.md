@@ -15,7 +15,7 @@ Cross-arm conclusion: INCONCLUSIVE
 
 This is not a missing appendix; it is the required stop. #998 requires the core correctness set and then the full F01–F24 matrix before performance. S passes the narrow TCP/Replace core set at `4f927b40`, but the full matrix is not implemented. No eligible N candidate exists. The C-NEG arm is intentionally invalid and can never be a performance arm.
 
-Note: at test commit `4f927b40`, the narrow TCP/Replace core set (F03/F05/F06/F07/F09/F10/F18, including a held-duplex F18b) passes; at `33fb48c2`, F08 passes. That does **not** satisfy the full F01–F24 gate: F01/F02/F04, F11–F17 and F19–F24 remain not implemented or not run. Therefore performance is still correctly `NOT_RUN`.
+Note: at test commit `4f927b40`, the narrow TCP/Replace core set (F03/F05/F06/F07/F09/F10/F18, including a held-duplex F18b) passes; at `33fb48c2`, F08 passes; at `948fb44d`, F04 fails closed. That does **not** satisfy the full F01–F24 gate: F01/F02, F11–F17 and F19–F24 remain not implemented or not run. Therefore performance is still correctly `NOT_RUN`.
 
 ## What was not run, and why
 

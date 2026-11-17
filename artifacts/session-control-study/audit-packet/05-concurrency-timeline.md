@@ -4,6 +4,20 @@ All timestamps below are **same-process monotonic milliseconds** from the test r
 
 The recorder does **not** currently emit a client-side “SessionRefreshRequested received” event. For S, the appearance of a new Ready session is observed, but the exact frame-receipt instant is not. Those cells are marked `UNOBSERVED`; they must not be inferred from the new-session timestamp.
 
+## F04 — old client with changed contract hash
+
+Canonical evidence: `evidence/s-core/F04/events.jsonl` (test commit `948fb44d`, attempt `attempt-final-948f`).
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | old proxy call before replacement | 477.655 | returns from R1; old hash `a3054d…` |
+| 2 | contract replaced with changed hash, new service registered | before 2494.399 | server accepts replacement |
+| 3 | replacement session check | 2494.399 | no new Ready session in 2 s; old session still listed |
+| 4 | old proxy call after replacement | 2500.979 | `Unavailable` |
+| 5 | R2 service count | 2503.136 | `newServiceCreated=0` |
+
+This is fail-closed: the old client does not enter R2. It is also an availability finding: the old client does not converge to a new session because its local generated contract is incompatible. The first F04 attempt waited 10 s for a replacement session and timed out; that log is preserved in `evidence/s-core/failures/F04-attempt-1-overstrict-session-wait.log`.
+
 ## F05 — stale request after the server cut, notification held
 
 Canonical evidence: `evidence/s-core/F05/events.jsonl` (S, `525a5aed`).

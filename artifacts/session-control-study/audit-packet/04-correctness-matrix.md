@@ -10,7 +10,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 |---|---|---|---|
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
-| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F05/F06/F07/F08/F09/F10 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
+| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
 | N | none | none | NOT_IMPLEMENTED |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
@@ -22,7 +22,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | F01 local proxy before connect | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F02 control success vs delayed data manifest | `PASS` on P via `IndependentControlReply...`; does not prove N/S | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN; the unchanged P test fails on S with `Unimplemented` (recorded as a regression, not an S F02 result) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F03 same ContractId/hash R1→R2 | NOT_RUN (P same-session behavior is the F05 hazard) | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F03...`, new session, R1=1/R2=1, contract hash `a3054d…` unchanged | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
-| F04 changed hash / old client | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
+| F04 changed hash / old client | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS (fail-closed)` — `Study_F04...`: contract replacement changed the hash; no replacement session became Ready; old client got `Unavailable`; R2 Created=0. Availability cost: old client cannot recover without a new app deployment | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F05 cut then held notification | `FAIL` — C-NEG hazard: stale request returns R2 value 2, R2 Created=1 | NOT_IMPLEMENTED | **PASS (hazard detected)** — `C_NEG_...`, R1=0/R2=1 | `PASS` — `Study_F05...`, stale `Unavailable`, R1=0/R2=0, cut hook held | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F06 admitted old call completes after cut | NOT_RUN (existing P behavior not isolated) | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F06...`, blocked call returns 42 after cut | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F07 queued request vs cut | `PASS` — all 14 `QueuedSelectionRetirement...` rows | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F07...`, queued `Unavailable`, R1=0/R2=0 | NOT_IMPLEMENTED | NOT_IMPLEMENTED |

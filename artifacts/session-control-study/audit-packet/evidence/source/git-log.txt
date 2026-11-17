@@ -1,3 +1,5 @@
+948fb44d research(998): add changed-hash old-client fail-closed control
+dbbc01c2 research(998): record F08 start-claim evidence and final packet
 33fb48c2 research(998): add start-claim vs cut control with handler gate
 b3334705 research(998): finalize F18b audit packet and evidence
 f1effe05 research(998): update audit packet with held-duplex F18b evidence
@@ -6,4 +8,3 @@ a9bd2f65 research(998): correct evidence pointers in audit packet
 c3aec415 research(998): correct F02 matrix note and add online packet link
 4bc71113 research(998): add audit packet documents and checksums
 c83394c1 research(998): publish audit packet with all positive and negative evidence
-525a5aed research(998): cut old admission before publishing S snapshot and retire on unregister

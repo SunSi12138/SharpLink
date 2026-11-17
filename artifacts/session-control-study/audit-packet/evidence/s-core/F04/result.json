@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "study": "issue-775-session-control-alternative",
+  "variant": "S",
+  "case": "F04",
+  "sourceSha": "948fb44d00748e2c8ba1813aa31c44d23616aa57",
+  "baseSha": "2948de82fff77d66fce51ecec9a5783b6ef3cb62",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "runtime": "10.0.15",
+  "transport": "tcp",
+  "attempt": 1,
+  "status": "PASS",
+  "detail": "old client failed closed or did not enter R2",
+  "eventCount": 5,
+  "evidencePaths": [
+    "events.jsonl",
+    "result.json"
+  ]
+}
