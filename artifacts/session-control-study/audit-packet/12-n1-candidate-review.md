@@ -68,7 +68,7 @@ Total: **63 checks, all exit 0**. Logs and `n1-result.json` per mode are in `evi
 
 ## 12.6 Required next step for N
 
-1. Independently review N1 V2 source/protocol using `13-n1-v2-audit-prep.md` and authorize (or reject) a second hosted run; do not run locally. In particular, resolve whether the passive frame gate's full-payload copy / 512-frame cap and the broad Stop filter can distort the eight-case run before authorization.
+1. Independently review N1 V2 source/protocol using `13-n1-v2-audit-prep.md` and authorize (or reject) a second hosted run; do not run locally. In particular, resolve whether the passive frame gate's full-payload copy / verified 513th-frame fixture throw and the broad Stop filter can distort the eight-case run before authorization.
 2. If authorized, run the exact 8-case protocol with SDK 10.0.115/runtime 10.0.15 and preserve first-failure diagnostics.
 3. Only after N1 passes all 8 static cases, extend to the N0 group/receipt/dynamic/five-family obligations; static N1 alone is not a substitute.
 4. Then re-run the #998 correctness matrix and only then consider performance.

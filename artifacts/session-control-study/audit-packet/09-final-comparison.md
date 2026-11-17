@@ -51,7 +51,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 16. F24 performs five replacements/reconnects and then client Stop; public counters quiesce to `serverActiveConnections=0` and `clientReadySessions=0`. This is not a full framework-task/snapshot/ALC census.
 17. At `9ad6fe74`, all 13 study tests pass in one process (`13/13`, 0 failed, 0 skipped), which is evidence of test isolation/order stability but not a substitute for the individual attempts.
 18. The separate N1 static-bind checkpoint (`131df413`) builds and its 63 pure-component checks pass locally, but the only hosted RPC run failed at the first Prepare and V2 has no second-run authorization. N1 remains `NOT_QUALIFIED`; it is not the N0 arm and no N RPC case was run.
-19. Pre-audit source review found two V2 risks that must be resolved before a second hosted run: the passive test gate copies every frame payload and hard-fails at 512 frames, and the Stop filter suppresses any `ConnectionClosed` after Stop starts, not only one caused by Stop. These are test/source risks, not proven N1 product failures.
+19. Pre-audit source review found two V2 risks that must be resolved before a second hosted run: the passive test gate copies every frame payload and a pure fixture probe verified it throws `FIXTURE frame inventory exceeded 512` on the 513th observation; the Stop filter suppresses any `ConnectionClosed` after Stop starts, not only one caused by Stop. These are test/source risks, not proven N1 product failures.
 
 ## 9.4 Source-based analysis (not measured)
 

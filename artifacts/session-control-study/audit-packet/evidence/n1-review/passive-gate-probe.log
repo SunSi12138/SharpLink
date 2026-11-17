@@ -1,0 +1,2 @@
+observe params: System.String sessionId, System.Boolean outbound, SharpLink.Abstractions.ProtocolV2FrameHeader header, System.Buffers.ReadOnlySequence`1[[System.Byte, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]] payload
+observe_threw_at=513 type=System.InvalidOperationException message=FIXTURE frame inventory exceeded 512.
