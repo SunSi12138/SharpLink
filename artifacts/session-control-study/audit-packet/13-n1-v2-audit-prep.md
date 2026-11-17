@@ -65,7 +65,9 @@ The independent auditor should decide whether (1) and (2) invalidate any V2 run 
 
 ## 13.4 Pre-audit questions
 
-1. **Nonblocking guarantee.** Inspect `NonBlockingDiagnostic<T>` and every `TryEnter` site. Is a contended gate guaranteed to return without waiting, and does a failed callback release every gate it acquired?2. **Close ordering.** Does `ClientBindingSession.Close` signal the original Ack waiter before diagnostics, and can a diagnostic throw or contention delay physical cleanup? The components claim yes; verify source, not just the test.
+1. **Nonblocking guarantee.** Inspect `NonBlockingDiagnostic<T>` and every `TryEnter` site. Is a contended gate guaranteed to return without waiting, and does a failed callback release every gate it acquired?
+
+2. **Close ordering.** Does `ClientBindingSession.Close` signal the original Ack waiter before diagnostics, and can a diagnostic throw or contention delay physical cleanup? The components claim yes; verify source, not just the test.
 3. **Stop filter.** Does `IsExpectedContractRefreshStopExit` apply only to a `ConnectionClosed` caused by an explicit Stop, and not swallow DeadlineExceeded, unexpected RPC failures or physical cleanup errors?
 4. **Cluster Stop.** Does the V2 cluster path close Bind work admission and return/seal sites without running callbacks while holding `_poolGate`? Are old keys unable to require GC?
 5. **Passive gate.** Is the `(ProtocolV2FrameType)255` gate passive for every case, and does it preserve exact staged/inbound byte order and actual inner flush completion?
