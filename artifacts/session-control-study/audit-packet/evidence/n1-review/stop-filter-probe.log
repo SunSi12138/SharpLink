@@ -1,0 +1,4 @@
+stop+ConnectionClosed=True
+stop+DeadlineExceeded=False
+no-stop+ConnectionClosed=False
+stop+InvalidOperation=False
