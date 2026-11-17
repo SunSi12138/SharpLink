@@ -1,0 +1,93 @@
+# 09 — Final Comparison and Decision
+
+Status: **PENDING_INDEPENDENT_AUDIT**. This is a research comparison, not an adoption decision and not a merge approval.
+
+## 9.1 Bottom line
+
+| Question | Answer |
+|---|---|
+| Does P exhibit the stale-request retarget hazard? | **Yes, proven.** C-NEG on P: stale request after Replace commit, before manifest notification, executes R2 (value 2; R1 Created=0, R2 Created=1). |
+| Does the narrow S prototype stop that hazard? | **Yes for the exercised TCP/Replace window.** F05: stale request returns `Unavailable`, R1=0, R2=0; replacement session then works. |
+| Is S a viable replacement for N0? | **NO-GO in current form.** It breaks dynamic registration after connect, retires unrelated services with the session, has no recovery for a lost refresh frame, and does not pass held-stream F18. |
+| Is there a valid N-vs-S performance comparison? | **No.** N is not implemented; S is not correctness-qualified; no A/A or paired samples were run. `INCONCLUSIVE`. |
+| Should #775's selected N0 architecture be changed now? | **No evidence supports changing it.** The experiment found a narrow safety mechanism but not a viable same-session replacement. |
+
+Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as an N0 substitute**. The N0 design remains the reference; this is not an approval to implement or merge S.
+
+## 9.2 Arm comparison
+
+| Dimension | P (dev) | N (N0) | S (prototype) | Q | H |
+|---|---|---|---|---|---|
+| Request identity | ContractId + MethodId | BindingId + MethodId (designed) | ContractId + MethodId, resolved only in the session-pinned snapshot | ContractId + MethodId with global barrier (designed) | BindingId + MethodId (designed) |
+| Cut / admission | live registry lookup; publish before drain cut | whole-group cut before publication + exact token | module `TryBeginDraining` before new snapshot publication; per-session snapshot blocks R2 | freeze + drain + ack + resume; not implemented | N0 exact-entry admission |
+| Old request after cut | can hit R2 (proven) | exact old entry rejects, no retarget | rejected with `Unavailable`; no R2 (F05) | unproven | exact rejection |
+| Unrelated service B | unaffected by A's registry swap (same session remains) | local binding invalidation; session unchanged | **whole session replaced** (F09), B moves | would depend on barrier scope | session unchanged |
+| Dynamic registration after connect | works (P tests pass) | Bind on existing data session | **broken**: session snapshot lacks new contract; existing tests fail | unproven | works via Bind |
+| Long stream / ALC | existing P behavior; not isolated | physical owner retained until exit | idle ALC collects; held stream **not run** | not implemented | designed |
+| Control frame | manifest broadcast only | Bind/Invalidated/Release/RequestAccepted | one `SessionRefreshRequested`; no ack/resend | freeze/resume frames not implemented | N0 controls |
+| Hot-path change | 1 live registry lookup | exact slot/token lookup (designed) | 1 pinned-dictionary lookup; no per-RPC allocation added | would add gate/queue checks | exact N0 path |
+| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,249 test/model insertions | 0 | 0 |
+| Correctness evidence | full P baseline + C-NEG | none | 6 core PASS + F18 idle; F18 held NOT_RUN; existing tests FAIL | none | none |
+| Performance evidence | none | none | none | none | none |
+| Verdict | baseline / unsafe under F05 | reference design, not implemented | **NO-GO research prototype** | **NOT_IMPLEMENTED / NO-GO** | **NOT_IMPLEMENTED** |
+
+## 9.3 Proven facts
+
+1. `dev` has no N0 binding path; 16-byte prefix is still `ContractId + MethodId`.
+2. P's `ReplaceAssemblyAsync` originally published the new `_services` before `TryBeginDraining`; C-NEG proves the resulting stale-request retarget on a real TCP server/client.
+3. The S prototype, after `525a5aed`, moves `TryBeginDraining` before the new snapshot publication and routes requests from a per-session frozen table. The narrow F05 window is closed in the tested harness.
+4. S's F06 blocked R1 call completes with 42 after the cut.
+5. S's F07 queued request returns `Unavailable` after losing the cut; neither R1 nor R2 user code runs; queue/permit counts return to zero.
+6. S's F09 unrelated B remains functionally correct but is moved to a new physical session.
+7. S's F10 moves two independent sessions to new snapshots and routes both fresh calls to R2.
+8. S's F18 idle replacement collects the old service ALC while client/server remain alive.
+9. S breaks existing dynamic-registration-after-connect behavior: `IndependentControlReply...` fails with `Unimplemented`; `QueuedSelection...` times out. The full S suite additionally **hangs** after 63 unique observed failures; it is `INCOMPLETE/HANG`, not a pass rate.
+10. P's baseline test runs are environment-limited: 46 Integration, 26 Unit, 1 Generator and 4 Load failures, dominated by SharedMemory/TLS/UDS/temp ACL denials.
+
+## 9.4 Source-based analysis (not measured)
+
+- S's cut is linearizable at the `TryBeginDraining` CAS for dynamic module admission. A request that wins `TryAcquire` before the CAS is an admitted old call; one that observes `Draining` is rejected.
+- The per-session snapshot prevents an old session from ever resolving R2, which is why the C-NEG hazard is closed without a per-request token.
+- The cost is paid in session lifetime: the snapshot strongly holds all `ServiceRegistration` objects, and a long-lived session/stream can keep the old module and ALC alive.
+- S's control frame is a single send with no acknowledgement or resend. A lost frame leaves the client on a draining old session; new calls fail `Unavailable`. This is not unsafe retargeting, but it is a permanent availability failure until an external reconnect.
+- `RegisterAssembly` has no S retirement notification. The current API expects dynamic registration to become usable on a live session; S requires a new handshake. This is a functional regression, not just a performance tradeoff.
+- `SessionRefreshRequested` was designed for desired-session configuration and blue/green refresh. Reusing it for registry retirement changes its meaning without a new capability/ack contract.
+
+## 9.5 Hypotheses not proven
+
+- That a held stream's old session/ALC can be released promptly after the stream exits.
+- That a control frame loss can be recovered by the existing client reconnect policy without an application-visible outage.
+- That S could add a Register notification and stay within bounded session churn.
+- That S would reduce hot-path cost; no measurement exists.
+- That Q could provide a global barrier without deadlock or unbounded queue/drain state.
+- That N can be implemented within the N0 cost envelope; no current N candidate exists.
+
+## 9.6 Protocol-complexity judgment
+
+S is small in source (133 product lines) but not simple in semantics:
+
+- it changes the lifetime unit from a registration to an entire physical session;
+- it makes the session snapshot a new authority that must be reconciled with Register, Replace, Unregister, reconnect and Stop;
+- it has no exact token/receipt, so it cannot replace N0's exact-identity obligations;
+- it reuses a control frame whose existing state machine was built for a different trigger;
+- it introduces a new failure mode (lost refresh) that P did not have.
+
+The apparent reduction in code is therefore a **transfer of complexity** to session lifecycle and availability, not an elimination of the binding problem.
+
+## 9.7 Resource-safety judgment
+
+`INCONCLUSIVE`. Idle old-module/ALC release is real. Held-stream, producer/consumer, stream Dispose, CTS, codec/facts and control-task physical exit are not measured. A long stream can keep the pinned old session and ALC alive by design; until that is measured and bounded, S cannot be called resource-safe.
+
+## 9.8 Decision
+
+```text
+S as an N0 substitute:       NO-GO
+N as a candidate:            NOT_IMPLEMENTED
+Q as a candidate:            NO-GO (unimplemented; no happens-before proof)
+H:                           NOT_IMPLEMENTED
+P baseline:                  unsafe under F05; not a candidate
+Overall architecture study:  INCONCLUSIVE
+#775 decision:               retain N0; no evidence to change it
+```
+
+This is **not** a GO to merge N0 either; N0 remains a design/contract, not a working candidate. The only supported research conclusion is that the session-snapshot idea can close the narrow stale-request window, but its current form is not a viable replacement for exact per-request binding. No performance conclusion is possible.

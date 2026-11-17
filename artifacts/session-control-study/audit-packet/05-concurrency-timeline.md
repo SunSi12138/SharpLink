@@ -1,0 +1,95 @@
+# 05 — Concurrency and Linearization Timeline
+
+All timestamps below are **same-process monotonic milliseconds** from the test recorder (`Stopwatch`). Client and server run in the same process in these integration tests, so the monotonic values are comparable within a case. They are not wall-clock times and are not used across machines.
+
+The recorder does **not** currently emit a client-side “SessionRefreshRequested received” event. For S, the appearance of a new Ready session is observed, but the exact frame-receipt instant is not. Those cells are marked `UNOBSERVED`; they must not be inferred from the new-session timestamp.
+
+## F05 — stale request after the server cut, notification held
+
+Canonical evidence: `evidence/s-core/F05/attempt-final-525/events.jsonl` (S, `525a5aed`).
+
+| Order | Event | Time (ms) | Observed fact | Evidence quality |
+|---:|---|---:|---|---|
+| 1 | S Replace prepares candidate | before 200.671 | client still on old session; R1 Created=0 | observed |
+| 2 | old module `TryBeginDraining` (cut) | before 212.130 | state CAS to Draining; new R not yet visible to old session | source-level, not separately timestamped |
+| 3 | new `_services` snapshot published | before 212.130 | Replace commit completed; test hook fires after publish | observed as `server-cut-committed` at 212.130 |
+| 4 | retirement notification enqueued | after 212.130, held | `PinnedSessionRetirementBarrierForTesting` holds the task before send | observed as held; exact enqueue timestamp not emitted |
+| 5 | client receives notification | `UNOBSERVED` | no client frame-receipt event | evidence gap |
+| 6 | stale request sent | ~233.389 | request rejected with `Unavailable`; R1 Created=0, R2 Created=0 | observed |
+| 7 | business start claim | none | no R1/R2 user code entered | observed via counters |
+| 8 | notification released; replacement session Ready | 316.481 | new session ID differs | observed |
+| 9 | fresh request | 334.015 | returns 11 from R2 | observed |
+
+**Linearization argument:** the `TryBeginDraining` CAS is ordered before the new snapshot write. The stale request read the old session's pinned table, found the old registration, and `TryAcquire`/`AcceptsCalls` observed `Draining`; it therefore could not obtain a business start claim. The test did not rely on a sleep: the server's cut hook and the held notification barrier define the window.
+
+**What is not proven:** the exact client receive time and the exact server send time are not recorded; the test proves “after cut, before notification release” from the server side, not a client-side happens-before edge.
+
+## F07 — queued request loses to cut
+
+Canonical evidence: `evidence/s-core/F07/attempt-final-525/events.jsonl`.
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | admission holder owns only permit | before 234.503 | external holder `ActivePermits=1` |
+| 2 | R1 request queued | 234.503 | `QueuedCalls=1`, R1/R2 Created=0 |
+| 3 | cut observed | 247.286 | queue still 1; R1/R2 Created=0 |
+| 4 | permit released | after 247.286 | queued continuation resumes |
+| 5 | queued request terminal | 256.326 | `Unavailable`, no R1/R2 business |
+
+**Linearization argument:** the queued selection is the old `ServiceRegistration`; on resume `DispatchAdmittedRpc` checks `AcceptsCalls`, which is false after the cut. It does not re-resolve the live registry, so it cannot enter R2. If the permit had been granted before the cut, the request would have been in F06's “start claim won” class; the test deliberately releases the permit only after the cut.
+
+## F09 — unrelated service collateral
+
+Canonical evidence: `evidence/s-core/F09/attempt-final-525/events.jsonl`.
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | unrelated B call before replacement | 222.753 | returns 7 on old session |
+| 2 | A replacement and session retirement | 264.914 | old session ID disappears; new session ID appears; `foreignServiceInterrupted=true` |
+| 3 | unrelated B call after replacement | 286.657 | returns 7 on the new session |
+
+This records S's declared **whole-session collateral cost**: B remains functionally correct, but its physical session and all in-flight/pending work are moved. It does not prove that B had no request failures during the gap; that would require a continuous request loop with a receipt timeline, which was not implemented.
+
+## F10 — two independent sessions
+
+Canonical evidence: `evidence/s-core/F10/attempt-final-525/events.jsonl`.
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | two physical sessions ready | before 230.733 | two distinct session IDs |
+| 2 | replace + retirement | 230.733 | 2 notifications; two new distinct session IDs; no old ID reused |
+| 3 | fresh calls | after 230.733 | test asserted both R2 calls returned 2 and 11 |
+
+The test does not emit a per-call event for the two fresh calls, only the PASS result; this is an evidence granularity gap, not a substitute for a timeline.
+
+## F06 — admitted old call survives cut
+
+Canonical evidence: `evidence/s-core/F06/attempt-final-525/events.jsonl`.
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | old call entered R1 user code | 235.944 | BlockStarted |
+| 2 | cut observed | 248.078 | call not completed |
+| 3 | release old call | after 248.078 | returns 42 |
+| 4 | replacement drain completes | after 255.375 | old call was allowed to finish |
+
+The monotonic order proves the cut happened **after** the call had already entered business and that the result was not lost. It does not instrument the exact `TryAcquire` instant; “entered business” is the observable start claim.
+
+## F13 — not run
+
+No Freeze/Resume implementation exists. There is no timeline to present. Marking this `NOT_RUN` is mandatory; it must not be inferred from F05/F07.
+
+## F18 — idle ALC
+
+Canonical evidence: `evidence/s-core/F18/attempt-final-525/events.jsonl`.
+
+| Event | Time (ms) | Observed fact |
+|---|---:|---|
+| old session replaced | 353.347 | `newSessionIds` differs; `retiredServerConnections=0` |
+| ALC check | 353.347 | `originalAlive=false` after 30 full GC/finalizer cycles |
+
+This is only the idle replacement path. A held stream/enumerator was not run, so the “old stream keeps ALC alive” question remains open.
+
+## F01–F04, F08, F11–F17, F19–F24
+
+No event timelines exist. Do not construct them from source reasoning; the matrix marks them `NOT_RUN` or `NOT_IMPLEMENTED`.
