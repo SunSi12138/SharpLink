@@ -400,7 +400,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             bool sharedMemory = false,
             TimeProvider? clientTimeProvider = null,
             TimeSpan? requestTimeout = null,
-            bool connectClient = true)
+            bool connectClient = true,
+            ISharpLinkServerInterceptor? serverInterceptor = null)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
@@ -417,6 +418,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 serverBuilder.UseTcp(0, IPAddress.Loopback);
             if (control is not null)
                 serverBuilder.ReplaceService(control);
+            if (serverInterceptor is not null)
+                serverBuilder.AddInterceptor(serverInterceptor);
             if (compressionProvider is not null)
                 serverBuilder.UseRuntime(options => options.Compression.Providers.Add(compressionProvider));
             var port = sharedMemory ? 0 : ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;

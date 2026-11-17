@@ -128,8 +128,7 @@ internal sealed class SessionControlStudyAttempt : IDisposable
 }
 
 internal static class SessionControlStudySupport
-{
-    internal static string[] ReadySessionIds(ISharpLinkClient client)
+{    internal static string[] ReadySessionIds(ISharpLinkClient client)
     {
         var field = typeof(SharpLinkClient).GetField(
             "_readyConnections",
@@ -187,5 +186,22 @@ internal static class SessionControlStudySupport
             await Task.Delay(10);
         }
         throw new TimeoutException($"No replacement Ready session appeared for old session {oldSessionId}.");
+    }
+}
+
+internal sealed class StartClaimGateInterceptor : ISharpLinkServerInterceptor
+{
+    internal TaskCompletionSource Entered { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal TaskCompletionSource Release { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async ValueTask InvokeAsync(
+        SharpLinkServerInvocationContext context,
+        SharpLinkServerInvocationDelegate next)
+    {
+        Entered.TrySetResult();
+        await Release.Task.ConfigureAwait(false);
+        await next(context).ConfigureAwait(false);
     }
 }
