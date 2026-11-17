@@ -90,7 +90,7 @@ GitHub Actions 链接：**#998 的 S 实验没有 Actions run**，全部在本�
    - 它是否满足 N0 的 exact RID/receipt/queue-only cut 义务。
 
 7. **N1 审计**
-   `SharpLink-775-N1-Implementation` 的 `131df413` 是静态 Unary/无输入 OneWay 的 wire6 检查点，不是 N0；其唯一 hosted run 43693296449 在首 Prepare 5 秒失败，V2 没有第二次运行授权。纯 fixture 探针已验证 passive gate 第 513 次观察抛 `FIXTURE frame inventory exceeded 512`，Stop filter 探针确认 Stop 开始后任意 `ConnectionClosed` 都被视为预期。请先按 `13-n1-v2-audit-prep.md` 核查：
+   `SharpLink-775-N1-Implementation` 的 `131df413` 是静态 Unary/无输入 OneWay 的 wire6 检查点，不是 N0；其唯一 hosted run 43693296449 在首 Prepare 5 秒失败，V2 没有第二次运行授权。独立上下文审计 `14-n1-v2-audit-report.md` 的结论是 `FIX_BEFORE_HOSTED`：passive gate 在 513 帧会向产品 transport 抛异常，Stop filter 过宽，且 V2 没有修复 V1。请先按 `13-n1-v2-audit-prep.md` 核查：
    - `study/998-n1-review @ e901bcfc` 是否只改了 `global.json`；
    - 63 项 V2 pure component 是否确实只覆盖纯组件，不能冒充 RPC/ALC/owner；
    - 为什么本机只运行 components、不运行 rpc（协议禁止本机 RPC，且无第二次 hosted 授权）；

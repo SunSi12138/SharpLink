@@ -1,6 +1,6 @@
 # 12 — N1 Static-Bind Candidate Review
 
-Status: **NOT_QUALIFIED / PENDING_INDEPENDENT_AUDIT**. This is a source review and pure-component check of the existing N1 static-bind checkpoint. It is **not** the N0 full candidate and must not be used for performance or as a replacement for #775's N0.
+Status: **NOT_QUALIFIED / FIX_BEFORE_HOSTED / PENDING_EXTERNAL_AUDIT**. This is a source review and pure-component check of the existing N1 static-bind checkpoint. It is **not** the N0 full candidate and must not be used for performance or as a replacement for #775's N0. The separate V2 audit is `14-n1-v2-audit-report.md`.
 
 ## 12.1 Source identity
 
@@ -68,7 +68,7 @@ Total: **63 checks, all exit 0**. Logs and `n1-result.json` per mode are in `evi
 
 ## 12.6 Required next step for N
 
-1. Independently review N1 V2 source/protocol using `13-n1-v2-audit-prep.md` and authorize (or reject) a second hosted run; do not run locally. In particular, resolve whether the passive frame gate's full-payload copy / verified 513th-frame fixture throw and the broad Stop filter can distort the eight-case run before authorization.
+1. Independently review N1 V2 source/protocol using `13-n1-v2-audit-prep.md` and `14-n1-v2-audit-report.md`. The independent-context audit verdict is **FIX_BEFORE_HOSTED**: make the passive gate non-throwing/header-only, scope the Stop filter to actual Stop causality, and add a live-session Stop control before any second hosted run. Do not run locally.
 2. If authorized, run the exact 8-case protocol with SDK 10.0.115/runtime 10.0.15 and preserve first-failure diagnostics.
 3. Only after N1 passes all 8 static cases, extend to the N0 group/receipt/dynamic/five-family obligations; static N1 alone is not a substitute.
 4. Then re-run the #998 correctness matrix and only then consider performance.

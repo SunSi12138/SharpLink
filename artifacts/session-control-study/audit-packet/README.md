@@ -21,6 +21,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 | `11-scope-closure.md` | executed scope, hard blockers and future work order |
 | `12-n1-candidate-review.md` | N1 static-bind candidate source, V1 failure and V2 pure-component check |
 | `13-n1-v2-audit-prep.md` | V1→V2 diff review checklist; no second run authorized |
+| `14-n1-v2-audit-report.md` | independent-context V2 audit: FIX_BEFORE_HOSTED |
 | `AUDIT-REQUEST.md` | copy-paste audit request with real data |
 | `evidence/` | raw events/results/logs, diffs, discovery censuses, hashes |
 
@@ -28,7 +29,7 @@ This packet contains the baseline, execution ledger, source review, correctness 
 
 - P baseline: C-NEG proves stale-request retargeting after Replace commit and before manifest notification.
 - S: closes the narrow TCP/Replace window in the exercised core cases (including F18b held-duplex ALC retention/release, F08 start-claim vs cut, F04 changed-hash fail-closed, F11 three replacement cycles, F20 simulated notice loss, and F24 five-cycle Stop), but is **NO-GO as an N0 substitute**: existing dynamic-registration tests fail, unrelated services lose their session, and the refresh frame is single-shot. Full F01–F24 is not complete.
-- N: `NOT_IMPLEMENTED` for N0. The separate N1 static checkpoint `131df413` is `NOT_QUALIFIED`: one hosted run failed at the first Prepare; 63 V2 pure checks pass locally, but no RPC was rerun.
+- N: `NOT_IMPLEMENTED` for N0. The separate N1 static checkpoint `131df413` is `NOT_QUALIFIED`: one hosted run failed at the first Prepare; 63 V2 pure checks pass locally, but no RPC was rerun; an independent-context V2 audit verdict is `FIX_BEFORE_HOSTED` due to the passive-gate throw and broad Stop filter.
 - Q/H: `NOT_IMPLEMENTED`.
 - Performance: `NOT_RUN`; no A/A or paired samples.
 - Overall: `INCONCLUSIVE`; no evidence to change #775’s N0 selection.

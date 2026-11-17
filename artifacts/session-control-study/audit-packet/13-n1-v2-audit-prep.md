@@ -80,7 +80,7 @@ The independent auditor should decide whether (1) and (2) invalidate any V2 run 
 ## 13.5 Recommendation
 
 - Do **not** run N1 RPC locally.
-- Complete an independent V2 source/protocol audit using this checklist.
+- The independent-context audit in `14-n1-v2-audit-report.md` returns **FIX_BEFORE_HOSTED**: fix the passive-gate throw/payload retention, scope the Stop filter to actual Stop causality, and add a live-session Stop control before a hosted run.
 - Resolve the passive-gate 512-frame/payload-copy risk before any hosted run; either bound it explicitly for the eight cases or make the passive path header-only without changing the gated cases.
 - If the independent auditor finds the diagnostic/Stop changes sound, obtain explicit root authorization for exactly one hosted run with SDK 10.0.115/runtime 10.0.15 and the frozen 8-case protocol.
 - Preserve V1 failure and do not overwrite it.

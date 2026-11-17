@@ -52,6 +52,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 17. At `9ad6fe74`, all 13 study tests pass in one process (`13/13`, 0 failed, 0 skipped), which is evidence of test isolation/order stability but not a substitute for the individual attempts.
 18. The separate N1 static-bind checkpoint (`131df413`) builds and its 63 pure-component checks pass locally, but the only hosted RPC run failed at the first Prepare and V2 has no second-run authorization. N1 remains `NOT_QUALIFIED`; it is not the N0 arm and no N RPC case was run.
 19. Pre-audit source review found two V2 risks that must be resolved before a second hosted run: the passive test gate copies every frame payload and a pure fixture probe verified it throws `FIXTURE frame inventory exceeded 512` on the 513th observation; a second pure probe confirms the Stop filter maps any `ConnectionClosed` to expected when Stop is started (Deadline/unexpected remain false). These are test/source risks, not proven N1 product failures.
+20. An independent-context V2 audit (`14-n1-v2-audit-report.md`) returns **FIX_BEFORE_HOSTED**: the passive gate can throw into the product transport path, the Stop filter is causally overbroad, and V2 does not fix the V1 first-Prepare failure. It recommends no second hosted run until those are fixed and a live-session Stop control is added.
 
 ## 9.4 Source-based analysis (not measured)
 

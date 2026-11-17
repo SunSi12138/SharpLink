@@ -29,14 +29,14 @@ Status: **PENDING_INDEPENDENT_AUDIT**. This file records why the study stops her
 | F21 bounded tables/capacity + Stop | no capacity injection |
 | F22 performance-width Unary/OneWay TCP/SHM | not a correctness goal; no eligible performance candidate |
 | F23 old wire/API mixed | S has no wire change; no mixed-peer run |
-| N | N0 `NOT_IMPLEMENTED`; N1 static checkpoint `131df413` exists but is `NOT_QUALIFIED` (V1 hosted FAIL; V2 components only) |
+| N | N0 `NOT_IMPLEMENTED`; N1 static checkpoint `131df413` is `NOT_QUALIFIED` and its V2 audit verdict is `FIX_BEFORE_HOSTED` |
 | Q | `NOT_IMPLEMENTED` — no freeze/send-gate/drain/ack state machine |
 | H | `NOT_IMPLEMENTED` |
 | G5/G6 performance | forbidden by #998 until the full correctness matrix passes; no A/A or ABBA/BAAB was run |
 
 ## 11.3 Hard blockers
 
-1. **No qualified N0 candidate.** `dev` has no BindingId/BindContract/BindAck/Invalidated/Release/RequestAccepted, no wire 6, no receipt/ABA/queue-only cut. The separate N1 static checkpoint (`131df413`) implements a static-only wire-6 slice, but its only hosted run failed at the first Prepare and V2 has no second-run authorization. It is not N0 and cannot support a valid N-vs-S comparison.
+1. **No qualified N0 candidate.** `dev` has no BindingId/BindContract/BindAck/Invalidated/Release/RequestAccepted, no wire 6, no receipt/ABA/queue-only cut. The separate N1 static checkpoint (`131df413`) implements a static-only wire-6 slice, but its only hosted run failed at the first Prepare and V2 has no second-run authorization; the V2 audit verdict is `FIX_BEFORE_HOSTED`. It is not N0 and cannot support a valid N-vs-S comparison.
 2. **No Q candidate.** Q requires a client send gate, server cut, writer flush/drain, FreezeAck and ResumeAck. None exists. Implementing it is a separate protocol project, not a test-only addition.
 3. **Performance gate.** #998 forbids performance for a candidate that has not passed the full F01–F24. S has 13 tested cases, not the full matrix. Running A/A or ABBA/BAAB now would violate the pre-registration and produce invalid evidence.
 4. **Transport capability.** SharedMemory mapping/TLS PFX/UDS bind are denied on this Windows host; 46 Integration, 26 Unit, 1 Generator and 4 Load baseline failures are preserved. TCP is executable; the requested cross-transport matrix is not.
@@ -73,7 +73,7 @@ Until then, no performance conclusion and no architecture change to #775 is just
 Experiment scope:       PARTIAL, honestly closed
 S:                      NO-GO
 N (N0):                 NOT_IMPLEMENTED
-N1 static checkpoint:   NOT_QUALIFIED (V1 FAIL; V2 components only)
+N1 static checkpoint:   NOT_QUALIFIED / FIX_BEFORE_HOSTED
 Q/H:                    NOT_IMPLEMENTED
 Performance:            NOT_RUN
 Overall study:          INCONCLUSIVE
