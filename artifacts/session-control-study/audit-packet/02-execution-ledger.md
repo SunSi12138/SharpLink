@@ -141,7 +141,17 @@ Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` / `7d2
 | F20 | `Study_F20_WithheldRetirementNoticeMustNotRecoverByItself` | `attempt-final-29cf` | PASS (simulated notice loss; duplicate/reorder NOT_RUN) | 0 |
 | F24 | `Study_F24_FiveReplacementsThenStopMustQuiesce` | `attempt-final-9ad6` | PASS (active connections/ready sessions zero; full task/ALC census NOT_RUN) | 0 |
 
-F18b is the held-stream control that was missing earlier: it holds a real duplex enumerator across the cut, verifies the old session/ALC is retained and the replacement is blocked, then releases the stream and verifies the old ALC is collectible. F08 uses a real server interceptor to hold the handler after admission; the cut occurs while the call is pending, and release returns the original R1 result 2. F04 replaces the contract assembly with a changed hash; the old client remains on the old session, no replacement session becomes Ready within 2 s, and its call fails `Unavailable` without entering R2. The first F18b directory (`attempt-final-4f92`) accidentally contains two identical runs and is preserved as `F18b-mixed-attempt`; the canonical evidence is `attempt-canonical-4f92`.
+F18b is the held-stream control that was missing earlier: it holds a real duplex enumerator across the cut, verifies the old session/ALC is retained and the replacement is blocked, then releases the stream and verifies the old ALC is collectible. F08 uses a real server interceptor to hold the handler after admission; the cut occurs while the call is pending, and release returns the original R1 result 2. F04 replaces the contract assembly with a changed hash; the old client remains on the old session, no replacement session becomes Ready within 2 s, and its call fails `Unavailable` without entering R2. F11 does three sequential replacements; F20 withholds the notice; F24 does five replacements and then Stop. The first F18b directory (`attempt-final-4f92`) accidentally contains two identical runs and is preserved as `F18b-mixed-attempt`; the canonical evidence is `attempt-canonical-4f92`.
+
+### Combined study batch at `9ad6fe74`
+
+One process ran all 13 study tests through:
+
+```text
+--treenode-filter "/*/*/RuntimeAssemblyIntegrationTests/Study_*"
+```
+
+Observed: **13 total / 13 passed / 0 failed / 0 skipped**, exit 0, 4s 842ms. This is evidence that the tests do not interfere with each other in one process; it is not a replacement for the individual case attempts. Log: `evidence/s-core/core-batch-stdout.log`.
 
 ### Full S integration suite at `525a5aed`
 

@@ -46,5 +46,6 @@ Then run the compiled TUnit executable directly (not `dotnet test`, which fails 
 - Baseline: `2948de82fff77d66fce51ecec9a5783b6ef3cb62`
 - Final S test/evidence commit: `9ad6fe748aa298d6a31abaaa06ef9f0a0132a4a4`
 - Final S product source: `525a5aed918516ac1214a91c99fbb3fbb3a746e9`
+- Final all-study batch: 13/13 passed, 0 failed, 0 skipped in 4.8 s
 
 This packet is not an approval to merge any candidate.

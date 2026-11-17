@@ -54,7 +54,9 @@ S full F01–F24 gate:         FAIL / INCOMPLETE
 S performance:               NOT_RUN (full matrix gate not met)
 ```
 
-F18's Unregister subcase, F11's late/out-of-order notification subcase, F20's duplicate/reorder subcases, and the F12–F17/F19–F24 streaming/physical-tail cases remain unrun. F04, F08, F11 sequential replacement and a simulated F20 loss are now covered, but the full matrix is still not complete. No performance comparison is valid for S.
+F18's Unregister subcase, F11's late/out-of-order notification subcase, F20's duplicate/reorder subcases, and the F12–F17/F19/F21–F23 streaming/physical-tail cases remain unrun. F04, F08, F11 sequential replacement, a simulated F20 loss and F24 five-cycle Stop are now covered, but the full matrix is still not complete. No performance comparison is valid for S.
+
+A single-process batch at `9ad6fe74` ran all 13 study tests: **13/13 passed, 0 failed, 0 skipped**, 4.8 s (see `evidence/s-core/core-batch-stdout.log`).
 
 ## 4.4 C-NEG expected-failure check
 

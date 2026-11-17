@@ -49,6 +49,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 14. F11 performs three sequential replacements, each creating a new physical session and routing a fresh call to the new registration. It does **not** exercise late or out-of-order old notifications.
 15. F20 withholds the retirement notice: the old session remains, a fresh call returns `Unavailable`, R2 is not entered, and releasing the notice recovers. This simulates loss, not a real dropped frame; duplicate/reorder are not tested.
 16. F24 performs five replacements/reconnects and then client Stop; public counters quiesce to `serverActiveConnections=0` and `clientReadySessions=0`. This is not a full framework-task/snapshot/ALC census.
+17. At `9ad6fe74`, all 13 study tests pass in one process (`13/13`, 0 failed, 0 skipped), which is evidence of test isolation/order stability but not a substitute for the individual attempts.
 
 ## 9.4 Source-based analysis (not measured)
 

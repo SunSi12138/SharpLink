@@ -84,6 +84,7 @@ The key commands are in `02-execution-ledger.md`. Summary:
 | S F11 at `7d21b89a` | 0 (three sequential cycles; late ack NOT_RUN) |
 | S F20 at `29cf85de` | 0 (simulated notice loss; duplicate/reorder NOT_RUN) |
 | S F24 at `9ad6fe74` | 0 (five cycles + Stop; public counters zero; full task/ALC census NOT_RUN) |
+| S all-study batch at `9ad6fe74` | 13/13 passed, 0 failed, 0 skipped; 4.8 s |
 | S full integration suite | **INCOMPLETE/HANG**: 63 unique failure names observed, no final summary; force-stopped after >13 min without output; see `evidence/full-suite/` |
 
 ## 10.5 Most important failures and risks
@@ -108,7 +109,7 @@ Please do not simply accept the author’s summary. Independently verify:
 4. **S retirement**: Is `RetirePinnedSessionsAsync` guaranteed to run for every affected session? What happens if `SessionRefresh` is not negotiated, the send queue is full, the frame is lost, or the client ignores it? Is the synthetic generation safe against ABA/dedup?
 5. **Dynamic registration**: Reproduce the two existing-test failures on S. Are they genuine behavioral regressions or test-harness artifacts? If genuine, can S ever satisfy #775’s same-session multi-service expectation?
 6. **F18**: Verify the held-duplex F18b events at `evidence/s-core/F18b/` and determine whether they truly hold a real stream, keep the old session/ALC alive, block replacement, and then collect after release. Also check the Unregister, server-stream `MoveNext`/`Dispose`, producer/CTS and codec/facts gaps that remain.
-7. **Evidence**: Re-run at least F05/F06/F07/F18/F18b from `4f927b40`, F08 from `33fb48c2`, F04 from `948fb44d`, F11 from `7d21b89a`, F20 from `29cf85de`, and F24 from `9ad6fe74`; compare event order to the packet. Check that the C-NEG test is on P code, not S, and that its “PASS” is the expected hazard.
+7. **Evidence**: Re-run at least F05/F06/F07/F18/F18b from `4f927b40`, F08 from `33fb48c2`, F04 from `948fb44d`, F11 from `7d21b89a`, F20 from `29cf85de`, and F24 from `9ad6fe74`; compare event order to the packet. Also check the 13/13 all-study batch at `9ad6fe74`. Check that the C-NEG test is on P code, not S, and that its “PASS” is the expected hazard.
 8. **Performance**: Is there any hidden or partial performance data? If not, confirm `INCONCLUSIVE`. If yes, test the A/A noise, pairing, sample completeness and cross-arm comparability.
 9. **Architecture**: Does S truly avoid a per-request token, or does it merely move identity to the physical session? Does this satisfy #775’s exact-registration/receipt/queue-cut obligations, or is it a different, incompatible design?
 10. **Conclusion**: Is `NO-GO for S as an N0 substitute` supported? Is `INCONCLUSIVE` the correct overall experiment result? What is the minimal next experiment that would change the decision?
