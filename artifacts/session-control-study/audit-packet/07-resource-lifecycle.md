@@ -4,14 +4,14 @@
 
 | Resource | S evidence | Physical-release conclusion |
 |---|---|---|
-| Old `ServiceRegistration` | F03/F05/F06/F07 replacement returned `ReferencesReleased=true`, `RemainingCalls=0`; old session replaced | old module references released on the exercised no-held-stream paths |
+| Old `ServiceRegistration` | F03/F05/F06/F07 replacement returned `ReferencesReleased=true`, `RemainingCalls=0`; old session replaced | old module references released on the exercised idle Replace paths; F18b covers a held duplex Replace |
 | Pinned session snapshot | F18 idle: old session replaced, `retiredServerConnections=0`, old service ALC collected after 30 full GC/finalizer cycles | snapshot is released when the old session closes (idle path) |
 | Codec / method facts | no N facts implementation; S did not change codec ownership code | no new evidence; existing codec lifecycle tests were not rerun under S |
 | Admission queue / active RPC | F07: `QueuedCalls=1`, `ActivePermits=1`; after rejection both reached 0; F06 active call returned 42 | queue and active call permit returned in the exercised cases |
 | Producer / consumer | NOT_RUN | no S evidence |
-| Client/server streams and `Dispose` | NOT_RUN (F18 held-stream subcase not run) | no S evidence |
+| Client/server streams and `Dispose` | F18b: a real duplex stream is held across the cut; old session/ALC retained, replacement blocked; after release the stream completes with 4 and the old ALC is collected | held-duplex path has physical-retention/release evidence; other stream tails still NOT_RUN |
 | `CancellationTokenSource` | NOT_RUN | no S evidence |
-| Session / control frame | F03/F10 old session IDs disappear; F10 2 notifications; no frame queue or sender-task counter | session replacement observed, control-frame retention not measured |
+| Session / control frame | F03/F10 old session IDs disappear; F10 2 notifications; F18b old session stays while the stream is active; no frame queue or sender-task counter | session replacement observed, control-frame retention not measured |
 | Collectible ALC | F18 idle: `originalAlive=false`; client/server remained live | idle replacement path can collect |
 | Remaining references / cleanup counts | `retiredServerConnections=0` in F18 idle; no full reference graph | partial evidence only |
 
@@ -21,7 +21,8 @@ The S snapshot is a strong reference to the whole `FrozenDictionary<long, Servic
 
 - While the session is alive, the old registration cannot be collected, even if the registry no longer advertises it.
 - F18 idle shows that once the session is replaced and its connection state is cleared, the old ALC is collectible.
-- **Not proven:** a long-running old stream keeps the old session alive until the stream physically exits. The client `TryCommitSessionRefreshRetirement` only removes the source after `CallAdmissionReservationCount == 0 && ActiveCallCount == 0`; a stream that keeps an active call will therefore keep the pinned snapshot and old ALC alive. This is exactly the #998 F18 “held stream” concern, and it was not executed.
+- F18b now covers the held-stream concern for a real duplex stream: the old session remains selectable and the old ALC remains alive while the stream is active; `ReplaceAssemblyAsync` does not complete; after the stream completes and the session retires, the old ALC is collectible. This is direct evidence for the Replace/duplex slice.
+- **Still not proven:** the Unregister subcase, server-stream `MoveNext`/`Dispose` tails, producer/consumer CTS tails, and a stream that never completes until forced cancellation.
 
 ## 7.3 Codec, Facts, and method tables
 
@@ -54,20 +55,29 @@ The source sends one frame and does not retain a per-session retry record. There
 
 ## 7.6 ALC evidence detail
 
-F18 idle event (S, `525a5aed`):
+F18b held-duplex event (S, test commit `4f927b40`, canonical `attempt-canonical-4f92`):
 
 ```json
-{"event":"collectible-check","payload":{
-  "oldSessionId":"0c92569d3372479687790a81c1441b6c",
-  "newSessionIds":["e1340bc53e874726aaec291f38a8a27b"],
-  "originalAlive":false,
+{"event":"held-duplex-retains-old-session","payload":{
+  "oldSessionId":"8074c325434d49ffa998f254105e5d49",
+  "readySessionIds":["8074c325434d49ffa998f254105e5d49"],
+  "oldAlive":true,"replaceCompleted":false}}
+{"event":"held-duplex-released","payload":{"values":[4]}}
+{"event":"held-duplex-collectible-check","payload":{
+  "oldSessionId":"8074c325434d49ffa998f254105e5d49",
+  "oldAlive":false,
+  "readySessionIds":["8150e4388a9a43a7b9dcfbf5c3d73491"],
   "retiredServerConnections":0}}
 ```
 
-Method: the service was loaded in a collectible `AssemblyLoadContext`, the original service was replaced, the old session was replaced, then 30 full `GC.Collect`/`WaitForPendingFinalizers` cycles were run while the client and server stayed alive. A first attempt failed because the test method kept the old `Assembly` and `AssemblyLoadContext` locals alive; that attempt is preserved and is not counted as product evidence.
+Method: the service was loaded in a collectible `AssemblyLoadContext`; a real generated duplex RPC yielded its first item and was held; Replace was started; the old session remained selectable and the old ALC alive; the replacement was blocked; the stream gate was then released, the second item (4) was consumed, and the stream completed; the old session was replaced and 30 full GC/finalizer cycles collected the old ALC.
 
-**Not proven:** the held-stream enumerator case, codec/method-fact roots, and client-side old ALC. Do not summarize this as “F18 passes”.
+F18 idle event (S, `4f927b40`, canonical `attempt-final-4f92`) also shows the old idle session replaced and `originalAlive=false` with `retiredServerConnections=0`.
+
+An earlier F18b `attempt-final-4f92` directory contains two identical runs because the test was executed twice with the same attempt name; it is preserved as `F18b-mixed-attempt` and is not used as canonical evidence.
+
+**Not proven:** the Unregister subcase, server-stream `MoveNext`/`Dispose` blocking, codec/method-fact roots, and client-side old ALC. Do not summarize the whole F18/F16 obligation as passed.
 
 ## 7.7 Physical clean-up verdict
 
-`INCONCLUSIVE`. There is real evidence for idle old-module/ALC release and queue/permit return, but no evidence for the held-stream, producer/consumer, CTS, codec facts, output `MoveNext`/`Dispose`, or control-task physical exit obligations. The S prototype therefore cannot be called resource-safe under #775.
+`INCONCLUSIVE`. There is now real evidence for idle and held-duplex old-module/ALC release and queue/permit return. There is still no evidence for the Unregister subcase, server-stream `MoveNext`/`Dispose`, producer/consumer CTS tails, codec facts, or control-task physical exit. The S prototype therefore cannot be called fully resource-safe under #775, although the earlier “held stream unknown” gap is narrowed substantially by F18b.

@@ -37,9 +37,10 @@ These are preserved, not hidden:
 | F03 `attempt-2` | compared service-module `RpcAssemblyHash` with contract hash; wrong oracle for service-only replacement | **test oracle invalid** |
 | F10 `attempt-1` | second client built after plugin load saw static duplicate; cleanup exception masked the first failure | **test setup invalid** |
 | F18 `attempt-1` | test held old `Assembly`/ALC locals; ALC correctly remained alive | **test root, not product leak** |
+| F18b `attempt-final-4f92` | same attempt name used for two identical runs, producing two event sequences | **attempt naming invalid**; preserved as `F18b-mixed-attempt`; canonical rerun `attempt-canonical-4f92` |
 | 14-row QueuedSelection focused run | `--filter-uid` ran only 1 row (parent UID); the all-row run needed `--treenode-filter` | **selector mistake**, corrected |
 
-Corrected attempts are clearly named `attempt-final-525` or `attempt-2/3`; the failed attempts remain in the tree. No assertion was removed to make a failing product path pass. F03's hash assertion was replaced because it was measuring the wrong assembly; the contract-hash observation is now recorded as a fact (`contractHash`, `serviceModuleHash`) rather than asserted as equality.
+Corrected attempts are clearly named `attempt-final-4f92` / `attempt-canonical-4f92` or `attempt-2/3`; the failed/mixed attempts remain in the tree. No assertion was removed to make a failing product path pass. F03's hash assertion was replaced because it was measuring the wrong assembly; the contract-hash observation is now recorded as a fact (`contractHash`, `serviceModuleHash`) rather than asserted as equality.
 
 ## 8.3 S candidate failures / regressions
 
@@ -48,7 +49,7 @@ Corrected attempts are clearly named `attempt-final-525` or `attempt-2/3`; the f
    - `QueuedSelectionRetirementShouldPreserveEveryRpcShape(unary, True)` times out waiting for the admission queue because the request never reaches R1.
    - Cause: the session snapshot is frozen at handshake; the existing client flow registers dynamic assemblies after connecting, and S has no retirement notification on `RegisterAssembly`.
 2. **Whole-session collateral.** F09 shows unrelated B is moved to a new physical session even though only A changed.
-3. **No held-stream F18.** The idle ALC case passes; the long-stream/ALC retention case is `NOT_RUN`.
+3. **F18 is now covered for Replace/duplex, not all subcases.** F18b holds a real duplex enumerator across the cut, shows the old session/ALC stays alive and the replacement waits, then releases it and collects the ALC. The Unregister subcase, server-stream `MoveNext`/`Dispose`, producer/CTS tails and codec-fact roots remain `NOT_RUN`.
 4. **Control-frame loss is unrecovered.** Source sends one `SessionRefreshRequested`; there is no ack/resend/reconciliation. A lost frame leaves the old session pinned to a draining R, so new calls return `Unavailable` until an external reconnect.
 5. **Register/Unregister parity.** `RegisterAssembly` sends no session notification. Unregister retirement was added in `525a5aed` but has no dedicated F-case.
 6. **AnonymousPipe.** `SessionRefresh` is not negotiated; retirement is silently skipped.
@@ -77,7 +78,7 @@ Corrected attempts are clearly named `attempt-final-525` or `attempt-2/3`; the f
 
 ## 8.6 Untested hazards that could invalidate a future “S works” claim
 
-- A held stream keeps the old session and pinned old ALC alive; no test.
+- A server-stream `MoveNext`/synchronous `Dispose` that blocks after the logical deadline, and the Unregister retirement path; F18b covers a held duplex Replace but not these tails.
 - Control frame lost/reordered/duplicate; no test.
 - Two replacements back-to-back while the first refresh is in flight; no test.
 - Replacement during a long client stream or duplex producer; no test.

@@ -13,7 +13,9 @@ ABBA/BAAB paired comparison: NOT_RUN
 Cross-arm conclusion: INCONCLUSIVE
 ```
 
-This is not a missing appendix; it is the required stop. #998 says a candidate that fails the core correctness gate may **not** enter the performance stage, and S did not complete F18 held-stream, F08, or F01–F24. No eligible N candidate exists. The C-NEG arm is intentionally invalid and can never be a performance arm.
+This is not a missing appendix; it is the required stop. #998 requires the core correctness set and then the full F01–F24 matrix before performance. S passes the narrow TCP/Replace core set at `4f927b40`, but the full matrix is not implemented. No eligible N candidate exists. The C-NEG arm is intentionally invalid and can never be a performance arm.
+
+Note: at the final test commit `4f927b40`, the narrow TCP/Replace core set (F03/F05/F06/F07/F09/F10/F18, including a held-duplex F18b) passes. That does **not** satisfy the full F01–F24 gate: F01/F02/F04, F08, F11–F17, F19–F24 remain not implemented or not run. Therefore performance is still correctly `NOT_RUN`.
 
 ## What was not run, and why
 
@@ -46,7 +48,7 @@ There are **zero** formal performance samples. There are no deleted slow samples
 ## What would be required to make a valid comparison
 
 1. An N candidate that actually implements wire 6, Bind/Invalidated/Release/RequestAccepted, exact-token admission, group cut and the physical owner obligations, plus a correctness result on the same frozen matrix.
-2. An S candidate that passes all F01–F24, including held-stream F18 and control-frame loss/reorder, without breaking existing dynamic-registration behavior.
+2. An S candidate that passes all F01–F24, including F18b held-duplex and control-frame loss/reorder, without breaking existing dynamic-registration behavior.
 3. A host/runner where SharedMemory, TCP and TLS/UDS prerequisites are actually available, or an explicit capability-limited matrix that is accepted before measurement.
 4. A preregistered A/A run and then 8 paired ABBA/BAAB runs with the #998 sample sizes and 10 s/20 s warmup/measurement windows.
 5. The telemetry hooks disabled during formal timing and binary SHA-256 recorded for every arm.

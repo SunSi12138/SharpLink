@@ -8,7 +8,7 @@ Status: **PENDING_INDEPENDENT_AUDIT**. This is a research comparison, not an ado
 |---|---|
 | Does P exhibit the stale-request retarget hazard? | **Yes, proven.** C-NEG on P: stale request after Replace commit, before manifest notification, executes R2 (value 2; R1 Created=0, R2 Created=1). |
 | Does the narrow S prototype stop that hazard? | **Yes for the exercised TCP/Replace window.** F05: stale request returns `Unavailable`, R1=0, R2=0; replacement session then works. |
-| Is S a viable replacement for N0? | **NO-GO in current form.** It breaks dynamic registration after connect, retires unrelated services with the session, has no recovery for a lost refresh frame, and does not pass held-stream F18. |
+| Is S a viable replacement for N0? | **NO-GO in current form.** It breaks dynamic registration after connect, retires unrelated services with the session, and has no recovery for a lost refresh frame. Its narrow core gate passes, including a held-duplex F18b, but the full F01–F24 matrix is not complete. |
 | Is there a valid N-vs-S performance comparison? | **No.** N is not implemented; S is not correctness-qualified; no A/A or paired samples were run. `INCONCLUSIVE`. |
 | Should #775's selected N0 architecture be changed now? | **No evidence supports changing it.** The experiment found a narrow safety mechanism but not a viable same-session replacement. |
 
@@ -23,11 +23,11 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 | Old request after cut | can hit R2 (proven) | exact old entry rejects, no retarget | rejected with `Unavailable`; no R2 (F05) | unproven | exact rejection |
 | Unrelated service B | unaffected by A's registry swap (same session remains) | local binding invalidation; session unchanged | **whole session replaced** (F09), B moves | would depend on barrier scope | session unchanged |
 | Dynamic registration after connect | works (P tests pass) | Bind on existing data session | **broken**: session snapshot lacks new contract; existing tests fail | unproven | works via Bind |
-| Long stream / ALC | existing P behavior; not isolated | physical owner retained until exit | idle ALC collects; held stream **not run** | not implemented | designed |
+| Long stream / ALC | existing P behavior; not isolated | physical owner retained until exit | idle and held-duplex F18 pass; Unregister/server-stream tails not run | not implemented | designed |
 | Control frame | manifest broadcast only | Bind/Invalidated/Release/RequestAccepted | one `SessionRefreshRequested`; no ack/resend | freeze/resume frames not implemented | N0 controls |
 | Hot-path change | 1 live registry lookup | exact slot/token lookup (designed) | 1 pinned-dictionary lookup; no per-RPC allocation added | would add gate/queue checks | exact N0 path |
 | Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,249 test/model insertions | 0 | 0 |
-| Correctness evidence | full P baseline + C-NEG | none | 6 core PASS + F18 idle; F18 held NOT_RUN; existing tests FAIL | none | none |
+| Correctness evidence | full P baseline + C-NEG | none | 7 core PASS, including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
 | Performance evidence | none | none | none | none | none |
 | Verdict | baseline / unsafe under F05 | reference design, not implemented | **NO-GO research prototype** | **NOT_IMPLEMENTED / NO-GO** | **NOT_IMPLEMENTED** |
 
@@ -40,9 +40,10 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 5. S's F07 queued request returns `Unavailable` after losing the cut; neither R1 nor R2 user code runs; queue/permit counts return to zero.
 6. S's F09 unrelated B remains functionally correct but is moved to a new physical session.
 7. S's F10 moves two independent sessions to new snapshots and routes both fresh calls to R2.
-8. S's F18 idle replacement collects the old service ALC while client/server remain alive.
+8. S's F18 idle replacement and F18b held-duplex release both collect the old service ALC while client/server remain alive; F18b additionally proves the old session/ALC is retained and the replacement is blocked while the stream is active.
 9. S breaks existing dynamic-registration-after-connect behavior: `IndependentControlReply...` fails with `Unimplemented`; `QueuedSelection...` times out. The full S suite additionally **hangs** after 63 unique observed failures; it is `INCOMPLETE/HANG`, not a pass rate.
 10. P's baseline test runs are environment-limited: 46 Integration, 26 Unit, 1 Generator and 4 Load failures, dominated by SharedMemory/TLS/UDS/temp ACL denials.
+11. At test commit `4f927b40`, the seven required core cases and the extra F18b held-duplex case all pass on TCP/Replace. This is a **narrow core-gate pass**, not a full F01–F24 pass.
 
 ## 9.4 Source-based analysis (not measured)
 
@@ -55,7 +56,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 
 ## 9.5 Hypotheses not proven
 
-- That a held stream's old session/ALC can be released promptly after the stream exits.
+- That the held-duplex release result generalizes to server-stream `MoveNext`/`Dispose`, forced cancellation, and Unregister.
 - That a control frame loss can be recovered by the existing client reconnect policy without an application-visible outage.
 - That S could add a Register notification and stay within bounded session churn.
 - That S would reduce hot-path cost; no measurement exists.
@@ -76,7 +77,7 @@ The apparent reduction in code is therefore a **transfer of complexity** to sess
 
 ## 9.7 Resource-safety judgment
 
-`INCONCLUSIVE`. Idle old-module/ALC release is real. Held-stream, producer/consumer, stream Dispose, CTS, codec/facts and control-task physical exit are not measured. A long stream can keep the pinned old session and ALC alive by design; until that is measured and bounded, S cannot be called resource-safe.
+`INCONCLUSIVE`. Idle and held-duplex old-module/ALC release are real: F18b shows the old session and ALC retained while the duplex stream is active, then collected after release and session retirement. Unregister, server-stream `MoveNext`/`Dispose`, producer/consumer, CTS and codec/facts physical exit are not measured. A long stream can keep the pinned old session and ALC alive by design; the duplex path shows it is released after completion, but the broader owner graph remains unproven.
 
 ## 9.8 Decision
 

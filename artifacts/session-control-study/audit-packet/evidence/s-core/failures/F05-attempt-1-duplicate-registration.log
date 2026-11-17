@@ -1,0 +1,30 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2 (314ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] Exception: assert failed: client contract registration: SharpLinkAssemblyRegistrationError { Code = DuplicateAssembly, Message = The same Assembly object is already registered on this client., IncomingAssembly = SharpLink.DynamicPlugin.Contracts, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null, ExistingAssembly = , IncomingLoadContext = study-f05 (collectible=True), ExistingLoadContext = , Artifact = , ContractName = , ContractId = , MethodName = , MethodId = , ExistingFingerprint = , IncomingFingerprint =  }
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.Ensure(Boolean condition, String message) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.cs:523
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.RegisterAllAsync(DynamicHarness harness, PluginBundle plugin) 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.cs:280
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs:20
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs:182
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\TestResults\SharpLink.IntegrationTests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\SharpLink.IntegrationTests.dll (net10.0|x64)
+  总计: 1
+  失败: 1
+  成功: 0
+  已跳过: 0
+  持续时间: 492ms
+test_exit=2

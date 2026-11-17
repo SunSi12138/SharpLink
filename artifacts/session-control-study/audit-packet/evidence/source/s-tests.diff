@@ -227,16 +227,25 @@ index 00000000..a4da343b
 +}
 diff --git a/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.SessionControlStudy.cs b/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.SessionControlStudy.cs
 new file mode 100644
-index 00000000..b7113371
+index 00000000..861442ed
 --- /dev/null
 +++ b/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.SessionControlStudy.cs
-@@ -0,0 +1,837 @@
+@@ -0,0 +1,1028 @@
 +using System.Reflection;
 +using System.Runtime.CompilerServices;
 +
 +namespace SharpLink.IntegrationTests;
 +
 +internal readonly record struct CollectibleRetirement(WeakReference Weak, string OldSessionId);
++
++internal sealed class HeldDuplexStudy
++{
++    internal IAsyncEnumerator<int> Enumerator = null!;
++    internal TaskCompletionSource Gate = null!;
++    internal Task<SharpLinkAssemblyReplacementResult> Replace = null!;
++    internal WeakReference Weak = null!;
++    internal string OldSessionId = string.Empty;
++}
 +
 +/// <summary>
 +/// Issue #998 G3 core cases for the isolated session-pinned-snapshot prototype (variant S).
@@ -338,6 +347,188 @@ index 00000000..b7113371
 +            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
 +            replacementContext.Unload();
 +        }
++    }
++
++    [Test]
++    [NotInParallel]
++    public async Task Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc()
++    {
++        using var attempt = SessionControlStudyAttempt.Begin("F18b");
++        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
++        using var plugin = PluginBundle.Load("study-f18b", loadService: false);
++        Ensure(harness.Client.RegisterAssembly(plugin.ContractAssembly).Succeeded,
++            "collectible client contract registers");
++        Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded,
++            "collectible server contract registers");
++        var servicePath = Path.Combine(
++            Path.GetDirectoryName(plugin.ContractAssembly.Location)!,
++            "SharpLink.DynamicPlugin.Services.dll");
++        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
++        var replacementAssembly = replacementContext.LoadFromAssemblyPath(servicePath);
++        var replacementType = replacementAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
++        replacementType.GetMethod("Reset")!.Invoke(null, null);
++
++        var cutCommitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        var releaseNotification = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        releaseNotification.TrySetResult();
++        var isS = SessionControlStudySupport.TryInstallSNotificationHooks(
++            server: (SharpLinkServer)harness.Server,
++            cutCommitted,
++            releaseNotification);
++        Ensure(isS, "the F18b test requires the S notification hook");
++
++        HeldDuplexStudy? held = null;
++        try
++        {
++            held = await StartHeldDuplexAsync(
++                harness, plugin, servicePath, replacementAssembly, cutCommitted);
++            Ensure(held.Weak.IsAlive,
++                "the held duplex call must keep the old service ALC alive before release");
++            Ensure(!held.Replace.IsCompleted,
++                "replacement must wait while the old duplex stream is active");
++            var sessionsWhileHeld = SessionControlStudySupport.ReadySessionIds(harness.Client);
++            Ensure(sessionsWhileHeld.Contains(held.OldSessionId, StringComparer.Ordinal),
++                "the old session must remain selectable while the admitted stream is active");
++            attempt.Emit("held-duplex-retains-old-session", new Dictionary<string, object?>
++            {
++                ["oldSessionId"] = held.OldSessionId,
++                ["readySessionIds"] = sessionsWhileHeld,
++                ["oldAlive"] = held.Weak.IsAlive,
++                ["replaceCompleted"] = held.Replace.IsCompleted
++            });
++
++            held.Gate.TrySetResult();
++            var values = new List<int>();
++            while (await held.Enumerator.MoveNextAsync())
++                values.Add(held.Enumerator.Current);
++            await held.Enumerator.DisposeAsync();
++            held.Enumerator = null!;
++            attempt.Emit("held-duplex-released", new Dictionary<string, object?>
++            {
++                ["values"] = values
++            });
++            Ensure(values.SequenceEqual(new[] { 4 }), "the released duplex stream completes with 4");
++
++            var replaced = await held.Replace.WaitAsync(TimeSpan.FromSeconds(15));
++            Ensure(replaced.Succeeded && replaced.ReferencesReleased,
++                $"held stream drains and releases the old module: {replaced.Error}");
++            await SessionControlStudySupport.WaitForReadySessionChangeAsync(
++                harness.Client, held.OldSessionId, TimeSpan.FromSeconds(10));
++            held.Replace = null!;
++            held.Gate = null!;
++
++            var weak = held.Weak;
++            var oldSessionId = held.OldSessionId;
++            held = null;
++            for (var attemptIndex = 0; attemptIndex < 30 && weak.IsAlive; attemptIndex++)
++            {
++                GC.Collect();
++                GC.WaitForPendingFinalizers();
++                GC.Collect();
++                await Task.Delay(20);
++            }
++            attempt.Emit("held-duplex-collectible-check", new Dictionary<string, object?>
++            {
++                ["oldSessionId"] = oldSessionId,
++                ["oldAlive"] = weak.IsAlive,
++                ["readySessionIds"] = SessionControlStudySupport.ReadySessionIds(harness.Client),
++                ["retiredServerConnections"] = ServerRegistryTestAccessor.RetiredConnectionCount(
++                    (SharpLinkServer)harness.Server)
++            });
++            Ensure(!weak.IsAlive,
++                "old service ALC must be collectible after the held duplex stream exits and the session retires");
++            attempt.Complete("PASS");
++        }
++        catch (Exception exception)
++        {
++            attempt.Emit("case-failed", new Dictionary<string, object?>
++            {
++                ["type"] = exception.GetType().FullName,
++                ["message"] = exception.Message
++            });
++            attempt.Complete("FAIL", exception.Message);
++            throw;
++        }
++        finally
++        {
++            try
++            {
++                held?.Gate.TrySetResult();
++                if (held?.Enumerator is { } enumerator)
++                    await enumerator.DisposeAsync();
++                if (held is not null)
++                {
++                    try { _ = await held.Replace.WaitAsync(TimeSpan.FromSeconds(5)); }
++                    catch (Exception) { }
++                }
++                _ = await harness.Server.UnregisterAssemblyAsync(
++                    replacementAssembly, TimeSpan.FromSeconds(2));
++                _ = await harness.Client.UnregisterAssemblyAsync(
++                    plugin.ContractAssembly, TimeSpan.FromSeconds(2));
++                _ = await harness.Server.UnregisterAssemblyAsync(
++                    plugin.ContractAssembly, TimeSpan.FromSeconds(2));
++            }
++            catch (Exception cleanupException)
++            {
++                attempt.Emit("cleanup-failed", new Dictionary<string, object?>
++                {
++                    ["type"] = cleanupException.GetType().FullName,
++                    ["message"] = cleanupException.Message
++                });
++            }
++            replacementContext.Unload();
++        }
++    }
++
++    [MethodImpl(MethodImplOptions.NoInlining)]
++    private static async Task<HeldDuplexStudy> StartHeldDuplexAsync(
++        DynamicHarness harness,
++        PluginBundle plugin,
++        string servicePath,
++        Assembly replacementAssembly,
++        TaskCompletionSource cutCommitted)
++    {
++        var server = (SharpLinkServer)harness.Server;
++        var originalContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
++        var originalAssembly = originalContext.LoadFromAssemblyPath(servicePath);
++        Ensure(server.RegisterAssembly(originalAssembly).Succeeded,
++            "collectible duplex service registers");
++        await harness.ConnectClientAsync();
++        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
++        var proxy = GetProxy(harness.Client, plugin.ContractType);
++        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
++        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        var enumerator = InvokeStream(
++                proxy, plugin.ContractType, "DuplexAsync", GatedValues(gate.Task), CancellationToken.None)
++            .GetAsyncEnumerator();
++        Ensure(await enumerator.MoveNextAsync(),
++            "the duplex stream must yield its first item before the cut");
++        Ensure(enumerator.Current == 2, "the first duplex item is 2");
++
++        var replace = server.ReplaceAssemblyAsync(
++            originalAssembly,
++            replacementAssembly,
++            TimeSpan.FromSeconds(20)).AsTask();
++        await cutCommitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
++        var weak = new WeakReference(originalContext, trackResurrection: false);
++        originalContext.Unload();
++        return new HeldDuplexStudy
++        {
++            Enumerator = enumerator,
++            Gate = gate,
++            Replace = replace,
++            Weak = weak,
++            OldSessionId = oldSessionId
++        };
++    }
++
++    private static async IAsyncEnumerable<int> GatedValues(
++        Task release,
++        [EnumeratorCancellation] CancellationToken cancellationToken = default)
++    {
++        yield return 1;
++        await release.WaitAsync(cancellationToken);
++        yield return 2;
 +    }
 +
 +    [Test]

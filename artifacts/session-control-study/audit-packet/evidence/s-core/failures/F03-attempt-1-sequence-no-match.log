@@ -1,0 +1,31 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | Microsoft Windows 10.0.26200 | win-x64 | .NET 10.0.15 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+失败 Study_F03_SameContractSameHashReplacementMustChangeSession (328ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] InvalidOperationException: Sequence contains no matching element
+    在 System.Linq.ThrowHelper.ThrowNoMatchException()
+    在 System.Linq.Enumerable.Single[TSource](IEnumerable`1 source, Func`2 predicate)
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.Study_F03_SameContractSameHashReplacementMustChangeSession() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs:73
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.Study_F03_SameContractSameHashReplacementMustChangeSession() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs:103
+    在 SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.Study_F03_SameContractSameHashReplacementMustChangeSession() 位于 C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs:103
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  生成的进程内文件项目:
+    - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\TestResults\SharpLink.IntegrationTests-windows-net10.0-report.html
+
+测试运行摘要: 失败! - C:\Users\sunsi\Desktop\test\sharplink-study\SharpLink\test\SharpLink.IntegrationTests\bin\Release\net10.0\SharpLink.IntegrationTests.dll (net10.0|x64)
+  总计: 1
+  失败: 1
+  成功: 0
+  已跳过: 0
+  持续时间: 507ms
+test_exit=2

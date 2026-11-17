@@ -140,7 +140,7 @@ If `SessionRefresh` was not negotiated, the method silently skips the connection
 
 ## 3.6 Hidden state and lifecycle risks
 
-1. **Pinned strong references.** The snapshot strongly references every `ServiceRegistration` in the session's bootstrap table. While an old session remains alive (for example because a long stream has not completed), the old ALC remains rooted. F18 idle passes; the held-stream case is not measured.
+1. **Pinned strong references.** The snapshot strongly references every `ServiceRegistration` in the session's bootstrap table. While an old session remains alive (for example because a long stream has not completed), the old ALC remains rooted. F18 idle and F18b held-duplex both pass: the held-duplex ALC is retained while the stream is active and collected after release/session retirement. Other stream tails are still unmeasured.
 2. **No Register parity.** A service registered after a session is Ready is not in that session's pinned table. The session must be replaced, but `RegisterAssembly` does not send a retirement notification. Existing code that registers after connect then calls a dynamic proxy fails with `Unimplemented` (observed).
 3. **No Unregister parity before the fix.** The first prototype only retired on Replace. `525a5aed` adds `OnPinnedGroupCutCommitted` after `UnregisterAssemblyAsync`'s cut, but this path has not been exercised by a dedicated F-case.
 4. **Single-shot control frame.** No resend/ack; loss can leave the client on a draining old session with permanent `Unavailable`.
@@ -150,7 +150,7 @@ If `SessionRefresh` was not negotiated, the method silently skips the connection
 ## 3.7 What the source does not prove
 
 - It does not prove F01/F02/F04/F08/F11–F17/F19–F24.
-- It does not prove held-stream F18, queued-stream owner release, ClientStreaming/Duplex accepted-stream admission, OneWay input, or `RequestAccepted`.
+- It does not prove F01/F02/F04/F08/F11–F17/F19–F24, nor the Unregister/server-stream tails of F18. F18b covers a held duplex Replace, not every stream-owner case.
 - It does not prove control-frame loss/reorder/duplicate safety; the implementation has no recovery for loss.
 - It does not provide the N0 exact token, receipt, group queue-only cut, or physical-entry handoff.
 - It does not produce performance evidence. No claim of hot-path improvement is made.

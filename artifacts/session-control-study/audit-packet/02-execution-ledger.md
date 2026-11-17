@@ -104,7 +104,8 @@ Commits:
 |---|---|
 | `58c280f4ef02c0620d510cc1a78139f2ec5e80ce` | initial S prototype + F05/F06/F07 tests |
 | `5b8d5fd269cf7d1e48172be1e1d07e13593d74d1` | F03/F09/F10/F18 + test harness fixes |
-| `525a5aed918516ac1214a91c99fbb3fbb3a746e9` | final S: cut before new snapshot publication; unregister retirement |
+| `525a5aed918516ac1214a91c99fbb3fbb3a746e9` | final S product: cut before new snapshot publication; unregister retirement |
+| `4f927b40ddac622d76cba45d23b173aa0c9da31c` | test-only: held-duplex ALC release control (F18b) |
 
 Important first failures (all preserved):
 
@@ -117,17 +118,20 @@ Important first failures (all preserved):
 | F18 | `attempt-1` | FAIL | test held the old collectible `Assembly`/`AssemblyLoadContext` local, rooting the ALC |
 | F18 | `attempt-2`/`attempt-final-1` | PASS | idle replacement only; held-stream subcase NOT_RUN |
 
-Final S core results at `525a5aed`:
+Final S core results at test commit `4f927b40` (product source `525a5aed`):
 
 | Case | Test method | Attempt | Status | Exit |
 |---|---|---|---|---:|
-| F03 | `Study_F03_SameContractSameHashReplacementMustChangeSession` | `attempt-final-525` | PASS | 0 |
-| F05 | `Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2` | `attempt-final-525` | PASS | 0 |
-| F06 | `Study_F06_AdmittedOldCallMustCompleteAfterCut` | `attempt-final-525` | PASS | 0 |
-| F07 | `Study_F07_QueuedRequestLosingToCutMustEnterNeitherR1NorR2` | `attempt-final-525` | PASS | 0 |
-| F09 | `Study_F09_UnrelatedServiceOnSameSessionIsCollateralInS` | `attempt-final-525` | PASS (records collateral cost) | 0 |
-| F10 | `Study_F10_TwoIndependentSessionsMustBothMoveToNewSnapshot` | `attempt-final-525` | PASS | 0 |
-| F18 | `Study_F18_RetiredServiceAlcMustNotBeRootedBySessions` | `attempt-final-525` | PASS (idle only) | 0 |
+| F03 | `Study_F03_SameContractSameHashReplacementMustChangeSession` | `attempt-final-4f92` | PASS | 0 |
+| F05 | `Study_F05_StaleRequestAfterCutBeforeNotificationMustNotEnterR1OrR2` | `attempt-final-4f92` | PASS | 0 |
+| F06 | `Study_F06_AdmittedOldCallMustCompleteAfterCut` | `attempt-final-4f92` | PASS | 0 |
+| F07 | `Study_F07_QueuedRequestLosingToCutMustEnterNeitherR1NorR2` | `attempt-final-4f92` | PASS | 0 |
+| F09 | `Study_F09_UnrelatedServiceOnSameSessionIsCollateralInS` | `attempt-final-4f92` | PASS (records collateral cost) | 0 |
+| F10 | `Study_F10_TwoIndependentSessionsMustBothMoveToNewSnapshot` | `attempt-final-4f92` | PASS | 0 |
+| F18 | `Study_F18_RetiredServiceAlcMustNotBeRootedBySessions` | `attempt-final-4f92` | PASS (idle) | 0 |
+| F18b | `Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc` | `attempt-canonical-4f92` | PASS (held duplex) | 0 |
+
+F18b is the held-stream control that was missing earlier: it holds a real duplex enumerator across the cut, verifies the old session/ALC is retained and the replacement is blocked, then releases the stream and verifies the old ALC is collectible. The first F18b directory (`attempt-final-4f92`) accidentally contains two identical runs and is preserved as `F18b-mixed-attempt`; the canonical evidence is `attempt-canonical-4f92`.
 
 ### Full S integration suite at `525a5aed`
 
@@ -178,7 +182,7 @@ Performed after the final S behavior was observed. Result: **S is NO-GO as a sam
 - N: `NOT_IMPLEMENTED` — no N0 binding frames or exact-token implementation exists on `dev`; the historical N1 hosted run in #775 is not a current candidate.
 - Q: `NOT_IMPLEMENTED` / `NO-GO` — no freeze/send-gate/drain/FreezeAck/Resume state machine exists.
 - H: `NOT_IMPLEMENTED`.
-- S performance: **NOT_RUN**. S did not pass the full F01–F24 and held-stream F18 obligation; #998 forbids performance for a candidate that fails the core gate. No A/A or ABBA run was started.
+- S performance: **NOT_RUN**. S did not complete the full F01–F24 matrix; #998 forbids performance before the full correctness matrix. No A/A or ABBA run was started.
 - C-NEG performance: forbidden by definition.
 
 ## G7 — audit packet

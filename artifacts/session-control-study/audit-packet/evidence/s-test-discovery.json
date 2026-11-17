@@ -1968,8 +1968,26 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 15,
-        "lineEnd": 108
+        "lineStart": 24,
+        "lineEnd": 117
+      }
+    },
+    {
+      "uid": "SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests.1.1.Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc.1.1.0",
+      "displayName": "Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc",
+      "type": {
+        "assemblyFullName": "SharpLink.IntegrationTests, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "namespace": "SharpLink.IntegrationTests",
+        "typeName": "RuntimeAssemblyIntegrationTests",
+        "methodName": "Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc",
+        "methodArity": 0,
+        "returnTypeFullName": "System.Threading.Tasks.Task",
+        "parameterTypeFullNames": []
+      },
+      "location": {
+        "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
+        "lineStart": 119,
+        "lineEnd": 248
       }
     },
     {
@@ -1986,8 +2004,8 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 110,
-        "lineEnd": 181
+        "lineStart": 301,
+        "lineEnd": 372
       }
     },
     {
@@ -2004,8 +2022,8 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 217,
-        "lineEnd": 327
+        "lineStart": 408,
+        "lineEnd": 518
       }
     },
     {
@@ -2022,8 +2040,8 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 329,
-        "lineEnd": 409
+        "lineStart": 520,
+        "lineEnd": 600
       }
     },
     {
@@ -2040,8 +2058,8 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 411,
-        "lineEnd": 585
+        "lineStart": 602,
+        "lineEnd": 776
       }
     },
     {
@@ -2058,8 +2076,8 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 587,
-        "lineEnd": 700
+        "lineStart": 778,
+        "lineEnd": 891
       }
     },
     {
@@ -2076,8 +2094,8 @@
       },
       "location": {
         "file": "C:\\Users\\sunsi\\Desktop\\test\\sharplink-study\\SharpLink\\test\\SharpLink.IntegrationTests\\RuntimeAssemblyIntegrationTests.SessionControlStudy.cs",
-        "lineStart": 702,
-        "lineEnd": 836
+        "lineStart": 893,
+        "lineEnd": 1027
       }
     },
     {

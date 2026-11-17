@@ -88,7 +88,20 @@ Canonical evidence: `evidence/s-core/F18/events.jsonl`.
 | old session replaced | 353.347 | `newSessionIds` differs; `retiredServerConnections=0` |
 | ALC check | 353.347 | `originalAlive=false` after 30 full GC/finalizer cycles |
 
-This is only the idle replacement path. A held stream/enumerator was not run, so the “old stream keeps ALC alive” question remains open.
+## F18b — held duplex ALC retention and release
+
+Canonical evidence: `evidence/s-core/F18b/events.jsonl` (test commit `4f927b40`, attempt `attempt-canonical-4f92`).
+
+| Order | Event | Time (ms) | Observed fact |
+|---:|---|---:|---|
+| 1 | real duplex first item received | before 253.678 | stream is active; first item 2 consumed |
+| 2 | cut/replace started | before 253.678 | `replaceCompleted=false` |
+| 3 | held check | 253.678 | old session still Ready; old ALC alive; replacement blocked |
+| 4 | stream gate released | 260.824 | second item 4 received; stream completes |
+| 5 | replacement completes | after 260.824 | test awaited successful replacement/drain |
+| 6 | ALC check | 364.207 | old ALC collected; new session Ready; retired connections 0 |
+
+This is evidence that the pinned snapshot does **not** release the old ALC while a held duplex call still owns it, and does release it after the stream exits and the session retires. It does not cover Unregister, server-stream `MoveNext`/`Dispose`, or forced cancellation.
 
 ## F01–F04, F08, F11–F17, F19–F24
 
