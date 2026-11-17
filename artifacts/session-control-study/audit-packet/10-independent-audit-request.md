@@ -73,7 +73,7 @@ The key commands are in `02-execution-ledger.md`. Summary:
 | P all 14 `QueuedSelectionRetirement...` rows | 0 (14/14) |
 | P `QueuedSelectionShouldNotRoot...` | 0 (1/1) |
 | C-NEG on P | 0 (test passed by detecting the deliberate hazard) |
-| S seven core cases at `525a5aed` | 0 each |
+| S core cases at `4f927b40` (product `525a5aed`) | 0 each (F03/F05/F06/F07/F09/F10/F18/F18b) |
 | S full integration suite | **INCOMPLETE/HANG**: 63 unique failure names observed, no final summary; force-stopped after >13 min without output; see `evidence/full-suite/` |
 
 ## 10.5 Most important failures and risks

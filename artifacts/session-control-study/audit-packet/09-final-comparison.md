@@ -26,7 +26,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 | Long stream / ALC | existing P behavior; not isolated | physical owner retained until exit | idle and held-duplex F18 pass; Unregister/server-stream tails not run | not implemented | designed |
 | Control frame | manifest broadcast only | Bind/Invalidated/Release/RequestAccepted | one `SessionRefreshRequested`; no ack/resend | freeze/resume frames not implemented | N0 controls |
 | Hot-path change | 1 live registry lookup | exact slot/token lookup (designed) | 1 pinned-dictionary lookup; no per-RPC allocation added | would add gate/queue checks | exact N0 path |
-| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,249 test/model insertions | 0 | 0 |
+| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,440 test/model insertions | 0 | 0 |
 | Correctness evidence | full P baseline + C-NEG | none | 7 core PASS, including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
 | Performance evidence | none | none | none | none | none |
 | Verdict | baseline / unsafe under F05 | reference design, not implemented | **NO-GO research prototype** | **NOT_IMPLEMENTED / NO-GO** | **NOT_IMPLEMENTED** |

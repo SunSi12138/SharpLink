@@ -66,7 +66,7 @@ GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没�
 4. **证据审计**
    逐项核实 SHA、测试 UID、实际命令、退出码、工件和事件时间线。重点核查：
    - `525a5aed` 是否确为最终 S；
-   - 七个核心 case（含 F18b）是否对应 `attempt-final-4f92` / `attempt-canonical-4f92`；
+   - 七个必需核心 case 与额外的 F18b 是否对应 `attempt-final-4f92` / `attempt-canonical-4f92`；
    - 失败 attempt 是否未被覆盖；
    - C-NEG 事件 `stale request → value=2, R1=0, R2=1` 是否真实；
    - P 的 528/482/46/0、Unit 2255/2229/26/0、Generator 295/294/1/0、Load 77/73/4/0 是否被正确引用；
