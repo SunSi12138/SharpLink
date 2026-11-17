@@ -102,6 +102,18 @@ Canonical evidence: `evidence/s-core/F08/events.jsonl` (test commit `33fb48c2`, 
 
 This demonstrates that a call that already won the start claim/completed activation is not cancelled by the cut; it completes after the handler gate is released. It does **not** prove the scheduling pause is before all user code: the dynamic singleton constructor already ran (`oldR1Created=1`). The cut still cannot convert it into a new admission.
 
+## F11 — three rapid sequential replacements
+
+Canonical evidence: `evidence/s-core/F11/events.jsonl` (test commit `7d21b89a`, attempt `attempt-final-7d21`).
+
+| Cycle | Event | Time (ms) | Old session → new session | R2 call |
+|---:|---|---:|---|---:|
+| 1 | replacement + refresh | 473.629 | `bb5b…` → `a474…` | 12 |
+| 2 | replacement + refresh | 562.864 | `a474…` → `4ec4…` | 13 |
+| 3 | replacement + refresh | 596.359 | `4ec4…` → `75ef…` | 14 |
+
+Each cycle awaited the previous replacement and a new Ready session before the next call. This is **not** a late-Ack/out-of-order test: no old notification is delayed or replayed. F11's late-ack subcase remains `NOT_RUN`.
+
 ## F13 — not run
 
 No Freeze/Resume implementation exists. There is no timeline to present. Marking this `NOT_RUN` is mandatory; it must not be inferred from F05/F07.

@@ -10,7 +10,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 |---|---|---|---|
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
-| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
+| S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11 + F18/F18b; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
 | N | none | none | NOT_IMPLEMENTED |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
@@ -29,7 +29,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | F08 start claim wins cut | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F08...` uses a real server interceptor to hold the handler after admission; cut occurs, call remains pending, release returns R1 result 2 | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F09 unrelated B on same session | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS with cost` — `Study_F09...`, B still answers 7 but both A and B move to a new session; `foreignServiceInterrupted=true` | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F10 two sessions / delayed notifications | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F10...`, both old sessions replaced, 2 notifications, both R2 calls correct | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
-| F11 rapid R1→R2→R3 / late ack | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
+| F11 rapid R1→R2→R3 / late ack | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | `PASS (three cycles)` — `Study_F11...` performs three sequential replacements, each creating a new physical session and routing to the current registration; late/out-of-order ack is NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F12 ABA / slot reuse | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN (S has no request token; synthetic refresh generation only) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F13 queued writer / Freeze | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F14 FreezeAck then held Resume | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
@@ -46,7 +46,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 
 ## 4.3 S core gate decision
 
-#998 requires F03/F05/F06/F07/F09/F10/F18 before performance. At test commit `4f927b40`, all seven core cases pass for the **TCP/Replace** slice (F18 via idle + held-duplex); at `33fb48c2`, F08 also passes. However, the required full F01–F24 matrix is not implemented:
+#998 requires F03/F05/F06/F07/F09/F10/F18 before performance. At test commit `4f927b40`, all seven core cases pass for the **TCP/Replace** slice (F18 via idle + held-duplex); at `33fb48c2`, F08 passes; at `948fb44d`, F04 fails closed; at `7d21b89a`, F11 passes three sequential cycles. However, the required full F01–F24 matrix is not implemented:
 
 ```text
 S core gate (TCP/Replace):   PASS
@@ -54,7 +54,7 @@ S full F01–F24 gate:         FAIL / INCOMPLETE
 S performance:               NOT_RUN (full matrix gate not met)
 ```
 
-F18's Unregister subcase, and the F11–F17/F19–F24 streaming/physical-tail cases remain unrun. F08 is now covered, but the full matrix is still not complete. No performance comparison is valid for S.
+F18's Unregister subcase, F11's late/out-of-order notification subcase, and the F12–F17/F19–F24 streaming/physical-tail cases remain unrun. F04, F08 and F11 sequential replacement are now covered, but the full matrix is still not complete. No performance comparison is valid for S.
 
 ## 4.4 C-NEG expected-failure check
 

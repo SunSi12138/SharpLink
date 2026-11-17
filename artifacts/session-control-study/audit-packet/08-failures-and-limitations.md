@@ -55,7 +55,7 @@ Corrected attempts are clearly named `attempt-final-4f92` / `attempt-canonical-4
 5. **Register/Unregister parity.** `RegisterAssembly` sends no session notification. Unregister retirement was added in `525a5aed` but has no dedicated F-case.
 6. **AnonymousPipe.** `SessionRefresh` is not negotiated; retirement is silently skipped.
 7. **Full S suite hangs.** At `525a5aed`, the full Integration executable emitted 63 unique failure names and then stopped producing output for >13 minutes after `QueuedSelectionRetirementShouldPreserveEveryRpcShape(client-stream, True)`; it was force-stopped. No final total exists, so the run is `INCOMPLETE/HANG`, not a pass rate. Partial log: `evidence/full-suite/`.
-8. **Full F01–F24 not implemented.** F11–F17/F19–F24 are absent; F01/F02 are not implemented as S cases. F04, F08 and a held-duplex F18b were added later and pass, but do not complete the matrix.
+8. **Full F01–F24 not implemented.** F12–F17/F19–F24 are absent; F01/F02 are not implemented as S cases; F11 covers three sequential replacements but not late/out-of-order notifications. F04, F08 and a held-duplex F18b were added later and pass, but do not complete the matrix.
 
 ## 8.4 Unimplemented arms and stages
 

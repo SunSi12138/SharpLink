@@ -26,8 +26,8 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 | Long stream / ALC | existing P behavior; not isolated | physical owner retained until exit | idle and held-duplex F18 pass; Unregister/server-stream tails not run | not implemented | designed |
 | Control frame | manifest broadcast only | Bind/Invalidated/Release/RequestAccepted | one `SessionRefreshRequested`; no ack/resend | freeze/resume frames not implemented | N0 controls |
 | Hot-path change | 1 live registry lookup | exact slot/token lookup (designed) | 1 pinned-dictionary lookup; no per-RPC allocation added | would add gate/queue checks | exact N0 path |
-| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,690 test/model insertions | 0 | 0 |
-| Correctness evidence | full P baseline + C-NEG | none | 9 core/F08/F04 PASS, including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
+| Implementation size on branch | — | **0** | 133 product insertions / 10 files; 1,764 test/model insertions | 0 | 0 |
+| Correctness evidence | full P baseline + C-NEG | none | 11 core/F04/F08/F11 PASS, including F18 idle and F18b held duplex; full F01–F24 not run; existing tests FAIL | none | none |
 | Performance evidence | none | none | none | none | none |
 | Verdict | baseline / unsafe under F05 | reference design, not implemented | **NO-GO research prototype** | **NOT_IMPLEMENTED / NO-GO** | **NOT_IMPLEMENTED** |
 
@@ -46,6 +46,7 @@ Overall experiment result: **INCONCLUSIVE**, with an explicit **NO-GO for S as a
 11. At test commit `4f927b40`, the seven required core cases and the extra F18b held-duplex case all pass on TCP/Replace; at `33fb48c2`, F08 also passes; at `948fb44d`, F04 fails closed without entering R2. This is a **narrow core/F08/F04 pass**, not a full F01–F24 pass.
 12. F08 uses a real server interceptor to hold the handler after admission; the cut occurs while the call is pending and release returns the original R1 result 2. The singleton constructor had already run, so this is not a pure “no user code before cut” proof.
 13. F04 is fail-closed: after a changed-hash contract replacement, the old client gets `Unavailable` and R2 is not entered. However, no replacement session becomes Ready within 2 s, so the old client cannot recover without a new application deployment. This is an availability cost, not a retargeting failure.
+14. F11 performs three sequential replacements, each creating a new physical session and routing a fresh call to the new registration. It does **not** exercise late or out-of-order old notifications.
 
 ## 9.4 Source-based analysis (not measured)
 

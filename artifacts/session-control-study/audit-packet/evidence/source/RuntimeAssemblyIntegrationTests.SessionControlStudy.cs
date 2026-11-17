@@ -227,6 +227,80 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task Study_F11_ThreeRapidReplacementsMustRetireEachSession()
+    {
+        using var attempt = SessionControlStudyAttempt.Begin("F11");
+        await using var harness = await DynamicHarness.CreateAsync(connectClient: false);
+        using var plugin = PluginBundle.Load("study-f11");
+        plugin.ResetServiceState();
+        await RegisterAllAsync(harness, plugin, waitForRemoteManifest: false);
+        await harness.ConnectClientAsync();
+        await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+        var server = (SharpLinkServer)harness.Server;
+        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var oldSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+        var currentAssembly = plugin.ServiceAssembly;
+        var contexts = new List<SharedContractServiceLoadContext>();
+        try
+        {
+            for (var cycle = 1; cycle <= 3; cycle++)
+            {
+                var context = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+                contexts.Add(context);
+                var nextAssembly = context.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+                var nextType = nextAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!;
+                nextType.GetMethod("Reset")!.Invoke(null, null);
+
+                var replaced = await server.ReplaceAssemblyAsync(
+                    currentAssembly, nextAssembly, TimeSpan.FromSeconds(5));
+                Ensure(replaced.Succeeded && replaced.ReferencesReleased,
+                    $"rapid replacement cycle {cycle} releases old module: {replaced.Error}");
+                await SessionControlStudySupport.WaitForReadySessionChangeAsync(
+                    harness.Client, oldSessionId, TimeSpan.FromSeconds(10));
+                var newSessionId = SessionControlStudySupport.ReadySessionIds(harness.Client).Single();
+                Ensure(newSessionId != oldSessionId,
+                    $"rapid replacement cycle {cycle} creates a new physical session");
+                var value = await InvokeValueTaskAsync<int>(
+                    proxy, plugin.ContractType, "UnaryAsync", 10 + cycle, CancellationToken.None);
+                Ensure(value == 11 + cycle,
+                    $"rapid replacement cycle {cycle} routes to the current registration");
+                attempt.Emit("replacement-cycle", new Dictionary<string, object?>
+                {
+                    ["cycle"] = cycle,
+                    ["oldSessionId"] = oldSessionId,
+                    ["newSessionId"] = newSessionId,
+                    ["value"] = value
+                });
+                currentAssembly = nextAssembly;
+                oldSessionId = newSessionId;
+            }
+
+            Ensure(SessionControlStudySupport.ReadySessionIds(harness.Client).Length == 1,
+                "after three rapid replacements exactly one client session is Ready");
+            attempt.Complete("PASS");
+        }
+        catch (Exception exception)
+        {
+            attempt.Emit("case-failed", new Dictionary<string, object?>
+            {
+                ["type"] = exception.GetType().FullName,
+                ["message"] = exception.Message
+            });
+            attempt.Complete("FAIL", exception.Message);
+            throw;
+        }
+        finally
+        {
+            _ = await server.UnregisterAssemblyAsync(currentAssembly, TimeSpan.FromSeconds(2));
+            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            _ = await server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            foreach (var context in contexts)
+                context.Unload();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task Study_F04_OldClientWithChangedContractHashMustNotEnterR2()
     {
         using var attempt = SessionControlStudyAttempt.Begin("F04");

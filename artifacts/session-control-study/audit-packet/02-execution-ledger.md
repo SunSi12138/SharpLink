@@ -108,6 +108,7 @@ Commits:
 | `4f927b40ddac622d76cba45d23b173aa0c9da31c` | test-only: held-duplex ALC release control (F18b) |
 | `33fb48c232e7bf3843dbb3ab34420e97ca6435ff` | test-only: start-claim vs cut control with handler gate (F08) |
 | `948fb44d00748e2c8ba1813aa31c44d23616aa57` | test-only: changed-hash old-client fail-closed control (F04) |
+| `7d21b89a86d95f79b0c2d5397ca737bcadf668c6` | test-only: three-cycle rapid replacement control (F11) |
 
 Important first failures (all preserved):
 
@@ -120,7 +121,7 @@ Important first failures (all preserved):
 | F18 | `attempt-1` | FAIL | test held the old collectible `Assembly`/`AssemblyLoadContext` local, rooting the ALC |
 | F18 | `attempt-2`/`attempt-final-1` | PASS | idle replacement only; held-stream subcase NOT_RUN |
 
-Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` (product source `525a5aed`):
+Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` / `7d21b89a` (product source `525a5aed`):
 
 | Case | Test method | Attempt | Status | Exit |
 |---|---|---|---|---:|
@@ -132,6 +133,7 @@ Final S core results at test commits `4f927b40` / `33fb48c2` / `948fb44d` (produ
 | F08 | `Study_F08_StartClaimWinsCutWithHandlerSchedulingHeld` | `attempt-final-33fb` | PASS | 0 |
 | F09 | `Study_F09_UnrelatedServiceOnSameSessionIsCollateralInS` | `attempt-final-4f92` | PASS (records collateral cost) | 0 |
 | F10 | `Study_F10_TwoIndependentSessionsMustBothMoveToNewSnapshot` | `attempt-final-4f92` | PASS | 0 |
+| F11 | `Study_F11_ThreeRapidReplacementsMustRetireEachSession` | `attempt-final-7d21` | PASS (three sequential cycles; late ack NOT_RUN) | 0 |
 | F18 | `Study_F18_RetiredServiceAlcMustNotBeRootedBySessions` | `attempt-final-4f92` | PASS (idle) | 0 |
 | F18b | `Study_F18b_HeldDuplexMustRetainThenReleaseOldAlc` | `attempt-canonical-4f92` | PASS (held duplex) | 0 |
 

@@ -1,3 +1,5 @@
+7d21b89a research(998): add three-cycle rapid replacement control
+78520f60 research(998): add F04 fail-closed evidence and final packet
 948fb44d research(998): add changed-hash old-client fail-closed control
 dbbc01c2 research(998): record F08 start-claim evidence and final packet
 33fb48c2 research(998): add start-claim vs cut control with handler gate
