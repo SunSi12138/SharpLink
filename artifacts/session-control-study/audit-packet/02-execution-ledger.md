@@ -203,7 +203,7 @@ After the initial study closed, the user directed the existing N1 checkpoint to 
 - Six permitted pure-component modes (`components`, `selection-components`, `contention-components`, `cluster-stop-components`, `diagnostic-components`, `publication-components`) all exit 0: **63 checks**.
 - **No RPC was run.** The frozen N1 protocol forbids local RPC and V2 has no second hosted-run authorization.
 - V1 hosted run [#43693296449](https://github.com/SunSi12138/SharpLink/actions/runs/43693296449) remains FAIL: 36 checks, first Prepare 5 s deadline, no RPC case completed, client Stop guard 3 s. Raw evidence is copied to `evidence/n1-review/`.
-- Result: N1 is **NOT_QUALIFIED**; it is not a replacement for the N0 arm and cannot enter performance.
+- Result: N1 is **NOT_QUALIFIED**; it is not a replacement for the N0 arm and cannot enter performance. The independent-context V2 audit (`14-n1-v2-audit-report.md`) returns **FIX_BEFORE_HOSTED**.
 
 ## G4 — architecture review
 

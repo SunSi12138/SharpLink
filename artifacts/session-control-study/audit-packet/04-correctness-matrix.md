@@ -13,7 +13,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | P (dev) | full current product | 528 integration / 2255 unit / 295 generator / 77 load; C-NEG | baseline only; F05 hazard confirmed |
 | C-NEG | test-only negative control on P | F05 hazard | intentionally invalid; correctly detected |
 | S | session-pinned snapshot + whole-session refresh on Replace/Unregister | F03/F04/F05/F06/F07/F08/F09/F10/F11/F24 + F18/F18b/F20; full suite INCOMPLETE/HANG | **narrow TCP/Replace core gate PASS**; full F01–F24 gate NOT passed; existing tests fail |
-| N | no N0 on dev; N1 static-bind checkpoint `131df413` exists separately | N1 V1 hosted FAIL; 63 V2 pure checks PASS locally, no RPC | **NOT_QUALIFIED**; not eligible for N column/performance |
+| N | no N0 on dev; N1 static-bind checkpoint `131df413` exists separately | N1 V1 hosted FAIL; 63 V2 pure checks PASS locally; V2 audit `FIX_BEFORE_HOSTED` | **NOT_QUALIFIED**; not eligible for N column/performance |
 | Q | none | none | NOT_IMPLEMENTED |
 | H | none | none | NOT_IMPLEMENTED |
 
