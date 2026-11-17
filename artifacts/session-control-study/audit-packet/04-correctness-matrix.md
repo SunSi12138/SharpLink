@@ -20,7 +20,7 @@ Important: the S test harness pre-registers dynamic services **before** the phys
 | Case | P | N | C-NEG | S | Q | H |
 |---|---|---|---|---|---|---|
 | F01 local proxy before connect | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
-| F02 control success vs delayed data manifest | `PASS` on P via `IndependentControlReply...`; does not prove N/S | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN (S requires pre-connect registration; unchanged test fails with `Unimplemented`) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
+| F02 control success vs delayed data manifest | `PASS` on P via `IndependentControlReply...`; does not prove N/S | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN; the unchanged P test fails on S with `Unimplemented` (recorded as a regression, not an S F02 result) | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F03 same ContractId/hash R1→R2 | NOT_RUN (P same-session behavior is the F05 hazard) | NOT_IMPLEMENTED | NOT_RUN | `PASS` — `Study_F03...`, new session, R1=1/R2=1, contract hash `a3054d…` unchanged | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F04 changed hash / old client | NOT_RUN | NOT_IMPLEMENTED | NOT_RUN | NOT_RUN | NOT_IMPLEMENTED | NOT_IMPLEMENTED |
 | F05 cut then held notification | `FAIL` — C-NEG hazard: stale request returns R2 value 2, R2 Created=1 | NOT_IMPLEMENTED | **PASS (hazard detected)** — `C_NEG_...`, R1=0/R2=1 | `PASS` — `Study_F05...`, stale `Unavailable`, R1=0/R2=0, cut hook held | NOT_IMPLEMENTED | NOT_IMPLEMENTED |

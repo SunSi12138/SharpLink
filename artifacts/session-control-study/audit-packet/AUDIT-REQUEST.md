@@ -29,6 +29,7 @@ GitHub Actions 链接：**无**。本实验全部在本机 Windows 执行，没�
 （若该目录未进入远端分支，则以同目录 ZIP 及 SHA-256 为准；ZIP 清单在 `SHA256SUMS.txt`。）
 
 审计材料：`audit-packet/01-baseline.md` 至 `10-independent-audit-request.md`，以及 `audit-packet/evidence/` 下的 events.jsonl、result.json、stdout 日志、失败清单、源码 diff 和二进制 SHA-256。
+在线目录：https://github.com/SunSi12138/SharpLink/tree/study/998-session-control/artifacts/session-control-study/audit-packet
 
 ---
 
