@@ -81,12 +81,11 @@ internal sealed partial class SharpLinkServer
                 return responseSend;
             }
             if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var nMethod) ||
-                nMethod.Kind != RpcMethodKind.Unary || nMethod.HasClientStreams ||
-                nMethod.HasResponsePayload != ((flags & ProtocolV2FrameFlags.HasReturn) != 0))
+                !IsSupportedNStudyTwoWayShape(nMethod, flags))
             {
                 return session.SendRpcErrorWithBackpressureAsync(requestId,
                     new SharpLinkException(SharpLinkErrorCode.Unimplemented,
-                        "This private checkpoint accepts only bound Unary and plain OneWay."),
+                        "This private checkpoint does not support that bound RPC shape."),
                     connection.ConnectionToken);
             }
 
@@ -165,7 +164,8 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         admittedCallState,
                         admissionProgram,
-                        binding);
+                        binding,
+                        descriptor.HasClientStreams);
                 }
 
                 var decision = admissionTask.Result;
@@ -234,6 +234,7 @@ internal sealed partial class SharpLinkServer
                     payload,
                     request,
                     serviceInfo,
+                    nMethod.HasClientStreams,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -365,6 +366,7 @@ internal sealed partial class SharpLinkServer
                 flags,
                 request,
                 serviceInfo,
+                nMethod.HasClientStreams,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,
@@ -376,6 +378,19 @@ internal sealed partial class SharpLinkServer
             if (ownsAdmissionProgramUse)
                 admissionProgram!.ReleaseUse();
         }
+    }
+
+    private static bool IsSupportedNStudyTwoWayShape(RpcMethodDescriptor method, ProtocolV2FrameFlags flags)
+    {
+        var hasReturn = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
+        return method.Kind switch
+        {
+            RpcMethodKind.Unary => !method.HasClientStreams && method.HasResponsePayload == hasReturn,
+            RpcMethodKind.ClientStreaming => method.HasClientStreams && method.ClientStreamCount > 0 &&
+                method.HasResponsePayload == hasReturn,
+            RpcMethodKind.DuplexStreaming => method.HasClientStreams && method.ClientStreamCount > 0 && !hasReturn,
+            _ => false
+        };
     }
 
     private async ValueTask AwaitDispatchRpcNoReturnAsync(

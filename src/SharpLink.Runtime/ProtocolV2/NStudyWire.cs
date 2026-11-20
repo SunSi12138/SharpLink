@@ -17,12 +17,13 @@ internal static class NStudyWire
     internal const ProtocolV2FrameType BindAck = (ProtocolV2FrameType)245;
     internal const ProtocolV2FrameType Release = (ProtocolV2FrameType)246;
     internal const ProtocolV2FrameType Invalidated = (ProtocolV2FrameType)247;
+    internal const ProtocolV2FrameType RequestAccepted = (ProtocolV2FrameType)248;
     internal const int BindingLimit = 64;
     private const int BindBytes = 48;
     private const int AckBytes = 112;
 
     internal static bool IsBindingFrame(ProtocolV2FrameType type) =>
-        type is Bind or BindAck or Release or Invalidated;
+        type is Bind or BindAck or Release or Invalidated or RequestAccepted;
 
     internal static void ValidateLength(ProtocolV2FrameType type, int size)
     {
@@ -30,6 +31,7 @@ internal static class NStudyWire
         {
             Bind => size == BindBytes,
             BindAck => size == AckBytes,
+            RequestAccepted => size == 0,
             Invalidated => size is >= sizeof(long) and <= BindingLimit * sizeof(long) &&
                 size % sizeof(long) == 0,
             _ => size == sizeof(long)

@@ -72,7 +72,7 @@ internal sealed class ClientConnection :
            Session.CanAcceptCalls;
 
     public int ActiveCallCount
-        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
+        => PendingCalls.ActiveCount + PendingCalls.NStudyProducerCount + Volatile.Read(ref _auxiliaryActiveCallCount);
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
 

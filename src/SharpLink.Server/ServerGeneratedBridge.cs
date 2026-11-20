@@ -21,6 +21,16 @@ internal sealed class ServerGeneratedBridge(
         {
             try
             {
+                if (callLease.State.NStudyAcceptancePending)
+                {
+                    // Generated stubs have already decoded the original arguments
+                    // and registered every input route at this entry boundary.
+                    if (PublishNStudyStreamAcceptance(requestId, callLease.State))
+                        return;
+                    _ = callLease.State.TryAcceptStreamData();
+                    throw ServerCallTerminationMapper.CreateServerCancellationException(
+                        callLease.State.Reason, callLease.State.Deadline.IsExpired(session.RuntimeContext.TimeProvider));
+                }
                 // User-code entry and inbound StreamData acceptance are both progress claims:
                 // neither may pass after a strong call terminal, and both promote an already-
                 // expired monotonic deadline to the terminal reason before returning.
@@ -45,6 +55,23 @@ internal sealed class ServerGeneratedBridge(
             throw new SharpLinkException(
                 SharpLinkErrorCode.DeadlineExceeded,
                 "Request deadline exceeded.");
+        }
+    }
+
+    private bool PublishNStudyStreamAcceptance(long requestId, ServerCallCancellationState state)
+    {
+        var writer = session.RentFrameWriter();
+        var transferred = false;
+        try
+        {
+            using (writer.BeginPacketScope(NStudyWire.RequestAccepted, ProtocolV2FrameFlags.None,
+                       unchecked((ulong)requestId))) { }
+            return state.TryPublishNStudyStreamAcceptance(session, writer, out transferred);
+        }
+        finally
+        {
+            if (!transferred)
+                session.RuntimeContext.Buffers.Return(writer);
         }
     }
 

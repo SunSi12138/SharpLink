@@ -6,6 +6,7 @@ internal sealed partial class SharpLinkServer
     // The post-admission resource skeleton mirrors the immediate method and requires parity tests.
     private ValueTask DispatchAdmittedRpcAsync(
         QueuedServiceSelection serviceSelection,
+        bool requiresStreamAcceptance,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -118,6 +119,7 @@ internal sealed partial class SharpLinkServer
                     payload,
                     request,
                     serviceInfo,
+                    requiresStreamAcceptance,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -249,6 +251,7 @@ internal sealed partial class SharpLinkServer
                 flags,
                 request,
                 serviceInfo,
+                requiresStreamAcceptance,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,

@@ -524,6 +524,9 @@ internal sealed partial class SharpLinkClient
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();
                     session.EnsureInboundFrameAllowed(header.Type);
+                    if (header.Type == ProtocolV2FrameType.StreamData ||
+                        header.Type == ProtocolV2FrameType.Response && (header.Flags & ProtocolV2FrameFlags.Error) == 0)
+                        connection.PendingCalls.RequireNStudyAcceptance(unchecked((long)header.RequestId));
                     IRpcByteBufferWriter? decodedOwner = null;
                     try
                     {
@@ -572,6 +575,9 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case NStudyWire.Invalidated:
                                 session.OnNStudyInvalidated(payload);
+                                break;
+                            case NStudyWire.RequestAccepted:
+                                connection.PendingCalls.AcceptNStudyRequest(unchecked((long)header.RequestId));
                                 break;
                             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 session.ApplyResponseCompressionPreferenceAck(

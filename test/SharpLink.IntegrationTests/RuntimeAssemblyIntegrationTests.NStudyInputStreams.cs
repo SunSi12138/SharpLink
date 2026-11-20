@@ -1,0 +1,216 @@
+using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace SharpLink.IntegrationTests;
+
+public sealed partial class RuntimeAssemblyIntegrationTests
+{
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp", "client-stream")]
+    [Arguments("tcp", "duplex")]
+    [Arguments("shared-memory", "client-stream")]
+    [Arguments("shared-memory", "duplex")]
+    public async Task NStudyInputStreamsWaitForAcceptanceAndKeepExactBinding(string transport, string shape)
+    {
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var ct = guard.Token;
+        var trace = new NStudyTrace(transport);
+        using var contracts = PluginBundle.Load($"n-input-{transport}-{shape}", loadService: false);
+        var staticLoad = SharpLinkAssemblyManifestLoader.TryLoad(
+            typeof(IShutdownCleanupProbe).Assembly, out var staticManifest);
+        var dynamicLoad = SharpLinkAssemblyManifestLoader.TryLoad(contracts.ContractAssembly, out var manifest);
+        Ensure(staticLoad.Succeeded && dynamicLoad.Succeeded, "actual generated manifests load");
+        var source = new FixedGeneratedManifestSource([staticManifest!]);
+        var bCid = staticManifest!.Contracts.Single(c => c.ContractType == typeof(IShutdownCleanupProbe)).ContractId;
+        var aCid = manifest!.Contracts.Single(c => c.ContractType == contracts.ContractType).ContractId;
+        await using var provider = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
+        var builder = NewNStudyServer(source, provider);
+        // One normal busy A request makes the next A stream wait. B is not
+        // limited by the A contract rule and uses the same physical connection.
+        builder.UseAdmissionControl(options =>
+        {
+            options.AddContract(aCid, rule => rule.UseConcurrency(1));
+            options.MaxQueuedCalls = 1;
+            options.MaxQueuedBytes = 64 * 1024;
+            options.MaxQueueDelay = TimeSpan.FromSeconds(15);
+        });
+        string? memoryName = transport == "shared-memory" ? $"sharplink-n-input-{Guid.NewGuid():N}" : null;
+        if (memoryName is null)
+            builder.UseTcp(0, IPAddress.Loopback);
+        else
+            builder.UseSharedMemory(memoryName);
+        var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
+        await using var server = (SharpLinkServer)builder.Build();
+        await using var client = NewNStudyClient(source, port, memoryName);
+        var path = Path.Combine(Path.GetDirectoryName(contracts.ContractAssembly.Location)!,
+            "SharpLink.DynamicPlugin.Services.dll");
+        var oldLoader = new SharedContractServiceLoadContext(contracts.ContractAssembly);
+        var newLoader = new SharedContractServiceLoadContext(contracts.ContractAssembly);
+        Type? oldType = null;
+        var input = new NStudyInput();
+        var cancelledInput = new NStudyInput();
+        try
+        {
+            var oldAssembly = oldLoader.LoadFromAssemblyPath(path);
+            var newAssembly = newLoader.LoadFromAssemblyPath(path);
+            oldType = oldAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
+            var newType = newAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
+            Ensure(server.RegisterAssembly(contracts.ContractAssembly).Succeeded &&
+                   server.RegisterAssembly(oldAssembly).Succeeded &&
+                   client.RegisterAssembly(contracts.ContractAssembly).Succeeded, "actual R1 and contract are registered");
+            await server.StartAsync(ct);
+            await client.ConnectAsync(ct);
+            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
+            var r1 = server.ReadNStudyTarget(oldAssembly, aCid);
+            var a1 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r1, ct);
+            var connection = ((ClientConnection[])typeof(SharpLinkClient).GetField("_readyConnections",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!).Single();
+            var serverConnection = ((ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!).SnapshotActive().Single();
+            Ensure(a1.Authority.PhysicalSession == serverConnection.NStudyPhysicalIdentity &&
+                   serverConnection.AuthenticationContext?.Subject == "n-validation" &&
+                   (memoryName is null ? connection.Session.RemoteEndPoint is IPEndPoint :
+                       connection.Session.Input is SharedMemoryPipeReader), "normal authenticated physical transport");
+            var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
+            var table = connection.PendingCalls;
+            var proxy = GetProxy(client, contracts.ContractType);
+            var unrelated = client.Get<IShutdownCleanupProbe>();
+            var oldModule = GetDynamicModule(server, oldAssembly);
+            var busy = InvokeValueTaskAsync<int>(proxy, contracts.ContractType, "BlockAsync", ct).AsTask();
+            await ((Task)oldType.GetProperty("BlockStarted")!.GetValue(null)!).WaitAsync(ct);
+
+            using (var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                var ordinaryCancelled = CallNStudyInput(proxy, contracts.ContractType, shape, cancelledInput, cancel.Token);
+                await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 && table.NStudyProducerCount == 1, ct);
+                Ensure(cancelledInput.Enumerators == 0 && !ordinaryCancelled.IsCompleted,
+                    "the queued request has been sent, but its producer was not opened");
+                cancel.Cancel();
+                try
+                {
+                    await ordinaryCancelled.WaitAsync(ct);
+                    throw new InvalidOperationException("The queued call should report normal caller cancellation.");
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                await WaitForNStudyAsync(() => kernel.QueuedCalls == 0 && table.NStudyProducerCount == 0, ct);
+                Ensure(cancelledInput.Enumerators == 0 && NStudyCount(oldType, "InputStreamExits") == 0 &&
+                       !busy.IsCompleted && await unrelated.TouchAsync(1, ct) == 101,
+                    "queued caller cancellation opens no producer or handler and leaves unrelated B usable");
+                trace.Record("QueuedCallerCancellationDoesNotOpenProducer", a1);
+            }
+
+            var call = CallNStudyInput(proxy, contracts.ContractType, shape, input, ct);
+            await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 && table.NStudyProducerCount == 1, ct);
+            Ensure(input.Enumerators == 0 && !call.IsCompleted && oldModule.RemainingStreams == 0 &&
+                   await unrelated.TouchAsync(2, ct) == 102, "B completes while the input stream awaits actual admission");
+            trace.Record("QueuedInputDoesNotOpenProducerWhileBContinues", a1);
+
+            oldType.GetMethod("ReleaseBlock")!.Invoke(null, null);
+            Ensure(await busy.WaitAsync(ct) == 42, "the ordinary blocking call returns and grants the queued stream");
+            await input.Started.WaitAsync(ct);
+            Ensure(input.Enumerators == 1 && oldModule.RemainingCalls == 1 && oldModule.RemainingStreams == 1,
+                "one producer starts only after the dispatch has leased and started the actual R1 reader");
+            trace.Record("AdmittedR1StartsOneProducer", a1);
+
+            var replacing = server.ReplaceAssemblyAsync(oldAssembly, newAssembly, TimeSpan.FromSeconds(15), ct).AsTask();
+            await WaitForNStudyAsync(() => connection.Session.NStudyPreparedCount == 1, ct);
+            var r2 = server.ReadNStudyTarget(newAssembly, aCid);
+            var a2 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r2, ct);
+            Ensure(r2.Registration != r1.Registration && a2.Authority == a1.Authority &&
+                   NStudyWire.SlotIndex(a2.BindingId) != NStudyWire.SlotIndex(a1.BindingId) &&
+                   serverConnection.NStudyBindings.Snapshot() == (2, 1, 1) &&
+                   connection.Session.CaptureNStudyBinding(bCid) == bBinding.BindingId &&
+                   await unrelated.TouchAsync(3, ct) == 103,
+                "old input keeps its exact occupied slot across Replace and B is unaffected");
+            trace.Record("R2BindsWhileR1InputStillOwnsItsOldSlot", a1, a2);
+
+            input.ReleaseItems();
+            await input.Disposing.WaitAsync(ct);
+            Ensure(!replacing.IsCompleted && !call.IsCompleted && NStudyCount(oldType, "Disposed") == 0 &&
+                   NStudyCount(oldType, "InputStreamExits") == 0 && table.NStudyProducerCount == 1 &&
+                   oldModule.RemainingStreams == 1 && NStudyCount(newType, "Created") == 0,
+                "the real final producer await keeps R1's receiver and physical ownership live");
+            trace.Record("OldOwnersStayLiveDuringProducerCleanup", a1, a2);
+
+            input.ReleaseDisposal();
+            var result = await call.WaitAsync(ct);
+            Ensure(result.SequenceEqual(shape == "client-stream" ? [10] : new[] { 6, 14 }),
+                "original generated stream data finishes in R1 without rebinding");
+            EnsureReplacementReleased(await replacing.WaitAsync(ct), "old physical input stream retired");
+            await WaitForNStudyAsync(() => table.ActiveCount == 0 && table.NStudyProducerCount == 0 &&
+                serverConnection.NStudyBindings.Snapshot() == (2, 0, 0) && kernel.ActivePermits == 0, ct);
+            Ensure(input.ExitCount == 1 && NStudyCount(oldType, "InputStreamExits") == 1 &&
+                   NStudyCount(oldType, "Disposed") == 1, "producer, original handler and old service exit once");
+            trace.Record("R1OwnersExitOnceAndResourcesDrain", a1, a2);
+
+            server.DisableAdmissionControl();
+            var direct = await CallNStudyInput(proxy, contracts.ContractType, shape, Values(11, 13), ct).WaitAsync(ct);
+            Ensure(direct.SequenceEqual(shape == "client-stream" ? [24] : new[] { 22, 26 }) &&
+                   NStudyCount(newType, "InputStreamExits") == 1 &&
+                   ReferenceEquals(connection.Session, NStudyClientSession(client)),
+                "ordinary R2 input also succeeds on the direct admission path on the original Session");
+            await WaitForNStudyAsync(() => table.ActiveCount == 0 && table.NStudyProducerCount == 0 &&
+                serverConnection.NStudyBindings.Snapshot() == (2, 0, 0), ct);
+            trace.Record("R2DirectInputCompletesOnTheOriginalSession", a2);
+        }
+        finally
+        {
+            input.ReleaseItems();
+            input.ReleaseDisposal();
+            cancelledInput.ReleaseItems();
+            cancelledInput.ReleaseDisposal();
+            oldType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
+            oldLoader.Unload();
+            newLoader.Unload();
+        }
+    }
+
+    private static async Task<int[]> CallNStudyInput(object proxy, Type contract, string shape,
+        IAsyncEnumerable<int> source, CancellationToken ct)
+    {
+        return shape == "client-stream"
+            ? [await InvokeValueTaskAsync<int>(proxy, contract, "ClientStreamAsync", source, ct)]
+            : await CollectAsync(InvokeStream(proxy, contract, "DuplexAsync", source, ct));
+    }
+
+    private sealed class NStudyInput : IAsyncEnumerable<int>
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _items = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _disposing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _dispose = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _enumerators;
+        private int _exits;
+
+        internal Task Started => _started.Task;
+        internal Task Disposing => _disposing.Task;
+        internal int Enumerators => Volatile.Read(ref _enumerators);
+        internal int ExitCount => Volatile.Read(ref _exits);
+        internal void ReleaseItems() => _items.TrySetResult();
+        internal void ReleaseDisposal() => _dispose.TrySetResult();
+
+        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _enumerators);
+            return ReadAsync(cancellationToken).GetAsyncEnumerator();
+        }
+
+        private async IAsyncEnumerable<int> ReadAsync([EnumeratorCancellation] CancellationToken ct)
+        {
+            try
+            {
+                _started.TrySetResult();
+                yield return 3;
+                await _items.Task.WaitAsync(ct);
+                yield return 7;
+            }
+            finally
+            {
+                _disposing.TrySetResult();
+                await _dispose.Task;
+                Interlocked.Increment(ref _exits);
+            }
+        }
+    }
+}

@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ServerRequestEnvelope request,
         ServiceRegistration serviceInfo,
+        bool requiresStreamAcceptance,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState? callState,
@@ -107,6 +108,13 @@ internal sealed partial class SharpLinkServer
             serviceInfo.ModuleCancellation,
             supportsCooperativeCancellation,
             requestCancellationMap);
+        if (requiresStreamAcceptance)
+        {
+            callState = EnsureTrackedCallState(
+                connection, callState, requestId, request.RpcDeadline,
+                serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+            callState.RequireNStudyStreamAcceptance();
+        }
         if (decodedRequestOwner is not null)
         {
             callState = EnsureTrackedCallState(

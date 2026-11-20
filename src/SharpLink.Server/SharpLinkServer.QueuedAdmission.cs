@@ -75,7 +75,8 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         ServerCallCancellationState callState,
         AdmissionProgram admissionProgram,
-        NStudyServerBindings.Use binding)
+        NStudyServerBindings.Use binding,
+        bool requiresStreamAcceptance)
     {
         var transferred = false;
         try
@@ -110,6 +111,7 @@ internal sealed partial class SharpLinkServer
             }
             var dispatchTask = DispatchAdmittedRpcAsync(
                 retainedPayload.SelectedService,
+                requiresStreamAcceptance,
                 connection,
                 requestId,
                 flags,

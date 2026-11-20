@@ -17,6 +17,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static int _created;
     private static int _disposed;
     private static int _notifications;
+    private static int _inputStreamExits;
 
     public DynamicPluginService(TimeProvider timeProvider)
     {
@@ -29,6 +30,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     public static int Disposed => Volatile.Read(ref _disposed);
 
     public static int Notifications => Volatile.Read(ref _notifications);
+    public static int InputStreamExits => Volatile.Read(ref _inputStreamExits);
 
     public static Task BlockStarted => Volatile.Read(ref _blockStarted).Task;
 
@@ -53,6 +55,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _notifications, 0);
+        Volatile.Write(ref _inputStreamExits, 0);
     }
 
     public static void ReleaseBlock() => Volatile.Read(ref _blockRelease).TrySetResult();
@@ -86,9 +89,13 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         CancellationToken cancellationToken)
     {
         var sum = 0;
-        await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
-            sum += value;
-        return sum;
+        try
+        {
+            await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+                sum += value;
+            return sum;
+        }
+        finally { Interlocked.Increment(ref _inputStreamExits); }
     }
 
     public async ValueTask<int> RejectClientStreamAsync(
@@ -141,8 +148,12 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         IAsyncEnumerable<int> values,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
-            yield return value * 2;
+        try
+        {
+            await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+                yield return value * 2;
+        }
+        finally { Interlocked.Increment(ref _inputStreamExits); }
     }
 
     public async ValueTask<int> BlockAsync(CancellationToken cancellationToken)

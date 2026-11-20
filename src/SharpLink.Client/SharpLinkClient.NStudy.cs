@@ -31,8 +31,15 @@ internal sealed partial class SharpLinkClient
 
     private static void RequireNStudyShape(in RpcMethodDescriptor method)
     {
-        if (method.HasClientStreams || method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay))
+        var supported = method.Kind switch
+        {
+            RpcMethodKind.Unary or RpcMethodKind.OneWay => !method.HasClientStreams,
+            RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming =>
+                method.HasClientStreams && method.ClientStreamCount > 0,
+            _ => false
+        };
+        if (!supported)
             throw new SharpLinkException(SharpLinkErrorCode.Unimplemented,
-                "This private checkpoint accepts only bound Unary and plain OneWay.");
+                "This private checkpoint does not support that bound RPC shape.");
     }
 }

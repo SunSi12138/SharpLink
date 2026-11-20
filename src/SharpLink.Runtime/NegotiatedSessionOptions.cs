@@ -76,7 +76,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
                     ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Bind or NStudyWire.BindAck or
-                    NStudyWire.Release or NStudyWire.Invalidated,
+                    NStudyWire.Release or NStudyWire.Invalidated or NStudyWire.RequestAccepted,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
@@ -89,7 +89,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.HealthResponse or
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-                    ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Invalidated,
+                    ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Invalidated or NStudyWire.RequestAccepted,
             RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal => false,
             _ => false
         };

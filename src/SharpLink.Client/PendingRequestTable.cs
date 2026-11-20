@@ -1099,7 +1099,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         public RpcDeadline Deadline { get; private set; }
         public CancellationToken CancellationToken { get; private set; }
         public CancellationToken ProducerCancellationToken
-            => _producerCancellation?.Token ?? CancellationToken.None;
+            => NStudyAdmission?.Token ?? _producerCancellation?.Token ?? CancellationToken.None;
+        public NStudyProducerAdmission? NStudyAdmission { get; private set; }
         public IPendingCallCompletionObserver? CompletionObserver => _completionObserver;
 
         /// <summary>
@@ -1141,12 +1142,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             call.Deadline = deadline;
             call.CancellationToken = cancellationToken;
             call._completionObserver = completionObserver;
-            call._producerCancellation = kind is
-                PendingCallKind.ClientStreaming or
-                PendingCallKind.DuplexStreaming or
-                PendingCallKind.OneWayClientStreaming
-                ? new CancellationTokenSource()
-                : null;
+            call.NStudyAdmission = kind is PendingCallKind.ClientStreaming or PendingCallKind.DuplexStreaming
+                ? new NStudyProducerAdmission() : null;
+            call._producerCancellation = kind == PendingCallKind.OneWayClientStreaming
+                ? new CancellationTokenSource() : null;
             call._cancellationRegistration = cancellationToken.CanBeCanceled
                 ? cancellationToken.UnsafeRegister(static state =>
                 {
@@ -1172,6 +1171,11 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         public Exception? CancelProducer(PendingCallCompletionReason reason)
         {
+            if (NStudyAdmission is { } admission)
+            {
+                NStudyAdmission = null;
+                return admission.Terminate();
+            }
             var producerCancellation = _producerCancellation;
             if (producerCancellation is null)
                 return null;
@@ -1207,6 +1211,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         public void ReturnUnused()
         {
             _cancellationRegistration.Dispose();
+            NStudyAdmission?.Release();
             _producerCancellation?.Dispose();
             _producerCancellation = null;
             ReturnCore();
@@ -1225,6 +1230,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             CancellationToken = CancellationToken.None;
             _producerCancellation = null;
             _completionObserver = null;
+            NStudyAdmission = null;
             _cancellationRegistration = default;
             Volatile.Write(ref _registered, 0);
 

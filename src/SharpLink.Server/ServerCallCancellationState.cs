@@ -57,6 +57,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     private readonly Lock _lifetimeGate = new();
     private readonly Lock _terminalGate = new();
+    private bool _nStudyAcceptancePending;
     private CancellationTokenSource? _invocationCancellation;
     private CancellationTokenRegistration _serverStoppingRegistration;
     private CancellationTokenRegistration _connectionClosedRegistration;
@@ -91,6 +92,27 @@ internal sealed class ServerCallCancellationState : IDisposable
     public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);
 
     internal bool HasPayloadOwnerForDiagnostics => Volatile.Read(ref _payloadOwner) is not null;
+    internal bool NStudyAcceptancePending => Volatile.Read(ref _nStudyAcceptancePending);
+
+    internal void RequireNStudyStreamAcceptance() => Volatile.Write(ref _nStudyAcceptancePending, true);
+
+    internal bool TryPublishNStudyStreamAcceptance(RpcSession session, IRpcByteBufferWriter writer, out bool transferred)
+    {
+        lock (_terminalGate)
+        {
+            transferred = false;
+            if (Reason != ServerCallCancellationReason.None || Deadline.IsExpired(_timeProvider!))
+                return false;
+            if (!_nStudyAcceptancePending)
+                return true;
+            transferred = true; // The FIFO owns the frame even when it rejects the append.
+            if (!session.TryEnqueuePreparedFrame(writer, false, CancellationToken.None,
+                    null, out _, out var rejection))
+                throw rejection!;
+            Volatile.Write(ref _nStudyAcceptancePending, false);
+            return true;
+        }
+    }
 
     internal static Action<ServerCallCancellationState>? BeforeRequestActivationForTests
     {
@@ -135,6 +157,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
+        state._nStudyAcceptancePending = false;
         state._admissionProgramUse = null;
         state._admissionLease = null;
         state._payloadPool = null;

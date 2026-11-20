@@ -137,6 +137,7 @@ public static class ProtocolV2FrameParser
         (byte)NStudyWire.BindAck => NStudyWire.BindAck,
         (byte)NStudyWire.Release => NStudyWire.Release,
         (byte)NStudyWire.Invalidated => NStudyWire.Invalidated,
+        (byte)NStudyWire.RequestAccepted => NStudyWire.RequestAccepted,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
