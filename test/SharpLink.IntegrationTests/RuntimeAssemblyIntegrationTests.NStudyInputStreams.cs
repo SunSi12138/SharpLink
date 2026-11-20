@@ -50,6 +50,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Type? oldType = null;
         var input = new NStudyInput();
         var cancelledInput = new NStudyInput();
+        var activeCancelledInput = new NStudyInput();
         try
         {
             var oldAssembly = oldLoader.LoadFromAssemblyPath(path);
@@ -64,10 +65,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
             var r1 = server.ReadNStudyTarget(oldAssembly, aCid);
             var a1 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r1, ct);
-            var connection = ((ClientConnection[])typeof(SharpLinkClient).GetField("_readyConnections",
-                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!).Single();
-            var serverConnection = ((ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry",
-                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!).SnapshotActive().Single();
+            var connection = NStudyClientConnection(client);
+            var serverConnection = NStudyServerConnection(server);
             Ensure(a1.Authority.PhysicalSession == serverConnection.NStudyPhysicalIdentity &&
                    serverConnection.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? connection.Session.RemoteEndPoint is IPEndPoint :
@@ -87,12 +86,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 Ensure(cancelledInput.Enumerators == 0 && !ordinaryCancelled.IsCompleted,
                     "the queued request has been sent, but its producer was not opened");
                 cancel.Cancel();
-                try
-                {
-                    await ordinaryCancelled.WaitAsync(ct);
-                    throw new InvalidOperationException("The queued call should report normal caller cancellation.");
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                await ExpectNStudyCallerCancellation(ordinaryCancelled, cancel.Token, ct);
                 await WaitForNStudyAsync(() => kernel.QueuedCalls == 0 && table.NStudyProducerCount == 0, ct);
                 Ensure(cancelledInput.Enumerators == 0 && NStudyCount(oldType, "InputStreamExits") == 0 &&
                        !busy.IsCompleted && await unrelated.TouchAsync(1, ct) == 101,
@@ -153,6 +147,36 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitForNStudyAsync(() => table.ActiveCount == 0 && table.NStudyProducerCount == 0 &&
                 serverConnection.NStudyBindings.Snapshot() == (2, 0, 0), ct);
             trace.Record("R2DirectInputCompletesOnTheOriginalSession", a2);
+
+            using var cancelActive = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var live = CallNStudyInput(proxy, contracts.ContractType, shape, activeCancelledInput, cancelActive.Token);
+            await activeCancelledInput.Started.WaitAsync(ct);
+            await WaitForNStudyAsync(() => NStudyCount(newType, "InputItemsConsumed") == 3, ct);
+            var originalToken = activeCancelledInput.ProducerToken;
+            var handle = originalToken.WaitHandle;
+            var safeHandle = handle.SafeWaitHandle;
+            var activeId = serverConnection.LastAcceptedRequestId;
+            trace.Record("ActiveR2InputDeliversAnItemBeforeCancellation", a2);
+            cancelActive.Cancel();
+            await ExpectNStudyCallerCancellation(live, cancelActive.Token, ct);
+            await activeCancelledInput.Disposing.WaitAsync(ct);
+            await WaitForNStudyAsync(() => NStudyCount(newType, "InputStreamExits") == 2 &&
+                !serverConnection.CallCancellations.TryGetValue(activeId, out _), ct);
+            Ensure(table.ActiveCount == 0 && table.NStudyProducerCount == 1 &&
+                   originalToken.IsCancellationRequested && !safeHandle.IsClosed &&
+                   handle.WaitOne(0) && activeCancelledInput.ExitCount == 0 &&
+                   await unrelated.TouchAsync(4, ct) == 104,
+                "logical cancellation and remote exit do not dispose the original producer CTS or interrupt B");
+            trace.Record("ActiveCancellationFinishesLogicallyWhileProducerOwnsItsCts", a2);
+            activeCancelledInput.ReleaseDisposal();
+            await WaitForNStudyAsync(() => table.NStudyProducerCount == 0 &&
+                connection.ActiveCallCount == 0 && serverConnection.ActiveCalls == 0 &&
+                serverConnection.NStudyBindings.Snapshot() == (2, 0, 0) &&
+                connection.Session.StreamManager.ActiveStreamCount == 0 &&
+                serverConnection.Session.StreamManager.ActiveStreamCount == 0, ct);
+            Ensure(activeCancelledInput.Enumerators == 1 && activeCancelledInput.ExitCount == 1 &&
+                   safeHandle.IsClosed, "the source CTS closes only after the one physical exit");
+            trace.Record("CancelledProducerExitsAndReleasesCtsAndRoutes", a2);
         }
         finally
         {
@@ -160,10 +184,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             input.ReleaseDisposal();
             cancelledInput.ReleaseItems();
             cancelledInput.ReleaseDisposal();
+            activeCancelledInput.ReleaseItems();
+            activeCancelledInput.ReleaseDisposal();
             oldType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
             oldLoader.Unload();
             newLoader.Unload();
         }
+    }
+
+    private static async Task ExpectNStudyCallerCancellation(Task call, CancellationToken caller, CancellationToken guard)
+    {
+        try
+        {
+            await call.WaitAsync(guard);
+            throw new InvalidOperationException("The call should report ordinary caller cancellation.");
+        }
+        catch (OperationCanceledException) when (caller.IsCancellationRequested && !guard.IsCancellationRequested) { }
     }
 
     private static async Task<int[]> CallNStudyInput(object proxy, Type contract, string shape,
@@ -187,11 +223,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal Task Disposing => _disposing.Task;
         internal int Enumerators => Volatile.Read(ref _enumerators);
         internal int ExitCount => Volatile.Read(ref _exits);
+        internal CancellationToken ProducerToken { get; private set; }
         internal void ReleaseItems() => _items.TrySetResult();
         internal void ReleaseDisposal() => _dispose.TrySetResult();
 
         public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
+            ProducerToken = cancellationToken;
             Interlocked.Increment(ref _enumerators);
             return ReadAsync(cancellationToken).GetAsyncEnumerator();
         }

@@ -388,6 +388,7 @@ internal sealed partial class SharpLinkServer
             RpcMethodKind.Unary => !method.HasClientStreams && method.HasResponsePayload == hasReturn,
             RpcMethodKind.ClientStreaming => method.HasClientStreams && method.ClientStreamCount > 0 &&
                 method.HasResponsePayload == hasReturn,
+            RpcMethodKind.ServerStreaming => !method.HasClientStreams && !hasReturn,
             RpcMethodKind.DuplexStreaming => method.HasClientStreams && method.ClientStreamCount > 0 && !hasReturn,
             _ => false
         };

@@ -14,10 +14,12 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static TaskCompletionSource _rejectResponseStarted = NewSignal();
     private static TaskCompletionSource _rejectResponseRelease = NewSignal();
     private static TaskCompletionSource _serverStreamDisposed = NewSignal();
+    private static OutputResource? _outputResource;
     private static int _created;
     private static int _disposed;
     private static int _notifications;
     private static int _inputStreamExits;
+    private static int _inputItemsConsumed;
 
     public DynamicPluginService(TimeProvider timeProvider)
     {
@@ -31,6 +33,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static int Notifications => Volatile.Read(ref _notifications);
     public static int InputStreamExits => Volatile.Read(ref _inputStreamExits);
+    public static int InputItemsConsumed => Volatile.Read(ref _inputItemsConsumed);
 
     public static Task BlockStarted => Volatile.Read(ref _blockStarted).Task;
 
@@ -41,6 +44,12 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     public static Task RejectResponseStarted => Volatile.Read(ref _rejectResponseStarted).Task;
 
     public static Task ServerStreamDisposed => Volatile.Read(ref _serverStreamDisposed).Task;
+    public static Task ServerOutputAwaitingItem => _outputResource!.WaitingForItem.Task;
+    public static Task ServerOutputCleanupStarted => _outputResource!.CleanupStarted.Task;
+    public static int ServerOutputCleanupCount => _outputResource?.CleanupCount ?? 0;
+    public static void HoldServerOutputResource() => _outputResource = new OutputResource();
+    public static void FinishServerOutputCleanup() => _outputResource?.CleanupReady.TrySetResult();
+    public static void ReleaseServerOutput() => _outputResource?.NextItemReady.TrySetResult();
 
     public static void Reset()
     {
@@ -52,10 +61,12 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Write(ref _rejectResponseStarted, NewSignal());
         Volatile.Write(ref _rejectResponseRelease, NewSignal());
         Volatile.Write(ref _serverStreamDisposed, NewSignal());
+        _outputResource = null;
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _notifications, 0);
         Volatile.Write(ref _inputStreamExits, 0);
+        Volatile.Write(ref _inputItemsConsumed, 0);
     }
 
     public static void ReleaseBlock() => Volatile.Read(ref _blockRelease).TrySetResult();
@@ -92,7 +103,10 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         try
         {
             await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                Interlocked.Increment(ref _inputItemsConsumed);
                 sum += value;
+            }
             return sum;
         }
         finally { Interlocked.Increment(ref _inputStreamExits); }
@@ -113,17 +127,29 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         int count,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        var output = _outputResource;
         try
         {
             for (var index = 0; index < count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 yield return index;
+                if (index == 0 && output is not null)
+                {
+                    output.WaitingForItem.TrySetResult();
+                    await output.NextItemReady.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
                 await Task.Yield();
             }
         }
         finally
         {
+            if (output is not null)
+            {
+                output.CleanupStarted.TrySetResult();
+                await output.CleanupReady.Task.ConfigureAwait(false);
+                Interlocked.Increment(ref output.CleanupCount);
+            }
             Volatile.Read(ref _serverStreamDisposed).TrySetResult();
         }
     }
@@ -151,7 +177,10 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         try
         {
             await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                Interlocked.Increment(ref _inputItemsConsumed);
                 yield return value * 2;
+            }
         }
         finally { Interlocked.Increment(ref _inputStreamExits); }
     }
@@ -191,6 +220,15 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     private static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private sealed class OutputResource
+    {
+        internal readonly TaskCompletionSource WaitingForItem = NewSignal();
+        internal readonly TaskCompletionSource NextItemReady = NewSignal();
+        internal readonly TaskCompletionSource CleanupStarted = NewSignal();
+        internal readonly TaskCompletionSource CleanupReady = NewSignal();
+        internal int CleanupCount;
+    }
 }
 
 [RpcService]
