@@ -25,6 +25,15 @@ internal sealed partial class StreamManager
             if (dispatcher is not DiscardingStreamDispatcher &&
                 dispatcher is not PreAdmissionStreamDispatcher { IsDiscarding: true })
             {
+                if (dispatcher is PreAdmissionStreamDispatcher { RetainsOneWayInput: true })
+                {
+                    // Cancel can precede a final queued chunk. The retained route owns
+                    // the debit and refund, but must not enter its original typed child.
+                    _acceptBytes?.Invoke(requestId, streamId, encodedByteCount);
+                    _bytesConsumed?.Invoke(requestId, streamId, encodedByteCount);
+                    entry.Release();
+                    return true;
+                }
                 entry.Release();
                 return false;
             }
@@ -51,6 +60,15 @@ internal sealed partial class StreamManager
             return false;
         try
         {
+            if (entry.Dispatcher is PreAdmissionStreamDispatcher { RetainsOneWayInput: true })
+            {
+                // EOF may precede the handler/queued admission's physical unwind.
+                // Record the peer terminal without entering or releasing its child.
+                entry.MarkPeerTerminalReceived();
+                if (!CompleteCapturedTerminalStream(requestId, streamId, requestRoutes, entry, exception))
+                    PublishReceiveTerminal(requestId, streamId, entry);
+                return true;
+            }
             return CompleteCapturedTerminalStream(requestId, streamId, requestRoutes, entry, exception);
         }
         finally

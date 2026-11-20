@@ -86,19 +86,21 @@ internal sealed partial class SharpLinkServer
         RpcSession session,
         long requestId,
         int clientStreamCount,
-        ServerCallCancellationState callState)
+        ServerCallCancellationState callState,
+        bool retainUntilLocalCompletion = false)
     {
         if (clientStreamCount == 0)
             return;
 
-        ReservePreAdmissionRequestStreamsCore(session, requestId, clientStreamCount, callState);
+        ReservePreAdmissionRequestStreamsCore(session, requestId, clientStreamCount, callState, retainUntilLocalCompletion);
     }
 
     private void ReservePreAdmissionRequestStreamsCore(
         RpcSession session,
         long requestId,
         int clientStreamCount,
-        ServerCallCancellationState callState)
+        ServerCallCancellationState callState,
+        bool retainUntilLocalCompletion)
     {
         var streamManager = session.StreamManager;
         var resourceGovernor = ResourceGovernor;
@@ -123,7 +125,8 @@ internal sealed partial class SharpLinkServer
                     decodedOwner ?? throw new InvalidOperationException(
                         "Compressed stream decoding did not return an owner."),
                     _runtimeContext.Buffers);
-            });
+            },
+            retainUntilLocalCompletion);
     }
 
     private void ReservePreInvocationRequestStreams(
@@ -235,19 +238,23 @@ internal sealed partial class SharpLinkServer
             session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
     }
 
-    private static int ResolveRawRequestClientStreamCount(
-        ServerConnectionState connection, ReadOnlySequence<byte> payload)
+    private static int ResolveRejectedNStudyOneWayCount(
+        ServerConnectionState connection, ReadOnlySequence<byte> payload, int declaredCount)
     {
+        if (declaredCount != 0)
+            return declaredCount;
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long bindingId) ||
-            !reader.TryReadLittleEndian(out long methodId) ||
-            !connection.NStudyBindings.TryResolve(bindingId, out var registration) ||
-            !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
+            !reader.TryReadLittleEndian(out long methodId))
         {
             return UnresolvedClientStreamCount;
         }
 
-        return descriptor.ClientStreamCount;
+        return connection.NStudyBindings.IsRetired(bindingId) ||
+            (connection.NStudyBindings.TryResolve(bindingId, out var registration) &&
+             registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor) &&
+             descriptor.Kind == RpcMethodKind.OneWay && !descriptor.HasClientStreams)
+            ? 0 : UnresolvedClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(

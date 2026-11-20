@@ -37,6 +37,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     private bool _discarding;
     private bool _localAbandonRequested;
     private bool _retainUntilLocalCompletion = retainUntilLocalCompletion;
+    internal bool RetainsOneWayInput => Volatile.Read(ref _retainUntilLocalCompletion);
     private bool _attachmentInProgress;
     private int _configurationVersion;
     private int _replayedDuringAttach;

@@ -1085,7 +1085,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         private PendingRequestTable? _table;
         private CancellationTokenRegistration _cancellationRegistration;
-        private CancellationTokenSource? _producerCancellation;
         private IPendingCallCompletionObserver? _completionObserver;
         private int _registered;
         private bool _requestPublished;
@@ -1099,7 +1098,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         public RpcDeadline Deadline { get; private set; }
         public CancellationToken CancellationToken { get; private set; }
         public CancellationToken ProducerCancellationToken
-            => NStudyAdmission?.Token ?? _producerCancellation?.Token ?? CancellationToken.None;
+            => NStudyAdmission?.Token ?? CancellationToken.None;
         public NStudyProducerAdmission? NStudyAdmission { get; private set; }
         public IPendingCallCompletionObserver? CompletionObserver => _completionObserver;
 
@@ -1115,7 +1114,11 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         /// </remarks>
         public bool RequestPublished => _requestPublished;
 
-        public void MarkRequestPublished() => _requestPublished = true;
+        public void MarkRequestPublished()
+        {
+            _requestPublished = true;
+            NStudyAdmission?.MarkRequestPublished();
+        }
 
         public static PendingCall Rent(
             PendingRequestTable table,
@@ -1142,10 +1145,12 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             call.Deadline = deadline;
             call.CancellationToken = cancellationToken;
             call._completionObserver = completionObserver;
-            call.NStudyAdmission = kind is PendingCallKind.ClientStreaming or PendingCallKind.DuplexStreaming
-                ? new NStudyProducerAdmission() : null;
-            call._producerCancellation = kind == PendingCallKind.OneWayClientStreaming
-                ? new CancellationTokenSource() : null;
+            call.NStudyAdmission = kind switch
+            {
+                PendingCallKind.ClientStreaming or PendingCallKind.DuplexStreaming => new(requiresAcceptance: true),
+                PendingCallKind.OneWayClientStreaming => new(requiresAcceptance: false),
+                _ => null
+            };
             call._cancellationRegistration = cancellationToken.CanBeCanceled
                 ? cancellationToken.UnsafeRegister(static state =>
                 {
@@ -1171,49 +1176,15 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         public Exception? CancelProducer(PendingCallCompletionReason reason)
         {
-            if (NStudyAdmission is { } admission)
-            {
-                NStudyAdmission = null;
-                return admission.Terminate();
-            }
-            var producerCancellation = _producerCancellation;
-            if (producerCancellation is null)
-                return null;
-            _producerCancellation = null;
-            if (reason == PendingCallCompletionReason.LocalStreamComplete)
-            {
-                producerCancellation.Dispose();
-                return null;
-            }
-            return CancelAndDisposeProducer(producerCancellation);
-        }
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static Exception? CancelAndDisposeProducer(
-            CancellationTokenSource producerCancellation)
-        {
-            Exception? callbackFailure = null;
-            try
-            {
-                producerCancellation.Cancel();
-            }
-            catch (Exception exception)
-            {
-                callbackFailure = exception;
-            }
-            finally
-            {
-                producerCancellation.Dispose();
-            }
-            return callbackFailure;
+            var admission = NStudyAdmission;
+            NStudyAdmission = null;
+            return admission?.Terminate(reason);
         }
 
         public void ReturnUnused()
         {
             _cancellationRegistration.Dispose();
             NStudyAdmission?.Release();
-            _producerCancellation?.Dispose();
-            _producerCancellation = null;
             ReturnCore();
         }
 
@@ -1228,7 +1199,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             Dispatcher = null;
             Deadline = default;
             CancellationToken = CancellationToken.None;
-            _producerCancellation = null;
             _completionObserver = null;
             NStudyAdmission = null;
             _cancellationRegistration = default;

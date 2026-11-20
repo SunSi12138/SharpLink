@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkServer
         ServerRequestEnvelope request,
         ServiceRegistration? serviceInfo,
         NStudyServerBindings.Use binding,
+        int declaredClientStreamCount,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         int admittedClientStreamCount = 0,
@@ -32,27 +33,33 @@ internal sealed partial class SharpLinkServer
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                     return ValueTask.CompletedTask;
                 }
-                // Only the private plain OneWay shape is enabled here. A
-                // request already emitted before a retirement notice owns no
-                // input stream; it can be dropped without closing unrelated B.
+                if (declaredClientStreamCount != 0)
+                {
+                    // Counted input can be drained without the retiring registry.
+                    DrainRejectedOneWayStreams(session, requestId, declaredClientStreamCount);
+                    return ValueTask.CompletedTask;
+                }
                 if (connection.NStudyBindings.IsRetired(request.InterfaceHash))
                     return ValueTask.CompletedTask;
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
 
-            // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
-            // client streams still needs a receive route so the peer can finish sending and recover
-            // its receive credit even though no user invocation will run. If the method shape cannot
-            // be resolved on the immediate path, terminate the connection rather than guess a stream
-            // count; an admission-resume path already owns the exact reserved stream count and can
-            // safely drain those routes instead.
+            // Only the exact method's shape can reach a typed route. The independent
+            // count is enough to discard input even if the exact method isn't available.
             if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor) ||
-                descriptor.Kind != RpcMethodKind.OneWay || descriptor.HasClientStreams)
+                descriptor.Kind != RpcMethodKind.OneWay ||
+                descriptor.HasClientStreams != (declaredClientStreamCount != 0) ||
+                descriptor.ClientStreamCount != declaredClientStreamCount)
             {
                 if (admittedCallState is not null)
                 {
                     DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
+                    return ValueTask.CompletedTask;
+                }
+                if (declaredClientStreamCount != 0)
+                {
+                    DrainRejectedOneWayStreams(session, requestId, declaredClientStreamCount);
                     return ValueTask.CompletedTask;
                 }
                 return TerminateUnresolvableOneWayRequest(session, requestId);
@@ -133,11 +140,20 @@ internal sealed partial class SharpLinkServer
                             descriptor.ClientStreamCount).AsTask());
                     }
 
-                    ReservePreAdmissionRequestStreams(
-                        session,
-                        requestId,
-                        descriptor.ClientStreamCount,
-                        admittedCallState);
+                    try
+                    {
+                        ReservePreAdmissionRequestStreams(
+                            session, requestId, descriptor.ClientStreamCount, admittedCallState,
+                            retainUntilLocalCompletion: true);
+                    }
+                    catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+                    {
+                        retainedPayload!.Dispose();
+                        // The route capacity failure already closes this peer.
+                        admittedCallState.TryCancel(ServerCallCancellationReason.PreAdmissionStreamResourceExhausted);
+                        return FinishRejectedQueuedAdmissionAsync(admissionTask, connection, requestId,
+                            requestCancellationMap, admittedCallState, oneWay: true);
+                    }
                     return new ValueTask(AwaitOneWayAdmissionAsync(
                         admissionTask,
                         retainedPayload!,
@@ -146,7 +162,7 @@ internal sealed partial class SharpLinkServer
                         flags,
                         requestCancellationMap,
                         serverLoopToken,
-                        descriptor.ClientStreamCount,
+                        descriptor,
                         admittedCallState,
                         admissionProgram,
                         binding));
@@ -167,7 +183,7 @@ internal sealed partial class SharpLinkServer
             {
                 DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
                 if (admittedCallState is not null)
-                    ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                 return ValueTask.CompletedTask;
             }
 
@@ -484,22 +500,33 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            try
-            {
-                var decision = await admissionTask.ConfigureAwait(false);
-                decision.Lease?.Dispose();
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                if (oneWay)
-                    ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
-                else
-                    ReleasePendingAdmissionState(
-                        connection.Session, requestCancellationMap, requestId, callState);
-            }
+            await FinishRejectedQueuedAdmissionAsync(admissionTask, connection, requestId,
+                requestCancellationMap, callState, oneWay).ConfigureAwait(false);
+        }
+    }
+
+    private static async ValueTask FinishRejectedQueuedAdmissionAsync(
+        ValueTask<AdmissionDecision> admissionTask,
+        ServerConnectionState connection,
+        long requestId,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        ServerCallCancellationState callState,
+        bool oneWay)
+    {
+        try
+        {
+            var decision = await admissionTask.ConfigureAwait(false);
+            decision.Lease?.Dispose();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (oneWay)
+                ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
+            else
+                ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
         }
     }
 

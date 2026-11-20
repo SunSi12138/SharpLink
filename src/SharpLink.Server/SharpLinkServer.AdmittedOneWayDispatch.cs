@@ -6,6 +6,7 @@ internal sealed partial class SharpLinkServer
     // The post-admission resource skeleton mirrors the immediate method and requires parity tests.
     private ValueTask DispatchAdmittedOneWayRpc(
         QueuedServiceSelection serviceSelection,
+        RpcMethodDescriptor descriptor,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -15,7 +16,6 @@ internal sealed partial class SharpLinkServer
         AdmissionProgram? admissionProgram,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
-        int admittedClientStreamCount = 0,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
@@ -30,49 +30,23 @@ internal sealed partial class SharpLinkServer
             {
                 if (admittedCallState is not null)
                 {
-                    DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
+                    DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                     return ValueTask.CompletedTask;
                 }
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
 
-            // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
-            // client streams still needs a receive route so the peer can finish sending and recover
-            // its receive credit even though no user invocation will run. If the method shape cannot
-            // be resolved on the immediate path, terminate the connection rather than guess a stream
-            // count; an admission-resume path already owns the exact reserved stream count and can
-            // safely drain those routes instead.
-            if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor))
-            {
-                if (admittedCallState is not null)
-                {
-                    DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
-                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
-                    return ValueTask.CompletedTask;
-                }
-                return TerminateUnresolvableOneWayRequest(session, requestId);
-            }
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
-                DrainRejectedOneWayStreams(
-                    session,
-                    requestId,
-                    admittedCallState is null
-                        ? descriptor.ClientStreamCount
-                        : admittedClientStreamCount);
+                DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
                 if (admittedCallState is not null)
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                 return ValueTask.CompletedTask;
             }
             if (!serviceInfo.AcceptsCalls)
             {
-                DrainRejectedOneWayStreams(
-                    session,
-                    requestId,
-                    admittedCallState is null
-                        ? descriptor.ClientStreamCount
-                        : admittedClientStreamCount);
+                DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
                 if (admittedCallState is not null)
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                 return ValueTask.CompletedTask;

@@ -106,6 +106,17 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
 
+                        var oneWayInputCount = 0;
+                        if (header.Type == NStudyWire.OneWayInputRequest)
+                        {
+                            // Count is independent of the registry. Check the entire
+                            // compressed envelope before stripping the count byte.
+                            oneWayInputCount = NStudyWire.ReadOneWayInputCount(payload);
+                            session.ValidateInboundPayloadEnvelope(header.Type, header.Flags, payload);
+                            payload = payload.Slice(1);
+                            header = header with { Type = ProtocolV2FrameType.Request };
+                        }
+
                         var isStreamProgress = header.Type is
                             ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
                         var streamRequestId = isStreamProgress
@@ -160,8 +171,8 @@ internal sealed partial class SharpLinkServer
                                 // prefix. Never perform potentially blocking decompression here:
                                 // dispatch must first resolve that relative budget into one local
                                 // RpcDeadline and then carry the same boundary through decode.
-                                session.ValidateInboundPayloadEnvelope(
-                                    header.Type, header.Flags, payload);
+                                if (oneWayInputCount == 0)
+                                    session.ValidateInboundPayloadEnvelope(header.Type, header.Flags, payload);
                             }
                             else
                             {
@@ -183,7 +194,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-                                            ResolveRawRequestClientStreamCount(connection, payload));
+                                            ResolveRejectedNStudyOneWayCount(connection, payload, oneWayInputCount));
                                     }
                                     else
                                     {
@@ -285,7 +296,8 @@ internal sealed partial class SharpLinkServer
                                             header.Flags,
                                             payload,
                                             requestCancellationMap,
-                                            ct);
+                                            ct,
+                                            oneWayInputCount);
                                         break;
                                     }
                                 case ProtocolV2FrameType.Cancel:
@@ -392,7 +404,8 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken)
+        CancellationToken serverLoopToken,
+        int oneWayInputCount)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         NStudyServerBindings.Use bindingUse = default;
@@ -407,7 +420,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(connection, payload));
+                        ResolveRejectedNStudyOneWayCount(connection, payload, oneWayInputCount));
                     return;
                 }
 
@@ -440,7 +453,8 @@ internal sealed partial class SharpLinkServer
                         admissionProgram,
                         request,
                         selected,
-                        bindingUse)
+                        bindingUse,
+                        oneWayInputCount)
                     : DispatchRpcAsync(
                         connection,
                         requestId,

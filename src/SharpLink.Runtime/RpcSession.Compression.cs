@@ -284,13 +284,14 @@ internal sealed partial class RpcSession
                 throw ProtocolV2FrameParser.Violation("StreamData stream ID is truncated.");
             return sizeof(ushort);
         }
-        if (type != ProtocolV2FrameType.Request)
+        if (!NStudyWire.IsRequestFrame(type))
             return -1;
 
         var reader = new SequenceReader<byte>(payload);
-        if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
+        var routingBytes = ProtocolV2Constants.RequestPrefixBytes + (type == NStudyWire.OneWayInputRequest ? 1 : 0);
+        if (reader.Remaining < routingBytes)
             throw ProtocolV2FrameParser.Violation("Request routing prefix is truncated.");
-        reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        reader.Advance(routingBytes);
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
             if (reader.Remaining < sizeof(long))

@@ -5,19 +5,30 @@ namespace SharpLink.Client;
 internal sealed class NStudyProducerAdmission
 {
     private readonly CancellationTokenSource _source = new();
-    private readonly TaskCompletionSource<bool> _acceptance = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<bool>? _acceptance;
     private int _owners = 1;
-    internal bool Confirmed { get; private set; }
+    private bool _confirmed;
+    private bool _requestPublished;
+    internal bool RequiresAcceptance => _acceptance is not null;
+    internal bool Confirmed => !RequiresAcceptance || _confirmed;
     internal bool Started { get; set; }
-    internal Task<bool> Acceptance => _acceptance.Task;
+    internal Task<bool> Acceptance => _acceptance!.Task;
     internal CancellationToken Token { get; }
+    internal bool RequestPublished => Volatile.Read(ref _requestPublished);
 
-    internal NStudyProducerAdmission() => Token = _source.Token;
+    internal NStudyProducerAdmission(bool requiresAcceptance)
+    {
+        if (requiresAcceptance)
+            _acceptance = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Token = _source.Token;
+    }
+
+    internal void MarkRequestPublished() => Volatile.Write(ref _requestPublished, true);
 
     internal void Confirm()
     {
-        Confirmed = true;
-        _acceptance.TrySetResult(true);
+        _confirmed = true;
+        _acceptance!.TrySetResult(true);
     }
 
     internal void Retain() => Interlocked.Increment(ref _owners);
@@ -28,9 +39,14 @@ internal sealed class NStudyProducerAdmission
             _source.Dispose();
     }
 
-    internal Exception? Terminate()
+    internal Exception? Terminate(PendingCallCompletionReason reason)
     {
-        _acceptance.TrySetResult(false);
+        _acceptance?.TrySetResult(false);
+        if (reason == PendingCallCompletionReason.LocalStreamComplete)
+        {
+            Release();
+            return null;
+        }
         try { _source.Cancel(); return null; }
         catch (Exception exception) { return exception; }
         finally { Release(); }
@@ -82,7 +98,7 @@ internal sealed partial class PendingRequestTable
         {
             if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slots[index]), call))
                 return; // Ordinary terminal completion, concurrent with the receipt.
-            if (!call.RequestPublished || call.NStudyAdmission is not { } admission)
+            if (!call.RequestPublished || call.NStudyAdmission is not { RequiresAcceptance: true } admission)
                 throw RpcSession.InvalidNStudy("Stream acceptance does not match a published input stream.");
             if (!call.Deadline.IsExpired(_timeProvider))
             {
@@ -102,7 +118,8 @@ internal sealed partial class PendingRequestTable
         lock (call.CompletionGate)
         {
             if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slots[index]), call) ||
-                !ReferenceEquals(call.NStudyAdmission, admission) || !admission.Confirmed || admission.Started)
+                !call.RequestPublished || !ReferenceEquals(call.NStudyAdmission, admission) ||
+                !admission.Confirmed || admission.Started)
                 return false;
             if (!call.Deadline.IsExpired(_timeProvider))
             {

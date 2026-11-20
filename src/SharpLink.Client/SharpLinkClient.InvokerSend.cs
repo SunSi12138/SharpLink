@@ -15,7 +15,8 @@ internal sealed partial class SharpLinkClient
         bool observeEmission = false,
         CancellationToken cancellationToken = default,
         IRequestEmissionFailureObserver? failureObserver = null,
-        PendingRequestTable? publicationTable = null)
+        PendingRequestTable? publicationTable = null,
+        int oneWayInputCount = 0)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
@@ -45,10 +46,15 @@ internal sealed partial class SharpLinkClient
         try
         {
             using (writer.BeginPacketScope(
-                       ProtocolV2FrameType.Request,
+                       oneWayInputCount == 0 ? ProtocolV2FrameType.Request : NStudyWire.OneWayInputRequest,
                        flags,
                        unchecked((ulong)requestId)))
             {
+                if (oneWayInputCount != 0)
+                {
+                    writer.GetSpan(1)[0] = checked((byte)oneWayInputCount);
+                    writer.Advance(1);
+                }
                 var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
                 var span = writer.GetSpan(prefixLength);
                 BinaryPrimitives.WriteInt64LittleEndian(span, binding.Token);

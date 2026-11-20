@@ -47,11 +47,16 @@ internal sealed partial class RpcSession
         var phase = Volatile.Read(ref _protocolState).Phase;
         if (Volatile.Read(ref _terminal) is { } terminal)
             throw terminal.Exception;
+        if (frameType == NStudyWire.OneWayInputRequest &&
+            (Role != RpcSessionRole.Server || NegotiatedOptions?.ProtocolMinorVersion != NStudyWire.Minor))
+        {
+            throw InvalidNStudy("Counted OneWay input requires its negotiated server Session.");
+        }
 
         if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType) ||
             (allowRequestWhileDraining &&
              phase == RpcSessionProtocolPhase.Draining &&
-             frameType == ProtocolV2FrameType.Request))
+             NStudyWire.IsRequestFrame(frameType)))
         {
             return;
         }
@@ -160,7 +165,7 @@ internal sealed partial class RpcSession
     {
         if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType))
             return;
-        if (phase == RpcSessionProtocolPhase.Draining && frameType == ProtocolV2FrameType.Request)
+        if (phase == RpcSessionProtocolPhase.Draining && NStudyWire.IsRequestFrame(frameType))
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,

@@ -715,11 +715,15 @@ internal sealed partial class SharpLinkClient
             throw exception;
         }
 
+        var table = connection!.PendingCalls;
+        NStudyProducerAdmission? admission = null;
+        var sentEof = false;
         try
         {
-            if (connection!.PendingCalls.Contains(requestId))
+            admission = table.RetainNStudyProducer(requestId);
+            if (admission is not null)
             {
-                var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+                var streamCancellationToken = admission.Token;
                 var emission = SendRpcCall(
                     connection.Session,
                     method.ContractId,
@@ -733,21 +737,60 @@ internal sealed partial class SharpLinkClient
                     observeEmission: control.Deadline.HasValue,
                     // The pending call owns producer cancellation and request publication.
                     cancellationToken: streamCancellationToken,
-                    publicationTable: connection.PendingCalls);
+                    publicationTable: table,
+                    oneWayInputCount: method.ClientStreamCount);
                 await emission.ConfigureAwait(false);
-                await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
-                connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
+                // No receipt is involved: the exact local head append is sufficient.
+                if (table.TryStartNStudyProducer(requestId, admission))
+                {
+                    await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
+                    sentEof = true;
+                    table.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
+                }
             }
         }
         catch (Exception exception)
         {
             // Preserve the pending owner's terminal arbitration and observe its lease once.
-            connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
+            table.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
+        }
+        finally
+        {
+            if (admission is not null)
+            {
+                try
+                {
+                    if (!sentEof && admission.RequestPublished)
+                        EndNStudyOneWayInput(connection.Session, requestId, method.ClientStreamCount);
+                }
+                finally { table.ReleaseNStudyProducer(admission); }
+            }
         }
 
         // Registration may already have completed and removed the pending entry. Its operation
         // still owns that terminal result and must be consumed exactly once to return it to the pool.
         _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
+    }
+
+    private void EndNStudyOneWayInput(RpcSession session, long requestId, int count)
+    {
+        if (!session.IsConnected)
+            return;
+        var end = new SharpLinkException(SharpLinkErrorCode.Cancelled, "The OneWay input producer stopped.");
+        try
+        {
+            // Physical writer exit precedes this FIFO tail. Its terminal frames
+            // retire discard routes even when the caller's Cancel arrived earlier.
+            for (var index = 1; index <= count; index++)
+                session.SendClientStreamError(requestId, (ushort)index, end, default,
+                    _runtimeContext.TimeProvider, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            // Incomplete terminal publication cannot leave remote routes waiting
+            // for input. Fail only the affected physical peer.
+            session.NotifyDisconnected(exception);
+        }
     }
 
     private async ValueTask<TResponse> InvokeClientStreamingCoreAsync<TRequest, TResponse, TStreams>(

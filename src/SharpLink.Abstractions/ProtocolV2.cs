@@ -13,10 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 0x79A2; // Private #999 N profile with stream acceptance.
+    public const ushort MinorVersion = 0x79A3; // Private #999 N profile with counted OneWay input.
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 0x79A2;
+    public const ushort MinimumCompatibleMinorVersion = 0x79A3;
 }
 
 /// <summary>Protocol v2 frame types.</summary>

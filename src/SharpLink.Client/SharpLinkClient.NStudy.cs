@@ -33,7 +33,10 @@ internal sealed partial class SharpLinkClient
     {
         var supported = method.Kind switch
         {
-            RpcMethodKind.Unary or RpcMethodKind.OneWay or RpcMethodKind.ServerStreaming => !method.HasClientStreams,
+            RpcMethodKind.Unary or RpcMethodKind.ServerStreaming => !method.HasClientStreams,
+            RpcMethodKind.OneWay => method.HasClientStreams
+                ? method.ClientStreamCount is > 0 and <= NStudyWire.OneWayInputLimit
+                : method.ClientStreamCount == 0,
             RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming =>
                 method.HasClientStreams && method.ClientStreamCount > 0,
             _ => false

@@ -214,7 +214,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         }
     }
 
-    private static SharpLinkClient NewNStudyClient(IGeneratedManifestSource source, int port, string? memoryName)
+    private static SharpLinkClient NewNStudyClient(IGeneratedManifestSource source, int port, string? memoryName,
+        Action<SharpClientBuilder>? configure = null)
     {
         var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(source).DisableRequestTimeout()
             .UseAuthenticator(SharpLinkAuthenticator.CreateClient(static _ =>
@@ -223,6 +224,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             builder.UseTcp(IPAddress.Loopback.ToString(), port);
         else
             builder.UseSharedMemory(memoryName);
+        configure?.Invoke(builder);
         return (SharpLinkClient)builder.Build();
     }
 

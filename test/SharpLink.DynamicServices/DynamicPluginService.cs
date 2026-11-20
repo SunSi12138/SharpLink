@@ -20,6 +20,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static int _notifications;
     private static int _inputStreamExits;
     private static int _inputItemsConsumed;
+    private static int _notifiedBatchBytes;
 
     public DynamicPluginService(TimeProvider timeProvider)
     {
@@ -34,6 +35,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     public static int Notifications => Volatile.Read(ref _notifications);
     public static int InputStreamExits => Volatile.Read(ref _inputStreamExits);
     public static int InputItemsConsumed => Volatile.Read(ref _inputItemsConsumed);
+    public static int NotifiedBatchBytes => Volatile.Read(ref _notifiedBatchBytes);
 
     public static Task BlockStarted => Volatile.Read(ref _blockStarted).Task;
 
@@ -67,6 +69,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Write(ref _notifications, 0);
         Volatile.Write(ref _inputStreamExits, 0);
         Volatile.Write(ref _inputItemsConsumed, 0);
+        Volatile.Write(ref _notifiedBatchBytes, 0);
     }
 
     public static void ReleaseBlock() => Volatile.Read(ref _blockRelease).TrySetResult();
@@ -93,6 +96,22 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     {
         await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
             Interlocked.Add(ref _notifications, value);
+    }
+
+    public async ValueTask NotifyBatchAsync(byte[] context, IAsyncEnumerable<byte[]> first,
+        IAsyncEnumerable<byte[]> second, CancellationToken cancellationToken)
+    {
+        var counts = await Task.WhenAll(CountInputAsync(first, cancellationToken),
+            CountInputAsync(second, cancellationToken)).ConfigureAwait(false);
+        Interlocked.Add(ref _notifiedBatchBytes, context.Length + counts[0] + counts[1]);
+    }
+
+    private static async Task<int> CountInputAsync(IAsyncEnumerable<byte[]> items, CancellationToken cancellationToken)
+    {
+        var total = 0;
+        await foreach (var item in items.WithCancellation(cancellationToken).ConfigureAwait(false))
+            total += item.Length;
+        return total;
     }
 
     public async ValueTask<int> ClientStreamAsync(

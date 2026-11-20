@@ -10,7 +10,7 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
-        int clientStreamCount,
+        RpcMethodDescriptor descriptor,
         ServerCallCancellationState callState,
         AdmissionProgram admissionProgram,
         NStudyServerBindings.Use binding)
@@ -29,22 +29,16 @@ internal sealed partial class SharpLinkServer
             }
             if (!decision.IsAcquired)
             {
-                DrainRejectedOneWayStreams(
-                    connection.Session, requestId, clientStreamCount);
                 _ = RejectAdmission(connection.Session, requestId, decision, oneWay: true);
-                ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
-                transferred = true;
                 return;
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
             if (!binding.ClaimStart())
-            {
-                DrainRejectedOneWayStreams(connection.Session, requestId, clientStreamCount);
                 return;
-            }
             var dispatchTask = DispatchAdmittedOneWayRpc(
                 retainedPayload.SelectedService,
+                descriptor,
                 connection,
                 requestId,
                 flags,
@@ -52,7 +46,7 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
-                callState, true, clientStreamCount, retainedPayload);
+                callState, true, retainedPayload);
             transferred = true;
             if (!dispatchTask.IsCompletedSuccessfully)
                 await dispatchTask.ConfigureAwait(false);
@@ -61,7 +55,10 @@ internal sealed partial class SharpLinkServer
         {
             retainedPayload.Dispose();
             if (!transferred)
-                ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
+            {
+                try { DrainRejectedOneWayStreams(connection.Session, requestId, descriptor.ClientStreamCount); }
+                finally { ReleaseAdmissionCallState(requestCancellationMap, requestId, callState); }
+            }
         }
     }
 

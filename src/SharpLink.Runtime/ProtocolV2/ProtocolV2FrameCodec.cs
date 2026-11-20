@@ -138,6 +138,7 @@ public static class ProtocolV2FrameParser
         (byte)NStudyWire.Release => NStudyWire.Release,
         (byte)NStudyWire.Invalidated => NStudyWire.Invalidated,
         (byte)NStudyWire.RequestAccepted => NStudyWire.RequestAccepted,
+        (byte)NStudyWire.OneWayInputRequest => NStudyWire.OneWayInputRequest,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -180,6 +181,11 @@ public static class ProtocolV2FrameParser
                                            ProtocolV2FrameFlags.Cancellable |
                                            ProtocolV2FrameFlags.OneWay |
                                            ProtocolV2FrameFlags.HasReturn,
+            NStudyWire.OneWayInputRequest => ProtocolV2FrameFlags.HasTimeBudget |
+                                             ProtocolV2FrameFlags.HasMetadata |
+                                             ProtocolV2FrameFlags.Compressed |
+                                             ProtocolV2FrameFlags.Cancellable |
+                                             ProtocolV2FrameFlags.OneWay,
             ProtocolV2FrameType.Response => ProtocolV2FrameFlags.Error |
                                             ProtocolV2FrameFlags.Truncated |
                                             ProtocolV2FrameFlags.Compressed,
@@ -211,6 +217,8 @@ public static class ProtocolV2FrameParser
         {
             throw Violation("One-way requests cannot request a return payload.");
         }
+        if (type == NStudyWire.OneWayInputRequest && (flags & ProtocolV2FrameFlags.OneWay) == 0)
+            throw Violation("A private OneWay input frame must use the OneWay flag.");
     }
 
     private static void ValidatePayloadShape(
@@ -243,6 +251,10 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.Request:
                 ValidateRequestPayload(payload, flags, limits.MaxMetadataBytes);
+                break;
+            case NStudyWire.OneWayInputRequest:
+                _ = NStudyWire.ReadOneWayInputCount(payload);
+                ValidateRequestPayload(payload.Slice(1), flags, limits.MaxMetadataBytes);
                 break;
             case ProtocolV2FrameType.Response:
                 if ((flags & ProtocolV2FrameFlags.Error) != 0)
