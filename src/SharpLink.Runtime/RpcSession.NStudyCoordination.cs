@@ -9,7 +9,10 @@ internal sealed partial class RpcSession
     private bool _nStudyCoordinationOwned;
     private ulong _nStudyTransitionId;
     private NStudyChange? _nStudyActivationNotSent;
-    private NStudyChange? _nStudyFrozen;
+    private bool _nStudyKeepTargetBlock;
+    private NStudyChange? _nStudyCandidate;
+    private NStudyClientRoute? _nStudyCandidateSource;
+    private bool _nStudySourceFrozen;
     private NStudyCoordinationMode _nStudyCoordinationMode;
 
     internal bool SupportsNStudyCoordination => (NegotiatedCapabilities & NStudyWire.CoordinationCapability) != 0;
@@ -55,6 +58,8 @@ internal sealed partial class RpcSession
         {
             if (_nStudyCoordinationOwned)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "This Session is already coordinating a version.");
+            if (_nStudyKeepTargetBlock)
+                throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "This Session must refresh before another version transition.");
             _nStudyCoordinationOwned = true;
         }
         return new NStudyCoordinationScope(this);
@@ -66,7 +71,7 @@ internal sealed partial class RpcSession
             return checked(++_nStudyTransitionId);
     }
 
-    internal void ObserveNStudyTransitionId(ulong id)
+    private void ObserveNStudyTransitionId(ulong id)
     {
         lock (_nStudyCoordinationGate)
         {
@@ -84,9 +89,26 @@ internal sealed partial class RpcSession
             (message.Phase == NStudyPhase.Propose && message.Change.Initiator == NStudyInitiator.Client);
         var fromServer = message.Phase is NStudyPhase.Candidate or NStudyPhase.Prepare or NStudyPhase.Activated or NStudyPhase.Declined ||
             (message.Phase == NStudyPhase.Propose && message.Change.Initiator == NStudyInitiator.Server);
-        if (!(Role == RpcSessionRole.Server ? fromClient : fromServer) ||
-            !GetNStudyCoordinationInbox().Writer.TryWrite(message))
+        if (!(Role == RpcSessionRole.Server ? fromClient : fromServer))
             throw InvalidNStudy("Version coordination exceeded the Session's role or inbox.");
+        if (message.Phase == NStudyPhase.Candidate)
+        {
+            var change = message.Change;
+            ObserveNStudyTransitionId(change.Id);
+            lock (_nStudyGate)
+            {
+                if (_nStudyCandidate.HasValue || _nStudyAuthority != change.Authority)
+                    throw InvalidNStudy("A candidate did not belong to this Session's negotiated authority.");
+                _nStudyCandidate = change;
+                // Capture on the actual ordered reader, before a later
+                // Invalidate can remove a lagging peer's old local route.
+                if (_nStudyBindings.TryGetValue(change.Contract, out var route) &&
+                    route.Target == change.Original && route.Hash == change.Hash)
+                    _nStudyCandidateSource = route;
+            }
+        }
+        if (!GetNStudyCoordinationInbox().Writer.TryWrite(message))
+            throw InvalidNStudy("The bounded version coordination inbox was full.");
     }
 
     internal ValueTask<NStudyCoordinationMessage> ReadNStudyCoordinationAsync(CancellationToken cancellationToken)
@@ -117,10 +139,20 @@ internal sealed partial class RpcSession
             _nStudyActivationNotSent = change;
     }
 
-    internal bool MayBindNStudyTarget(long contract, NStudyTarget target)
+    internal bool MayBindNStudyTarget(NStudyTarget target)
     {
         lock (_nStudyCoordinationGate)
-            return _nStudyActivationNotSent is not { } change || change.Contract != contract || change.Target != target;
+            return _nStudyActivationNotSent is not { } change || change.Target != target;
+    }
+
+    internal void KeepNStudyTargetBlockUntilActivated(NStudyChange change)
+    {
+        lock (_nStudyCoordinationGate)
+        {
+            if (_nStudyActivationNotSent != change)
+                throw InvalidNStudy("A coordinated publication lost its per-Session target gate.");
+            _nStudyKeepTargetBlock = true;
+        }
     }
 
     internal async ValueTask SendNStudyCoordinationAsync(NStudyCoordinationMessage message, CancellationToken ct)
@@ -152,6 +184,7 @@ internal sealed partial class RpcSession
                 // R2 Bind may pass only after the activation was queued in this
                 // physical Session's ordinary FIFO. A racing receiver sees this cut.
                 _nStudyActivationNotSent = null;
+                _nStudyKeepTargetBlock = false;
             }
             await emitted.ConfigureAwait(false);
         }
@@ -162,30 +195,27 @@ internal sealed partial class RpcSession
         }
     }
 
-    internal void ValidateNStudySource(NStudyChange change)
+    internal bool HasNStudyCandidateSource(NStudyChange change)
     {
         lock (_nStudyGate)
-            _ = GetNStudySourceLocked(change);
+            return _nStudyCandidate == change && _nStudyCandidateSource is not null;
     }
 
     internal Task FreezeNStudySource(NStudyChange change)
     {
         lock (_nStudyGate)
         {
-            var route = GetNStudySourceLocked(change);
+            if (_nStudyCandidate != change || _nStudyCandidateSource is not { } route ||
+                (_nStudyBindings.TryGetValue(change.Contract, out var current)
+                    ? !ReferenceEquals(current, route) : !IsNStudyRetired(route.Token)))
+                throw InvalidNStudy("Preparation lost its captured original binding on this Session.");
             if (_pendingNStudyBind is not null || _nStudyReleasePending)
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A local Bind or Release still owns the Session.");
-            _nStudyFrozen = change;
+            _nStudySourceFrozen = true;
             _nStudyBindings.Remove(change.Contract);
             return route.Retire();
         }
     }
-
-    private NStudyClientRoute GetNStudySourceLocked(NStudyChange change) =>
-        _nStudyAuthority == change.Authority &&
-        _nStudyBindings.TryGetValue(change.Contract, out var route) &&
-        route.Target == change.Original && route.Hash == change.Hash
-            ? route : throw InvalidNStudy("Version preparation does not match this Session's exact source binding.");
 
     private void EnsureNStudyCoordinationAvailable()
     {
@@ -199,10 +229,15 @@ internal sealed partial class RpcSession
         public void Dispose()
         {
             lock (session._nStudyGate)
-                session._nStudyFrozen = null;
+            {
+                session._nStudyCandidate = null;
+                session._nStudyCandidateSource = null;
+                session._nStudySourceFrozen = false;
+            }
             lock (session._nStudyCoordinationGate)
             {
-                session._nStudyActivationNotSent = null;
+                if (!session._nStudyKeepTargetBlock)
+                    session._nStudyActivationNotSent = null;
                 session._nStudyCoordinationOwned = false;
             }
         }

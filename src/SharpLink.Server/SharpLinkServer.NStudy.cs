@@ -33,7 +33,7 @@ internal sealed partial class SharpLinkServer
                     var target = service.NStudyTarget;
                     if (bind.Expected != default && bind.Expected != target)
                         ack = ack with { Status = NStudyBindStatus.Superseded };
-                    else if (!session.MayBindNStudyTarget(bind.Contract, target))
+                    else if (!session.MayBindNStudyTarget(target))
                         ack = ack with { Status = NStudyBindStatus.Unavailable };
                     else if (table.TryInstall(service, out var token))
                         ack = ack with { Status = NStudyBindStatus.Bound, Target = target, BindingId = token };
@@ -316,6 +316,20 @@ internal sealed class NStudyServerBindings
                 }
             }
             return (open, retiring, users);
+        }
+    }
+
+    internal bool HasOpenTarget(NStudyTarget target)
+    {
+        lock (_gate)
+        {
+            if (_slots is { } slots)
+            {
+                foreach (var slot in slots)
+                    if (slot.Open && slot.Target == target)
+                        return true;
+            }
+            return false;
         }
     }
 

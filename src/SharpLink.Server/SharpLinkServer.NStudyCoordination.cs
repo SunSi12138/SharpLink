@@ -2,8 +2,14 @@ using System.Reflection;
 
 namespace SharpLink.Server;
 
+internal readonly record struct NStudyPeerOffer(ServerConnectionState Peer, NStudyInitiator Initiator,
+    Func<NStudyChange, CancellationToken, ValueTask<bool>>? ApproveLocally);
+internal readonly record struct NStudyPeerActivation(NStudyChange? Change, Guid ClientRegistration,
+    NStudyDeclineReason DeclineReason, bool ActivationSent, bool Terminated);
+internal readonly record struct NStudyCohortActivation(SharpLinkAssemblyReplacementResult Replacement,
+    IReadOnlyList<NStudyPeerActivation> Peers);
 internal readonly record struct NStudyServerActivation(SharpLinkAssemblyReplacementResult Replacement,
-    NStudyChange? Change, Guid PreparedClientRegistration);
+    NStudyChange? Change, Guid PreparedClientRegistration, NStudyDeclineReason DeclineReason);
 
 internal sealed partial class SharpLinkServer
 {
@@ -15,60 +21,80 @@ internal sealed partial class SharpLinkServer
         Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
         TimeSpan gracefulTimeout, CancellationToken cancellationToken)
     {
+        var result = await StageNStudyReplacementOnSessionsAsync([new(peer, initiator, approveLocally)],
+            oldAssembly, newAssembly, contract, gracefulTimeout, cancellationToken).ConfigureAwait(false);
+        var single = result.Peers[0];
+        return new(result.Replacement, single.Change, single.ClientRegistration, single.DeclineReason);
+    }
+
+    internal async Task<NStudyCohortActivation> StageNStudyReplacementOnSessionsAsync(
+        IReadOnlyList<NStudyPeerOffer> offers, Assembly oldAssembly, Assembly newAssembly, long contract,
+        TimeSpan gracefulTimeout, CancellationToken cancellationToken)
+    {
         ValidateReplacementInputs(oldAssembly, newAssembly, gracefulTimeout);
+        ArgumentOutOfRangeException.ThrowIfLessThan(offers.Count, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(offers.Count, 8);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_connectionRegistry.TryGetValue(peer.Session.Id, out var current) || !ReferenceEquals(current, peer))
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected data Session is no longer a server peer.");
-        using var ownership = peer.Session.EnterNStudyCoordination();
-        peer.Session.ValidateNStudyLocalDecision(approveLocally);
-        using var timer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, timer.Token, peer.ConnectionToken, peer.Session.LifetimeToken);
-        var authority = new NStudyAuthority(_desiredSessionServerInstanceId, _nStudyRegistryEpoch, peer.NStudyPhysicalIdentity);
-        var coordination = new NStudyServerPreparation(peer, authority, contract, initiator, approveLocally, budget.Token);
+        using var controlTimer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
+        using var controlBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, controlTimer.Token);
+        var participants = new List<NStudyParticipant>(offers.Count);
+        NStudyServerPreparation? preparation = null;
         try
         {
+            var seen = new HashSet<ServerConnectionState>();
+            foreach (var offer in offers)
+            {
+                var peer = offer.Peer;
+                if (!seen.Add(peer))
+                    throw new ArgumentException("A physical Session can participate only once.", nameof(offers));
+                if (!_connectionRegistry.TryGetValue(peer.Session.Id, out var current) || !ReferenceEquals(current, peer))
+                    throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected data Session is no longer a server peer.");
+                var authority = new NStudyAuthority(_desiredSessionServerInstanceId, _nStudyRegistryEpoch, peer.NStudyPhysicalIdentity);
+                participants.Add(NStudyParticipant.Acquire(offer, authority, controlBudget.Token));
+            }
+            // The application names the first peer as the commit authorizer.
+            // The other selected data Sessions authorize only their own resume.
+            preparation = new(participants, seen, _connectionRegistry, contract);
             var replacement = await ReplaceAssemblyCoreAsync(oldAssembly, newAssembly, gracefulTimeout,
-                cancellationToken, coordination).ConfigureAwait(false);
-            if (!replacement.Succeeded && coordination.Change is { } change && !coordination.Declined)
-                await peer.Session.SendNStudyCoordinationAsync(new(NStudyPhase.Declined, change), budget.Token).ConfigureAwait(false);
-            return new(replacement, coordination.Change, coordination.ClientRegistration);
+                cancellationToken, preparation).ConfigureAwait(false);
+            if (!replacement.Succeeded)
+                await preparation.AbortBeforeCommitAsync().ConfigureAwait(false);
+            return new(replacement, participants.Select(static participant => participant.Outcome).ToArray());
         }
-        catch (Exception error)
+        finally
         {
-            if (coordination.Change.HasValue && !coordination.Activated)
-                peer.Session.NotifyDisconnected(error);
-            throw;
+            if (preparation is not null && !preparation.Published)
+                await preparation.AbortBeforeCommitAsync().ConfigureAwait(false);
+            foreach (var participant in participants)
+                participant.Dispose();
         }
     }
 
-    // Only the real compatible replacement pipeline can supply this preparation.
-    // Remote messages have no assembly references or means to install code.
     private sealed class NStudyServerPreparation(
-        ServerConnectionState peer, NStudyAuthority authority, long contract, NStudyInitiator initiator,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally, CancellationToken controlToken)
+        IReadOnlyList<NStudyParticipant> peers, HashSet<ServerConnectionState> enrolled,
+        ServerConnectionRegistry registry, long contract)
     {
-        internal NStudyChange? Change { get; private set; }
-        internal Guid ClientRegistration { get; private set; }
-        internal bool Declined { get; private set; }
-        internal bool Activated { get; private set; }
+        private NStudyTarget _original;
+        private bool _aborted;
+        internal bool Published { get; private set; }
 
-        internal bool CanCommit =>
-            !controlToken.IsCancellationRequested &&
-            peer.LifecycleState == ServerConnectionLifecycleState.Ready && peer.Session.CanAcceptCalls &&
-            peer.AuthenticationContext is { } authenticated && !authenticated.IsExpired();
+        internal bool CanCommit => peers[0].CanContinue && IsCohortStillComplete();
+
+        private bool IsCohortStillComplete() => registry.SnapshotActive().All(peer =>
+            !peer.Session.SupportsNStudyCoordination || enrolled.Contains(peer) ||
+            !peer.NStudyBindings.HasOpenTarget(_original));
 
         internal bool TryStage(FrozenDictionary<long, ServiceRegistration> current,
             FrozenDictionary<long, ServiceRegistration> candidate,
             SharpLinkDynamicModule oldModule, SharpLinkDynamicModule newModule)
         {
-            if (!CanCommit || !current.TryGetValue(contract, out var before) ||
+            if (!current.TryGetValue(contract, out var before) ||
                 !ReferenceEquals(before.Module, oldModule) || !candidate.TryGetValue(contract, out var after) ||
                 !ReferenceEquals(after.Module, newModule))
                 return false;
-
-            // A compatible staged group must replace the same set of service
-            // contracts before any announcement or local policy decision.
+            _original = before.NStudyTarget;
+            if (!IsCohortStillComplete() || peers.Any(static peer => !peer.CanContinue))
+                return false;
             var count = 0;
             foreach (var (id, service) in current)
             {
@@ -81,47 +107,199 @@ internal sealed partial class SharpLinkServer
             }
             if (candidate.Values.Count(service => ReferenceEquals(service.Module, newModule)) != count)
                 return false;
-
-            var change = new NStudyChange(peer.Session.NextNStudyTransitionId(), initiator, authority,
-                contract, before.NStudyContractHash, before.NStudyTarget, after.NStudyTarget);
-            Change = change;
-            peer.Session.BlockNStudyTargetBind(change);
+            foreach (var peer in peers)
+                peer.Stage(contract, before.NStudyContractHash, _original, after.NStudyTarget);
             return true;
         }
 
         internal async ValueTask<bool> NegotiateAsync()
         {
-            var change = Change!.Value;
-            var session = peer.Session;
-            await session.SendNStudyCoordinationAsync(new(NStudyPhase.Candidate, change), controlToken).ConfigureAwait(false);
-            if (initiator == NStudyInitiator.Client)
-                await session.ReadNStudyCoordinationAsync(change, NStudyPhase.Propose, controlToken).ConfigureAwait(false);
-            else
-                await session.SendNStudyCoordinationAsync(new(NStudyPhase.Propose, change), controlToken).ConfigureAwait(false);
-
-            if (!await session.DecideNStudyLocallyAsync(change, approveLocally, controlToken).ConfigureAwait(false) || !CanCommit)
-            {
-                await session.SendNStudyCoordinationAsync(new(NStudyPhase.Declined, change), controlToken).ConfigureAwait(false);
-                Declined = true;
+            // Candidate is queued ahead of any committed invalidation on each
+            // physical FIFO. Readiness is per Session after this declaration.
+            await Task.WhenAll(peers.Select(static peer => peer.DeclareAsync())).ConfigureAwait(false);
+            if (peers[0].Terminated)
                 return false;
-            }
-            await session.SendNStudyCoordinationAsync(new(NStudyPhase.Prepare, change), controlToken).ConfigureAwait(false);
-            var ready = await session.ReadNStudyCoordinationAsync(change, NStudyPhase.Ready, controlToken,
-                allowDecline: true).ConfigureAwait(false);
-            if (ready.Phase == NStudyPhase.Declined)
-            {
-                Declined = true;
-                return false;
-            }
-            ClientRegistration = ready.ClientRegistration;
-            return true;
+            foreach (var peer in peers)
+                peer.StartDecision();
+            return await peers[0].IsReadyAsync().ConfigureAwait(false);
         }
 
-        internal async ValueTask PublishActivationAsync()
+        internal void MarkPublished()
         {
-            await peer.Session.SendNStudyCoordinationAsync(new(NStudyPhase.Activated, Change!.Value),
-                controlToken).ConfigureAwait(false);
-            Activated = true;
+            foreach (var peer in peers)
+                peer.KeepTargetBlocked();
+            Published = true;
+        }
+
+        internal Task PublishActivationAsync() =>
+            Task.WhenAll(peers.Select(static peer => peer.ActivateWhenReadyAsync()));
+
+        internal async Task AbortBeforeCommitAsync()
+        {
+            if (_aborted || Published)
+                return;
+            _aborted = true;
+            await Task.WhenAll(peers.Select(static peer => peer.AbortBeforeCommitAsync())).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class NStudyParticipant(
+        NStudyPeerOffer offer, NStudyAuthority authority, IDisposable scope, CancellationTokenSource budget) : IDisposable
+    {
+        private RpcSession Session => offer.Peer.Session;
+        private CancellationToken ControlToken => budget.Token;
+        private NStudyChange? _change;
+        private bool _declared;
+        private Task<bool>? _decision;
+        private Guid _clientRegistration;
+        private NStudyDeclineReason _declineReason;
+        private bool _activationSent;
+        internal bool Terminated { get; private set; }
+        internal bool CanContinue => !Terminated && !ControlToken.IsCancellationRequested &&
+            offer.Peer.LifecycleState == ServerConnectionLifecycleState.Ready && Session.CanAcceptCalls &&
+            offer.Peer.AuthenticationContext is { } authenticated && !authenticated.IsExpired();
+        internal NStudyPeerActivation Outcome => new(_change, _clientRegistration, _declineReason,
+            _activationSent, Terminated);
+
+        internal static NStudyParticipant Acquire(NStudyPeerOffer offer, NStudyAuthority authority, CancellationToken ct)
+        {
+            var scope = offer.Peer.Session.EnterNStudyCoordination();
+            try
+            {
+                offer.Peer.Session.ValidateNStudyLocalDecision(offer.ApproveLocally);
+                var budget = CancellationTokenSource.CreateLinkedTokenSource(ct,
+                    offer.Peer.ConnectionToken, offer.Peer.Session.LifetimeToken);
+                return new(offer, authority, scope, budget);
+            }
+            catch
+            {
+                scope.Dispose();
+                throw;
+            }
+        }
+
+        internal void Stage(long contract, RpcHash128 hash, NStudyTarget original, NStudyTarget target)
+        {
+            var change = new NStudyChange(Session.NextNStudyTransitionId(), offer.Initiator, authority, contract, hash, original, target);
+            Session.BlockNStudyTargetBind(change);
+            _change = change;
+        }
+
+        internal async Task DeclareAsync()
+        {
+            try
+            {
+                await SendAsync(NStudyPhase.Candidate).ConfigureAwait(false);
+                _declared = true;
+            }
+            catch (Exception error) { Terminate(error); }
+        }
+
+        internal void StartDecision()
+        {
+            if (_declared && !Terminated)
+                _decision = Task.Run(DecideAsync);
+        }
+
+        internal Task<bool> IsReadyAsync() => _decision ?? Task.FromResult(false);
+
+        private async Task<bool> DecideAsync()
+        {
+            try
+            {
+                var change = _change!.Value;
+                if (offer.Initiator == NStudyInitiator.Client)
+                    await Session.ReadNStudyCoordinationAsync(change, NStudyPhase.Propose, ControlToken).ConfigureAwait(false);
+                else
+                    await SendAsync(NStudyPhase.Propose).ConfigureAwait(false);
+
+                if (!await Session.DecideNStudyLocallyAsync(change, offer.ApproveLocally, ControlToken).ConfigureAwait(false))
+                {
+                    await DeclineAsync(NStudyDeclineReason.Policy).ConfigureAwait(false);
+                    return false;
+                }
+                if (!CanContinue)
+                {
+                    await DeclineAsync(NStudyDeclineReason.CandidateChanged).ConfigureAwait(false);
+                    return false;
+                }
+                await SendAsync(NStudyPhase.Prepare).ConfigureAwait(false);
+                var reply = await Session.ReadNStudyCoordinationAsync(change, NStudyPhase.Ready, ControlToken,
+                    allowDecline: true).ConfigureAwait(false);
+                _declineReason = reply.DeclineReason;
+                _clientRegistration = reply.ClientRegistration;
+                return reply.Phase == NStudyPhase.Ready;
+            }
+            catch (Exception error)
+            {
+                Terminate(error);
+                return false;
+            }
+        }
+
+        internal void KeepTargetBlocked() => Session.KeepNStudyTargetBlockUntilActivated(_change!.Value);
+
+        internal async Task ActivateWhenReadyAsync()
+        {
+            if (!await IsReadyAsync().ConfigureAwait(false))
+                return;
+            try
+            {
+                if (!CanContinue)
+                {
+                    await DeclineAsync(NStudyDeclineReason.CandidateChanged).ConfigureAwait(false);
+                    return;
+                }
+                await SendAsync(NStudyPhase.Activated).ConfigureAwait(false);
+                _activationSent = true;
+            }
+            catch (Exception error) { Terminate(error); }
+        }
+
+        internal async Task AbortBeforeCommitAsync()
+        {
+            if (!_declared)
+                return;
+            if (Terminated)
+            {
+                await IsReadyAsync().ConfigureAwait(false);
+                return;
+            }
+            if (_decision is { IsCompletedSuccessfully: true } decision)
+            {
+                if (decision.Result)
+                {
+                    try { await DeclineAsync(NStudyDeclineReason.CandidateChanged).ConfigureAwait(false); }
+                    catch (Exception error) { Terminate(error); }
+                }
+                return;
+            }
+            // A still-running decision may be between protocol phases. Terminate
+            // just that attempt's peer rather than guessing a reusable phase.
+            Terminate(new SharpLinkException(SharpLinkErrorCode.Unavailable, "The staged cohort did not commit."));
+            await IsReadyAsync().ConfigureAwait(false);
+        }
+
+        private async ValueTask DeclineAsync(NStudyDeclineReason reason)
+        {
+            await Session.SendNStudyCoordinationAsync(new(NStudyPhase.Declined, _change!.Value, DeclineReason: reason),
+                ControlToken).ConfigureAwait(false);
+            _declineReason = reason;
+        }
+
+        private ValueTask SendAsync(NStudyPhase phase) =>
+            Session.SendNStudyCoordinationAsync(new(phase, _change!.Value), ControlToken);
+
+        private void Terminate(Exception error)
+        {
+            Terminated = true;
+            Session.NotifyDisconnected(error);
+        }
+
+        public void Dispose()
+        {
+            budget.Dispose();
+            scope.Dispose();
         }
     }
 }

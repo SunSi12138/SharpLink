@@ -352,6 +352,8 @@ internal sealed partial class SharpLinkServer
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                             if (coordinated is null)
                                 newModule.NStudyPublication = _nStudyPublicationGeneration = nextNPublication;
+                            else
+                                coordinated.MarkPublished();
                             // Close original starts before the exact next registration is bindable.
                             oldModule.TryBeginDraining();
                             invalidationWorkers = SealNStudyBindings(oldModule);

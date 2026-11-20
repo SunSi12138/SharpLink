@@ -35,8 +35,8 @@ internal sealed partial class RpcSession
         ulong operation;
         lock (_nStudyGate)
         {
-            if (_nStudyFrozen is { } frozen && frozen.Contract == bind.Contract &&
-                (resuming != frozen || bind.Expected != frozen.Target || bind.Hash != frozen.Hash))
+            if (_nStudyCandidate is { } candidate && candidate.Contract == bind.Contract &&
+                (!_nStudySourceFrozen || resuming != candidate || bind.Expected != candidate.Target || bind.Hash != candidate.Hash))
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The contract is awaiting its coordinated activation.");
             if (_pendingNStudyBind is not null || _nStudyReleasePending)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private Bind is already pending.");
