@@ -100,6 +100,7 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
+                        var nextNPublication = checked(_nStudyPublicationGeneration + 1);
                         if (generation != _registryGeneration ||
                             !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
                         {
@@ -108,6 +109,7 @@ internal sealed partial class SharpLinkServer
                         else
                         {
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            module.NStudyPublication = _nStudyPublicationGeneration = nextNPublication;
                             Volatile.Write(ref _services, candidate.Services);
                             _dynamicModules.Add(assembly, module);
                             _registryGeneration++;
@@ -290,6 +292,7 @@ internal sealed partial class SharpLinkServer
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
                         }
 
+                        var nextNPublication = checked(_nStudyPublicationGeneration + 1);
                         if (generation != _registryGeneration ||
                             !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
                         {
@@ -304,10 +307,12 @@ internal sealed partial class SharpLinkServer
                             _detachedModuleServices.Add(oldModule, detachedServices);
                             _unregisterOperations.Add(oldAssembly, drainOperation);
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            newModule.NStudyPublication = _nStudyPublicationGeneration = nextNPublication;
+                            // Close original starts before the exact next registration is bindable.
+                            oldModule.TryBeginDraining();
                             Volatile.Write(ref _services, candidate.Services);
                             _registryGeneration++;
                             ScheduleContractManifestPublish();
-                            oldModule.TryBeginDraining();
                             published = true;
                             break;
                         }
@@ -480,6 +485,7 @@ internal sealed partial class SharpLinkServer
                     instance: null,
                     callerOwned: false);
                 var registration = definition.Build(_serviceProvider, module);
+                registration.NStudyContractHash = contract.Manifest.RpcAssemblyHash;
                 createdServices.Add(registration);
                 nextServices.Add(service.ContractId, registration);
             }

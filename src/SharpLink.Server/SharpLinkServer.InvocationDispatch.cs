@@ -41,7 +41,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            if (!connection.NStudyBindings.TryResolve(request.InterfaceHash, out var serviceInfo))
             {
                 ValueTask responseSend;
                 try
@@ -49,8 +49,8 @@ internal sealed partial class SharpLinkServer
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
                         new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
+                            SharpLinkErrorCode.Unavailable,
+                            "The exact private binding is no longer available."),
                         connection.ConnectionToken);
                 }
                 finally
@@ -79,6 +79,15 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
+            if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var nMethod) ||
+                nMethod.Kind != RpcMethodKind.Unary || nMethod.HasClientStreams ||
+                nMethod.HasResponsePayload != ((flags & ProtocolV2FrameFlags.HasReturn) != 0))
+            {
+                return session.SendRpcErrorWithBackpressureAsync(requestId,
+                    new SharpLinkException(SharpLinkErrorCode.Unimplemented,
+                        "This private checkpoint accepts only bound Unary and plain OneWay."),
+                    connection.ConnectionToken);
+            }
 
             if (admissionProgram is not null && !admissionGranted)
             {
@@ -91,7 +100,7 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
-                var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+                var descriptor = nMethod;
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {

@@ -234,6 +234,9 @@ internal sealed class SharpLinkDynamicModule
         => (SharpLinkDynamicModuleState)Volatile.Read(ref _state);
 
     internal CancellationToken ForcedCancellation => _forcedCancellationToken;
+    internal Guid NStudyRegistration { get; } = Guid.NewGuid();
+    internal long NStudyPublication { get; set; }
+    internal bool SuppliesAssembly(Assembly assembly) => ReferenceEquals(Volatile.Read(ref _assembly), assembly);
 
     internal int RemainingCalls => Sum(_callCounters);
 

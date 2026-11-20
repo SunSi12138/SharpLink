@@ -39,6 +39,7 @@ internal sealed partial class SharpLinkClient
             flags |= ProtocolV2FrameFlags.HasMetadata;
         }
 
+        var binding = session.CaptureNStudyBinding(contractId);
         var writer = session.RentFrameWriter();
         var ownsWriter = true;
         try
@@ -50,7 +51,7 @@ internal sealed partial class SharpLinkClient
             {
                 var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
                 var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
+                BinaryPrimitives.WriteInt64LittleEndian(span, binding);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
                 if (deadline.HasValue)
                     BinaryPrimitives.WriteInt64LittleEndian(

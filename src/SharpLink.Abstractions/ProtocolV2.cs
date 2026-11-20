@@ -13,10 +13,10 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    public const ushort MinorVersion = 0x79A0; // Private #999 N profile, not a release allocation.
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    public const ushort MinimumCompatibleMinorVersion = 0x79A0;
 }
 
 /// <summary>Protocol v2 frame types.</summary>

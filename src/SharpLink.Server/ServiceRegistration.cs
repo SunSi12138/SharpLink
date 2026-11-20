@@ -110,6 +110,11 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal SharpLinkDynamicModule? Module { get; }
+    private readonly Guid _nStaticRegistration = Guid.NewGuid();
+    internal RpcHash128 NStudyContractHash { get; set; }
+    internal NStudyTarget NStudyTarget => Module is { } module
+        ? new(module.NStudyRegistration, module.NStudyPublication)
+        : new(_nStaticRegistration, 1);
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.
     private readonly WeakReference<ServiceRegistration>? _queuedWeakIdentity;

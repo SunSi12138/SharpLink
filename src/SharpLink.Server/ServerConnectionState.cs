@@ -61,6 +61,8 @@ internal sealed class ServerConnectionState
     }
 
     internal RpcSession Session { get; }
+    internal Guid NStudyPhysicalIdentity { get; } = Guid.NewGuid();
+    internal NStudyServerBindings NStudyBindings { get; } = new();
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 

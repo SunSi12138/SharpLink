@@ -82,6 +82,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _exceptionMapper = composition.ExceptionMapper;
         _serviceProvider = composition.ServiceProvider;
         _staticManifests = composition.StaticManifests;
+        foreach (var registration in composition.Services.Values)
+            registration.NStudyContractHash = _staticManifests.First(
+                manifest => ReferenceEquals(manifest.OwnerAssembly, registration.ContractType.Assembly)).RpcAssemblyHash;
         _admissionController = composition.AdmissionController;
         _connectionAdmission = composition.ConnectionAdmission;
         _shutdownPlan = composition.ShutdownPlan;

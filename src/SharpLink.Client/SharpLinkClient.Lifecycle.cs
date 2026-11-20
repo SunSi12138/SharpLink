@@ -567,6 +567,9 @@ internal sealed partial class SharpLinkClient
                             case ProtocolV2FrameType.Pong:
                                 DebugLogServerHeartbeatReceived(_logger);
                                 break;
+                            case NStudyWire.BindAck:
+                                session.OnNStudyBindAck(header.RequestId, payload);
+                                break;
                             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 session.ApplyResponseCompressionPreferenceAck(
                                     ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload).AppliedGeneration);

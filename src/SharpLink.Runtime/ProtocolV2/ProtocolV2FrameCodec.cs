@@ -102,6 +102,8 @@ public static class ProtocolV2FrameParser
         var flags = ParseFlags(flagsRaw);
         var requestId = unchecked((ulong)requestIdBits);
         ValidateHeader(type, flags, requestId);
+        if (NStudyWire.IsBindingFrame(type))
+            NStudyWire.ValidateLength(type, payloadLength);
         if (buffer.Length - ProtocolV2Constants.HeaderBytes < payloadLength)
             return false;
 
@@ -131,6 +133,8 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
         (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
+        (byte)NStudyWire.Bind => NStudyWire.Bind,
+        (byte)NStudyWire.BindAck => NStudyWire.BindAck,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -306,6 +310,12 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.SessionRefreshRequested:
                 _ = ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload);
+                break;
+            case NStudyWire.Bind:
+                _ = NStudyWire.ReadBind(payload);
+                break;
+            case NStudyWire.BindAck:
+                _ = NStudyWire.ReadAck(payload);
                 break;
         }
     }

@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: true, interceptors);
@@ -46,6 +47,7 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
@@ -81,6 +83,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
@@ -131,6 +134,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(responseCodec);
         ArgumentNullException.ThrowIfNull(interceptors);
         EnsureLogicalCallProgress(control);
+        RequireNStudyShape(method);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -197,6 +201,7 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(responseCodec);
         ArgumentNullException.ThrowIfNull(interceptors);
         EnsureLogicalCallProgress(control);
+        RequireNStudyShape(method);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {

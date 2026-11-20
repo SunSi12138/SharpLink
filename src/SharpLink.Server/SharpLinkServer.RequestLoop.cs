@@ -183,7 +183,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-                                            ResolveRawRequestClientStreamCount(payload));
+                                            ResolveRawRequestClientStreamCount(connection, payload));
                                     }
                                     else
                                     {
@@ -258,6 +258,10 @@ internal sealed partial class SharpLinkServer
                                     break;
                                 case ProtocolV2FrameType.Pong:
                                     DebugLogClientHeartbeatReceived(_logger);
+                                    break;
+                                case NStudyWire.Bind:
+                                    await HandleNStudyBindAsync(connection, header.RequestId,
+                                        NStudyWire.ReadBind(payload), ct).ConfigureAwait(false);
                                     break;
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
                                     var responseCompressionPreference =
@@ -398,7 +402,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        ResolveRawRequestClientStreamCount(connection, payload));
                     return;
                 }
 
