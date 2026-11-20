@@ -48,7 +48,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 if (retiredAlc.OldContext.IsAlive)
                     await Task.Delay(25, ct);
             }
-            Ensure(!retiredAlc.OldContext.IsAlive, "retained old token entries do not own the old implementation");
+            Ensure(!retiredAlc.OldContext.IsAlive, "retirement does not pin the old implementation");
             Ensure(await retiredAlc.First.Get<IShutdownCleanupProbe>().TouchAsync(8, ct) == 108 &&
                    await retiredAlc.Second.Get<IShutdownCleanupProbe>().TouchAsync(8, ct) == 108,
                 "original Sessions keep serving B after old implementation collects");
@@ -141,22 +141,36 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(next.Registration != original.Registration && next.Publication > original.Publication,
                 "same contract hash does not equate two service registrations");
 
-            var next1 = await first.PrepareNStudyContractAsync(identity.A, identity.AHash, next, ct);
-            Ensure(next1.Authority == a1.Authority && next1.Target == next && next1.BindingId != a1.BindingId &&
-                   s2.CaptureNStudyBinding(identity.A) == a2.BindingId &&
+            var firstPeer = peers.Single(p => p.NStudyPhysicalIdentity == a1.Authority.PhysicalSession);
+            var secondPeer = peers.Single(p => p.NStudyPhysicalIdentity == a2.Authority.PhysicalSession);
+            // No client has requested Release or Bind since the registry cut.
+            await WaitForNStudyAsync(() => s1.NStudyPreparedCount == 1 && s2.NStudyPreparedCount == 1, ct);
+            Ensure(firstPeer.NStudyBindings.Snapshot() == (1, 1, 1) &&
+                   secondPeer.NStudyBindings.Snapshot() == (1, 0, 0) &&
                    s1.CaptureNStudyBinding(identity.B) == b1.BindingId &&
                    s2.CaptureNStudyBinding(identity.B) == b2.BindingId,
-                "preparing new R2 changes only the requested contract on that Session");
+                "Replace proactively removes A on both peers, preserving B and the active R1 owner");
+            trace.Record("ServerReplaceInvalidatesOnlyAOnBothSessions", a1, a2);
+
+            var next1 = await first.PrepareNStudyContractAsync(identity.A, identity.AHash, next, ct);
+            Ensure(next1.Authority == a1.Authority && next1.Target == next && next1.BindingId != a1.BindingId &&
+                   NStudyWire.SlotIndex(next1.BindingId) != NStudyWire.SlotIndex(a1.BindingId) &&
+                   s2.NStudyPreparedCount == 1 &&
+                   s1.CaptureNStudyBinding(identity.B) == b1.BindingId &&
+                   s2.CaptureNStudyBinding(identity.B) == b2.BindingId,
+                "the busy peer binds R2 separately without reusing the slot still owned by R1");
             Ensure(await InvokeValueTaskAsync<int>(proxy1, contracts.ContractType, "UnaryAsync", 10, ct) == 11 &&
                    await first.Get<IShutdownCleanupProbe>().TouchAsync(2, ct) == 102 &&
                    await second.Get<IShutdownCleanupProbe>().TouchAsync(2, ct) == 102 &&
                    NStudyCount(newType, "Created") == 1 && !originalCall.IsCompleted,
                 "first session and unrelated B proceed while the original service is still live");
-            trace.Record("FirstSessionUsesR2WhileSecondKeepsItsOwnBinding", next1, a2);
+            trace.Record("FirstSessionUsesR2BeforeTheSecondBinds", next1);
 
             var next2 = await second.PrepareNStudyContractAsync(identity.A, identity.AHash, next, ct);
-            Ensure(next2.Authority == a2.Authority && next2.Target == next && next2.BindingId != a2.BindingId,
-                "other peer obtains its own exact successful R2 Bind");
+            Ensure(next2.Authority == a2.Authority && next2.Target == next &&
+                   NStudyWire.SlotIndex(next2.BindingId) == NStudyWire.SlotIndex(a2.BindingId) &&
+                   NStudyWire.Incarnation(next2.BindingId) == NStudyWire.Incarnation(a2.BindingId) + 1,
+                "the idle peer reuses its own cleared slot at the next incarnation");
             Ensure(await InvokeValueTaskAsync<int>(proxy2, contracts.ContractType, "UnaryAsync", 20, ct) == 21,
                 "new generated Unary on the second Session reaches R2");
             await InvokeValueTaskAsync(proxy1, contracts.ContractType, "NotifyAsync", 11, ct);
@@ -173,6 +187,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(NStudyCount(oldType, "Disposed") == 1 && oldModule.State == SharpLinkDynamicModuleState.Released,
                 "retired implementation is released once after the physical invocation");
             trace.Record("OriginalR1CompletedAndRetired");
+
+            var removed = await server.UnregisterAssemblyAsync(newAssembly, TimeSpan.FromSeconds(10), ct);
+            await WaitForNStudyAsync(() => s1.NStudyPreparedCount == 1 && s2.NStudyPreparedCount == 1 &&
+                firstPeer.NStudyBindings.Snapshot() == (1, 0, 0) &&
+                secondPeer.NStudyBindings.Snapshot() == (1, 0, 0), ct);
+            Ensure(removed.ReferencesReleased && NStudyCount(newType, "Disposed") == 1 &&
+                   s1.CaptureNStudyBinding(identity.B) == b1.BindingId &&
+                   s2.CaptureNStudyBinding(identity.B) == b2.BindingId &&
+                   ReferenceEquals(s1, NStudyClientSession(first)) && ReferenceEquals(s2, NStudyClientSession(second)) &&
+                   await first.Get<IShutdownCleanupProbe>().TouchAsync(3, ct) == 103 &&
+                   await second.Get<IShutdownCleanupProbe>().TouchAsync(3, ct) == 103,
+                "normal Unregister invalidates only R2 before both original Sessions continue serving B");
+            trace.Record("ServerUnregisterInvalidatesOnlyR2OnBothSessions", next1, next2);
             transfer = true;
             return new NStudyLivePeers(server, first, second, newLoader, weak);
         }

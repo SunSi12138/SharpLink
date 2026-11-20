@@ -179,6 +179,7 @@ internal sealed partial class SharpLinkServer
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
 
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
+        List<ServerConnectionState>? invalidationWorkers = null;
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
@@ -310,6 +311,7 @@ internal sealed partial class SharpLinkServer
                             newModule.NStudyPublication = _nStudyPublicationGeneration = nextNPublication;
                             // Close original starts before the exact next registration is bindable.
                             oldModule.TryBeginDraining();
+                            invalidationWorkers = SealNStudyBindings(oldModule);
                             Volatile.Write(ref _services, candidate.Services);
                             _registryGeneration++;
                             ScheduleContractManifestPublish();
@@ -356,6 +358,7 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        PublishNStudyRetirement(invalidationWorkers);
         TrackFrameworkTask(
             drainOperation!,
             "DynamicAssemblyReplacementDrain",

@@ -32,6 +32,11 @@ internal sealed partial class SharpLinkServer
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                     return ValueTask.CompletedTask;
                 }
+                // Only the private plain OneWay shape is enabled here. A
+                // request already emitted before a retirement notice owns no
+                // input stream; it can be dropped without closing unrelated B.
+                if (connection.NStudyBindings.IsRetired(request.InterfaceHash))
+                    return ValueTask.CompletedTask;
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
 

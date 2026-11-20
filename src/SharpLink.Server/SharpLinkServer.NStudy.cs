@@ -60,6 +60,57 @@ internal sealed partial class SharpLinkServer
             return service.NStudyTarget;
         }
     }
+
+    // Under the registration gate: no new Bind can select the retiring group.
+    // Separate scalar notices from physical module cleanup and send outside it.
+    private List<ServerConnectionState>? SealNStudyBindings(SharpLinkDynamicModule module)
+    {
+        var target = new NStudyTarget(module.NStudyRegistration, module.NStudyPublication);
+        List<ServerConnectionState>? workers = null;
+        foreach (var connection in _connectionRegistry.SnapshotActive())
+        {
+            if (connection.NStudyBindings.Seal(target))
+                (workers ??= []).Add(connection);
+        }
+        return workers;
+    }
+
+    private void PublishNStudyRetirement(List<ServerConnectionState>? workers)
+    {
+        if (workers is null)
+            return;
+        foreach (var connection in workers)
+            TrackFrameworkTask(PublishNStudyRetirementAsync(connection), "NStudyBindingInvalidation");
+    }
+
+    private async Task PublishNStudyRetirementAsync(ServerConnectionState connection)
+    {
+        var tokens = new long[NStudyWire.BindingLimit];
+        try
+        {
+            while (true)
+            {
+                var count = connection.NStudyBindings.TakeInvalidated(tokens);
+                if (count == 0)
+                    return;
+                using var timer = new CancellationTokenSource(TimeSpan.FromSeconds(5), _runtimeContext.TimeProvider);
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(connection.ConnectionToken, timer.Token);
+                budget.Token.ThrowIfCancellationRequested();
+                await connection.Session.SendNStudyInvalidatedAsync(tokens.AsMemory(0, count), budget.Token)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (connection.ConnectionToken.IsCancellationRequested)
+        {
+            // Termination already owns this peer.
+        }
+        catch (Exception error)
+        {
+            // A notice with uncertain emission is scoped to this physical peer.
+            connection.Session.NotifyDisconnected(error);
+            throw;
+        }
+    }
 }
 
 // Release and control use the actual receive loop. The dispatch continuation can
@@ -70,11 +121,14 @@ internal sealed class NStudyServerBindings
     private readonly Lock _gate = new();
     private Slot[]? _slots;
     private ulong _operation;
+    private bool _publishingInvalidations;
 
     private struct Slot
     {
         internal SharpLinkServer.QueuedServiceSelection Service;
+        internal NStudyTarget Target;
         internal uint Incarnation;
+        internal uint PendingInvalidation;
         internal int Users;
         internal bool Occupied;
         internal bool Open;
@@ -98,9 +152,10 @@ internal sealed class NStudyServerBindings
                 if (entry.Occupied || entry.Incarnation == uint.MaxValue)
                     continue;
                 entry.Service = new(service);
+                entry.Target = service.NStudyTarget;
                 entry.Open = entry.Occupied = true;
                 entry.Incarnation++;
-                bindingId = unchecked((long)(((ulong)entry.Incarnation << 32) | (uint)(index + 1)));
+                bindingId = NStudyWire.BindingId(index, entry.Incarnation);
                 return true;
             }
         }
@@ -151,6 +206,62 @@ internal sealed class NStudyServerBindings
         }
     }
 
+    // The current worker, if any, also owns future notices. Keep at most the
+    // newest retired incarnation of each slot, even when that slot is reused.
+    internal bool Seal(NStudyTarget target)
+    {
+        lock (_gate)
+        {
+            if (_slots is not { } slots)
+                return false;
+            var marked = false;
+            foreach (ref var entry in slots.AsSpan())
+            {
+                if (!entry.Open || entry.Target != target)
+                    continue;
+                entry.Open = false;
+                entry.PendingInvalidation = entry.Incarnation;
+                ReclaimIfIdle(ref entry);
+                marked = true;
+            }
+            if (!marked || _publishingInvalidations)
+                return false;
+            return _publishingInvalidations = true;
+        }
+    }
+
+    internal int TakeInvalidated(Span<long> tokens)
+    {
+        lock (_gate)
+        {
+            var count = 0;
+            var slots = _slots!;
+            for (var i = 0; i < slots.Length; i++)
+            {
+                ref var entry = ref slots[i];
+                if (entry.PendingInvalidation == 0)
+                    continue;
+                tokens[count++] = NStudyWire.BindingId(i, entry.PendingInvalidation);
+                entry.PendingInvalidation = 0;
+            }
+            if (count == 0)
+                _publishingInvalidations = false;
+            return count;
+        }
+    }
+
+    internal bool IsRetired(long token)
+    {
+        lock (_gate)
+        {
+            var index = NStudyWire.SlotIndex(token);
+            var incarnation = NStudyWire.Incarnation(token);
+            return incarnation != 0 && _slots is { } slots && (uint)index < (uint)slots.Length &&
+                (incarnation < slots[index].Incarnation ||
+                 incarnation == slots[index].Incarnation && !slots[index].Open);
+        }
+    }
+
     private bool ClaimStart(long bindingId)
     {
         lock (_gate)
@@ -171,9 +282,9 @@ internal sealed class NStudyServerBindings
 
     private bool TryFind(long bindingId, out int index)
     {
-        index = unchecked((int)(uint)bindingId - 1);
+        index = NStudyWire.SlotIndex(bindingId);
         return _slots is { } slots && (uint)index < (uint)slots.Length &&
-               slots[index].Occupied && slots[index].Incarnation == (uint)((ulong)bindingId >> 32);
+               slots[index].Occupied && slots[index].Incarnation == NStudyWire.Incarnation(bindingId);
     }
 
     private static void ReclaimIfIdle(ref Slot entry)
@@ -181,6 +292,7 @@ internal sealed class NStudyServerBindings
         if (!entry.Open && entry.Users == 0)
         {
             entry.Service = default;
+            entry.Target = default;
             entry.Occupied = false;
         }
     }

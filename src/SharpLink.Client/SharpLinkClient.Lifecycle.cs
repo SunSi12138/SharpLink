@@ -570,6 +570,9 @@ internal sealed partial class SharpLinkClient
                             case NStudyWire.BindAck:
                                 session.OnNStudyBindAck(header.RequestId, payload);
                                 break;
+                            case NStudyWire.Invalidated:
+                                session.OnNStudyInvalidated(payload);
+                                break;
                             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 session.ApplyResponseCompressionPreferenceAck(
                                     ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceAck(payload).AppliedGeneration);

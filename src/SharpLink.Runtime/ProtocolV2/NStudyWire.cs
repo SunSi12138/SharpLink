@@ -12,24 +12,71 @@ internal readonly record struct NStudyAck(
 
 internal static class NStudyWire
 {
-    internal const ushort Minor = 0x79A0;
+    internal const ushort Minor = ProtocolV2Constants.MinorVersion;
     internal const ProtocolV2FrameType Bind = (ProtocolV2FrameType)244;
     internal const ProtocolV2FrameType BindAck = (ProtocolV2FrameType)245;
     internal const ProtocolV2FrameType Release = (ProtocolV2FrameType)246;
+    internal const ProtocolV2FrameType Invalidated = (ProtocolV2FrameType)247;
     internal const int BindingLimit = 64;
     private const int BindBytes = 48;
     private const int AckBytes = 112;
 
-    internal static bool IsBindingFrame(ProtocolV2FrameType type) => type is Bind or BindAck or Release;
+    internal static bool IsBindingFrame(ProtocolV2FrameType type) =>
+        type is Bind or BindAck or Release or Invalidated;
 
     internal static void ValidateLength(ProtocolV2FrameType type, int size)
     {
-        if (size != (type == Bind ? BindBytes : type == BindAck ? AckBytes : sizeof(long)))
+        var valid = type switch
+        {
+            Bind => size == BindBytes,
+            BindAck => size == AckBytes,
+            Invalidated => size is >= sizeof(long) and <= BindingLimit * sizeof(long) &&
+                size % sizeof(long) == 0,
+            _ => size == sizeof(long)
+        };
+        if (!valid)
             throw Invalid("Incorrect private Bind frame length.");
     }
 
     internal static bool IsBindingId(long token) =>
         (ulong)token >> 32 != 0 && (uint)token is > 0 and <= BindingLimit;
+
+    internal static int SlotIndex(long token) => unchecked((int)(uint)token - 1);
+    internal static uint Incarnation(long token) => (uint)((ulong)token >> 32);
+    internal static long BindingId(int index, uint incarnation) =>
+        unchecked((long)(((ulong)incarnation << 32) | (uint)(index + 1)));
+
+    internal static int ReadInvalidated(ReadOnlySequence<byte> payload, Span<long> tokens)
+    {
+        ValidateLength(Invalidated, checked((int)payload.Length));
+        var count = (int)payload.Length / sizeof(long);
+        var reader = new SequenceReader<byte>(payload);
+        ulong seen = 0;
+        for (var i = 0; i < count; i++)
+        {
+            if (!reader.TryReadLittleEndian(out long token) || !IsBindingId(token))
+                throw Invalid("Invalid private retirement identity.");
+            var slot = 1UL << SlotIndex(token);
+            if ((seen & slot) != 0)
+                throw Invalid("Duplicate slot in private retirement batch.");
+            seen |= slot;
+            tokens[i] = token;
+        }
+        return count;
+    }
+
+    internal static void WriteInvalidated(IBufferWriter<byte> writer, ReadOnlySpan<long> tokens)
+    {
+        var size = tokens.Length * sizeof(long);
+        ValidateLength(Invalidated, size);
+        var bytes = writer.GetSpan(size)[..size];
+        foreach (var token in tokens)
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(bytes, token);
+            bytes = bytes[sizeof(long)..];
+        }
+        writer.Advance(size);
+    }
 
     internal static long ReadRelease(ReadOnlySequence<byte> payload)
     {

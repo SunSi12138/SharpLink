@@ -5,6 +5,7 @@ internal sealed partial class RpcSession
     private static readonly TimeSpan NStudyTimeout = TimeSpan.FromSeconds(5);
     private readonly Lock _nStudyGate = new();
     private readonly Dictionary<long, NStudyClientRoute> _nStudyBindings = [];
+    private uint[]? _nStudyRetiredThrough;
     private bool _nStudyReleasePending;
     private PendingNStudyBind? _pendingNStudyBind;
     private ulong _lastNStudyOperation;
@@ -56,6 +57,17 @@ internal sealed partial class RpcSession
                 _nStudyAuthority = ack.Authority;
                 if (ack.Status == NStudyBindStatus.Bound)
                 {
+                    // Registry cut can reach the peer before the original BindAck.
+                    if (IsNStudyRetired(ack.BindingId))
+                        return ack with { Status = NStudyBindStatus.Superseded, BindingId = 0, Target = default };
+                    var incarnation = NStudyWire.Incarnation(ack.BindingId);
+                    if (incarnation > 1)
+                    {
+                        // Reuse itself confirms prior incarnations are closed,
+                        // even if the lightweight notice is still in flight.
+                        MarkNStudyRetiredThrough(NStudyWire.SlotIndex(ack.BindingId), incarnation - 1);
+                        RetireNStudyRoutes();
+                    }
                     var next = new NStudyClientRoute(this, ack);
                     if (_nStudyBindings.TryGetValue(ack.Contract, out prior))
                         drained = prior.Retire();
@@ -151,6 +163,56 @@ internal sealed partial class RpcSession
         }
     }
 
+    internal void OnNStudyInvalidated(ReadOnlySequence<byte> payload)
+    {
+        EnsureNStudyRetirementPhase(RpcSessionRole.Client);
+        Span<long> tokens = stackalloc long[NStudyWire.BindingLimit];
+        var count = NStudyWire.ReadInvalidated(payload, tokens);
+        lock (_nStudyGate)
+        {
+            foreach (var token in tokens[..count])
+                MarkNStudyRetiredThrough(NStudyWire.SlotIndex(token), NStudyWire.Incarnation(token));
+            RetireNStudyRoutes();
+        }
+    }
+
+    private void MarkNStudyRetiredThrough(int slot, uint incarnation)
+    {
+        var retired = _nStudyRetiredThrough ??= new uint[NStudyWire.BindingLimit];
+        retired[slot] = Math.Max(retired[slot], incarnation);
+    }
+
+    private void RetireNStudyRoutes()
+    {
+        // Dictionary removal does not invalidate enumeration. Closing the
+        // append gate never joins old calls or blocks the receive loop.
+        foreach (var (contract, route) in _nStudyBindings)
+        {
+            if (IsNStudyRetired(route.Token))
+            {
+                _ = route.Retire();
+                _nStudyBindings.Remove(contract);
+            }
+        }
+    }
+
+    private bool IsNStudyRetired(long token) =>
+        _nStudyRetiredThrough is { } retired &&
+        NStudyWire.Incarnation(token) <= retired[NStudyWire.SlotIndex(token)];
+
+    internal ValueTask SendNStudyInvalidatedAsync(ReadOnlyMemory<long> tokens, CancellationToken ct)
+    {
+        EnsureNStudyRetirementPhase(RpcSessionRole.Server);
+        return SendNStudyControlAsync(NStudyWire.Invalidated, 0, default, default, ct, retired: tokens);
+    }
+
+    private void EnsureNStudyRetirementPhase(RpcSessionRole role)
+    {
+        if (Role != role || ProtocolPhase is not (RpcSessionProtocolPhase.Ready or RpcSessionProtocolPhase.Draining) ||
+            NegotiatedOptions?.ProtocolMinorVersion != NStudyWire.Minor)
+            throw InvalidNStudy("Private retirement requires a compatible physical Session.");
+    }
+
     internal ValueTask SendNStudyBindAckAsync(ulong operation, NStudyAck ack, CancellationToken ct)
     {
         EnsureNStudyReady(RpcSessionRole.Server);
@@ -164,7 +226,8 @@ internal sealed partial class RpcSession
         => SendNStudyControlAsync(NStudyWire.Release, 0, default, default, ct, token);
 
     private async ValueTask SendNStudyControlAsync(ProtocolV2FrameType type, ulong operation,
-        NStudyBind bind, NStudyAck ack, CancellationToken ct, long retiredToken = 0)
+        NStudyBind bind, NStudyAck ack, CancellationToken ct, long retiredToken = 0,
+        ReadOnlyMemory<long> retired = default)
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -176,6 +239,8 @@ internal sealed partial class RpcSession
                     NStudyWire.WriteBind(writer, bind);
                 else if (type == NStudyWire.Release)
                     NStudyWire.WriteRelease(writer, retiredToken);
+                else if (type == NStudyWire.Invalidated)
+                    NStudyWire.WriteInvalidated(writer, retired.Span);
                 else
                     NStudyWire.WriteAck(writer, ack);
             }
