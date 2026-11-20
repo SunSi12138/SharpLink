@@ -4,15 +4,23 @@ internal sealed partial class RpcSession
 {
     private static readonly TimeSpan NStudyTimeout = TimeSpan.FromSeconds(5);
     private readonly Lock _nStudyGate = new();
-    private readonly Dictionary<long, NStudyAck> _nStudyBindings = [];
+    private readonly Dictionary<long, NStudyClientRoute> _nStudyBindings = [];
+    private bool _nStudyReleasePending;
     private PendingNStudyBind? _pendingNStudyBind;
     private ulong _lastNStudyOperation;
     private NStudyAuthority _nStudyAuthority;
 
-    internal long CaptureNStudyBinding(long contractId)
+    internal long CaptureNStudyBinding(long contractId) => CaptureNStudyRoute(contractId).Token;
+
+    internal int NStudyPreparedCount
+    {
+        get { lock (_nStudyGate) return _nStudyBindings.Count; }
+    }
+
+    internal NStudyClientRoute CaptureNStudyRoute(long contractId)
     {
         lock (_nStudyGate)
-            return _nStudyBindings.TryGetValue(contractId, out var ack) ? ack.BindingId :
+            return _nStudyBindings.TryGetValue(contractId, out var route) ? route :
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
                     "No prepared private binding on the selected physical Session.");
     }
@@ -25,7 +33,7 @@ internal sealed partial class RpcSession
         ulong operation;
         lock (_nStudyGate)
         {
-            if (_pendingNStudyBind is not null)
+            if (_pendingNStudyBind is not null || _nStudyReleasePending)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private Bind is already pending.");
             operation = checked(++_lastNStudyOperation);
             _pendingNStudyBind = pending;
@@ -38,6 +46,8 @@ internal sealed partial class RpcSession
         {
             await SendNStudyBindAsync(operation, bind, ct).ConfigureAwait(false);
             var ack = await pending.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+            NStudyClientRoute? prior = null;
+            Task? drained = null;
             lock (_nStudyGate)
             {
                 ct.ThrowIfCancellationRequested();
@@ -45,7 +55,17 @@ internal sealed partial class RpcSession
                     throw InvalidNStudy("Private Bind did not come from the same Session authority.");
                 _nStudyAuthority = ack.Authority;
                 if (ack.Status == NStudyBindStatus.Bound)
-                    _nStudyBindings[ack.Contract] = ack;
+                {
+                    var next = new NStudyClientRoute(this, ack);
+                    if (_nStudyBindings.TryGetValue(ack.Contract, out prior))
+                        drained = prior.Retire();
+                    _nStudyBindings[ack.Contract] = next;
+                }
+            }
+            if (drained is not null)
+            {
+                await drained.WaitAsync(ct).ConfigureAwait(false);
+                await SendNStudyReleaseAsync(prior!.Token, ct).ConfigureAwait(false);
             }
             return ack;
         }
@@ -61,6 +81,60 @@ internal sealed partial class RpcSession
             lock (_nStudyGate)
                 _pendingNStudyBind = null;
         }
+    }
+
+    internal async Task<bool> ReleaseNStudyBindingAsync(long contract, CancellationToken cancellationToken)
+    {
+        EnsureNStudyReady(RpcSessionRole.Client);
+        cancellationToken.ThrowIfCancellationRequested();
+        NStudyClientRoute route;
+        Task drained;
+        lock (_nStudyGate)
+        {
+            if (_pendingNStudyBind is not null || _nStudyReleasePending)
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private binding control is already pending.");
+            if (!_nStudyBindings.Remove(contract, out route!))
+                return false;
+            drained = route.Retire();
+            _nStudyReleasePending = true;
+        }
+
+        using var timer = new CancellationTokenSource(NStudyTimeout, RuntimeContext.TimeProvider);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(LifetimeToken, timer.Token, cancellationToken);
+        try
+        {
+            await drained.WaitAsync(budget.Token).ConfigureAwait(false);
+            await SendNStudyReleaseAsync(route.Token, budget.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error)
+        {
+            NotifyDisconnected(error);
+            throw;
+        }
+        finally
+        {
+            lock (_nStudyGate)
+                _nStudyReleasePending = false;
+        }
+    }
+
+    internal bool TryEnqueueNStudyRequest(NStudyClientRoute route, IRpcByteBufferWriter writer,
+        bool observeEmission, CancellationToken ct, IRequestEmissionFailureObserver? observer,
+        out ValueTask emission, out Exception? rejection)
+    {
+        if (!route.TryEnter(this))
+        {
+            RuntimeContext.Buffers.Return(writer);
+            emission = default;
+            rejection = new SharpLinkException(SharpLinkErrorCode.Unavailable, "This private binding is retired.");
+            return false;
+        }
+        try
+        {
+            return TryEnqueuePreparedFrame(writer, observeEmission, ct, observer, out emission, out rejection);
+        }
+        finally { route.Leave(); }
     }
 
     internal void OnNStudyBindAck(ulong operation, ReadOnlySequence<byte> payload)
@@ -86,8 +160,11 @@ internal sealed partial class RpcSession
     private ValueTask SendNStudyBindAsync(ulong operation, NStudyBind bind, CancellationToken ct)
         => SendNStudyControlAsync(NStudyWire.Bind, operation, bind, default, ct);
 
+    private ValueTask SendNStudyReleaseAsync(long token, CancellationToken ct)
+        => SendNStudyControlAsync(NStudyWire.Release, 0, default, default, ct, token);
+
     private async ValueTask SendNStudyControlAsync(ProtocolV2FrameType type, ulong operation,
-        NStudyBind bind, NStudyAck ack, CancellationToken ct)
+        NStudyBind bind, NStudyAck ack, CancellationToken ct, long retiredToken = 0)
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -97,6 +174,8 @@ internal sealed partial class RpcSession
             {
                 if (type == NStudyWire.Bind)
                     NStudyWire.WriteBind(writer, bind);
+                else if (type == NStudyWire.Release)
+                    NStudyWire.WriteRelease(writer, retiredToken);
                 else
                     NStudyWire.WriteAck(writer, ack);
             }

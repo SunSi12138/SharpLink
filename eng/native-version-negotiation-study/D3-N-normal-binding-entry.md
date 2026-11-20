@@ -35,3 +35,37 @@ peers. Verify remote OneWay totals R1=5/R2=24, original invocation returns
 with both peers still serving B. Check actual source, transport, identities,
 outcome and five ordered event records per transport. Retain first failure;
 no timeout changes, no unusual negative case, no release or performance run.
+
+## Follow-up: explicit Release, physical slot reuse and fresh Session Bind
+
+Same private N shape scope (generated Unary and plain OneWay), ordinary
+authenticated TCP and SharedMemory. The original two scenarios rerun
+because ordinary request capture and publication changed. Add one normal
+lifecycle scenario on each transport (four discovered tests total).
+
+Release removes the exact client route and joins only publishers already
+in the final append section. It rides the same FIFO after those heads;
+it neither acknowledges remote business nor waits for it. Successful
+re-preparation also releases the preceding local route this way. Server
+Release seals the token and cannot grant its slot until all dispatch uses
+physically return; brief scalar arbitration is outside all user work.
+An already queued context must still claim this token's start after its
+ordinary admission; a returned use has one authority. This does not
+implement proactive invalidation, every group cut/queue rule, or a final ABI.
+
+The fixture releases A during its real R1 call and confirms actual
+processing by subsequent B on the same route. While the original
+slot still has its physical user and is marked retiring, compatible R2's
+real Bind must choose a different slot. After R1 returns normally and
+physically retires, normal Bind reuses the old index with a higher
+incarnation. Sixty-eight ordinary explicit release/rebind cycles on
+the same Session must reconcile back to two open slots and no retiring
+or dispatch users. B must remain available. A public planned rolling
+refresh then creates a separately authenticated physical Session with
+zero inherited binds. Bind A and B freshly and call current R2 and
+unchanged B through the same proxies. Numeric tokens may repeat on this
+distinct Session; their grants remain independent.
+
+Use the first exact native run, one fixed 25 s fixture guard and normal
+transport timers; preserve its evidence and do not change or rerun
+successful schedules as a substitute for a failed one.

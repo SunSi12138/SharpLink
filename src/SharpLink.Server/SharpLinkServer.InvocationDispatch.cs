@@ -10,6 +10,9 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
+        ServerRequestEnvelope request,
+        ServiceRegistration? serviceInfo,
+        NStudyServerBindings.Use binding,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
@@ -20,8 +23,6 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -41,7 +42,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!connection.NStudyBindings.TryResolve(request.InterfaceHash, out var serviceInfo))
+            if (serviceInfo is null)
             {
                 ValueTask responseSend;
                 try
@@ -163,7 +164,8 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admittedCallState,
-                        admissionProgram);
+                        admissionProgram,
+                        binding);
                 }
 
                 var decision = admissionTask.Result;
@@ -187,6 +189,14 @@ internal sealed partial class SharpLinkServer
                     return rejectionSend;
                 }
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
+            }
+
+            if (!binding.ClaimStart())
+            {
+                if (admittedCallState is not null)
+                    ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                return session.SendRpcErrorWithBackpressureAsync(
+                    requestId, NStudyBindingRetiredError(), connection.ConnectionToken);
             }
 
             var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);

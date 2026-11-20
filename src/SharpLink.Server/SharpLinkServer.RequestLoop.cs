@@ -263,6 +263,10 @@ internal sealed partial class SharpLinkServer
                                     await HandleNStudyBindAsync(connection, header.RequestId,
                                         NStudyWire.ReadBind(payload), ct).ConfigureAwait(false);
                                     break;
+                                case NStudyWire.Release:
+                                    session.EnsureNStudyReady(RpcSessionRole.Server);
+                                    connection.NStudyBindings.Release(NStudyWire.ReadRelease(payload));
+                                    break;
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
                                     var responseCompressionPreference =
                                         ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
@@ -391,6 +395,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        NStudyServerBindings.Use bindingUse = default;
         try
         {
             if (!TryAcceptRequest(connection, requestId))
@@ -418,10 +423,12 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            var admissionProgram = CaptureAdmissionProgram(requestId);
             ValueTask dispatchTask;
             try
             {
+                var request = ReadRequestEnvelope(connection.Session, payload, flags);
+                _ = connection.NStudyBindings.TryBorrow(request.InterfaceHash, out var selected, out bindingUse);
+                var admissionProgram = CaptureAdmissionProgram(requestId);
                 dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
                     ? DispatchOneWayRpc(
                         connection,
@@ -430,7 +437,10 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram)
+                        admissionProgram,
+                        request,
+                        selected,
+                        bindingUse)
                     : DispatchRpcAsync(
                         connection,
                         requestId,
@@ -438,7 +448,10 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram);
+                        admissionProgram,
+                        request,
+                        selected,
+                        bindingUse);
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)
@@ -478,6 +491,10 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex)
         {
             LogRpcDispatchUnhandledException(_logger, ex);
+        }
+        finally
+        {
+            bindingUse.Dispose();
         }
     }
 

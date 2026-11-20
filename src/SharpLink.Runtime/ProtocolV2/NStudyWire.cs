@@ -15,16 +15,38 @@ internal static class NStudyWire
     internal const ushort Minor = 0x79A0;
     internal const ProtocolV2FrameType Bind = (ProtocolV2FrameType)244;
     internal const ProtocolV2FrameType BindAck = (ProtocolV2FrameType)245;
+    internal const ProtocolV2FrameType Release = (ProtocolV2FrameType)246;
     internal const int BindingLimit = 64;
     private const int BindBytes = 48;
     private const int AckBytes = 112;
 
-    internal static bool IsBindingFrame(ProtocolV2FrameType type) => type is Bind or BindAck;
+    internal static bool IsBindingFrame(ProtocolV2FrameType type) => type is Bind or BindAck or Release;
 
     internal static void ValidateLength(ProtocolV2FrameType type, int size)
     {
-        if (size != (type == Bind ? BindBytes : AckBytes))
+        if (size != (type == Bind ? BindBytes : type == BindAck ? AckBytes : sizeof(long)))
             throw Invalid("Incorrect private Bind frame length.");
+    }
+
+    internal static bool IsBindingId(long token) =>
+        (ulong)token >> 32 != 0 && (uint)token is > 0 and <= BindingLimit;
+
+    internal static long ReadRelease(ReadOnlySequence<byte> payload)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(long)];
+        ReadFixed(payload, bytes);
+        var token = BinaryPrimitives.ReadInt64LittleEndian(bytes);
+        if (!IsBindingId(token))
+            throw Invalid("Invalid private Release binding identity.");
+        return token;
+    }
+
+    internal static void WriteRelease(IBufferWriter<byte> writer, long token)
+    {
+        if (!IsBindingId(token))
+            throw Invalid("Invalid private Release binding identity.");
+        BinaryPrimitives.WriteInt64LittleEndian(writer.GetSpan(sizeof(long)), token);
+        writer.Advance(sizeof(long));
     }
 
     internal static void WriteBind(IBufferWriter<byte> output, in NStudyBind bind)
@@ -81,7 +103,7 @@ internal static class NStudyWire
             ack.Status is < NStudyBindStatus.Bound or > NStudyBindStatus.Unavailable)
             throw Invalid("Invalid private Bind acknowledgement identity.");
         if (ack.Status == NStudyBindStatus.Bound
-            ? (ack.BindingId >> 32) != 1 || (uint)ack.BindingId is 0 or > BindingLimit || ack.Target == default
+            ? !IsBindingId(ack.BindingId) || ack.Target == default
             : ack.BindingId != 0 || ack.Target != default)
             throw Invalid("Invalid private Bind acknowledgement result.");
     }

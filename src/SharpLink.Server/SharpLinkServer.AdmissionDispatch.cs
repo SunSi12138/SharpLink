@@ -10,6 +10,9 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
+        ServerRequestEnvelope request,
+        ServiceRegistration? serviceInfo,
+        NStudyServerBindings.Use binding,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         int admittedClientStreamCount = 0,
@@ -21,9 +24,7 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
-            if (!connection.NStudyBindings.TryResolve(request.InterfaceHash, out var serviceInfo))
+            if (serviceInfo is null)
             {
                 if (admittedCallState is not null)
                 {
@@ -142,7 +143,8 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         descriptor.ClientStreamCount,
                         admittedCallState,
-                        admissionProgram));
+                        admissionProgram,
+                        binding));
                 }
 
                 var decision = admissionTask.Result;
@@ -154,6 +156,14 @@ internal sealed partial class SharpLinkServer
                     return ValueTask.CompletedTask;
                 }
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
+            }
+
+            if (!binding.ClaimStart())
+            {
+                DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+                if (admittedCallState is not null)
+                    ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                return ValueTask.CompletedTask;
             }
 
             var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);

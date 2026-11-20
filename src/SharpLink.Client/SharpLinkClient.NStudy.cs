@@ -19,6 +19,16 @@ internal sealed partial class SharpLinkClient
         return ack;
     }
 
+    internal Task<bool> ReleaseNStudyContractAsync(long contract, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var ready = Volatile.Read(ref _readyConnections);
+        if (ready.Length != 1)
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
+                "The private binding study requires exactly one ready connection.");
+        return ready[0].Session.ReleaseNStudyBindingAsync(contract, ct);
+    }
+
     private static void RequireNStudyShape(in RpcMethodDescriptor method)
     {
         if (method.HasClientStreams || method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay))

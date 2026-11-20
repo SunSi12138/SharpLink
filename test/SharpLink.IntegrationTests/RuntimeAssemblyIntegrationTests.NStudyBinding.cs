@@ -28,13 +28,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var identity = new NStudyContractInputs(aCid, manifest.RpcAssemblyHash, bCid, staticManifest.RpcAssemblyHash);
 
         await using var provider = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
-        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(src).UseServiceProvider(provider)
-            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (r, _) => ValueTask.FromResult(
-                r.Payload.Span.SequenceEqual(NStudyAuthenticationPayload)
-                    ? SharpLinkAuthenticationResult.Authenticate(new SharpLinkAuthenticationContext("n-validation"))
-                    : SharpLinkAuthenticationResult.Reject())))
-            .RequireAuthentication()
-            .ReplaceService<IShutdownCleanupProbe>(new ShutdownCleanupProbe());
+        var builder = NewNStudyServer(src, provider);
         string? memoryName = transport == "shared-memory" ? $"sharplink-n-{Guid.NewGuid():N}" : null;
         if (memoryName is null)
             builder.UseTcp(0, IPAddress.Loopback);
@@ -61,6 +55,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             trace.Record("OldAlcCollectedWhileBothConnectionsServeB");
         }
     }
+
+    private static SharpLinkServerBuilder NewNStudyServer(IGeneratedManifestSource source, IServiceProvider provider)
+        => SharpLinkServerBuilder.Create().UseGeneratedManifestSource(source).UseServiceProvider(provider)
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (request, _) => ValueTask.FromResult(
+                request.Payload.Span.SequenceEqual(NStudyAuthenticationPayload)
+                    ? SharpLinkAuthenticationResult.Authenticate(new SharpLinkAuthenticationContext("n-validation"))
+                    : SharpLinkAuthenticationResult.Reject())))
+            .RequireAuthentication()
+            .ReplaceService<IShutdownCleanupProbe>(new ShutdownCleanupProbe());
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<NStudyLivePeers> GiveNStudyServiceAReplacementAsync(

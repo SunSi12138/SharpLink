@@ -7,6 +7,9 @@ internal sealed partial class SharpLinkServer
     private readonly Guid _nStudyRegistryEpoch = Guid.NewGuid();
     private long _nStudyPublicationGeneration = 1;
 
+    private static SharpLinkException NStudyBindingRetiredError() =>
+        new(SharpLinkErrorCode.Unavailable, "This private binding was retired before business admission.");
+
     private async ValueTask HandleNStudyBindAsync(
         ServerConnectionState connection, ulong operation, NStudyBind bind, CancellationToken ct)
     {
@@ -59,13 +62,23 @@ internal sealed partial class SharpLinkServer
     }
 }
 
-// One physical server receive-loop owner. The bounded checkpoint never recycles
-// a slot; the selected identity cannot keep a retired dynamic implementation alive.
+// Release and control use the actual receive loop. The dispatch continuation can
+// return its exact physical read on another thread. The lock guards only these
+// bounded scalar changes; existing user work is always outside it.
 internal sealed class NStudyServerBindings
 {
-    private SharpLinkServer.QueuedServiceSelection[]? _entries;
-    private int _used;
+    private readonly Lock _gate = new();
+    private Slot[]? _slots;
     private ulong _operation;
+
+    private struct Slot
+    {
+        internal SharpLinkServer.QueuedServiceSelection Service;
+        internal uint Incarnation;
+        internal int Users;
+        internal bool Occupied;
+        internal bool Open;
+    }
 
     internal void ObserveOperation(ulong operation)
     {
@@ -76,22 +89,127 @@ internal sealed class NStudyServerBindings
 
     internal bool TryInstall(ServiceRegistration service, out long bindingId)
     {
-        if (_used >= NStudyWire.BindingLimit)
+        lock (_gate)
         {
-            bindingId = 0;
-            return false;
+            var slots = _slots ??= new Slot[NStudyWire.BindingLimit];
+            for (var index = 0; index < slots.Length; index++)
+            {
+                ref var entry = ref slots[index];
+                if (entry.Occupied || entry.Incarnation == uint.MaxValue)
+                    continue;
+                entry.Service = new(service);
+                entry.Open = entry.Occupied = true;
+                entry.Incarnation++;
+                bindingId = unchecked((long)(((ulong)entry.Incarnation << 32) | (uint)(index + 1)));
+                return true;
+            }
         }
-        (_entries ??= new SharpLinkServer.QueuedServiceSelection[NStudyWire.BindingLimit])[_used] = new(service);
-        bindingId = (1L << 32) | (uint)++_used;
-        return true;
+        bindingId = 0;
+        return false;
     }
 
     internal bool TryResolve(long bindingId, out ServiceRegistration service)
     {
-        var slot = (uint)bindingId;
-        if ((bindingId >> 32) == 1 && slot > 0 && slot <= (uint)_used)
-            return _entries![(int)slot - 1].TryGetService(out service);
+        lock (_gate)
+        {
+            if (TryFind(bindingId, out var index) && _slots![index].Open)
+                return _slots[index].Service.TryGetService(out service);
+        }
         service = null!;
         return false;
+    }
+
+    internal bool TryBorrow(long bindingId, out ServiceRegistration service, out Use use)
+    {
+        lock (_gate)
+        {
+            if (TryFind(bindingId, out var index))
+            {
+                ref var entry = ref _slots![index];
+                if (entry.Open && entry.Service.TryGetService(out service))
+                {
+                    checked { entry.Users++; }
+                    use = new(this, bindingId);
+                    return true;
+                }
+            }
+        }
+        service = null!;
+        use = default;
+        return false;
+    }
+
+    internal void Release(long bindingId)
+    {
+        lock (_gate)
+        {
+            if (!TryFind(bindingId, out var index))
+                return;
+            ref var entry = ref _slots![index];
+            entry.Open = false;
+            ReclaimIfIdle(ref entry);
+        }
+    }
+
+    private bool ClaimStart(long bindingId)
+    {
+        lock (_gate)
+            return TryFind(bindingId, out var index) && _slots![index].Open;
+    }
+
+    private void Return(long bindingId)
+    {
+        lock (_gate)
+        {
+            if (!TryFind(bindingId, out var index) || _slots![index].Users <= 0)
+                throw new InvalidOperationException("The exact N-study binding use was returned without an owner.");
+            ref var entry = ref _slots[index];
+            entry.Users--;
+            ReclaimIfIdle(ref entry);
+        }
+    }
+
+    private bool TryFind(long bindingId, out int index)
+    {
+        index = unchecked((int)(uint)bindingId - 1);
+        return _slots is { } slots && (uint)index < (uint)slots.Length &&
+               slots[index].Occupied && slots[index].Incarnation == (uint)((ulong)bindingId >> 32);
+    }
+
+    private static void ReclaimIfIdle(ref Slot entry)
+    {
+        if (!entry.Open && entry.Users == 0)
+        {
+            entry.Service = default;
+            entry.Occupied = false;
+        }
+    }
+
+    internal (int Open, int Retiring, int Users) Snapshot()
+    {
+        lock (_gate)
+        {
+            var open = 0;
+            var retiring = 0;
+            var users = 0;
+            if (_slots is not null)
+            {
+                foreach (var slot in _slots)
+                {
+                    if (slot.Open) open++;
+                    else if (slot.Occupied) retiring++;
+                    users += slot.Users;
+                }
+            }
+            return (open, retiring, users);
+        }
+    }
+
+    // Only DispatchRequestAsync owns Return. Queued continuations borrow this
+    // scalar identity to arbitrate their eventual start, never return the use.
+    internal readonly struct Use(NStudyServerBindings owner, long bindingId) : IDisposable
+    {
+        internal bool ClaimStart() => owner?.ClaimStart(bindingId) == true;
+        public void Dispose() => owner?.Return(bindingId);
     }
 }

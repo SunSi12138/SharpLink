@@ -39,7 +39,7 @@ internal sealed partial class SharpLinkClient
             flags |= ProtocolV2FrameFlags.HasMetadata;
         }
 
-        var binding = session.CaptureNStudyBinding(contractId);
+        var binding = session.CaptureNStudyRoute(contractId);
         var writer = session.RentFrameWriter();
         var ownsWriter = true;
         try
@@ -51,7 +51,7 @@ internal sealed partial class SharpLinkClient
             {
                 var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
                 var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, binding);
+                BinaryPrimitives.WriteInt64LittleEndian(span, binding.Token);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
                 if (deadline.HasValue)
                     BinaryPrimitives.WriteInt64LittleEndian(
@@ -83,7 +83,8 @@ internal sealed partial class SharpLinkClient
                         cancellationToken,
                         failureObserver,
                         out var emission,
-                        out var rejection))
+                        out var rejection,
+                        binding))
                 {
                     if (rejection is not null)
                     {
@@ -131,7 +132,8 @@ internal sealed partial class SharpLinkClient
                 throw CreateDeadlineExceededException();
             }
 
-            if (!session.TryEnqueuePreparedFrame(
+            if (!session.TryEnqueueNStudyRequest(
+                    binding,
                     plain,
                     observeEmission,
                     cancellationToken,

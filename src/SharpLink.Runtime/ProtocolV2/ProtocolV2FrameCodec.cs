@@ -135,6 +135,7 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
         (byte)NStudyWire.Bind => NStudyWire.Bind,
         (byte)NStudyWire.BindAck => NStudyWire.BindAck,
+        (byte)NStudyWire.Release => NStudyWire.Release,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -159,7 +160,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.ContractManifest or
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
             ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-            ProtocolV2FrameType.SessionRefreshRequested;
+            ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Release;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -316,6 +317,9 @@ public static class ProtocolV2FrameParser
                 break;
             case NStudyWire.BindAck:
                 _ = NStudyWire.ReadAck(payload);
+                break;
+            case NStudyWire.Release:
+                _ = NStudyWire.ReadRelease(payload);
                 break;
         }
     }

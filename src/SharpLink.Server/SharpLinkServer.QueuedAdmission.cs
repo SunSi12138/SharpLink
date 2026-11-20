@@ -12,7 +12,8 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         int clientStreamCount,
         ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram)
+        AdmissionProgram admissionProgram,
+        NStudyServerBindings.Use binding)
     {
         var transferred = false;
         try
@@ -37,6 +38,11 @@ internal sealed partial class SharpLinkServer
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
+            if (!binding.ClaimStart())
+            {
+                DrainRejectedOneWayStreams(connection.Session, requestId, clientStreamCount);
+                return;
+            }
             var dispatchTask = DispatchAdmittedOneWayRpc(
                 retainedPayload.SelectedService,
                 connection,
@@ -68,7 +74,8 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram)
+        AdmissionProgram admissionProgram,
+        NStudyServerBindings.Use binding)
     {
         var transferred = false;
         try
@@ -95,6 +102,12 @@ internal sealed partial class SharpLinkServer
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
+            if (!binding.ClaimStart())
+            {
+                await PublishAdmissionError(connection.Session, requestId, callState, NStudyBindingRetiredError(),
+                    connection.ConnectionToken).ConfigureAwait(false);
+                return;
+            }
             var dispatchTask = DispatchAdmittedRpcAsync(
                 retainedPayload.SelectedService,
                 connection,
