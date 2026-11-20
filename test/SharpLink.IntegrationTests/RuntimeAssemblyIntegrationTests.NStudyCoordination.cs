@@ -34,7 +34,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
         await using var client = NewNStudyClient(source, port, memoryName);
-        server.NStudyManualCoordinationEnabled = client.NStudyManualCoordinationEnabled = true;
+        server.NStudyVersionCoordinationMode = client.NStudyVersionCoordinationMode = NStudyCoordinationMode.Manual;
         var path = Path.Combine(Path.GetDirectoryName(contracts.ContractAssembly.Location)!,
             "SharpLink.DynamicPlugin.Services.dll");
         var oldLoader = new SharedContractServiceLoadContext(contracts.ContractAssembly);

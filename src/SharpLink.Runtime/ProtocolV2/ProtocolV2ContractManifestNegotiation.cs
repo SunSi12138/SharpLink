@@ -8,15 +8,15 @@ internal static class ProtocolV2ContractManifestNegotiation
         int connectionReceiveWindowBytes,
         IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders,
         bool enableSessionRefresh = true,
-        bool enableNStudyManualCoordination = false)
+        bool enableNStudyCoordination = false)
     {
         ArgumentNullException.ThrowIfNull(compressionProviders);
         var capabilities = ProtocolV2Negotiator.AlwaysImplementedCapabilities |
                            ProtocolV2Capabilities.ContractManifest;
         if (enableSessionRefresh)
             capabilities |= ProtocolV2Capabilities.SessionRefresh;
-        if (enableNStudyManualCoordination)
-            capabilities |= NStudyWire.ManualCoordination;
+        if (enableNStudyCoordination)
+            capabilities |= NStudyWire.CoordinationCapability;
         if (compressionProviders.Count != 0)
             capabilities |= ProtocolV2Capabilities.Compression;
         return ProtocolV2NegotiationPolicy.Create(

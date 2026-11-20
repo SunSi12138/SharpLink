@@ -1,5 +1,6 @@
 namespace SharpLink.Runtime;
 
+internal enum NStudyCoordinationMode : byte { Disabled, Manual, Automatic }
 internal enum NStudyInitiator : byte { Client = 1, Server }
 internal enum NStudyPhase : byte { Candidate = 1, Propose, Prepare, Ready, Activated, Declined }
 internal readonly record struct NStudyChange(
@@ -9,7 +10,7 @@ internal readonly record struct NStudyCoordinationMessage(NStudyPhase Phase, NSt
 
 internal static partial class NStudyWire
 {
-    internal const ProtocolV2Capabilities ManualCoordination = (ProtocolV2Capabilities)(1UL << 7);
+    internal const ProtocolV2Capabilities CoordinationCapability = (ProtocolV2Capabilities)(1UL << 7);
     internal const ProtocolV2FrameType Coordination = (ProtocolV2FrameType)250;
     private const int CoordinationBytes = 138;
 

@@ -7,20 +7,20 @@ internal readonly record struct NStudyServerActivation(SharpLinkAssemblyReplacem
 
 internal sealed partial class SharpLinkServer
 {
-    internal bool NStudyManualCoordinationEnabled { get; set; }
+    internal NStudyCoordinationMode NStudyVersionCoordinationMode { get; set; }
 
     internal async Task<NStudyServerActivation> StageNStudyReplacementAsync(
         ServerConnectionState peer,
         Assembly oldAssembly, Assembly newAssembly, long contract, NStudyInitiator initiator,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>> approveLocally,
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
         TimeSpan gracefulTimeout, CancellationToken cancellationToken)
     {
         ValidateReplacementInputs(oldAssembly, newAssembly, gracefulTimeout);
-        ArgumentNullException.ThrowIfNull(approveLocally);
         cancellationToken.ThrowIfCancellationRequested();
         if (!_connectionRegistry.TryGetValue(peer.Session.Id, out var current) || !ReferenceEquals(current, peer))
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected data Session is no longer a server peer.");
         using var ownership = peer.Session.EnterNStudyCoordination();
+        peer.Session.ValidateNStudyLocalDecision(approveLocally);
         using var timer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, timer.Token, peer.ConnectionToken, peer.Session.LifetimeToken);
@@ -46,7 +46,7 @@ internal sealed partial class SharpLinkServer
     // Remote messages have no assembly references or means to install code.
     private sealed class NStudyServerPreparation(
         ServerConnectionState peer, NStudyAuthority authority, long contract, NStudyInitiator initiator,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>> approveLocally, CancellationToken controlToken)
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally, CancellationToken controlToken)
     {
         internal NStudyChange? Change { get; private set; }
         internal Guid ClientRegistration { get; private set; }
@@ -99,7 +99,7 @@ internal sealed partial class SharpLinkServer
             else
                 await session.SendNStudyCoordinationAsync(new(NStudyPhase.Propose, change), controlToken).ConfigureAwait(false);
 
-            if (!await approveLocally(change, controlToken).AsTask().WaitAsync(controlToken).ConfigureAwait(false) || !CanCommit)
+            if (!await session.DecideNStudyLocallyAsync(change, approveLocally, controlToken).ConfigureAwait(false) || !CanCommit)
             {
                 await session.SendNStudyCoordinationAsync(new(NStudyPhase.Declined, change), controlToken).ConfigureAwait(false);
                 Declined = true;

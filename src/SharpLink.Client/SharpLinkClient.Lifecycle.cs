@@ -376,13 +376,14 @@ internal sealed partial class SharpLinkClient
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
+        session.ConfigureNStudyCoordination(NStudyVersionCoordinationMode);
         var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
             enableSessionRefresh: session.SupportsSessionRefreshReplacement,
-            enableNStudyManualCoordination: NStudyManualCoordinationEnabled);
+            enableNStudyCoordination: session.NStudyLocalCoordinationMode != NStudyCoordinationMode.Disabled);
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,

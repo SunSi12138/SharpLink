@@ -5,20 +5,20 @@ internal readonly record struct NStudyClientActivation(NStudyChange Change, NStu
 internal sealed partial class SharpLinkClient
 {
     // Sampled at the actual handshake; later setting changes apply to future Sessions only.
-    internal bool NStudyManualCoordinationEnabled { get; set; }
+    internal NStudyCoordinationMode NStudyVersionCoordinationMode { get; set; }
 
     internal async Task<NStudyClientActivation?> NegotiateNStudyReplacementAsync(
         NStudyInitiator localChoice,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>> approveLocally,
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(approveLocally);
         cancellationToken.ThrowIfCancellationRequested();
         var ready = Volatile.Read(ref _readyConnections);
         if (ready.Length != 1)
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A private coordination attempt needs one Ready Session.");
         var session = ready[0].Session;
         using var ownership = session.EnterNStudyCoordination();
+        session.ValidateNStudyLocalDecision(approveLocally);
         using var timer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timer.Token, session.LifetimeToken);
         var ct = budget.Token;
@@ -55,7 +55,7 @@ internal sealed partial class SharpLinkClient
                 // Local generated assets must actually exist. Remote approval cannot
                 // install them, and the local registry is rechecked after policy awaits.
                 if (module.Manifest.RpcAssemblyHash != change.Hash ||
-                    !await approveLocally(change, ct).AsTask().WaitAsync(ct).ConfigureAwait(false) ||
+                    !await session.DecideNStudyLocallyAsync(change, approveLocally, ct).ConfigureAwait(false) ||
                     !IsStillLocalNStudyRegistration(change.Contract, registration))
                 {
                     await session.SendNStudyCoordinationAsync(new(NStudyPhase.Declined, change), ct).ConfigureAwait(false);
