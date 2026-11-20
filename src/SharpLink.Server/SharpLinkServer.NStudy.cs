@@ -33,6 +33,8 @@ internal sealed partial class SharpLinkServer
                     var target = service.NStudyTarget;
                     if (bind.Expected != default && bind.Expected != target)
                         ack = ack with { Status = NStudyBindStatus.Superseded };
+                    else if (!session.MayBindNStudyTarget(bind.Contract, target))
+                        ack = ack with { Status = NStudyBindStatus.Unavailable };
                     else if (table.TryInstall(service, out var token))
                         ack = ack with { Status = NStudyBindStatus.Bound, Target = target, BindingId = token };
                     else

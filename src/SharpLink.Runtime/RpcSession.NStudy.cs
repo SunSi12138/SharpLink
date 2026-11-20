@@ -26,7 +26,8 @@ internal sealed partial class RpcSession
                     "No prepared private binding on the selected physical Session.");
     }
 
-    internal async Task<NStudyAck> PrepareNStudyBindAsync(NStudyBind bind, CancellationToken cancellationToken)
+    internal async Task<NStudyAck> PrepareNStudyBindAsync(NStudyBind bind, CancellationToken cancellationToken,
+        NStudyChange? resuming = null)
     {
         EnsureNStudyReady(RpcSessionRole.Client);
         cancellationToken.ThrowIfCancellationRequested();
@@ -34,6 +35,9 @@ internal sealed partial class RpcSession
         ulong operation;
         lock (_nStudyGate)
         {
+            if (_nStudyFrozen is { } frozen && frozen.Contract == bind.Contract &&
+                (resuming != frozen || bind.Expected != frozen.Target || bind.Hash != frozen.Hash))
+                throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The contract is awaiting its coordinated activation.");
             if (_pendingNStudyBind is not null || _nStudyReleasePending)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private Bind is already pending.");
             operation = checked(++_lastNStudyOperation);

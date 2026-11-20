@@ -381,7 +381,8 @@ internal sealed partial class SharpLinkClient
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
-            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement,
+            enableNStudyManualCoordination: NStudyManualCoordinationEnabled);
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
@@ -578,6 +579,9 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case NStudyWire.RequestAccepted:
                                 connection.PendingCalls.AcceptNStudyRequest(unchecked((long)header.RequestId));
+                                break;
+                            case NStudyWire.Coordination:
+                                session.OnNStudyCoordination(header.RequestId, payload);
                                 break;
                             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 session.ApplyResponseCompressionPreferenceAck(

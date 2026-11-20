@@ -278,6 +278,9 @@ internal sealed partial class SharpLinkServer
                                     session.EnsureNStudyReady(RpcSessionRole.Server);
                                     connection.NStudyBindings.Release(NStudyWire.ReadRelease(payload));
                                     break;
+                                case NStudyWire.Coordination:
+                                    session.OnNStudyCoordination(header.RequestId, payload);
+                                    break;
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
                                     var responseCompressionPreference =
                                         ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);

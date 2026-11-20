@@ -50,7 +50,8 @@ internal static class RpcSessionProtocolRules
         ProtocolV2Capabilities.HealthCheck |
         ProtocolV2Capabilities.CancellationReason |
         ProtocolV2Capabilities.ContractManifest |
-        ProtocolV2Capabilities.SessionRefresh;
+        ProtocolV2Capabilities.SessionRefresh |
+        NStudyWire.ManualCoordination;
 
     internal static bool IsFrameAllowed(
         RpcSessionProtocolPhase phase,
@@ -77,7 +78,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
                     ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Bind or NStudyWire.BindAck or
                     NStudyWire.Release or NStudyWire.Invalidated or NStudyWire.RequestAccepted or
-                    NStudyWire.OneWayInputRequest,
+                    NStudyWire.OneWayInputRequest or NStudyWire.Coordination,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

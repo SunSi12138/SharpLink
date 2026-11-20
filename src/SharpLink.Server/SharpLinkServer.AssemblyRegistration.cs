@@ -163,20 +163,32 @@ internal sealed partial class SharpLinkServer
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default)
     {
+        ValidateReplacementInputs(oldAssembly, newAssembly, gracefulTimeout);
+        return ReplaceAssemblyCoreAsync(oldAssembly, newAssembly, gracefulTimeout, cancellationToken);
+    }
+
+    private static void ValidateReplacementInputs(Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout)
+    {
         ArgumentNullException.ThrowIfNull(oldAssembly);
         ArgumentNullException.ThrowIfNull(newAssembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+    }
+
+    private async ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyCoreAsync(
+        Assembly oldAssembly, Assembly newAssembly, TimeSpan gracefulTimeout, CancellationToken cancellationToken,
+        NStudyServerPreparation? coordinated = null)
+    {
         if (ReferenceEquals(oldAssembly, newAssembly))
         {
-            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+            return SharpLinkAssemblyReplacementResult.Failure(CreateError(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidArgument,
                 "The old and new Assembly objects must be different.",
-                newAssembly)));
+                newAssembly));
         }
 
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, out var manifest);
         if (!loaded.Succeeded)
-            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
+            return SharpLinkAssemblyReplacementResult.Failure(loaded.Error!);
 
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
         List<ServerConnectionState>? invalidationWorkers = null;
@@ -202,38 +214,38 @@ internal sealed partial class SharpLinkServer
                 {
                     if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
                     {
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                        return SharpLinkAssemblyReplacementResult.Failure(CreateError(
                             SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                             $"Server state '{CurrentState}' does not accept runtime assembly replacement.",
-                            newAssembly)));
+                            newAssembly));
                     }
                     if (!_dynamicModules.TryGetValue(oldAssembly, out oldModule) ||
                         oldModule.State != SharpLinkDynamicModuleState.Running ||
                         _unregisterOperations.ContainsKey(oldAssembly))
                     {
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                        return SharpLinkAssemblyReplacementResult.Failure(CreateError(
                             SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                             "The old Assembly object does not own a running runtime registration.",
-                            newAssembly)));
+                            newAssembly));
                     }
                     if (IsAssemblyRegistered(newAssembly))
                     {
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                        return SharpLinkAssemblyReplacementResult.Failure(CreateError(
                             SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
                             "The new Assembly object is already registered on this server.",
-                            newAssembly)));
+                            newAssembly));
                     }
                     if (_dynamicModules.Count >= MaximumDynamicModules)
                     {
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                        return SharpLinkAssemblyReplacementResult.Failure(CreateError(
                             SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
                             $"The server runtime module limit of {MaximumDynamicModules} has been reached; wait for a draining replacement to finish.",
-                            newAssembly)));
+                            newAssembly));
                     }
 
                     var replacementDependencyError = ValidateReplacementDependants(oldModule, manifest!);
                     if (replacementDependencyError is not null)
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(replacementDependencyError));
+                        return SharpLinkAssemblyReplacementResult.Failure(replacementDependencyError);
 
                     generation = _registryGeneration;
                     currentModules = _dynamicModules.Values
@@ -257,10 +269,33 @@ internal sealed partial class SharpLinkServer
                 if (error is not null)
                 {
                     rollbackError = error;
-                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(error));
+                    return SharpLinkAssemblyReplacementResult.Failure(error);
                 }
                 candidateServices = candidate.Services;
                 retainedCandidateServices = retainedServices;
+
+                if (coordinated is not null)
+                {
+                    lock (_registryGate)
+                    {
+                        // Reserve the exact candidate's identity; it will not be
+                        // substituted or reused if this preparation is abandoned.
+                        newModule.NStudyPublication = _nStudyPublicationGeneration = checked(_nStudyPublicationGeneration + 1);
+                        if (generation != _registryGeneration ||
+                            !coordinated.TryStage(Volatile.Read(ref _services), candidate.Services, oldModule, newModule))
+                        {
+                            rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                                "The compatible group could not be staged on this Session.", newAssembly);
+                            return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
+                        }
+                    }
+                    if (!await coordinated.NegotiateAsync().ConfigureAwait(false))
+                    {
+                        rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "A local version decision declined the staged group.", newAssembly);
+                        return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
+                    }
+                }
 
                 var retry = false;
                 lock (_registryGate)
@@ -278,7 +313,7 @@ internal sealed partial class SharpLinkServer
                             SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                             "The old Assembly object changed while the replacement candidate was being prepared.",
                             newAssembly);
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
+                        return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
                     }
                     else
                     {
@@ -290,10 +325,17 @@ internal sealed partial class SharpLinkServer
                         if (dependencyError is not null)
                         {
                             rollbackError = dependencyError;
-                            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
+                            return SharpLinkAssemblyReplacementResult.Failure(dependencyError);
                         }
 
-                        var nextNPublication = checked(_nStudyPublicationGeneration + 1);
+                        if (coordinated is not null && !coordinated.CanCommit)
+                        {
+                            rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                                "The negotiated Session is no longer ready to commit.", newAssembly);
+                            return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
+                        }
+                        var nextNPublication = coordinated is null
+                            ? checked(_nStudyPublicationGeneration + 1) : newModule.NStudyPublication;
                         if (generation != _registryGeneration ||
                             !_runtimeContext.TryPublishGeneratedCodecs(candidate.Codecs, codecRegistration))
                         {
@@ -308,7 +350,8 @@ internal sealed partial class SharpLinkServer
                             _detachedModuleServices.Add(oldModule, detachedServices);
                             _unregisterOperations.Add(oldAssembly, drainOperation);
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                            newModule.NStudyPublication = _nStudyPublicationGeneration = nextNPublication;
+                            if (coordinated is null)
+                                newModule.NStudyPublication = _nStudyPublicationGeneration = nextNPublication;
                             // Close original starts before the exact next registration is bindable.
                             oldModule.TryBeginDraining();
                             invalidationWorkers = SealNStudyBindings(oldModule);
@@ -322,6 +365,12 @@ internal sealed partial class SharpLinkServer
                 }
                 if (retry)
                 {
+                    if (coordinated is not null)
+                    {
+                        rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "Local registry changed after approval; the prepared identity was not committed.", newAssembly);
+                        return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
+                    }
                     candidateServices = null;
                     retainedCandidateServices = null;
                     var abandonedRegistration = codecRegistration;
@@ -331,14 +380,15 @@ internal sealed partial class SharpLinkServer
                 }
             }
         }
-        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException &&
+            (coordinated is null || exception is not OperationCanceledException and not SharpLinkProtocolViolationException))
         {
             rollbackException = exception;
             rollbackError = CreateError(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
                 newAssembly);
-            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
+            return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
         }
         finally
         {
@@ -364,7 +414,9 @@ internal sealed partial class SharpLinkServer
             "DynamicAssemblyReplacementDrain",
             TaskObservationMode.ExternallyObserved);
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
-        return WaitForReplacementAsync(drainOperation!, cancellationToken);
+        if (coordinated is not null)
+            await coordinated.PublishActivationAsync().ConfigureAwait(false);
+        return await WaitForReplacementAsync(drainOperation!, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<SharpLinkAssemblyReplacementResult> WaitForReplacementAsync(

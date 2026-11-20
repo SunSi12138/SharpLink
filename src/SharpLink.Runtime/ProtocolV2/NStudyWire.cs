@@ -10,7 +10,7 @@ internal readonly record struct NStudyAck(
     NStudyBindStatus Status, long Contract, RpcHash128 Hash, NStudyAuthority Authority,
     long BindingId, NStudyTarget Target);
 
-internal static class NStudyWire
+internal static partial class NStudyWire
 {
     internal const ushort Minor = ProtocolV2Constants.MinorVersion;
     internal const ProtocolV2FrameType Bind = (ProtocolV2FrameType)244;
@@ -25,7 +25,7 @@ internal static class NStudyWire
     private const int AckBytes = 112;
 
     internal static bool IsBindingFrame(ProtocolV2FrameType type) =>
-        type is Bind or BindAck or Release or Invalidated or RequestAccepted;
+        type is Bind or BindAck or Release or Invalidated or RequestAccepted or Coordination;
 
     internal static bool IsRequestFrame(ProtocolV2FrameType type) =>
         type is ProtocolV2FrameType.Request or OneWayInputRequest;
@@ -45,6 +45,7 @@ internal static class NStudyWire
             Bind => size == BindBytes,
             BindAck => size == AckBytes,
             RequestAccepted => size == 0,
+            Coordination => size == CoordinationBytes,
             Invalidated => size is >= sizeof(long) and <= BindingLimit * sizeof(long) &&
                 size % sizeof(long) == 0,
             _ => size == sizeof(long)

@@ -10,6 +10,8 @@ internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
     private TaskCompletionSource? _drained;
 
     internal long Token => ack.BindingId;
+    internal NStudyTarget Target => ack.Target;
+    internal RpcHash128 Hash => ack.Hash;
 
     internal bool TryEnter(RpcSession owner)
     {
