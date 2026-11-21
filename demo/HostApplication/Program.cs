@@ -44,13 +44,15 @@ public sealed class HostRpcDemoService(
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var clientGetter = clientAccessor.GetClientAsync(cancellationToken);
-        var client = clientGetter.IsCompleted ? clientGetter.Result : await clientGetter;
-
+        using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        startup.CancelAfter(TimeSpan.FromSeconds(10));
+        var client = await clientAccessor.GetClientAsync(startup.Token);
+        var hello = client.CreateProxy<IHelloService>();
+        await client.WaitForReadyAsync(startup.Token);
+        await hello.PrepareAsync(TimeSpan.FromSeconds(5), startup.Token);
 
         logger.LogInformation("Host RPC demo starting.");
-        var hello = client.Get<IHelloService>();
-        var result = await hello.Echo("HostApplication");
+        var result = await hello.Service.Echo("HostApplication");
         logger.LogInformation("RPC result: {Result}", result);
 
         appLifetime.StopApplication();

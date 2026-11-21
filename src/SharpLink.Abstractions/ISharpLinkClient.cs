@@ -438,6 +438,13 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
         CancellationToken cancellationToken = default);
 
+    /// <summary>Creates a local generated proxy without connecting or preparing a remote route.</summary>
+    /// <remarks>Use the returned proxy's <c>PrepareAsync</c> on a ready connection before calling its service.</remarks>
+    /// <param name="options">Metadata to attach to the proxy's calls.</param>
+    /// <typeparam name="TContract">The registered RPC contract interface.</typeparam>
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+        => throw new NotSupportedException("This client does not support prepared RPC proxies.");
+
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;

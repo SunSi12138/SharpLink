@@ -2,6 +2,17 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    public RpcProxy<T> CreateProxy<T>(RpcProxyOptions? options = null) where T : IService
+    {
+        var metadata = options?.Metadata;
+        if (metadata is { Count: > 0 } && ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata) > _protocolOptions.MaxMetadataBytes)
+            throw new ArgumentOutOfRangeException(nameof(options), "Proxy metadata exceeds the client size limit.");
+        if (Volatile.Read(ref _stopStarted) != 0 || State is SharpLinkConnectionState.Faulted)
+            throw CreateConnectionClosedException("Client is not accepting new proxies.");
+        var site = CreateNStudyContractSite<T>(metadata);
+        return new(site.Service, site);
+    }
+
     // Private checkpoint: the existing ABI supplies the real generated proxy.
     // Cold selection requires every method to work on this receiver.
     internal NStudyContractSite<T> CreateNStudyContractSite<T>(SharpLinkMetadata? metadata = null) where T : IService
@@ -40,7 +51,7 @@ internal sealed partial class SharpLinkClient
             => new(SharpLinkErrorCode.Unavailable, "The private RPC site needs a current prepared Session.");
     }
 
-    internal sealed class NStudyContractSite<T> : IRpcChannel where T : IService
+    internal sealed class NStudyContractSite<T> : IRpcChannel, IRpcProxyPreparation where T : IService
     {
         private readonly SharpLinkClient _client;
         private readonly ClientProxyRegistration _registration;
@@ -67,6 +78,9 @@ internal sealed partial class SharpLinkClient
 
         internal ValueTask<NStudyAck> PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken)
             => PrepareAsync(timeout, cancellationToken, null);
+
+        async ValueTask IRpcProxyPreparation.PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken)
+            => _ = await PrepareAsync(timeout, cancellationToken).ConfigureAwait(false);
 
         internal ValueTask<NStudyAck> PrepareExactAsync(NStudyObservedTarget observed, TimeSpan timeout,
             CancellationToken cancellationToken)
