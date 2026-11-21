@@ -45,7 +45,9 @@ public class TlsTransportIntegrationTests
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")));
         await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42,
+        var original = client.CreateProxy<ITlsIntegrationService>();
+        await original.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await original.Service.AddAsync(20, 22) == 42,
             "runtime Add must preserve TLS and client authentication configuration");
 
         await client.ReplaceClusterAsync(
@@ -58,7 +60,9 @@ public class TlsTransportIntegrationTests
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")),
             TimeSpan.FromSeconds(2));
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(19, 23) == 42,
+        var replacement = client.CreateProxy<ITlsIntegrationService>();
+        await replacement.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await replacement.Service.AddAsync(19, 23) == 42,
             "runtime Replace must preserve TLS and client authentication configuration");
     }
 
@@ -69,8 +73,10 @@ public class TlsTransportIntegrationTests
         var port = GetFreePort();
         await using var firstServer = await StartServerAsync(port, CreateServerOptions(certificate));
         await using var client = CreateClient(port, CreateClientOptions("localhost"));
+        var proxy = client.CreateProxy<ITlsIntegrationService>();
         await client.ConnectAsync();
-        await VerifyRpcShapesAsync(client.Get<ITlsIntegrationService>());
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        await VerifyRpcShapesAsync(proxy.Service);
 
         await firstServer.StopAsync();
         var concreteClient = (SharpLinkClient)client;
@@ -79,7 +85,8 @@ public class TlsTransportIntegrationTests
         await WaitUntilAsync(() =>
             concreteClient.ReadyConnectionCount != 0 &&
             concreteClient.State == SharpLinkConnectionState.Ready);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42, "TLS reconnect RPC");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await proxy.Service.AddAsync(20, 22) == 42, "TLS reconnect uses a new explicit preparation");
     }
 
     [Test]

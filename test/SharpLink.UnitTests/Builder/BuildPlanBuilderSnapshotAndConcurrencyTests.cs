@@ -60,7 +60,7 @@ public sealed partial class BuildPlanBuilderTests
 
             transport.ReleaseProfileBinding();
             client = await build.WaitAsync(TimeSpan.FromSeconds(2));
-            var context = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+            var context = (SharpLinkRuntimeContext)client.RuntimeContext;
             Ensure(context.Protocol.MaxFramePayloadBytes == 2_048,
                 "a rejected concurrent configuration must not alter the frozen Client plan");
         }

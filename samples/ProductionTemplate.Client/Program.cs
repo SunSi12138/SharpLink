@@ -46,10 +46,19 @@ await using var client = SharpClientBuilder.Create()
         tlsHandshakeTimeout: TimeSpan.FromSeconds(5))
     .Build();
 
+#if SHARPLINK_PREPARED_SAMPLE
+var proxy = client.CreateProxy<IGreetingService>();
+#endif
 await client.ConnectAsync(startupTimeout.Token);
 await client.WaitForReadinessAsync(1, startupTimeout.Token);
 
+#if SHARPLINK_PREPARED_SAMPLE
+await proxy.PrepareAsync(TimeSpan.FromSeconds(5), startupTimeout.Token);
+var greeting = proxy.Service;
+#else
+// The separately built published package uses its existing API.
 var greeting = client.Get<IGreetingService>();
+#endif
 var reply = await greeting.GreetAsync(
     new GreetingRequest { Name = "production" },
     CancellationToken.None);

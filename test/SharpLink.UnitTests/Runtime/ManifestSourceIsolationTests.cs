@@ -90,7 +90,7 @@ public sealed class ManifestSourceIsolationTests
             Ensure(clientSource.CreateSnapshotCount == 1 && serverSource.CreateSnapshotCount == 1,
                 "Client and Server Compile must each query only their own source once");
             Ensure(client.Get<IContractA>() is ContractAProxy &&
-                   ((IRpcChannel)client).RuntimeContext.Codecs.GetCodec<CodecValueA>() is TestCodec<CodecValueA>,
+                   client.RuntimeContext.Codecs.GetCodec<CodecValueA>() is TestCodec<CodecValueA>,
                 "the Client facade and Runtime must both materialize the same combined frozen snapshot");
             Ensure(serverStubFactoryCount == 1,
                 "the Server service plan must materialize once from the same snapshot as its Runtime Codec");

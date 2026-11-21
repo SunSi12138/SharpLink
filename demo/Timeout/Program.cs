@@ -12,9 +12,10 @@ var client = DemoTcp.CreateClient(port, builder => builder.UseRequestTimeout(Tim
 
 try
 {
-    await DemoTcp.EnsureConnectedAsync(client, appCts.Token, "Failed to connect timeout demo client.");
-
-    var service = client.Get<ITimeoutService>();
+    var proxy = client.CreateProxy<ITimeoutService>();
+    await client.ConnectAsync(appCts.Token);
+    await proxy.PrepareAsync(TimeSpan.FromSeconds(5), appCts.Token);
+    var service = proxy.Service;
 
     try
     {

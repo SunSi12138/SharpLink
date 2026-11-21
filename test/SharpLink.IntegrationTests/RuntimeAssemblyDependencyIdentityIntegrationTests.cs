@@ -251,8 +251,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private static IRpcRuntimeContext GetEndpointRuntimeContext(object endpoint)
     {
-        if (endpoint is IRpcChannel channel)
-            return channel.RuntimeContext;
+        if (endpoint is ISharpLinkClient client)
+            return client.RuntimeContext;
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         return endpoint.GetType().GetField("_runtimeContext", flags)?.GetValue(endpoint) as IRpcRuntimeContext
             ?? throw new InvalidOperationException($"Runtime context was not available from '{endpoint.GetType()}'.");

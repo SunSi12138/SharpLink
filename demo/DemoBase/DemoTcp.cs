@@ -53,14 +53,6 @@ public static class DemoTcp
         await terminal;
     }
 
-    public static async Task EnsureConnectedAsync(
-        ISharpLinkClient client,
-        CancellationToken cancellationToken,
-        string? errorMessage = null)
-    {
-        await client.ConnectAsync(cancellationToken);
-    }
-
     public static async Task ShutdownAsync(
         CancellationTokenSource appCts,
         Task serverTask,
