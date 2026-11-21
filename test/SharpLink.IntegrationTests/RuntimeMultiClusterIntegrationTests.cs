@@ -224,7 +224,9 @@ public sealed class RuntimeMultiClusterIntegrationTests
             .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
             .UseCluster(options =>
             {
-                options.MinReadyEndpoints = 1;
+                // Dial every published endpoint in this two-endpoint fixture. The
+                // resolver clamps the target to one while its initial snapshot has only A.
+                options.MinReadyEndpoints = 2;
                 options.MaxConnections = 2;
                 options.MaxConnectionsPerEndpoint = 1;
             })
@@ -239,9 +241,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
         Record("InitialCohortOpensOneActualRoute", "resolver-first");
 
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [a, b]));
-        // This client can start with one endpoint. Observe the second Ready endpoint
-        // without changing that configured startup threshold.
-        await WaitUntilAsync(() => client.GetReadinessSnapshot().ReadyEndpoints == 2, ct);
+        await client.WaitForReadinessAsync(2, ct);
         var previousAttempts = admission.Attempts.Count;
         admission.PauseFirst = true;
         var denied = await CaptureExceptionAsync(proxy.Service.GetEndpointIdAsync().AsTask());
