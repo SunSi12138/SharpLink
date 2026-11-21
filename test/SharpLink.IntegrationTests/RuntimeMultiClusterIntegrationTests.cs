@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -272,6 +273,51 @@ public sealed class RuntimeMultiClusterIntegrationTests
         Record("RemovedEndpointLeavesAlreadyPreparedSurvivor", "resolver-second");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task PreparingCohortWaitsForAllRequestedDeployments()
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = budget.Token;
+        await using var first = await ServerScope.StartAsync("resolver-first");
+        await using var pendingDeployment = await ServerScope.StartAsync("pending", exposeProbe: false);
+        var a = Endpoint("resolver-first", first.Port);
+        var b = Endpoint("resolver-second", pendingDeployment.Port);
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [a]));
+        await using var client = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(4))
+            .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+        var cohort = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await client.ConnectAsync(ct);
+        var runtime = typeof(SharpLinkClient).GetField("_cluster", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!;
+        var ready = (ClientConnection[])runtime.GetType().GetMethod("CaptureReadyConnections")!.Invoke(runtime, null)!;
+        var sessionA = ready.Single().Session;
+        var initialOperations = sessionA.NStudyBindOperationForDiagnostics;
+        resolver.Publish(new SharpLinkEndpointSnapshot(2, [a, b]));
+        await client.WaitForReadinessAsync(2, ct);
+
+        var result = await CaptureExceptionAsync(cohort.PrepareAsync(TimeSpan.FromSeconds(4), ct).AsTask());
+        Ensure(result is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition } &&
+               sessionA.NStudyBindOperationForDiagnostics == initialOperations + 1,
+            "A actually bound before B reported the ordinary missing deployment");
+        await WaitUntilAsync(() => first.OpenBindings == 0, ct);
+        var prematureCall = await CaptureExceptionAsync(cohort.Service.GetEndpointIdAsync().AsTask());
+        Ensure(prematureCall is SharpLinkException { Code: SharpLinkErrorCode.Unavailable } &&
+               pendingDeployment.OpenBindings == 0, "the unsuccessful cohort did not expose or leak A's provisional binding");
+
+        resolver.Publish(new SharpLinkEndpointSnapshot(3, [a]));
+        await WaitUntilAsync(() => pendingDeployment.ActiveConnections == 0, ct);
+        await cohort.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(await cohort.Service.GetEndpointIdAsync() == "resolver-first" && first.OpenBindings == 1,
+            "a later successful Prepare uses the remaining deployment on the original A Session");
+    }
+
     private static Exception? CaptureException(Action action)
     {
         try
@@ -419,11 +465,13 @@ public sealed class RuntimeMultiClusterIntegrationTests
                 client.UseTcp(IPAddress.Loopback.ToString(), Port);
         }
 
-        internal static Task<ServerScope> StartAsync(string endpointId, bool sharedMemory = false)
+        internal static Task<ServerScope> StartAsync(string endpointId, bool sharedMemory = false, bool exposeProbe = true)
         {
-            var builder = SharpLinkServerBuilder.Create()
-                .ReplaceService<IConnectionBehaviorService>(
-                    new ConnectionBehaviorService { EndpointId = endpointId });
+            var builder = SharpLinkServerBuilder.Create();
+            if (exposeProbe)
+                builder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
+            else
+                builder.UseGeneratedManifestSource(new FixedGeneratedManifestSource([]));
             var memoryName = sharedMemory ? $"sl999-slot-{Guid.NewGuid():N}" : null;
             if (memoryName is null)
                 builder.UseTcp(0, IPAddress.Loopback);
