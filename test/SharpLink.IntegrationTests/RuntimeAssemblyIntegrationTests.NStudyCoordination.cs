@@ -158,6 +158,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         private readonly TaskCompletionSource<bool> _approval = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Task<NStudyChange> Seen => _seen.Task;
         internal void Approve() => _approval.TrySetResult(true);
+        internal void Decline() => _approval.TrySetResult(false);
         internal async ValueTask<bool> DecideAsync(NStudyChange change, CancellationToken ct)
         {
             _seen.TrySetResult(change);

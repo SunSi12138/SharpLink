@@ -15,7 +15,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Automatic, twoPeers: false,
             async (fixture, trace, ct) =>
             {
-                var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, _) = fixture;
+                var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, _, _) = fixture;
                 var a1 = first.A;
                 var a = GetProxy(first.Client, contracts.ContractType);
                 var b = first.Client.Get<IShutdownCleanupProbe>();
@@ -96,7 +96,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: true,
             async (fixture, trace, ct) =>
             {
-                var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, secondOrNull) = fixture;
+                var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, secondOrNull, _) = fixture;
                 var second = secondOrNull ?? throw new InvalidOperationException("Expected two physical Sessions.");
                 var firstA = GetProxy(first.Client, contracts.ContractType);
                 var secondA = GetProxy(second.Client, contracts.ContractType);
@@ -183,6 +183,92 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 }
             });
 
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp")]
+    [Arguments("shared-memory")]
+    public Task NStudyDeclinedFollowerRecoversOnAFreshPhysicalSession(string transport)
+        => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: true,
+            async (fixture, trace, ct) =>
+            {
+                var (server, contracts, oldAssembly, newAssembly, oldType, _, first, secondOrNull, createClient) = fixture;
+                var second = secondOrNull ?? throw new InvalidOperationException("Expected a second Session.");
+                var localChoice = new NStudyManualDecision();
+                try
+                {
+                    var firstA = GetProxy(first.Client, contracts.ContractType);
+                    var secondA = GetProxy(second.Client, contracts.ContractType);
+                    var secondB = second.Client.Get<IShutdownCleanupProbe>();
+                    var original = InvokeValueTaskAsync<int>(secondA, contracts.ContractType, "BlockAsync", ct).AsTask();
+                    await ReadNStudyTask(oldType, "BlockStarted").WaitAsync(ct);
+                    var lead = first.Client.NegotiateNStudyReplacementAsync(
+                        NStudyInitiator.Server, static (_, _) => ValueTask.FromResult(true), ct);
+                    var lag = second.Client.NegotiateNStudyReplacementAsync(
+                        NStudyInitiator.Server, localChoice.DecideAsync, ct);
+                    var change = server.StageNStudyReplacementOnSessionsAsync(
+                        [
+                            new(first.ServerConnection, NStudyInitiator.Server, static (_, _) => ValueTask.FromResult(true)),
+                            new(second.ServerConnection, NStudyInitiator.Server, static (_, _) => ValueTask.FromResult(true))
+                        ],
+                        oldAssembly, newAssembly, first.A.Contract, TimeSpan.FromSeconds(15), ct);
+                    _ = await localChoice.Seen.WaitAsync(ct);
+                    var leadR2 = await lead.WaitAsync(ct) ?? throw new InvalidOperationException("Expected the first peer to activate.");
+                    await WaitForNStudyAsync(() => second.Session.NStudyPreparedCount == 1, ct);
+                    Ensure(!lag.IsCompleted && !original.IsCompleted &&
+                           await InvokeValueTaskAsync<int>(firstA, contracts.ContractType, "UnaryAsync", 8, ct) == 9,
+                        "lead is in the committed R2 while the other physical peer has not decided");
+                    trace.Record("LeadActivatesBeforeTheLaggingPeerDecides", leadR2.Binding, second.A);
+
+                    localChoice.Decline();
+                    Ensure(await lag.WaitAsync(ct) is null && await secondB.TouchAsync(3, ct) == 103,
+                        "ordinary refusal is not a disconnect and leaves B callable");
+                    oldType.GetMethod("ReleaseBlock")!.Invoke(null, null);
+                    Ensure(await original.WaitAsync(ct) == 42, "the old already-started call finishes exactly where it started");
+                    var outcome = await change.WaitAsync(ct);
+                    EnsureReplacementReleased(outcome.Replacement, "the published replacement survives a peer's ordinary decline");
+                    Ensure(outcome.Peers[0].ActivationSent && !outcome.Peers[1].ActivationSent &&
+                           outcome.Peers[1].DeclineReason == NStudyDeclineReason.Policy &&
+                           !outcome.Peers[1].Terminated && NStudyCount(oldType, "Disposed") == 1 &&
+                           !second.ServerConnection.Session.MayBindNStudyTarget(leadR2.Binding.Target) &&
+                           second.Session.IsConnected, "decline preserves the exact target block after control completes");
+                    trace.Record("FollowerDeclineKeepsItsOriginalSessionAndBButNotR2", leadR2.Binding, second.B);
+
+                    try
+                    {
+                        await second.Client.PrepareNStudyContractAsync(second.A.Contract, second.A.Hash,
+                            leadR2.Binding.Target, ct);
+                        throw new InvalidOperationException("A normal Bind cannot approve the declined target.");
+                    }
+                    catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable) { }
+                    Ensure(second.Session.NStudyPreparedCount == 1 && await secondB.TouchAsync(4, ct) == 104 &&
+                           await InvokeValueTaskAsync<int>(firstA, contracts.ContractType, "UnaryAsync", 11, ct) == 12,
+                        "the old physical Session neither resumes A nor interrupts either peer's B/R2 use");
+                    trace.Record("DeclinedPeerCannotBindR2OnItsOldPhysicalSession", leadR2.Binding, second.B);
+
+                    await second.Client.DisposeAsync();
+                    await second.ServerConnection.SessionTask.WaitAsync(ct);
+                    await using var fresh = createClient();
+                    Ensure(fresh.RegisterAssembly(contracts.ContractAssembly).Succeeded, "the application supplies its compatible local contract");
+                    await fresh.ConnectAsync(ct);
+                    var freshSession = NStudyClientSession(fresh);
+                    Ensure(!ReferenceEquals(freshSession, second.Session) && freshSession.NStudyPreparedCount == 0,
+                        "the fresh physical peer does not inherit the old data Session's prepared routes");
+                    var b = await fresh.PrepareNStudyContractAsync(second.B.Contract, second.B.Hash, default, ct);
+                    var a = await fresh.PrepareNStudyContractAsync(second.A.Contract, second.A.Hash,
+                        server.ReadNStudyTarget(newAssembly, second.A.Contract), ct);
+                    Ensure(a.Authority.PhysicalSession != second.A.Authority.PhysicalSession &&
+                           a.Authority.RegistryEpoch == second.A.Authority.RegistryEpoch &&
+                           a.Authority == b.Authority && a.Target == leadR2.Binding.Target &&
+                           await InvokeValueTaskAsync<int>(GetProxy(fresh, contracts.ContractType), contracts.ContractType,
+                               "UnaryAsync", 15, ct) == 16 &&
+                           await fresh.Get<IShutdownCleanupProbe>().TouchAsync(5, ct) == 105 &&
+                           ReferenceEquals(first.Session, NStudyClientSession(first.Client)),
+                        "ordinary explicit reconnect and fresh binds recover only that peer, without changing the lead Session");
+                    trace.Record("FreshDataSessionBindsCurrentR2WithoutChangingLead", leadR2.Binding, a);
+                }
+                finally { localChoice.Approve(); }
+            });
+
     private static async Task WithNStudyCoordinationPeersAsync(string transport,
         NStudyCoordinationMode mode, bool twoPeers, Func<NStudyCoordinationFixture, NStudyTrace, CancellationToken, Task> run)
     {
@@ -206,11 +292,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             builder.UseSharedMemory(memoryName);
         var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
-        await using var client1 = NewNStudyClient(source, port, memoryName);
-        await using var client2 = twoPeers ? NewNStudyClient(source, port, memoryName) : null;
-        server.NStudyVersionCoordinationMode = client1.NStudyVersionCoordinationMode = mode;
-        if (client2 is not null)
-            client2.NStudyVersionCoordinationMode = mode;
+        await using var client1 = CreateClient();
+        await using var client2 = twoPeers ? CreateClient() : null;
+        server.NStudyVersionCoordinationMode = mode;
         var path = Path.Combine(Path.GetDirectoryName(contracts.ContractAssembly.Location)!,
             "SharpLink.DynamicPlugin.Services.dll");
         var oldLoader = new SharedContractServiceLoadContext(contracts.ContractAssembly);
@@ -227,7 +311,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await server.StartAsync(ct);
             var first = await ConnectPeerAsync(client1);
             var second = client2 is null ? null : await ConnectPeerAsync(client2);
-            await run(new(server, contracts, oldAssembly, newAssembly, oldType, newType, first, second), trace, ct);
+            await run(new(server, contracts, oldAssembly, newAssembly, oldType, newType, first, second, CreateClient), trace, ct);
 
             async Task<NStudyTestPeer> ConnectPeerAsync(SharpLinkClient client)
             {
@@ -253,11 +337,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             oldLoader.Unload();
             newLoader.Unload();
         }
+
+        SharpLinkClient CreateClient()
+        {
+            var client = NewNStudyClient(source, port, memoryName);
+            client.NStudyVersionCoordinationMode = mode;
+            return client;
+        }
     }
 
     private sealed record NStudyTestPeer(SharpLinkClient Client, RpcSession Session,
         ServerConnectionState ServerConnection, NStudyAck A, NStudyAck B);
     private sealed record NStudyCoordinationFixture(SharpLinkServer Server, PluginBundle Contracts,
         Assembly OldAssembly, Assembly NewAssembly, Type OldType, Type NewType,
-        NStudyTestPeer First, NStudyTestPeer? Second);
+        NStudyTestPeer First, NStudyTestPeer? Second, Func<SharpLinkClient> CreateClient);
 }
