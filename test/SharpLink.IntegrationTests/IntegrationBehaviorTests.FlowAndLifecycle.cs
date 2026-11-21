@@ -294,7 +294,9 @@ public partial class IntegrationBehaviorTests
     public async Task MethodTimeoutShouldExpireWithoutPublicCallContextDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var proxy = harness.Client.CreateProxy<ITestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var svc = proxy.Service;
 
         var summary = await svc.DescribeCallAsync(42, CancellationToken.None);
         Ensure(summary.StartsWith("42:missing:no-deadline", StringComparison.Ordinal),
@@ -307,17 +309,25 @@ public partial class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task CallerSelectedMetadataShouldVaryPerInvocation()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CallerSelectedMetadataShouldVaryPerInvocation(bool useSharedMemory)
     {
-        await using var harness = await TestHarness.CreateAsync();
-        var tenantA = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "a")));
-        var tenantB = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "b")));
+        await using var harness = await TestHarness.CreateAsync(useSharedMemory: useSharedMemory);
+        var tenantA = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "a"))
+        });
+        var tenantB = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "b"))
+        });
+        var timeout = TimeSpan.FromSeconds(5);
+        await Task.WhenAll(tenantA.PrepareAsync(timeout).AsTask(), tenantB.PrepareAsync(timeout).AsTask());
 
         var results = await Task.WhenAll(
-            tenantA.DescribeCallAsync(1, CancellationToken.None).AsTask(),
-            tenantB.DescribeCallAsync(2, CancellationToken.None).AsTask());
+            tenantA.Service.DescribeCallAsync(1, CancellationToken.None).AsTask(),
+            tenantB.Service.DescribeCallAsync(2, CancellationToken.None).AsTask());
 
         Ensure(results[0].StartsWith("1:a:", StringComparison.Ordinal),
             "caller-selected metadata A should stay bound to its invocation");

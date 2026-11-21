@@ -11,8 +11,9 @@ public class InterceptorIntegrationTests
             clientInterceptor: clientInterceptor,
             serverInterceptor: serverInterceptor);
 
-        var service = harness.Client.Get<IInterceptorTestService>();
-        var result = await service.DescribeAsync(17);
+        var proxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var result = await proxy.Service.DescribeAsync(17);
 
         Ensure(result.Contains("client-interceptor", StringComparison.Ordinal), "client metadata reached service");
         Ensure(clientInterceptor.Method.IsIdempotent, "client descriptor idempotent marker");

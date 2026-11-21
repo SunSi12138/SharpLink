@@ -10,7 +10,7 @@ public class RpcChannelCallShapeIntegrationTests
     public async Task GeneratedProxyCallsShouldWorkWithRealRpcService(bool useSharedMemory)
     {
         await using var harness = await CallShapeHarness.CreateAsync(useSharedMemory);
-        var svc = harness.Client.Get<ICallShapeService>();
+        var svc = await harness.PrepareServiceAsync();
 
         Ensure(await svc.UnaryPayloadAsync(3) == 13, "UnaryPayloadAsync");
         Ensure(await svc.UnaryNoPayloadAsync() == 7, "UnaryNoPayloadAsync");
@@ -123,7 +123,7 @@ public class RpcChannelCallShapeIntegrationTests
     public async Task GeneratedProxyCancellableCallShouldThrowOperationCanceledException()
     {
         await using var harness = await CallShapeHarness.CreateAsync();
-        var svc = harness.Client.Get<ICallShapeService>();
+        var svc = await harness.PrepareServiceAsync();
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(120));
 
         await EnsureThrows<OperationCanceledException>(
@@ -135,7 +135,7 @@ public class RpcChannelCallShapeIntegrationTests
     public async Task GeneratedProxyTimeoutCallShouldThrowDeadlineExceeded()
     {
         await using var harness = await CallShapeHarness.CreateAsync();
-        var svc = harness.Client.Get<ICallShapeService>();
+        var svc = await harness.PrepareServiceAsync();
 
         var exception = await EnsureThrows<SharpLinkException>(
             svc.UnaryAlwaysSlowWithTimeoutAsync().AsTask(),
@@ -262,6 +262,13 @@ public class RpcChannelCallShapeIntegrationTests
 
             await client.ConnectAsync(cts.Token);
             return new CallShapeHarness(server, serverTask, cts, client);
+        }
+
+        public async ValueTask<ICallShapeService> PrepareServiceAsync()
+        {
+            var proxy = Client.CreateProxy<ICallShapeService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5), _serverCts.Token);
+            return proxy.Service;
         }
 
         public async ValueTask DisposeAsync()
