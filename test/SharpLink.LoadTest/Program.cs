@@ -248,6 +248,8 @@ public static class Program
                 clientBuilder.DisableRequestTimeout();
             else if (options.RequestTimeout is { } requestTimeout)
                 clientBuilder.UseRequestTimeout(requestTimeout);
+            else
+                clientBuilder.UseRequestTimeout();
             await using var client = clientBuilder.Build();
             await RunClientOnlyAsync(options, metrics, client);
         }
