@@ -61,14 +61,20 @@ internal sealed partial class SharpLinkClient
 
     internal sealed class NStudyPreparedSite
     {
+        // Null still denotes the temporary legacy path. An unprepared typed call must never use it.
+        internal static NStudyPreparedSite Unprepared { get; } = new();
+
         private readonly NStudyPreparedRoute? _single;
         private readonly NStudyPreparedRoute[]? _cohort;
+
+        private NStudyPreparedSite() { }
 
         internal NStudyPreparedSite(NStudyPreparedRoute single) => _single = single;
         internal NStudyPreparedSite(NStudyPreparedRoute[] cohort) => _cohort = cohort;
 
         internal bool IsBalanced => _cohort is not null;
-        internal NStudyAck Ack => (_single ?? _cohort![0]).Ack;
+        internal NStudyAck Ack => _single?.Ack ?? (_cohort is { Length: > 0 } cohort
+            ? cohort[0].Ack : throw Unavailable());
 
         internal bool TryGetConnection(out ClientConnection connection)
         {
@@ -79,7 +85,7 @@ internal sealed partial class SharpLinkClient
         internal NStudyPreparedRoute? Find(ClientConnection connection)
         {
             if (_cohort is null)
-                return _single!.IsReadyOn(connection) ? _single : null;
+                return _single?.IsReadyOn(connection) == true ? _single : null;
             foreach (var route in _cohort)
                 if (route.IsReadyOn(connection))
                     return route;
@@ -524,7 +530,7 @@ internal sealed partial class SharpLinkClient
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var prepared = RequirePrepared(method, RpcMethodKind.Unary);
+            var prepared = CaptureSiteForCall(method, RpcMethodKind.Unary);
             return _registration.Module is { } module
                 ? SharpLinkModuleRpcChannel.InvokeUnaryWithModule(_client, module, method, request, requestCodec,
                     responseCodec, metadata ?? _metadata, cancellationToken, prepared)
@@ -541,18 +547,19 @@ internal sealed partial class SharpLinkClient
             where TStreams : struct, IRpcClientStreamWriter
         {
             ct.ThrowIfCancellationRequested();
-            var prepared = RequirePrepared(method, RpcMethodKind.OneWay);
+            var prepared = CaptureSiteForCall(method, RpcMethodKind.OneWay);
             return _registration.Module is { } module
                 ? SharpLinkModuleRpcChannel.InvokeOneWayWithModule(_client, module, method, request, codec, streams,
                     metadata ?? _metadata, ct, prepared)
                 : _client.InvokeOneWay(method, request, codec, streams, metadata ?? _metadata, ct, prepared);
         }
 
-        private NStudyPreparedSite RequirePrepared(RpcMethodDescriptor method, RpcMethodKind kind)
+        private NStudyPreparedSite CaptureSiteForCall(RpcMethodDescriptor method, RpcMethodKind kind)
         {
             if (method.ContractId != _registration.Descriptor.ContractId || method.Kind != kind)
                 throw new InvalidOperationException("The method does not use this private contract receiver.");
-            return ReadPrepared() ?? throw NStudyPreparedSite.Unavailable();
+            // Capture once even when no binding exists. A later Prepare affects only new calls.
+            return ReadPrepared() ?? NStudyPreparedSite.Unprepared;
         }
 
         ValueTask<TResponse> IRpcContractChannel.InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
@@ -566,7 +573,7 @@ internal sealed partial class SharpLinkClient
             where TStreams : struct, IRpcClientStreamWriter
         {
             ct.ThrowIfCancellationRequested();
-            var prepared = RequirePrepared(method, RpcMethodKind.ClientStreaming);
+            var prepared = CaptureSiteForCall(method, RpcMethodKind.ClientStreaming);
             return _registration.Module is { } module
                 ? SharpLinkModuleRpcChannel.InvokeClientStreamingWithModule(_client, module, method, request, codec,
                     responseCodec, streams, metadata ?? _metadata, ct, prepared)
@@ -583,7 +590,7 @@ internal sealed partial class SharpLinkClient
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken ct)
         {
-            var prepared = RequirePrepared(method, RpcMethodKind.ServerStreaming);
+            var prepared = CaptureSiteForCall(method, RpcMethodKind.ServerStreaming);
             return SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(_client, _registration.Module, method, request,
                 codec, responseCodec, metadata ?? _metadata, ct, prepared);
         }
@@ -598,7 +605,7 @@ internal sealed partial class SharpLinkClient
             SharpLinkMetadata? metadata, CancellationToken ct)
             where TStreams : struct, IRpcClientStreamWriter
         {
-            var prepared = RequirePrepared(method, RpcMethodKind.DuplexStreaming);
+            var prepared = CaptureSiteForCall(method, RpcMethodKind.DuplexStreaming);
             return SharpLinkModuleRpcChannel.InvokeDuplexStreamingDeferred(_client, _registration.Module, method, request,
                 codec, responseCodec, streams, metadata ?? _metadata, ct, prepared);
         }

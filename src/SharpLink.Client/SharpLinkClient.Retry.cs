@@ -12,7 +12,8 @@ internal sealed partial class SharpLinkClient
     {
         // This helper is reached through the unary invocation pipeline, including
         // telemetry and interceptor terminals. Generated unary calls use Unary descriptors.
-        if (!method.IsIdempotent)
+        // An invocation created without a binding cannot acquire one by retrying.
+        if (!method.IsIdempotent || ReferenceEquals(control.PreparedSite, NStudyPreparedSite.Unprepared))
         {
             return InvokeUnaryCoreAsync(
                 method,

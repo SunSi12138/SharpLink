@@ -237,6 +237,10 @@ internal sealed partial class SharpLinkClient
         AttemptOutcomeState? attemptOutcome,
         NStudyPreparedSite? prepared = null)
     {
+        // Reached only by a remote continuation, not by a local interceptor result.
+        if (ReferenceEquals(prepared, NStudyPreparedSite.Unprepared))
+            throw NStudyPreparedSite.Unavailable();
+
         if (_cluster is not null)
             return prepared is { IsBalanced: false }
                 ? ReserveClusterPreparedSite(prepared, attemptOutcome)

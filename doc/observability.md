@@ -4,6 +4,8 @@
 
 `ISharpLinkClientInterceptor` 在逻辑调用层执行，可通过 `SharpLinkClientInvocationContext.Metadata` 添加或替换 envelope metadata、短路调用或观察结果。每个 `next` 只能调用一次；返回前必须等待它完成，不能启动后丢弃 `ValueTask`。
 
+在 #999 的准备式代理上，只返回本地结果的 interceptor 不需要 `PrepareAsync`，也不会连接或启动请求流生产者。一旦走到远端调用的 `next`，只使用该调用创建时已准备的绑定：没有绑定就返回 `Unavailable`，不会在请求里补做准备或自动重试。
+
 Client interceptor 开启后请求值可能装箱，结果通过 `SharpLinkClientInvocationResult` 表示。短路结果必须与生成签名匹配，否则调用以 `Internal` 失败。零 interceptor 时走不装箱的生成快路径。
 
 ## Server Interceptor
