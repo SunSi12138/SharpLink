@@ -10,6 +10,115 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [NotInParallel]
     [Arguments("tcp")]
     [Arguments("shared-memory")]
+    public async Task NStudyConcurrentPrepareSharesOneBindWithIndependentWaiters(string transport)
+    {
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var ct = guard.Token;
+        using var firstCaller = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var trace = new NStudyTrace(transport);
+        var clock = new SharpLink.UnitTests.Runtime.ManualTimeProvider();
+        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(typeof(INStudyUnarySiteProbe).Assembly, out var manifest);
+        Ensure(loaded.Succeeded, "the real generated manifest loads");
+        var contract = manifest!.Contracts.Single(c => c.ContractType == typeof(INStudyUnarySiteProbe));
+        var bCid = manifest.Contracts.Single(c => c.ContractType == typeof(IShutdownCleanupProbe)).ContractId;
+        var source = new FixedGeneratedManifestSource([manifest]);
+        await using var provider = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
+        var observer = new NStudyUnarySiteObserver(contract.ContractId);
+        var builder = NewNStudyServer(source, provider).ReplaceService<INStudyUnarySiteProbe>(new NStudyUnarySiteProbe())
+            .AddInterceptor(observer);
+        var memory = transport == "shared-memory" ? $"sharplink-n-prepare-{Guid.NewGuid():N}" : null;
+        if (memory is null)
+            builder.UseTcp(0, IPAddress.Loopback);
+        else
+            builder.UseSharedMemory(memory);
+        var port = memory is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
+        await using var server = (SharpLinkServer)builder.Build();
+        await using var client = NewNStudyClient(source, port, memory, settings => settings.UseTimeProvider(clock));
+        var site = client.CreateNStudyUnarySite<INStudyUnarySiteProbe>(Metadata("shared-generated"));
+        var manual = site.BindUnary(contract.Methods.Single().MethodId);
+        var observedAck = new TaskCompletionSource<NStudyAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continuePublication = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        site.BeforePublishingPreparationForTests = (ack, token) =>
+        {
+            observedAck.TrySetResult(ack);
+            return new ValueTask(continuePublication.Task.WaitAsync(token));
+        };
+        try
+        {
+            await server.StartAsync(ct);
+            await client.ConnectAsync(ct);
+            var bBinding = await client.PrepareNStudyContractAsync(bCid, manifest.RpcAssemblyHash, default, ct);
+            var session = NStudyClientSession(client);
+            var peer = NStudyServerConnection(server);
+            var before = session.NStudyBindOperationForDiagnostics;
+            var leader = site.PrepareAsync(TimeSpan.FromSeconds(4), firstCaller.Token).AsTask();
+            var ack = await observedAck.Task.WaitAsync(ct);
+            Ensure(!leader.IsCompleted && observer.Calls.IsEmpty &&
+                   session.NStudyBindOperationForDiagnostics == before + 1 &&
+                   session.CaptureNStudyBinding(contract.ContractId) == ack.BindingId &&
+                   peer.NStudyBindings.Snapshot() == (2, 0, 0) &&
+                   peer.NStudyPhysicalIdentity == ack.Authority.PhysicalSession &&
+                   peer.AuthenticationContext?.Subject == "n-validation" &&
+                   (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
+                "the genuine Binder received one server Ack and only local ready publication is paused");
+            trace.Record("OneActualBindAwaitsLocalPublication", ack, bBinding);
+
+            clock.Advance(TimeSpan.FromMilliseconds(250));
+            var survivor = site.PrepareAsync(TimeSpan.FromSeconds(4), ct).AsTask();
+            var impatient = site.PrepareAsync(TimeSpan.FromSeconds(1), ct).AsTask();
+            Ensure(client.NStudyPrepareWaitersForDiagnostics == 3 && !survivor.IsCompleted && !impatient.IsCompleted &&
+                   session.NStudyBindOperationForDiagnostics == before + 1,
+                "three active waiters for the same site share the existing operation");
+            trace.Record("ConcurrentWaitersShareOneBind", ack);
+
+            firstCaller.Cancel();
+            await ExpectNStudyCallerCancellation(leader, firstCaller.Token, ct);
+            clock.Advance(TimeSpan.FromMilliseconds(750));
+            Ensure(!impatient.IsCompleted, "the late caller owns its own one second budget, not the leader's start time");
+            clock.Advance(TimeSpan.FromMilliseconds(250));
+            try
+            {
+                await impatient.WaitAsync(ct);
+                throw new InvalidOperationException("The short Prepare waiter should expire without affecting the shared operation.");
+            }
+            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
+            Ensure(!survivor.IsCompleted && client.NStudyPrepareWaitersForDiagnostics == 1 &&
+                   session.NStudyBindOperationForDiagnostics == before + 1 && observer.Calls.IsEmpty &&
+                   await client.Get<IShutdownCleanupProbe>().TouchAsync(2, ct) == 102,
+                "ordinary cancellation and timeout release only those waiters; original Session and B remain available");
+            trace.Record("CallerCancellationAndTimeoutLeaveSharedOperationAlive", ack, bBinding);
+
+            continuePublication.TrySetResult();
+            Ensure(await survivor.WaitAsync(ct) == ack && client.NStudyPrepareWaitersForDiagnostics == 0 &&
+                   session.NStudyBindOperationForDiagnostics == before + 1 &&
+                   ReferenceEquals(NStudyClientSession(client), session),
+                "the survivor receives the one actual Ack after normal site publication");
+            Ensure(await site.Service.ReportAsync(3, ct) == 103 &&
+                   await manual.InvokeAsync(4, new NStudyManualIntRequestCodec(), site.GetCodec<int>(),
+                       Metadata("shared-manual"), ct) == 104 &&
+                   observer.Calls.Select(call => call.Label).SequenceEqual(new[] { "shared-generated", "shared-manual" }),
+                "both normal callers use the shared prepared route and preserve their own metadata");
+            trace.Record("SurvivingWaiterPublishesForBothCallers", ack);
+
+            Ensure(await site.PrepareAsync(TimeSpan.FromSeconds(1), ct) == ack &&
+                   session.NStudyBindOperationForDiagnostics == before + 1 &&
+                   client.NStudyPrepareWaitersForDiagnostics == 0 &&
+                   session.CaptureNStudyBinding(bCid) == bBinding.BindingId,
+                "ready Prepare reuses the result without a waiter or a second control operation");
+            await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0) && client.PendingCallCount == 0, ct);
+            trace.Record("ReadyReuseDoesNotCreateAnotherOperation", ack, bBinding);
+        }
+        finally
+        {
+            continuePublication.TrySetResult();
+            site.BeforePublishingPreparationForTests = null;
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp")]
+    [Arguments("shared-memory")]
     public async Task NStudyGeneratedAndManualUnaryUseTheSamePreparedSite(string transport)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));

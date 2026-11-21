@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    private static readonly TimeSpan NStudyTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan NStudyTimeout = TimeSpan.FromSeconds(5);
     private readonly Lock _nStudyGate = new();
     private readonly Dictionary<long, NStudyClientRoute> _nStudyBindings = [];
     private uint[]? _nStudyRetiredThrough;
@@ -16,6 +16,17 @@ internal sealed partial class RpcSession
     internal int NStudyPreparedCount
     {
         get { lock (_nStudyGate) return _nStudyBindings.Count; }
+    }
+
+    internal ulong NStudyBindOperationForDiagnostics
+    {
+        get { lock (_nStudyGate) return _lastNStudyOperation; }
+    }
+
+    internal bool HasNStudyBinding(long contractId, long bindingId)
+    {
+        lock (_nStudyGate)
+            return _nStudyBindings.TryGetValue(contractId, out var route) && route.Token == bindingId;
     }
 
     internal NStudyClientRoute CaptureNStudyRoute(long contractId)
@@ -99,7 +110,8 @@ internal sealed partial class RpcSession
         }
     }
 
-    internal async Task<bool> ReleaseNStudyBindingAsync(long contract, CancellationToken cancellationToken)
+    internal async Task<bool> ReleaseNStudyBindingAsync(long contract, CancellationToken cancellationToken,
+        long? exactBindingId = null)
     {
         EnsureNStudyReady(RpcSessionRole.Client);
         cancellationToken.ThrowIfCancellationRequested();
@@ -107,6 +119,10 @@ internal sealed partial class RpcSession
         Task drained;
         lock (_nStudyGate)
         {
+            // Reconciliation may only detach the route installed by its own operation.
+            if (exactBindingId is { } expected &&
+                (!_nStudyBindings.TryGetValue(contract, out var current) || current.Token != expected))
+                return false;
             if (_pendingNStudyBind is not null || _nStudyReleasePending)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private binding control is already pending.");
             if (!_nStudyBindings.Remove(contract, out route!))

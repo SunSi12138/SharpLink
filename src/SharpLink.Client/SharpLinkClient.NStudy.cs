@@ -2,6 +2,26 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    private const int NStudyPrepareWaiterLimit = 64;
+    private int _nStudyPrepareWaiters;
+
+    internal int NStudyPrepareWaitersForDiagnostics => Volatile.Read(ref _nStudyPrepareWaiters);
+
+    private void ReserveNStudyPrepareWaiter()
+    {
+        var observed = Volatile.Read(ref _nStudyPrepareWaiters);
+        while (observed < NStudyPrepareWaiterLimit)
+        {
+            var current = Interlocked.CompareExchange(ref _nStudyPrepareWaiters, observed + 1, observed);
+            if (current == observed)
+                return;
+            observed = current;
+        }
+        throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "The private Prepare waiter limit is reached.");
+    }
+
+    private void ReturnNStudyPrepareWaiter() => Interlocked.Decrement(ref _nStudyPrepareWaiters);
+
     // Cold entry used only in the private N profile; one explicitly selected
     // Ready connection. A normal invocation never waits for or creates a Bind.
     internal async Task<NStudyAck> PrepareNStudyContractAsync(long contract, RpcHash128 hash,

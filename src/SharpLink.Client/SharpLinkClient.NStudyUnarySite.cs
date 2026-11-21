@@ -39,7 +39,9 @@ internal sealed partial class SharpLinkClient
         private readonly ClientProxyRegistration _registration;
         private readonly RpcHash128 _hash;
         private readonly SharpLinkMetadata? _metadata;
+        private readonly Lock _prepareGate = new();
         private NStudyPreparedUnary? _prepared;
+        private PrepareOperation? _preparation;
 
         internal NStudyUnarySite(SharpLinkClient client, ClientProxyRegistration registration,
             RpcHash128 hash, SharpLinkMetadata? metadata)
@@ -54,30 +56,180 @@ internal sealed partial class SharpLinkClient
         internal T Service { get; }
         public IRpcRuntimeContext RuntimeContext => _client.RuntimeContext;
         internal IRpcCodec<TValue> GetCodec<TValue>() => _registration.Codecs.GetCodec<TValue>();
+        internal Func<NStudyAck, CancellationToken, ValueTask>? BeforePublishingPreparationForTests { get; set; }
 
-        internal async ValueTask<NStudyAck> PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken)
+        internal ValueTask<NStudyAck> PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
             ArgumentOutOfRangeException.ThrowIfGreaterThan(timeout, SharpLinkTimer.MaximumDelay);
             cancellationToken.ThrowIfCancellationRequested();
+            var deadline = RpcDeadline.Create(timeout, _client._runtimeContext.TimeProvider);
             EnsureLocalReady();
             var connection = _client.RequireSingleNStudyConnection();
             if (Volatile.Read(ref _prepared) is { } current && current.IsReadyOn(connection))
-                return current.Ack;
+                return ValueTask.FromResult(ConfirmWaiter(current, connection, deadline, cancellationToken));
 
-            using var budget = new CancellationTokenSource(timeout, _client._runtimeContext.TimeProvider);
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(budget.Token, cancellationToken);
-            _client.ValidateRemoteContractAssembly(_registration);
-            var contract = _registration.Descriptor.ContractId;
-            var ack = await BindNStudyContractOnAsync(connection, contract, _hash, default, linked.Token).ConfigureAwait(false);
-            linked.Token.ThrowIfCancellationRequested();
+            return AwaitPreparationAsync(connection, deadline, cancellationToken);
+        }
+
+        private async ValueTask<NStudyAck> AwaitPreparationAsync(ClientConnection connection, RpcDeadline deadline,
+            CancellationToken cancellationToken)
+        {
+            _client.ReserveNStudyPrepareWaiter();
+            try
+            {
+                PrepareOperation operation;
+                var start = false;
+                NStudyPreparedUnary? alreadyReady = null;
+                lock (_prepareGate)
+                {
+                    if (_prepared is { } current && current.IsReadyOn(connection))
+                    {
+                        alreadyReady = current;
+                        operation = null!;
+                    }
+                    else if (_preparation is { } pending)
+                    {
+                        if (!ReferenceEquals(pending.Connection, connection))
+                            throw NStudyPreparedUnary.Unavailable();
+                        operation = pending;
+                    }
+                    else
+                    {
+                        operation = _preparation = new PrepareOperation(connection);
+                        start = true;
+                    }
+                }
+                if (alreadyReady is not null)
+                    return ConfirmWaiter(alreadyReady, connection, deadline, cancellationToken);
+
+                if (start)
+                    StartPreparation(operation);
+                cancellationToken.ThrowIfCancellationRequested();
+                var clock = _client._runtimeContext.TimeProvider;
+                var remaining = deadline.GetRemaining(clock);
+                if (remaining <= TimeSpan.Zero)
+                    throw CreateDeadlineExceededException();
+                NStudyPreparedUnary prepared;
+                try
+                {
+                    prepared = await operation.Completion.Task.WaitAsync(remaining, clock, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException) { throw CreateDeadlineExceededException(); }
+                return ConfirmWaiter(prepared, connection, deadline, cancellationToken);
+            }
+            finally { _client.ReturnNStudyPrepareWaiter(); }
+        }
+
+        private NStudyAck ConfirmWaiter(NStudyPreparedUnary prepared, ClientConnection connection, RpcDeadline deadline,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (deadline.IsExpired(_client._runtimeContext.TimeProvider))
+                throw CreateDeadlineExceededException();
             EnsureLocalReady();
-            var route = connection.Session.CaptureNStudyRoute(contract);
-            if (route.Token != ack.BindingId || route.Target != ack.Target || route.Hash != _hash ||
-                !route.IsOpenOn(connection.Session) || !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
+            if (!prepared.IsReadyOn(connection) || !connection.CanAcceptCalls ||
+                !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
                 throw NStudyPreparedUnary.Unavailable();
-            Volatile.Write(ref _prepared, new NStudyPreparedUnary(connection, route, ack));
-            return ack;
+            return prepared.Ack;
+        }
+
+        private void StartPreparation(PrepareOperation operation)
+        {
+            // Register before sending so Stop can drain the operation even after all waiters leave.
+            bool registered;
+            lock (_client._poolGate)
+            {
+                registered = !_client._poolStopping;
+                if (registered)
+                    _client.TrackFrameworkTask(operation.Completion.Task, "NStudyUnaryPrepare",
+                        TaskObservationMode.ExternallyObserved);
+            }
+            if (registered)
+            {
+                _ = RunPreparationAsync(operation);
+                return;
+            }
+            FinishPreparation(operation, null, CreateConnectionClosedException("Client is not accepting Prepare."));
+            _ = operation.Completion.Task.Exception;
+        }
+
+        private async Task RunPreparationAsync(PrepareOperation operation)
+        {
+            NStudyPreparedUnary? ready = null;
+            Exception? failure = null;
+            try
+            {
+                var connection = operation.Connection;
+                var session = connection.Session;
+                var contract = _registration.Descriptor.ContractId;
+                var clock = _client._runtimeContext.TimeProvider;
+                var deadline = RpcDeadline.Create(RpcSession.NStudyTimeout, clock);
+                using var timer = new CancellationTokenSource(RpcSession.NStudyTimeout, clock);
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(timer.Token,
+                    _client._shutdownCts.Token, session.LifetimeToken);
+                var ct = budget.Token;
+                var bound = default(NStudyAck);
+                try
+                {
+                    EnsureLocalReady();
+                    _client.ValidateRemoteContractAssembly(_registration);
+                    bound = await BindNStudyContractOnAsync(connection, contract, _hash, default, ct).ConfigureAwait(false);
+                    if (BeforePublishingPreparationForTests is { } beforePublish)
+                        await beforePublish(bound, ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
+                    if (deadline.IsExpired(clock))
+                        throw CreateDeadlineExceededException();
+                    EnsureLocalReady();
+                    var route = session.CaptureNStudyRoute(contract);
+                    if (route.Token != bound.BindingId || route.Target != bound.Target || route.Hash != _hash ||
+                        !route.IsOpenOn(session) || !connection.CanAcceptCalls ||
+                        !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
+                        throw NStudyPreparedUnary.Unavailable();
+                    ready = new NStudyPreparedUnary(connection, route, bound);
+                }
+                catch (Exception error)
+                {
+                    if (bound.BindingId != 0 && session.HasNStudyBinding(contract, bound.BindingId))
+                    {
+                        try { await session.ReleaseNStudyBindingAsync(contract, ct, bound.BindingId).ConfigureAwait(false); }
+                        catch (Exception cleanup) when (cleanup is not OutOfMemoryException and not StackOverflowException)
+                        {
+                            if (session.HasNStudyBinding(contract, bound.BindingId))
+                                session.NotifyDisconnected(cleanup);
+                        }
+                    }
+                    if (error is OperationCanceledException && timer.IsCancellationRequested)
+                        throw CreateDeadlineExceededException();
+                    if (error is OperationCanceledException && _client._shutdownCts.IsCancellationRequested)
+                        throw CreateConnectionClosedException("Client is not accepting Prepare.");
+                    throw;
+                }
+            }
+            catch (Exception error) { failure = error; }
+            finally { FinishPreparation(operation, ready, failure); }
+        }
+
+        private void FinishPreparation(PrepareOperation operation, NStudyPreparedUnary? ready, Exception? error)
+        {
+            lock (_prepareGate)
+            {
+                if (ready is not null)
+                    Volatile.Write(ref _prepared, ready);
+                _preparation = null;
+            }
+            if (error is not null)
+                operation.Completion.TrySetException(error);
+            else
+                operation.Completion.TrySetResult(ready!);
+        }
+
+        private sealed class PrepareOperation(ClientConnection connection)
+        {
+            internal ClientConnection Connection { get; } = connection;
+            internal TaskCompletionSource<NStudyPreparedUnary> Completion { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         private void EnsureLocalReady()
