@@ -692,39 +692,24 @@ public partial class ServiceRegistrationTests
         private int _descriptorLookups;
         internal int DescriptorLookups => Volatile.Read(ref _descriptorLookups);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
             Interlocked.Increment(ref _descriptorLookups);
             if (descriptorKind is not { } kind)
             {
-                descriptor = default;
+                method = default;
                 return false;
             }
 
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash, methodHash, kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
+            method = new(new RpcMethodDescriptor(InterfaceHash, methodId, kind,
+                HasResponsePayload: false, HasClientStreams: false, HasMethodTimeout: false, MethodTimeout: null), Execute);
             return true;
         }
 
         public long InterfaceHash => 1;
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
-
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        private static ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
-
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-            => ValueTask.CompletedTask;
-
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
-            CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }
 }

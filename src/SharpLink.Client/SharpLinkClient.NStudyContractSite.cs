@@ -132,11 +132,7 @@ internal sealed partial class SharpLinkClient
             var methods = new Dictionary<long, RpcMethodDescriptor>(contract.Methods.Count);
             foreach (var method in contract.Methods)
             {
-                if (method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay or RpcMethodKind.ServerStreaming or
-                        RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming) ||
-                    method.Invocation is not { } invocation || invocation.Kind != method.Kind ||
-                    invocation.ContractId != contract.ContractId || invocation.MethodId != method.MethodId ||
-                    !methods.TryAdd(method.MethodId, invocation))
+                if (!methods.TryAdd(method.MethodId, method.Invocation))
                     throw new NotSupportedException("The private site requires matching generated method facts.");
             }
 

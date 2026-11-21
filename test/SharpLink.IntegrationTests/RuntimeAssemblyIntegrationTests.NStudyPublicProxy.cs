@@ -35,7 +35,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             ? client.GetLocalContract<INStudyUnarySiteProbe>()
             : client.GetLocalContract(typeof(INStudyUnarySiteProbe).Assembly, contract.ContractId);
         var manual = client.CreateContractChannel(local, new RpcProxyOptions { Metadata = Metadata("handwritten-default") });
-        var method = contract.Methods.Single().Invocation!.Value;
+        var method = contract.Methods.Single().Invocation;
         var requestCodec = new NStudyManualIntRequestCodec();
         var responseCodec = RpcGeneratedCodecResolver.GetProvider(manual.RuntimeContext,
             typeof(INStudyUnarySiteProbe).Assembly).GetCodec<int>();

@@ -438,35 +438,18 @@ public class SharpLinkServerRequestScopeTests
 
         public long InterfaceHash { get; } = interfaceHash;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
-                kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return methodHash == MethodHash;
+            method = methodId == MethodHash
+                ? new(new RpcMethodDescriptor(InterfaceHash, methodId, kind, false, false, false, null)
+                    { SupportsCancellation = true }, Execute)
+                : default;
+            return methodId == MethodHash;
         }
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args)
+        private ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
             => _completion is null ? ValueTask.CompletedTask : new ValueTask(_completion.Task);
-
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-            => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
-
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-            => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
-
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
-            CancellationToken cancellationToken)
-            => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
 
         internal void Complete() => _completion?.TrySetResult();
         internal void Fail(Exception exception) => _completion?.TrySetException(exception);

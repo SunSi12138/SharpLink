@@ -267,57 +267,11 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         {
             public long InterfaceHash { get; } = interfaceHash;
 
-            public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+            public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
             {
-                _ = methodHash;
-                descriptor = default;
+                method = default;
                 return false;
             }
-
-            public bool SupportsCancellation(long methodHash)
-            {
-                _ = methodHash;
-                return false;
-            }
-
-            public ValueTask InvokeNoReturnAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                long methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeNoReturnCancellableAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                long methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                CancellationToken cancellationToken)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                long methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                IBufferWriter<byte> output)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeCancellableAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                long methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                IBufferWriter<byte> output,
-                CancellationToken cancellationToken)
-                => throw UnexpectedInvocation();
-
-            private static InvalidOperationException UnexpectedInvocation()
-                => new("unresolved method-shape stub must never be invoked");
         }
 
         private sealed class RestoreServicesScope(

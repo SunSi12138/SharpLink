@@ -51,8 +51,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var server = (SharpLinkServer)builder.Build();
         await using var client = NewNStudyClient(clientSource, port, memoryName,
             settings => settings.UseRuntime(options => options.Compression.Providers.Add(sender)));
-        var cold = count.Snapshot();
-        Ensure(cold == (aContract.Methods.Count, 0) &&
+        var cold = count.PreparedCount;
+        Ensure(cold == aContract.Methods.Count &&
                !RuntimeHelpers.IsReferenceOrContainsReferences<NStudyMethodFacts>(),
             "each registered method is prepared once; the queued facts and executor slot hold no object reference");
         try
@@ -80,7 +80,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var measure = a.MeasureAsync(batch, ct).AsTask();
             var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
             await WaitForNStudyAsync(() => kernel.QueuedCalls == 1, ct);
-            Ensure(receiver.Decoded == 0 && sender.Compressed > 0 && count.Snapshot() == cold &&
+            Ensure(receiver.Decoded == 0 && sender.Compressed > 0 && count.PreparedCount == cold &&
                    count.Invocations(methodId) == 0 && !recorder.Methods.ContainsKey(methodId) &&
                    await b.TouchAsync(1, ct) == 101,
                 "actual compressed business goes to admission before provider decode and interception, with no Stub metadata access");
@@ -94,7 +94,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    measured.Kind == RpcMethodKind.Unary && measured.IsIdempotent && measured.HasMethodTimeout &&
                    measured.MethodTimeout == TimeSpan.FromSeconds(15) && measured.SupportsCancellation &&
                    measured == aContract.Methods.Single(item => item.MethodId == methodId).Invocation &&
-                   count.Snapshot() == cold &&
+                   count.PreparedCount == cold &&
                    count.Invocations(methodId) == 1,
                 "one real persistent decode and the same generated method facts reach the server interceptor");
             trace.Record("PersistentWorkerAndInterceptorReuseExactMethodFacts", aBinding);
@@ -103,7 +103,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             // context. The original streaming call supplies its own method facts.
             server.ReplaceInterceptors([]);
             Ensure(await a.MeasureAsync([17, 18], ct) == 19 && count.Invocations(methodId) == 2 &&
-                   count.Snapshot() == cold && recorder.Visits(methodId) == 1,
+                   count.PreparedCount == cold && recorder.Visits(methodId) == 1,
                 "direct and intercepted calls reach the same prepared method without a legacy ID dispatch");
             trace.Record("DirectAndInterceptedCallsUseOnePreparedEntry", aBinding);
             await using var samples = a.ReadSamplesAsync(ct).GetAsyncEnumerator(ct);
@@ -122,7 +122,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(mapper.Method is { } output && output.ContractId == aCid && output.MethodId == outputId &&
                    output.Kind == RpcMethodKind.ServerStreaming && output.SupportsCancellation &&
                    output == aContract.Methods.Single(item => item.MethodId == outputId).Invocation &&
-                   count.Snapshot() == cold &&
+                   count.PreparedCount == cold &&
                    count.Invocations(outputId) == 1 && !recorder.Methods.ContainsKey(outputId) &&
                    await b.TouchAsync(2, ct) == 102,
                 "output mapper keeps the actual original descriptor with no interceptor and no Stub metadata re-read");
@@ -157,20 +157,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private sealed class NStudyStubMetadataCounts
     {
         internal int Prepared;
-        internal int Legacy;
         internal readonly ConcurrentDictionary<long, int> Executed = new();
         internal int Invocations(long method) => Executed.GetValueOrDefault(method);
-        internal (int, int) Snapshot() => (Volatile.Read(ref Prepared), Volatile.Read(ref Legacy));
+        internal int PreparedCount => Volatile.Read(ref Prepared);
     }
 
     private sealed class NStudyCountingStub(IRpcStub inner, NStudyStubMetadataCounts count)
-        : IRpcStub, IRpcGeneratedPreparedMethods
+        : IRpcStub
     {
         public long InterfaceHash => inner.InterfaceHash;
         public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
             Interlocked.Increment(ref count.Prepared);
-            if (!((IRpcGeneratedPreparedMethods)inner).TryPrepareMethod(methodId, out method))
+            if (!inner.TryPrepareMethod(methodId, out method))
                 return false;
             var execute = method.Execute;
             var declared = method.Descriptor;
@@ -185,40 +184,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 }
             };
             return true;
-        }
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
-        {
-            Interlocked.Increment(ref count.Legacy);
-            return inner.TryGetMethodDescriptor(methodHash, out descriptor);
-        }
-        public bool SupportsCancellation(long methodHash)
-        {
-            Interlocked.Increment(ref count.Legacy);
-            return inner.SupportsCancellation(methodHash);
-        }
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args)
-        {
-            Interlocked.Increment(ref count.Legacy);
-            return inner.InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
-        }
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref count.Legacy);
-            return inner.InvokeNoReturnCancellableAsync(service, bridge, methodHash, requestId, args, cancellationToken);
-        }
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-        {
-            Interlocked.Increment(ref count.Legacy);
-            return inner.InvokeAsync(service, bridge, methodHash, requestId, args, output);
-        }
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref count.Legacy);
-            return inner.InvokeCancellableAsync(service, bridge, methodHash, requestId, args, output, cancellationToken);
         }
     }
 

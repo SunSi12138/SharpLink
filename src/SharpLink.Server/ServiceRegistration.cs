@@ -121,17 +121,14 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal void PrepareNStudyMethods(ISharpLinkGeneratedAssemblyManifest manifest,
         SharpLinkGeneratedContractDescriptor contract)
     {
-        if (Stub is not IRpcGeneratedPreparedMethods table)
-            throw new InvalidOperationException("This private profile requires generated prepared method entries.");
         var methods = new Dictionary<long, NStudyMethodFacts>(contract.Methods.Count);
         var executors = new RpcGeneratedMethodExecutor[contract.Methods.Count];
         var slot = 0;
         foreach (var declared in contract.Methods)
         {
-            if (!table.TryPrepareMethod(declared.MethodId, out var prepared) || prepared.Execute is null ||
-                declared.Invocation is not { } method || prepared.Descriptor != method ||
-                method.MethodId != declared.MethodId || method.ContractId != contract.ContractId ||
-                method.Kind != declared.Kind || method.SupportsCancellation != declared.SupportsCancellation)
+            var method = declared.Invocation;
+            if (!Stub.TryPrepareMethod(declared.MethodId, out var prepared) || prepared.Execute is null ||
+                prepared.Descriptor != method)
                 throw new InvalidOperationException("The private registration needs exact generated method facts.");
             methods.Add(method.MethodId, new(method, slot));
             executors[slot++] = prepared.Execute;

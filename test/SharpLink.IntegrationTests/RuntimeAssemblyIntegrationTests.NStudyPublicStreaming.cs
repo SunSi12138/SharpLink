@@ -31,6 +31,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         IRpcCodecProvider Codecs, SharpLinkGeneratedContractDescriptor Contract,
         Func<TimeSpan, CancellationToken, ValueTask<NStudyAck>> Prepare) where TContract : IService
     {
-        internal RpcMethodDescriptor Method(string name) => Contract.Methods.Single(item => item.Name == name).Invocation!.Value;
+        internal RpcMethodDescriptor Method(string name) => Contract.Methods.Single(item => item.Name == name).Invocation;
     }
 }

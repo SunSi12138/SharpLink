@@ -422,55 +422,17 @@ public class SharpLinkServerRequestScopeReviewTests
         public long InterfaceHash => 2480;
         internal int InvocationCount => Volatile.Read(ref _invocationCount);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
-                kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return methodHash == MethodHash;
+            method = methodId == MethodHash
+                ? new(new RpcMethodDescriptor(InterfaceHash, methodId, kind, false, false, false, null)
+                    { SupportsCancellation = true }, Execute)
+                : default;
+            return methodId == MethodHash;
         }
 
-        public bool SupportsCancellation(long methodHash) => true;
-
-        public ValueTask InvokeNoReturnAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args)
-            => InvokeCore(CancellationToken.None);
-
-        public ValueTask InvokeNoReturnCancellableAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args,
-            CancellationToken cancellationToken)
-            => InvokeCore(cancellationToken);
-
-        public ValueTask InvokeAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args,
-            IBufferWriter<byte> output)
-            => InvokeCore(CancellationToken.None);
-
-        public ValueTask InvokeCancellableAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args,
-            IBufferWriter<byte> output,
-            CancellationToken cancellationToken)
+        private ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
             => InvokeCore(cancellationToken);
 
         private ValueTask InvokeCore(CancellationToken cancellationToken)

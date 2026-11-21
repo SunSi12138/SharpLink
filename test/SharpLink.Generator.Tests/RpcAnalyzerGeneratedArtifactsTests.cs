@@ -57,7 +57,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal study API 6 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 6, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-n999-api6-prepared-executor-facts-v2", StringComparison.Ordinal),
+               manifest.Contains("sharplink-n999-api6-single-prepared-stub-v3", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -190,7 +190,8 @@ public sealed class HelloService : IHelloService
         var generated = RunGeneratorAndGetSources(source);
         var allGenerated = string.Join("\n", generated);
         var stub = generated.Single(static text => text.Contains("private sealed class __Stub_"));
-        Ensure(CountOccurrences(allGenerated, "Invocation = new RpcMethodDescriptor(") == 6,
+        var manifest = generated.Single(static text => text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+        Ensure(CountOccurrences(manifest, "new RpcMethodDescriptor(") == 6,
             "the manifest supplies invocation facts for normal manual selection without creating a server stub");
         var firstBody = stub.IndexOf("private ValueTask __Invoke_", StringComparison.Ordinal);
         Ensure(firstBody >= 0 && CountOccurrences(stub, "private ValueTask __Invoke_") == 6 &&
@@ -217,7 +218,9 @@ public sealed class HelloService : IHelloService
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
-        Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
+        Ensure(allGenerated.Contains("SupportsCancellation = true", StringComparison.Ordinal) &&
+               !stub.Contains("public bool SupportsCancellation(", StringComparison.Ordinal) &&
+               !stub.Contains("InvokeNoReturnCancellableAsync(", StringComparison.Ordinal),
             "streaming stubs must publish framework cancellation support");
         Ensure(allGenerated.Contains(
                 "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
@@ -227,8 +230,8 @@ public sealed class HelloService : IHelloService
                 "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
                 StringComparison.Ordinal),
             "multiple client-stream count must be generated deterministically");
-        var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
-        Ensure(supportsCancellationCases >= 3,
+        Ensure(CountOccurrences(stub, "SupportsCancellation = true") == 4 &&
+               CountOccurrences(manifest, "SupportsCancellation = true") == 4,
             "client, server, and duplex streaming methods must all support framework cancellation");
         return Task.CompletedTask;
     }

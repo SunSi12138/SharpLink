@@ -152,7 +152,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var requestCodec = new NStudyManualIntRequestCodec();
         var responseCodec = RpcGeneratedCodecResolver.GetProvider(manual.RuntimeContext, manifest.OwnerAssembly).GetCodec<int>();
         Ensure(ReferenceEquals(manual.RuntimeContext, client.RuntimeContext) && client.ReadyConnectionCount == 0 &&
-               client.PendingCallCount == 0 && count.Snapshot() == (1, 0),
+               client.PendingCallCount == 0 && count.PreparedCount == 1,
             "both local entries can be created before connect without a business call or second server preparation");
         trace.Record("GeneratedAndManualEntriesAreLocalBeforeConnect");
 
@@ -178,13 +178,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         trace.Record("OnePreparedSiteOnTheAuthenticatedSession", first, bBinding);
 
         Ensure(await site.Service.ReportAsync(5, ct) == 105 &&
-               await manual.InvokeUnaryAsync(method.Invocation!.Value, 9, requestCodec, responseCodec, Metadata("manual"), ct) == 109,
+               await manual.InvokeUnaryAsync(method.Invocation, 9, requestCodec, responseCodec, Metadata("manual"), ct) == 109,
             "a generated payload and a handwritten typed payload reach the same business method");
         var originals = recorder.Calls.ToArray();
         Ensure(originals.Length == 2 && originals[0].Label == "generated" && originals[1].Label == "manual" &&
                originals.All(call => call.Method == method.Invocation && call.HasDeadline) &&
                originals[0].Connection == originals[1].Connection && clientObserver.Calls == 2 &&
-               requestCodec.Writes == 1 && count.Invocations(method.MethodId) == 2 && count.Snapshot() == (1, 0) &&
+               requestCodec.Writes == 1 && count.Invocations(method.MethodId) == 2 && count.PreparedCount == 1 &&
                session.CaptureNStudyBinding(contract.ContractId) == first.BindingId,
             "both share one Session route, server executor, client interceptor pipeline and generated method budget; metadata stays distinct");
         trace.Record("BothCallersReuseOneBindingAndServerEntry", first);
@@ -205,11 +205,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(second.BindingId != first.BindingId && second.Authority == first.Authority &&
                second.Target == first.Target && ReferenceEquals(NStudyClientSession(client), session) &&
                await site.Service.ReportAsync(12, ct) == 112 &&
-               await manual.InvokeUnaryAsync(method.Invocation!.Value, 14, requestCodec, responseCodec, Metadata("manual-again"), ct) == 114,
+               await manual.InvokeUnaryAsync(method.Invocation, 14, requestCodec, responseCodec, Metadata("manual-again"), ct) == 114,
             "both retained callers use a new exact Bind after explicit re-Prepare on the original Session");
         await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0) && client.PendingCallCount == 0, ct);
         Ensure(recorder.Calls.Last().Label == "manual-again" && clientObserver.Calls == 5 &&
-               requestCodec.Writes == 2 && count.Invocations(method.MethodId) == 5 && count.Snapshot() == (1, 0) &&
+               requestCodec.Writes == 2 && count.Invocations(method.MethodId) == 5 && count.PreparedCount == 1 &&
                session.CaptureNStudyBinding(bCid) == bBinding.BindingId,
             "the same executor receives all five calls, and physical uses return to baseline");
         trace.Record("ExplicitReprepareRefreshesBothCallersWithoutReconnecting", first, second);

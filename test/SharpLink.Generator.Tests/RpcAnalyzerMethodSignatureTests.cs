@@ -270,7 +270,7 @@ public interface IOrdersService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task EmptyInvocationCategoriesMustUseStructuredUnimplemented()
+    public Task OneShapeContractsShouldOnlyEmitTheirDeclaredPreparedEntry()
     {
         var responseOnly = string.Join("\n", RunGeneratorAndGetSources(BuildSource("""
 [SharpLink.Sdk.RpcContract]
@@ -290,10 +290,14 @@ public interface INoResponseOnlyContract : SharpLink.Sdk.IService
 
         Ensure(!responseOnly.Contains("RpcException", StringComparison.Ordinal) &&
                !noResponseOnly.Contains("RpcException", StringComparison.Ordinal),
-            "empty invocation categories must not emit the legacy unstructured exception");
-        Ensure(responseOnly.Contains("SharpLinkErrorCode.Unimplemented", StringComparison.Ordinal) &&
-               noResponseOnly.Contains("SharpLinkErrorCode.Unimplemented", StringComparison.Ordinal),
-            "both empty invocation categories must return structured Unimplemented");
+            "a one-shape contract must not emit the legacy unstructured exception");
+        foreach (var generated in new[] { responseOnly, noResponseOnly })
+        {
+            Ensure(CountOccurrences(generated, "public bool TryPrepareMethod(") == 1 &&
+                   CountOccurrences(generated, "method = new(new RpcMethodDescriptor(") == 1 &&
+                   generated.Contains("default: method = default; return false;", StringComparison.Ordinal),
+                "the single resolver exposes just the declared entry and leaves missing methods to the server");
+        }
         return Task.CompletedTask;
     }
 }

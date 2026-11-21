@@ -4,7 +4,7 @@ public partial class RpcGenerator
 {
     private const int GeneratedManifestApi = 6;
     private const int GeneratedProtocolVersion = 2;
-    private const string GeneratedAbiIdentity = "sharplink-n999-api6-prepared-executor-facts-v2";
+    private const string GeneratedAbiIdentity = "sharplink-n999-api6-single-prepared-stub-v3";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -203,8 +203,8 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    {(StubSupportsCancellation(method) ? "true" : "false")},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
-                sb.AppendLine($"                    \"{method.Fingerprint}\")");
-                sb.AppendLine($"                {{ Invocation = {GetMethodDescriptorExpression(contract, method)} }},");
+                sb.AppendLine($"                    \"{method.Fingerprint}\",");
+                sb.AppendLine($"                    {GetMethodDescriptorExpression(contract, method)}),");
             }
             sb.AppendLine("            }),");
             sb.AppendLine($"            static (channel, codecs) => __CreateProxy_{GetContractArtifactIdentity(contract)}(channel, codecs),");

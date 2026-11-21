@@ -78,11 +78,8 @@ public sealed record SharpLinkGeneratedMethodDescriptor(
     bool SupportsCancellation,
     string RequestSchema,
     string ResponseSchema,
-    string Fingerprint)
-{
-    /// <summary>Gets the invocation facts emitted for this method, when supplied by its generator.</summary>
-    public RpcMethodDescriptor? Invocation { get; init; }
-}
+    string Fingerprint,
+    RpcMethodDescriptor Invocation);
 
 /// <summary>Describes the contract-owned generated artifacts in one assembly.</summary>
 public sealed record SharpLinkGeneratedContractDescriptor(
@@ -164,7 +161,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 6;
 
     /// <summary>Exact discriminator for the #999 study generated receiver ABI.</summary>
-    public const string AbiIdentity = "sharplink-n999-api6-prepared-executor-facts-v2";
+    public const string AbiIdentity = "sharplink-n999-api6-single-prepared-stub-v3";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

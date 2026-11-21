@@ -19,6 +19,15 @@ public class LegacyApiSurfaceTests
     ];
 
     [Test]
+    public async Task GeneratedStubShouldExposeOnlyThePreparedMethodResolver()
+    {
+        await Assert.That(typeof(IRpcStub).GetMethods().Select(method => method.Name))
+            .IsEquivalentTo(new[] { "get_InterfaceHash", "TryPrepareMethod" });
+        await Assert.That(typeof(IRpcStub).Assembly.GetType("SharpLink.Abstractions.IRpcGeneratedPreparedMethods"))
+            .IsNull();
+    }
+
+    [Test]
     public async Task PreparedProxyShouldBeTheOnlyCallerMetadataFactory()
     {
         foreach (var client in new[] { typeof(ISharpLinkClient), typeof(ISharpLinkMultiClusterClient) })
