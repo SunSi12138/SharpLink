@@ -1,8 +1,12 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using SharpLink.Abstractions;
 using SharpLink.Sdk;
+
+[assembly: RpcCodecAdapterRegistration(typeof(SharpLink.CodecPublicationDrainProvider.FeedReadingCodecAdapter),
+    "sharplink.tests.reading-feed/v1")]
 
 namespace SharpLink.CodecPublicationDrainProvider;
 
@@ -12,10 +16,26 @@ public interface IReadingFeed : IService
     IAsyncEnumerable<FeedReading> ReadAsync(bool follow, CancellationToken cancellationToken);
 }
 
-[RpcCodec(typeof(FeedReadingCodec))]
+[RpcCodecAdapter(typeof(FeedReadingCodecAdapter))]
 public readonly record struct FeedReading(int Value);
 
 [RpcCodecSemanticIdentity(0x9bff6b9eb60d4a39UL, 0xa948e36697963226UL)]
+public sealed class FeedReadingCodecAdapter : IRpcCodecAdapter
+{
+    public string AdapterId => "sharplink.tests.reading-feed/v1";
+    public IRpcCodecAdapterScope CreateScope() => new Scope();
+
+    private sealed class Scope : IRpcCodecAdapterScope
+    {
+        private readonly FeedReadingCodec _codec = new();
+
+        public IRpcCodec<T> CreateCodec<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T>()
+            => _codec as IRpcCodec<T> ?? throw new NotSupportedException($"No reading codec for {typeof(T)}.");
+
+        public void Dispose() => _codec.Dispose();
+    }
+}
+
 public sealed class FeedReadingCodec : IRpcCodec<FeedReading>, IDisposable
 {
     public static int Serialized;

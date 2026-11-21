@@ -144,9 +144,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             EnsureReplacementReleased(await replacing.WaitAsync(ct), "old feed owner finishes physically");
             await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0) && peer.ActiveCalls == 0 &&
                 peer.Session.StreamManager.ActiveStreamCount == 0 && session.StreamManager.ActiveStreamCount == 0, ct);
-            Ensure(FeedCount(service, "ClosedFeeds") == 1 && FeedCount(service, "DisposedServices") == 1 &&
-                   FeedCount(oldCodec, "Disposed") == 1 && FeedCount(newCodec, "Disposed") == 0 &&
-                   ReferenceEquals(NStudyClientSession(client), session), "R1 feed, service and codec close once; R2 stays live");
+            var disposed = (Feeds: FeedCount(service, "ClosedFeeds"), Services: FeedCount(service, "DisposedServices"),
+                OldCodec: FeedCount(oldCodec, "Disposed"), NewCodec: FeedCount(newCodec, "Disposed"));
+            Ensure(disposed == (1, 1, 1, 0) && ReferenceEquals(NStudyClientSession(client), session),
+                $"R1 feed, service and codec close once; R2 stays live. Actual close counts: {disposed}");
             trace.Record("NormalEofReleasesOnlyR1Owners", a1, a2);
             return (weak, a2, bBinding);
         }
