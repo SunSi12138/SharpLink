@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading.Channels;
 
 [assembly: SharpLinkClusterContractAssembly(
@@ -11,46 +12,63 @@ public sealed class RuntimeMultiClusterIntegrationTests
 {
     [Test]
     [NotInParallel]
-    public async Task RuntimeTcpSlotShouldAddReplaceAndRemoveWithoutRebindingOldProxy()
+    [Arguments("tcp")]
+    [Arguments("shared-memory")]
+    public async Task RuntimeSlotShouldKeepPublicProxyOnItsCapturedChild(string transport)
     {
-        await using var first = await ServerScope.StartAsync("first");
-        await using var second = await ServerScope.StartAsync("second");
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = budget.Token;
+        var seq = 0;
+        void Record(string edge, string? endpoint = null)
+            => Console.WriteLine("NMULTI " + JsonSerializer.Serialize(new { seq = ++seq, transport, edge, endpoint }));
+        bool sharedMemory = transport == "shared-memory";
+        await using var first = await ServerScope.StartAsync("first", sharedMemory);
+        await using var second = await ServerScope.StartAsync("second", sharedMemory);
         await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
-            .AddCluster(
-                "bootstrap",
-                child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port),
-                slot => slot.AllowDynamicContracts = true)
+            .AddCluster("bootstrap", first.ConfigureClient, slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        await client.StartAsync();
-        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
-        await client.AddClusterAsync(
-            "runtime",
-            child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port));
-        await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+        await client.StartAsync(ct);
+        await client.WaitForReadyAsync("bootstrap", ct);
+        var added = await client.AddClusterAsync("runtime", first.ConfigureClient, cancellationToken: ct);
+        Ensure(added.Succeeded, $"the ordinary add publishes the first child: {added.Message}");
+        await client.WaitForReadyAsync("runtime", ct);
 
-        var oldProxy = client.Get<IConnectionBehaviorService>();
-        Ensure(await oldProxy.GetEndpointIdAsync() == "first",
+        var old = client.CreateProxy<IConnectionBehaviorService>();
+        var retained = client.CreateProxy<IConnectionBehaviorService>();
+        await old.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        var original = await old.Service.GetEndpointIdAsync();
+        Ensure(original == "first",
             "the published runtime route must become usable after its explicit readiness wait");
+        Record("OldPublicProxyPreparesAndCallsFirstChild", original);
 
-        await client.ReplaceClusterAsync(
-            "runtime",
-            child => child.UseTcp(IPAddress.Loopback.ToString(), second.Port),
-            TimeSpan.FromSeconds(2));
+        var replacement = await client.ReplaceClusterAsync("runtime", second.ConfigureClient, TimeSpan.FromSeconds(4), ct);
+        Ensure(replacement is { Succeeded: true, Published: true, ReferencesReleased: true, ForcedStop: false },
+            $"the normal whole-slot replacement publishes then drains the old child: {replacement.Message}");
 
-        var newProxy = client.Get<IConnectionBehaviorService>();
-        Ensure(await newProxy.GetEndpointIdAsync() == "second",
+        var fresh = client.CreateProxy<IConnectionBehaviorService>();
+        await fresh.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        var current = await fresh.Service.GetEndpointIdAsync();
+        Ensure(current == "second",
             "a proxy created after replacement must bind to the new child");
-        var oldFailure = await CaptureExceptionAsync(oldProxy.GetEndpointIdAsync().AsTask());
-        Ensure(oldFailure is SharpLinkException or InvalidOperationException,
-            "a proxy created before replacement must remain bound to the retired child");
+        Record("NewPublicProxyPreparesAndCallsReplacementChild", current);
+        var stalePrepare = await CaptureExceptionAsync(retained.PrepareAsync(TimeSpan.FromSeconds(4), ct).AsTask());
+        var staleCall = await CaptureExceptionAsync(old.Service.GetEndpointIdAsync().AsTask());
+        Ensure(stalePrepare is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } &&
+               staleCall is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } &&
+               await fresh.Service.GetEndpointIdAsync() == "second" &&
+               (await client.CheckHealthAsync("bootstrap", ct)).Status == SharpLinkHealthStatus.Ready,
+            "old handles never use the replacement, even when their first explicit Prepare comes after the swap");
+        Record("SavedHandlesCannotBorrowReplacementAndBootstrapStaysReady");
 
-        var removal = await client.RemoveClusterAsync("runtime", TimeSpan.FromSeconds(2));
+        var removal = await client.RemoveClusterAsync("runtime", TimeSpan.FromSeconds(4), ct);
         Ensure(removal is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
             "a completed child stop must be reported as a graceful removal");
-        var missingRoute = CaptureException(() => client.Get<IConnectionBehaviorService>());
-        Ensure(missingRoute is InvalidOperationException,
+        var missingRoute = CaptureException(() => client.CreateProxy<IConnectionBehaviorService>());
+        Ensure(missingRoute is InvalidOperationException &&
+               (await client.CheckHealthAsync("bootstrap", ct)).Status == SharpLinkHealthStatus.Ready,
             "new proxy creation must fail immediately after the slot is removed");
+        Record("NormalRemovalUnpublishesOnlyTheSelectedChild");
     }
 
     [Test]
@@ -195,29 +213,44 @@ public sealed class RuntimeMultiClusterIntegrationTests
 
         private ServerScope(
             int port,
+            string? memoryName,
             ISharpLinkServer server,
             CancellationTokenSource shutdown,
             Task runTask)
         {
             Port = port;
+            MemoryName = memoryName;
             _server = server;
             _shutdown = shutdown;
             _runTask = runTask;
         }
 
         internal int Port { get; }
+        private string? MemoryName { get; }
 
-        internal static Task<ServerScope> StartAsync(string endpointId)
+        internal void ConfigureClient(SharpClientBuilder client)
+        {
+            if (MemoryName is { } name)
+                client.UseSharedMemory(name);
+            else
+                client.UseTcp(IPAddress.Loopback.ToString(), Port);
+        }
+
+        internal static Task<ServerScope> StartAsync(string endpointId, bool sharedMemory = false)
         {
             var builder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
                 .ReplaceService<IConnectionBehaviorService>(
                     new ConnectionBehaviorService { EndpointId = endpointId });
-            var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
+            var memoryName = sharedMemory ? $"sl999-slot-{Guid.NewGuid():N}" : null;
+            if (memoryName is null)
+                builder.UseTcp(0, IPAddress.Loopback);
+            else
+                builder.UseSharedMemory(memoryName);
+            var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
             var server = builder.Build();
             var shutdown = new CancellationTokenSource();
             var runTask = server.RunUntilStoppedAsync(shutdown.Token).AsTask();
-            return Task.FromResult(new ServerScope(port, server, shutdown, runTask));
+            return Task.FromResult(new ServerScope(port, memoryName, server, shutdown, runTask));
         }
 
         public async ValueTask DisposeAsync()

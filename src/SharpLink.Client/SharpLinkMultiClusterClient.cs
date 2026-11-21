@@ -118,27 +118,26 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
 
     public ValueTask DisposeAsync() => StopAsync();
 
+    public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+        => GetProxyChild<TContract>().CreateProxy<TContract>(options);
+
     public TContract Get<TContract>() where TContract : IService
-    {
-        var state = State;
-        if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
-            throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
-
-        if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
-            return route.Slot.Client.Get<TContract>();
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
-    }
+        => GetProxyChild<TContract>().Get<TContract>();
 
     public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
     {
         ArgumentNullException.ThrowIfNull(metadata);
-        var state = State;
+        return GetProxyChild<TContract>().GetWithMetadata<TContract>(metadata);
+    }
+
+    private ISharpLinkClient GetProxyChild<TContract>() where TContract : IService
+    {
+        var state = (SharpLinkMultiClusterState)Volatile.Read(ref _state);
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
 
         if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
-            return route.Slot.Client.GetWithMetadata<TContract>(metadata);
+            return route.Slot.Client;
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
     }
