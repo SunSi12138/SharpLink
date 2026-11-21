@@ -96,13 +96,19 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
         SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+        => InvokeServerStreamingDeferred(inner, module, method, request, requestCodec, responseCodec, metadata,
+            cancellationToken, null);
+
+    internal static IAsyncEnumerable<TResponse> InvokeServerStreamingDeferred<TRequest, TResponse>(
+        SharpLinkClient inner, SharpLinkDynamicModule? module, RpcMethodDescriptor method,
+        in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+        SharpLinkMetadata? metadata, CancellationToken cancellationToken, SharpLinkClient.NStudyPreparedSite? prepared)
     {
-        var requestValue = request;
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors);
-        return InvokeServerStreamingDeferred(
-            method, requestValue, requestCodec, responseCodec, interceptors, control, cancellationToken);
+            method, metadata, includeClientDefault: false, interceptors) with { PreparedSite = prepared };
+        return EnumerateServerStream(inner, module,
+            method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
 
     public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
@@ -143,8 +149,8 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         finally { lease.Dispose(); combined.Dispose(); }
     }
 
-    private async IAsyncEnumerable<TResponse> InvokeServerStreamingDeferred<TRequest, TResponse>(
-        RpcMethodDescriptor method,
+    private static async IAsyncEnumerable<TResponse> EnumerateServerStream<TRequest, TResponse>(
+        SharpLinkClient inner, SharpLinkDynamicModule? module, RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
@@ -154,21 +160,36 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
     {
         SharpLinkClient.EnsureLogicalCallProgress(control);
-        if (!module.TryAcquire(true, out var lease))
+        SharpLinkDynamicModuleLease lease = default;
+        if (module is not null && !module.TryAcquire(true, out lease))
         {
             SharpLinkClient.EnsureLogicalCallProgress(control);
             throw Draining();
         }
-        var combined = Combine(callCancellation, module.ForcedCancellation);
+        var combined = module is null ? new CombinedCancellation(callCancellation, null) :
+            Combine(callCancellation, module.ForcedCancellation);
+        var lifetime = module is not null && control.PreparedSite is not null
+            ? new NStudyServerOutputLifetime(lease, combined.Source)
+            : null;
         try
         {
             SharpLinkClient.EnsureLogicalCallProgress(control);
             var stream = inner.InvokeServerStreamingResolved(
-                method, request, requestCodec, responseCodec, interceptors, control, combined.Token);
+                method, request, requestCodec, responseCodec, interceptors,
+                control with { OutputLifetime = lifetime }, combined.Token);
             await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
                 yield return item;
         }
-        finally { lease.Dispose(); combined.Dispose(); }
+        finally
+        {
+            if (lifetime is not null)
+                lifetime.CloseConsumer();
+            else
+            {
+                lease.Dispose();
+                combined.Dispose();
+            }
+        }
     }
 
     private async IAsyncEnumerable<TResponse> InvokeDuplexStreamingDeferred<TRequest, TResponse, TStreams>(
@@ -235,6 +256,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     private readonly struct CombinedCancellation(CancellationToken token, CancellationTokenSource? source) : IDisposable
     {
         internal CancellationToken Token { get; } = token;
+        internal CancellationTokenSource? Source => source;
         public void Dispose() => source?.Dispose();
     }
 }

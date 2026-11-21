@@ -173,10 +173,28 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
-        TrackFrameworkTask(
-            StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken),
-            "ServerStreamingInvoker");
+        var owner = control.OutputLifetime;
+        owner?.ClaimDispatcher();
+        PooledAsyncStreamDispatcher<TResponse> dispatcher;
+        try
+        {
+            dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(
+                cancellationToken, responseCodec, method.ResponseNullable, owner);
+        }
+        catch { owner?.Dispose(); throw; }
+
+        var close = owner is null ? null : dispatcher.CapturePhysicalLeaseClose();
+        try
+        {
+            TrackFrameworkTask(
+                StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken),
+                "ServerStreamingInvoker");
+        }
+        finally
+        {
+            if (close is not null)
+                owner!.AttachDispatcher(close);
+        }
         return dispatcher;
     }
 
@@ -964,7 +982,8 @@ internal sealed partial class SharpLinkClient
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
                     cancellationToken: registration.TerminalSignal?.Token ?? CancellationToken.None,
-                    publicationTable: connection.PendingCalls).ConfigureAwait(false);
+                    publicationTable: connection.PendingCalls,
+                    exactRoute: control.PreparedSite?.RequireRoute()).ConfigureAwait(false);
             }
             finally
             {
@@ -1073,7 +1092,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            connection = GetReadyConnection(method, retrySelection: null, outcome, control.PreparedSite);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             requestId = connection.PendingCalls.RegisterStream(

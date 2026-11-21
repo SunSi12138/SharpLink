@@ -13,6 +13,7 @@ namespace SharpLink.CodecPublicationDrainProvider;
 [RpcContract]
 public interface IReadingFeed : IService
 {
+    [SharpLink.Sdk.Timeout(12)]
     IAsyncEnumerable<FeedReading> ReadAsync(bool follow, CancellationToken cancellationToken);
 }
 
@@ -41,6 +42,7 @@ public sealed class FeedReadingCodec : IRpcCodec<FeedReading>, IDisposable
     public static int Serialized;
     public static int Deserialized;
     public static int Disposed;
+    public static Action<int>? BeforeDecodeReturns { get; set; }
     private bool _disposed;
 
     public void Serialize(in FeedReading value, IBufferWriter<byte> buffer)
@@ -56,8 +58,11 @@ public sealed class FeedReadingCodec : IRpcCodec<FeedReading>, IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         Span<byte> bytes = stackalloc byte[4];
         buffer.CopyTo(bytes);
+        var value = BinaryPrimitives.ReadInt32LittleEndian(bytes);
+        BeforeDecodeReturns?.Invoke(value);
+        ObjectDisposedException.ThrowIf(_disposed, this);
         Interlocked.Increment(ref Deserialized);
-        return new(BinaryPrimitives.ReadInt32LittleEndian(bytes));
+        return new(value);
     }
 
     public void Dispose()

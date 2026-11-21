@@ -11,10 +11,10 @@ internal sealed partial class SharpLinkClient
         if (!Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
             throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
         if (registration.Descriptor.Methods.Any(method =>
-                method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay) ||
+                method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay or RpcMethodKind.ServerStreaming) ||
                 method.Invocation is not { } invocation || invocation.Kind != method.Kind ||
                 invocation.ContractId != registration.Descriptor.ContractId || invocation.MethodId != method.MethodId))
-            throw new NotSupportedException("The private contract site requires generated Unary or OneWay methods.");
+            throw new NotSupportedException("The private site requires generated Unary, OneWay or ServerStreaming methods.");
         return new NStudyContractSite<T>(this, registration, FindOwningManifest(registration).RpcAssemblyHash, metadata);
     }
 
@@ -244,6 +244,7 @@ internal sealed partial class SharpLinkClient
 
         internal ManualUnary BindUnary(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.Unary));
         internal ManualOneWay BindOneWay(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.OneWay));
+        internal ManualServerStream BindServerStream(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.ServerStreaming));
 
         private RpcMethodDescriptor FindMethod(long methodId, RpcMethodKind kind)
         {
@@ -273,6 +274,14 @@ internal sealed partial class SharpLinkClient
                 => site.InvokeOneWay(method, request, requestCodec, streams, metadata, cancellationToken);
         }
 
+        internal sealed class ManualServerStream(NStudyContractSite<T> site, RpcMethodDescriptor method)
+        {
+            internal IAsyncEnumerable<TResponse> Invoke<TRequest, TResponse>(in TRequest request,
+                IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+                SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
+                => site.InvokeServerStream(method, request, requestCodec, responseCodec, metadata, cancellationToken);
+        }
+
         ValueTask<TResponse> IRpcChannel.InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
@@ -282,7 +291,8 @@ internal sealed partial class SharpLinkClient
             in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
         {
-            var prepared = RequirePrepared(method, RpcMethodKind.Unary, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var prepared = RequirePrepared(method, RpcMethodKind.Unary);
             return _registration.Module is { } module
                 ? SharpLinkModuleRpcChannel.InvokeUnaryWithModule(_client, module, method, request, requestCodec,
                     responseCodec, metadata ?? _metadata, cancellationToken, prepared)
@@ -298,16 +308,16 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> codec, in TStreams streams, SharpLinkMetadata? metadata, CancellationToken ct)
             where TStreams : struct, IRpcClientStreamWriter
         {
-            var prepared = RequirePrepared(method, RpcMethodKind.OneWay, ct);
+            ct.ThrowIfCancellationRequested();
+            var prepared = RequirePrepared(method, RpcMethodKind.OneWay);
             return _registration.Module is { } module
                 ? SharpLinkModuleRpcChannel.InvokeOneWayWithModule(_client, module, method, request, codec, streams,
                     metadata ?? _metadata, ct, prepared)
                 : _client.InvokeOneWay(method, request, codec, streams, metadata ?? _metadata, ct, prepared);
         }
 
-        private NStudyPreparedSite RequirePrepared(RpcMethodDescriptor method, RpcMethodKind kind, CancellationToken ct)
+        private NStudyPreparedSite RequirePrepared(RpcMethodDescriptor method, RpcMethodKind kind)
         {
-            ct.ThrowIfCancellationRequested();
             if (method.ContractId != _registration.Descriptor.ContractId || method.Kind != kind)
                 throw new InvalidOperationException("The method does not use this private contract receiver.");
             return Volatile.Read(ref _prepared) ?? throw NStudyPreparedSite.Unavailable();
@@ -319,13 +329,23 @@ internal sealed partial class SharpLinkClient
 
         IAsyncEnumerable<TResponse> IRpcChannel.InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
-            SharpLinkMetadata? metadata, CancellationToken ct) => throw UnsupportedStreaming();
+            SharpLinkMetadata? metadata, CancellationToken ct)
+            => InvokeServerStream(method, request, codec, responseCodec, metadata, ct);
+
+        private IAsyncEnumerable<TResponse> InvokeServerStream<TRequest, TResponse>(RpcMethodDescriptor method,
+            in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
+            SharpLinkMetadata? metadata, CancellationToken ct)
+        {
+            var prepared = RequirePrepared(method, RpcMethodKind.ServerStreaming);
+            return SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(_client, _registration.Module, method, request,
+                codec, responseCodec, metadata ?? _metadata, ct, prepared);
+        }
 
         IAsyncEnumerable<TResponse> IRpcChannel.InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
             SharpLinkMetadata? metadata, CancellationToken ct) => throw UnsupportedStreaming();
 
         private static NotSupportedException UnsupportedStreaming()
-            => new("This private generated receiver supports Unary and OneWay methods.");
+            => new("The private site does not yet support ClientStreaming or Duplex.");
     }
 }
