@@ -111,9 +111,6 @@ public class SharpLinkRemoteHealthCheckTests
         public T Get<T>() where T : IService
             => throw new NotSupportedException();
 
-        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-            => throw new NotSupportedException();
-
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => default;
 

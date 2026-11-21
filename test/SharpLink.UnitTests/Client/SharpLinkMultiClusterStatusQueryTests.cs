@@ -107,9 +107,6 @@ public sealed class SharpLinkMultiClusterStatusQueryTests : SharpLinkMultiCluste
         public TContract Get<TContract>() where TContract : IService
             => throw new NotSupportedException();
 
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-            => throw new NotSupportedException();
-
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster)
         {
             GetClusterStateCalls++;

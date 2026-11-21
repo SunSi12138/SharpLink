@@ -31,7 +31,9 @@ This preserves the synchronous `Get<TContract>()` API. `Get<TContract>()` never 
 
 ## Bind-time validation
 
-For a connected client, `Get<TContract>()` and `GetWithMetadata<TContract>()` compare the local generated assembly hash with the latest discovered remote manifest snapshot before returning or creating a proxy.
+In the #999 study, `CreateProxy<TContract>()` creates a local handle. Its explicit `PrepareAsync` compares the local contract's assembly hash with the remote manifest on the selected physical Session before binding. Metadata belongs to the handle's calls, not to the bind identity.
+
+During migration, `Get<TContract>()` still compares the local assembly hash with the discovered manifest when returning a proxy on a connected client.
 
 A mismatch fails with `FailedPrecondition`. The diagnostic identifies the contract, local assembly/hash, remote hash, session, and remote manifest generation. Rejection happens before an RPC `Request` payload is emitted.
 

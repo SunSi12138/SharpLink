@@ -360,6 +360,13 @@ public partial class IntegrationBehaviorTests
         public ISharpLinkClient Client { get; }
         internal ISharpLinkServer Server => _server;
 
+        internal async ValueTask<TContract> PrepareServiceAsync<TContract>() where TContract : IService
+        {
+            var proxy = Client.CreateProxy<TContract>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5), _serverCts.Token);
+            return proxy.Service;
+        }
+
         private TestHarness(
             ISharpLinkServer server,
             Task serverTask,

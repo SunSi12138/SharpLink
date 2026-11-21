@@ -87,9 +87,6 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
         public TContract Get<TContract>() where TContract : IService
             => throw new NotSupportedException();
 
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-            => throw new NotSupportedException();
-
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => throw new NotSupportedException();
 

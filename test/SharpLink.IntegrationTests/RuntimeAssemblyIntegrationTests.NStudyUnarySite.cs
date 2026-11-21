@@ -145,11 +145,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var port = memory is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
         await using var client = NewNStudyClient(clientSource, port, memory, settings => settings.AddInterceptor(clientObserver));
-        var site = client.CreateNStudyContractSite<INStudyUnarySiteProbe>(Metadata("generated"));
-        var manual = site.BindUnary(method.MethodId);
+        var site = client.CreateProxy<INStudyUnarySiteProbe>(new RpcProxyOptions { Metadata = Metadata("generated") });
+        var manual = client.CreateContractChannel(client.GetLocalContract<INStudyUnarySiteProbe>());
+        var alternate = client.CreateProxy<INStudyUnarySiteProbe>(new RpcProxyOptions { Metadata = Metadata("alternate") });
+        var other = client.CreateProxy<IShutdownCleanupProbe>();
         var requestCodec = new NStudyManualIntRequestCodec();
-        var responseCodec = site.GetCodec<int>();
-        Ensure(ReferenceEquals(site.RuntimeContext, client.RuntimeContext) && client.ReadyConnectionCount == 0 &&
+        var responseCodec = RpcGeneratedCodecResolver.GetProvider(manual.RuntimeContext, manifest.OwnerAssembly).GetCodec<int>();
+        Ensure(ReferenceEquals(manual.RuntimeContext, client.RuntimeContext) && client.ReadyConnectionCount == 0 &&
                client.PendingCallCount == 0 && count.Snapshot() == (1, 0),
             "both local entries can be created before connect without a business call or second server preparation");
         trace.Record("GeneratedAndManualEntriesAreLocalBeforeConnect");
@@ -159,10 +161,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var session = NStudyClientSession(client);
         var peer = NStudyServerConnection(server);
         Ensure(session.NStudyPreparedCount == 0, "connection alone does not prepare any business route");
-        var first = await site.PrepareAsync(TimeSpan.FromSeconds(5), ct);
-        var same = await site.PrepareAsync(TimeSpan.FromSeconds(5), ct);
-        var bBinding = await client.PrepareNStudyContractAsync(bCid, manifest.RpcAssemblyHash, default, ct);
-        Ensure(first == same && first.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+        var timeout = TimeSpan.FromSeconds(5);
+        await site.PrepareAsync(timeout, ct);
+        var first = session.CaptureNStudyRoute(contract.ContractId).Acknowledgement;
+        var sharedPreparation = manual.PrepareAsync(timeout, ct);
+        Ensure(sharedPreparation.IsCompletedSuccessfully, "the handwritten channel shares the generated preparation");
+        await sharedPreparation;
+        await other.PrepareAsync(timeout, ct);
+        var bBinding = session.CaptureNStudyRoute(bCid).Acknowledgement;
+        Ensure(first.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                session.CaptureNStudyBinding(contract.ContractId) == first.BindingId &&
                peer.AuthenticationContext?.Subject == "n-validation" &&
                (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader) &&
@@ -171,7 +178,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         trace.Record("OnePreparedSiteOnTheAuthenticatedSession", first, bBinding);
 
         Ensure(await site.Service.ReportAsync(5, ct) == 105 &&
-               await manual.InvokeAsync(9, requestCodec, responseCodec, Metadata("manual"), ct) == 109,
+               await manual.InvokeUnaryAsync(method.Invocation!.Value, 9, requestCodec, responseCodec, Metadata("manual"), ct) == 109,
             "a generated payload and a handwritten typed payload reach the same business method");
         var originals = recorder.Calls.ToArray();
         Ensure(originals.Length == 2 && originals[0].Label == "generated" && originals[1].Label == "manual" &&
@@ -182,19 +189,23 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "both share one Session route, server executor, client interceptor pipeline and generated method budget; metadata stays distinct");
         trace.Record("BothCallersReuseOneBindingAndServerEntry", first);
 
-        var legacy = client.GetWithMetadata<INStudyUnarySiteProbe>(Metadata("legacy"));
-        Ensure(await legacy.ReportAsync(7, ct) == 107 && recorder.Calls.Last().Label == "legacy" &&
-               await client.Get<IShutdownCleanupProbe>().TouchAsync(1, ct) == 101,
-            "the original entry and unrelated B remain usable on the same client");
-        trace.Record("ExistingMetadataEntryAndUnrelatedContractStillWork", first, bBinding);
+        var alternatePreparation = alternate.PrepareAsync(timeout, ct);
+        Ensure(alternatePreparation.IsCompletedSuccessfully, "metadata does not select a different Bind");
+        await alternatePreparation;
+        Ensure(await alternate.Service.ReportAsync(7, ct) == 107 && recorder.Calls.Last().Label == "alternate" &&
+               session.CaptureNStudyBinding(contract.ContractId) == first.BindingId &&
+               await other.Service.TouchAsync(1, ct) == 101,
+            "the other metadata handle reuses the exact binding and unrelated B remains usable");
+        trace.Record("PreparedMetadataHandleAndUnrelatedContractStillWork", first, bBinding);
 
         Ensure(await client.ReleaseNStudyContractAsync(contract.ContractId, ct),
             "the application can release its route in the ordinary way");
-        var second = await site.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        await site.PrepareAsync(timeout, ct);
+        var second = session.CaptureNStudyRoute(contract.ContractId).Acknowledgement;
         Ensure(second.BindingId != first.BindingId && second.Authority == first.Authority &&
                second.Target == first.Target && ReferenceEquals(NStudyClientSession(client), session) &&
                await site.Service.ReportAsync(12, ct) == 112 &&
-               await manual.InvokeAsync(14, requestCodec, responseCodec, Metadata("manual-again"), ct) == 114,
+               await manual.InvokeUnaryAsync(method.Invocation!.Value, 14, requestCodec, responseCodec, Metadata("manual-again"), ct) == 114,
             "both retained callers use a new exact Bind after explicit re-Prepare on the original Session");
         await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0) && client.PendingCallCount == 0, ct);
         Ensure(recorder.Calls.Last().Label == "manual-again" && clientObserver.Calls == 5 &&

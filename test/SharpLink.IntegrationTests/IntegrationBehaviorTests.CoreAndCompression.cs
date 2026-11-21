@@ -86,7 +86,7 @@ public partial class IntegrationBehaviorTests
     {
         // Generated Contract Codec bindings are authoritative in 3.0: no endpoint resolver exists.
         await using var harness = await TestHarness.CreateAsync(useSharedMemory: useSharedMemory);
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         var add = await svc.AddAsync(10, 20);
         Ensure(add == 30, "AddAsync");
@@ -131,7 +131,8 @@ public partial class IntegrationBehaviorTests
             Age = 7,
             Tags = [new string('b', 4096)]
         };
-        var response = await harness.Client.Get<ITestService>().EchoAsync(source);
+        var service = await harness.PrepareServiceAsync<ITestService>();
+        var response = await service.EchoAsync(source);
 
         Ensure(response.Name == source.Name + "-r", "compressed unary response");
         Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
@@ -150,7 +151,8 @@ public partial class IntegrationBehaviorTests
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
 
         var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
-        var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
+        var response = await service.EchoBytesAsync(payload);
 
         Ensure(response.SequenceEqual(payload), "different local encode-only tuning");
         Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
@@ -180,8 +182,8 @@ public partial class IntegrationBehaviorTests
                 options.Compression.Providers.Add(serverAlternate);
             });
 
-        var result = await harness.Client.Get<ICompressionService>()
-            .EchoBytesAsync(Enumerable.Repeat((byte)3, 4096).ToArray());
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
+        var result = await service.EchoBytesAsync(Enumerable.Repeat((byte)3, 4096).ToArray());
         Ensure(result.Length == 4096, "provider preference call");
         Ensure(clientPreferred.CompressCount > 0 && serverPreferred.DecompressCount > 0,
             "server-first mutual provider should be selected");
@@ -203,7 +205,8 @@ public partial class IntegrationBehaviorTests
                 ? null
                 : options => options.Compression.Providers.Add(serverProvider));
 
-        var result = await harness.Client.Get<ITestService>().EchoAsync(new Person
+        var service = await harness.PrepareServiceAsync<ITestService>();
+        var result = await service.EchoAsync(new Person
         {
             Name = new string('x', 4096),
             Age = 1,
@@ -226,7 +229,7 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
         var payload = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
 
         var unary = await service.EchoBytesAsync(payload);
@@ -266,7 +269,8 @@ public partial class IntegrationBehaviorTests
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
         var payload = Enumerable.Repeat((byte)0x4a, 4096).ToArray();
 
-        var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
+        var response = await service.EchoBytesAsync(payload);
 
         Ensure(response.SequenceEqual(payload), "public TryCompress=false raw fallback");
         Ensure(clientProvider.CompressCount > 0 && serverProvider.CompressCount > 0,
@@ -283,7 +287,7 @@ public partial class IntegrationBehaviorTests
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
 
         var small = Enumerable.Repeat((byte)1, 128).ToArray();
         Ensure((await service.EchoBytesAsync(small)).SequenceEqual(small), "small raw fallback");

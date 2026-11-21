@@ -360,11 +360,6 @@ public class SharpLinkClientAccessorTests
 
 
 
-        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-
-
-            => throw new NotSupportedException();
-
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => default;
 
@@ -458,10 +453,6 @@ public class SharpLinkClientAccessorTests
 
 
 
-        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-
-
-            => throw new NotSupportedException();
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,
@@ -503,9 +494,6 @@ public class SharpLinkClientAccessorTests
         public T Get<T>() where T : IService => throw new NotSupportedException();
 
 
-        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-
-            => throw new NotSupportedException();
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
             Assembly assembly,

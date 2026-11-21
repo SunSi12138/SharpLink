@@ -124,12 +124,6 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     public TContract Get<TContract>() where TContract : IService
         => GetProxyChild<TContract>().Get<TContract>();
 
-    public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-    {
-        ArgumentNullException.ThrowIfNull(metadata);
-        return GetProxyChild<TContract>().GetWithMetadata<TContract>(metadata);
-    }
-
     private ISharpLinkClient GetProxyChild<TContract>() where TContract : IService
     {
         var state = (SharpLinkMultiClusterState)Volatile.Read(ref _state);

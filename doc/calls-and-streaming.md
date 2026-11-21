@@ -10,13 +10,19 @@ Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock �
 
 ## Metadata
 
-Metadata 是 RPC envelope state，不是业务合同参数。需要由调用方为某一次 invocation 明确选择 metadata 时，使用窄能力 `GetWithMetadata<TContract>(SharpLinkMetadata)` 获取绑定该 metadata 的 proxy，再正常调用业务方法；它不会恢复通用 options bag，也不会使用 ambient/global state。例如：
+Metadata 随 RPC 传输，不是业务合同参数。在 #999 验证分支，用 `RpcProxyOptions.Metadata` 为某次调用或一组调用选择 metadata。连接就绪后，先准备代理，再通过 `Service` 发起调用：
 
 ```csharp
-var tenantProxy = client.GetWithMetadata<IMyService>(
-    new SharpLinkMetadata(new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a")));
-await tenantProxy.GetAsync(id, cancellationToken);
+var tenantProxy = client.CreateProxy<IMyService>(new RpcProxyOptions
+{
+    Metadata = new SharpLinkMetadata(
+        new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a"))
+});
+await tenantProxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+await tenantProxy.Service.GetAsync(id, cancellationToken);
 ```
+
+同一契约的代理可以共用同一次准备，但每个代理仍分别携带自己的 metadata。
 
 Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为横切策略补充/变换当前逻辑调用的 metadata；不要用调用顺序或全局可变 interceptor 状态模拟 caller-selected metadata。服务端从 `SharpLinkCallContext.Current?.Metadata` 或 Server interceptor context 读取。Metadata 受 `MaxMetadataBytes` 限制，适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
 

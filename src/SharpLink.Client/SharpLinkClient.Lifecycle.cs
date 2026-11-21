@@ -345,24 +345,6 @@ internal sealed partial class SharpLinkClient
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }
 
-    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-    {
-        ArgumentNullException.ThrowIfNull(metadata);
-        if (metadata.Count == 0)
-            return Get<T>();
-
-        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
-        {
-            ValidateRemoteContractAssembly(registration);
-            IRpcChannel channel = registration.Module is null
-                ? this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            return (T)registration.Descriptor.ProxyFactory(new LegacyRpcContractReceiver(channel, metadata), registration.Codecs);
-        }
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
-    }
-
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null

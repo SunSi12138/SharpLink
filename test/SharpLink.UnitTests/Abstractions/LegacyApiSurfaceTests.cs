@@ -19,6 +19,18 @@ public class LegacyApiSurfaceTests
     ];
 
     [Test]
+    public async Task PreparedProxyShouldBeTheOnlyCallerMetadataFactory()
+    {
+        foreach (var client in new[] { typeof(ISharpLinkClient), typeof(ISharpLinkMultiClusterClient) })
+        {
+            var factory = client.GetMethod("CreateProxy", [typeof(RpcProxyOptions)]);
+            await Assert.That(factory?.ReturnType.IsGenericType ?? false).IsTrue();
+            await Assert.That(factory!.ReturnType.GetGenericTypeDefinition()).IsEqualTo(typeof(RpcProxy<>));
+            await Assert.That(client.GetMethod("GetWithMetadata")).IsNull();
+        }
+    }
+
+    [Test]
     public async Task EngineControlSurfaceShouldNotBeExportedAndApprovedSpisRemainImplementable()
     {
         var abstractions = typeof(IRpcGeneratedServerBridge).Assembly;
