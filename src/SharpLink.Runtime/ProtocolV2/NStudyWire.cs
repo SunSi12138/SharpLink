@@ -46,7 +46,7 @@ internal static partial class NStudyWire
             BindAck => size == AckBytes,
             RequestAccepted => size == 0,
             Coordination => size == CoordinationBytes,
-            InventoryQuery => size == 0,
+            InventoryQuery => size is 0 or InventoryAuthorityBytes,
             InventoryReply => IsInventoryLength(size),
             Invalidated => size is >= sizeof(long) and <= BindingLimit * sizeof(long) &&
                 size % sizeof(long) == 0,

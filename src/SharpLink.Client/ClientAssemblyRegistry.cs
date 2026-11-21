@@ -173,6 +173,7 @@ internal sealed partial class ClientAssemblyRegistry
                         else
                         {
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            module.NStudyPublication = NextNStudyPublication;
                             _proxyLookup.Publish(candidate.Proxies);
                             _dynamicModules.Add(assembly, module);
                             _generation++;
@@ -359,6 +360,7 @@ internal sealed partial class ClientAssemblyRegistry
                             _dynamicModules.Add(newAssembly, newModule);
                             _unregisterOperations.Add(oldAssembly, drainOperation);
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                            newModule.NStudyPublication = NextNStudyPublication;
                             _proxyLookup.Publish(candidate.Proxies);
                             _generation++;
                             oldModule.TryBeginDraining();
@@ -495,7 +497,8 @@ internal sealed partial class ClientAssemblyRegistry
                 registrations.Add(contract.ContractType, new SharpLinkClient.ClientProxyRegistration(
                     contract,
                     null,
-                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType)));
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType),
+                    manifest.RpcAssemblyHash));
             }
         }
         return registrations.ToFrozenDictionary();

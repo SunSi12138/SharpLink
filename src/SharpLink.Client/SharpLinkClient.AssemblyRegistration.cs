@@ -38,11 +38,13 @@ internal sealed partial class SharpLinkClient
         internal ClientProxyRegistration(
             SharpLinkGeneratedContractDescriptor descriptor,
             SharpLinkDynamicModule? module,
-            IRpcCodecProvider codecs)
+            IRpcCodecProvider codecs,
+            RpcHash128 nStudyAssemblyHash)
         {
             Descriptor = descriptor;
             Module = module;
             Codecs = codecs;
+            NStudyAssemblyHash = nStudyAssemblyHash;
         }
 
         internal SharpLinkGeneratedContractDescriptor Descriptor { get; }
@@ -50,6 +52,8 @@ internal sealed partial class SharpLinkClient
         internal SharpLinkDynamicModule? Module { get; }
 
         internal IRpcCodecProvider Codecs { get; }
+
+        internal RpcHash128 NStudyAssemblyHash { get; }
 
         internal object? Proxy;
     }

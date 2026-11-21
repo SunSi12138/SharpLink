@@ -49,7 +49,7 @@ internal sealed partial class SharpLinkServer
                     throw new ArgumentException("A physical Session can participate only once.", nameof(offers));
                 if (!_connectionRegistry.TryGetValue(peer.Session.Id, out var current) || !ReferenceEquals(current, peer))
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected data Session is no longer a server peer.");
-                var authority = new NStudyAuthority(_desiredSessionServerInstanceId, _nStudyRegistryEpoch, peer.NStudyPhysicalIdentity);
+                var authority = ReadNStudySessionAuthority(peer);
                 participants.Add(NStudyParticipant.Acquire(offer, authority, controlBudget.Token));
             }
             // The application names the first peer as the commit authorizer.
@@ -227,8 +227,22 @@ internal sealed partial class SharpLinkServer
                 var reply = await Session.ReadNStudyCoordinationAsync(change, NStudyPhase.Ready, ControlToken,
                     allowDecline: true).ConfigureAwait(false);
                 _declineReason = reply.DeclineReason;
+                if (reply.Phase != NStudyPhase.Ready)
+                    return false;
+
+                // The query supplies a fact, not permission: both policies and Ready
+                // already ran on this physical Session. Never substitute a different
+                // installed generation even if its contract hash is the same.
+                var inventory = await Session.QueryNStudyClientInventoryAsync(authority, ControlToken).ConfigureAwait(false);
+                if (!CanContinue || inventory.Status != NStudyInventoryStatus.Current ||
+                    !inventory.Entries.Any(entry => entry.Contract == change.Contract && entry.Hash == change.Hash &&
+                        entry.Target.Registration == reply.ClientRegistration))
+                {
+                    await DeclineAsync(NStudyDeclineReason.CandidateChanged).ConfigureAwait(false);
+                    return false;
+                }
                 _clientRegistration = reply.ClientRegistration;
-                return reply.Phase == NStudyPhase.Ready;
+                return true;
             }
             catch (Exception error)
             {

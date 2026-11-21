@@ -2,7 +2,9 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    private ulong _nStudyInventorySequence;
+    private ulong _nStudyInventoryIssued;
+    private ulong _nStudyInventoryReceived;
+    private Guid _nStudyInventoryPublisher;
     private long _nStudyInventoryRevision = -1;
     private PendingNStudyInventory? _nStudyInventory;
 
@@ -12,9 +14,16 @@ internal sealed partial class RpcSession
             return _nStudyAuthority != default && _nStudyAuthority == authority;
     }
 
-    internal async Task<NStudyInventorySnapshot> QueryNStudyInventoryAsync(CancellationToken cancellationToken)
+    internal Task<NStudyInventorySnapshot> QueryNStudyInventoryAsync(CancellationToken cancellationToken)
+        => QueryNStudyPeerInventoryAsync(RpcSessionRole.Client, null, cancellationToken);
+
+    internal Task<NStudyInventorySnapshot> QueryNStudyClientInventoryAsync(NStudyAuthority authority, CancellationToken cancellationToken)
+        => QueryNStudyPeerInventoryAsync(RpcSessionRole.Server, authority, cancellationToken);
+
+    private async Task<NStudyInventorySnapshot> QueryNStudyPeerInventoryAsync(RpcSessionRole role,
+        NStudyAuthority? authority, CancellationToken cancellationToken)
     {
-        EnsureNStudyReady(RpcSessionRole.Client);
+        EnsureNStudyReady(role);
         cancellationToken.ThrowIfCancellationRequested();
         using var timer = new CancellationTokenSource(NStudyTimeout, RuntimeContext.TimeProvider);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(LifetimeToken, timer.Token, cancellationToken);
@@ -24,12 +33,13 @@ internal sealed partial class RpcSession
         {
             if (_nStudyInventory is not null)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private inventory query is already pending.");
-            pending = new(checked(++_nStudyInventorySequence));
+            pending = new(checked(++_nStudyInventoryIssued), authority);
             _nStudyInventory = pending;
         }
         try
         {
-            await SendNStudyInventoryFrameAsync(NStudyWire.InventoryQuery, pending.Operation, null, ct).ConfigureAwait(false);
+            await SendNStudyInventoryFrameAsync(NStudyWire.InventoryQuery, pending.Operation, null, authority, ct)
+                .ConfigureAwait(false);
             var snapshot = await pending.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             return snapshot;
@@ -48,11 +58,11 @@ internal sealed partial class RpcSession
 
     internal void OnNStudyInventoryReply(ulong operation, ReadOnlySequence<byte> payload)
     {
-        EnsureNStudyReady(RpcSessionRole.Client);
+        EnsureNStudyReady(Role);
         PendingNStudyInventory? pending;
         lock (_nStudyGate)
         {
-            if (operation > _nStudyInventorySequence)
+            if (operation > _nStudyInventoryIssued)
                 throw InvalidNStudy("Inventory reply does not match an issued query.");
             pending = _nStudyInventory;
             if (pending?.Operation != operation)
@@ -63,29 +73,46 @@ internal sealed partial class RpcSession
         {
             if (!ReferenceEquals(_nStudyInventory, pending))
                 return;
+            var authority = pending!.Authority ?? _nStudyAuthority;
+            if ((authority != default && authority != snapshot.Authority) ||
+                (Role == RpcSessionRole.Client && snapshot.PublisherEpoch != snapshot.Authority.RegistryEpoch))
+                throw InvalidNStudy("Private inventory did not name the current physical Session and publisher.");
             if (snapshot.Status == NStudyInventoryStatus.Current)
             {
-                if ((_nStudyAuthority != default && _nStudyAuthority != snapshot.Authority) ||
+                if ((_nStudyInventoryPublisher != default && _nStudyInventoryPublisher != snapshot.PublisherEpoch) ||
                     snapshot.Revision < _nStudyInventoryRevision)
-                    throw InvalidNStudy("Private inventory changed authority or revision on this Session.");
-                _nStudyAuthority = snapshot.Authority;
+                    throw InvalidNStudy("Private inventory changed publisher or regressed revision on this Session.");
+                if (Role == RpcSessionRole.Client)
+                    _nStudyAuthority = snapshot.Authority;
+                _nStudyInventoryPublisher = snapshot.PublisherEpoch;
                 _nStudyInventoryRevision = snapshot.Revision;
             }
-            pending!.Completion.TrySetResult(snapshot);
+            pending.Completion.TrySetResult(snapshot);
+        }
+    }
+
+    internal void ValidateNStudyInventoryQueryAuthority(NStudyAuthority authority)
+    {
+        EnsureNStudyReady(RpcSessionRole.Client);
+        lock (_nStudyGate)
+        {
+            if (_nStudyAuthority != default && _nStudyAuthority != authority)
+                throw InvalidNStudy("Private client inventory query named another physical Session.");
         }
     }
 
     internal ValueTask SendNStudyInventoryReplyAsync(ulong operation, NStudyInventorySnapshot snapshot, CancellationToken ct)
     {
-        EnsureNStudyReady(RpcSessionRole.Server);
-        if (operation <= _nStudyInventorySequence)
+        EnsureNStudyReady(Role);
+        // Only the receive loop answers a query; this sequence is independent of outgoing queries.
+        if (operation <= _nStudyInventoryReceived)
             throw InvalidNStudy("Private inventory query did not advance.");
-        _nStudyInventorySequence = operation;
-        return SendNStudyInventoryFrameAsync(NStudyWire.InventoryReply, operation, snapshot, ct);
+        _nStudyInventoryReceived = operation;
+        return SendNStudyInventoryFrameAsync(NStudyWire.InventoryReply, operation, snapshot, null, ct);
     }
 
     private async ValueTask SendNStudyInventoryFrameAsync(ProtocolV2FrameType type, ulong operation,
-        NStudyInventorySnapshot? snapshot, CancellationToken ct)
+        NStudyInventorySnapshot? snapshot, NStudyAuthority? queryAuthority, CancellationToken ct)
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -95,6 +122,8 @@ internal sealed partial class RpcSession
             {
                 if (snapshot is not null)
                     NStudyWire.WriteInventory(writer, snapshot);
+                else if (queryAuthority is { } authority)
+                    NStudyWire.WriteInventoryQueryAuthority(writer, authority);
             }
             ownsWriter = false;
             await SendPacketAndFlushAsync(writer, ct).ConfigureAwait(false);
@@ -106,9 +135,10 @@ internal sealed partial class RpcSession
         }
     }
 
-    private sealed class PendingNStudyInventory(ulong operation)
+    private sealed class PendingNStudyInventory(ulong operation, NStudyAuthority? authority)
     {
         internal ulong Operation { get; } = operation;
+        internal NStudyAuthority? Authority { get; } = authority;
         internal TaskCompletionSource<NStudyInventorySnapshot> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }

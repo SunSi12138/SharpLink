@@ -575,6 +575,10 @@ internal sealed partial class SharpLinkClient
                             case NStudyWire.BindAck:
                                 session.OnNStudyBindAck(header.RequestId, payload);
                                 break;
+                            case NStudyWire.InventoryQuery:
+                                await HandleNStudyInventoryAsync(session, header.RequestId,
+                                    NStudyWire.ReadInventoryQueryAuthority(payload), ct).ConfigureAwait(false);
+                                break;
                             case NStudyWire.InventoryReply:
                                 session.OnNStudyInventoryReply(header.RequestId, payload);
                                 break;

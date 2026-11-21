@@ -60,8 +60,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var session = connection.Session;
             var peer = NStudyServerConnection(server);
             var clientContractModule = GetDynamicModule(client, contracts.ContractAssembly);
+            var observed = await server.QueryNStudyClientInventoryAsync(peer, ct);
+            var observedClientRegistration = observed.Select(aCid);
             Ensure(session.SupportsNStudyCoordination && peer.Session.SupportsNStudyCoordination &&
                    a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+                   observed.Authority == a1.Authority && observedClientRegistration.Hash == manifest.RpcAssemblyHash &&
+                   observedClientRegistration.Target.Registration == clientContractModule.NStudyRegistration &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "both selected authenticated peers negotiated Manual on their real Session");
@@ -136,6 +140,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             EnsureReplacementReleased(final.Replacement, "only the old coordinated group retires");
             await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0), ct);
             Ensure(final.Change == offered && final.PreparedClientRegistration == activated.LocalRegistration &&
+                   final.PreparedClientRegistration == observedClientRegistration.Target.Registration &&
                    NStudyCount(oldType, "Disposed") == 1 && ReferenceEquals(session, NStudyClientSession(client)) &&
                    GetDynamicModule(client, contracts.ContractAssembly) == clientContractModule &&
                    ReferenceEquals(a, GetProxy(client, contracts.ContractType)),
