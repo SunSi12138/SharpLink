@@ -78,7 +78,8 @@ public static class Program
             await client.ConnectAsync(cancellationToken);
             var proxy = client.CreateProxy<IPreCreditAotService>();
             await proxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
-            var enumerator = proxy.Service.StreamAsync(8).GetAsyncEnumerator(cancellationToken);
+            var service = proxy.Service;
+            var enumerator = service.StreamAsync(8).GetAsyncEnumerator(cancellationToken);
             var disposed = false;
             try
             {
