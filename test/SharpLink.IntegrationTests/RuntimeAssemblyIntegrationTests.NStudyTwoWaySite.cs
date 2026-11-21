@@ -206,12 +206,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static NStudyPreparedTwoWay BuildNStudyTypedTwoWay<TContract, TReading>(
         SharpLinkClient client, Assembly assembly, bool duplex, string label) where TContract : IService
     {
-        var site = client.CreateNStudyContractSite<TContract>(Metadata(label));
-        var methods = GetDynamicModule(client, assembly).Manifest.Contracts.Single(c => c.ContractType == typeof(TContract)).Methods;
-        var reconcile = site.BindClientStream(methods.Single(m => m.Name == "ReconcileAsync").MethodId);
-        var mirror = site.BindDuplex(methods.Single(m => m.Name == "MirrorAsync").MethodId);
-        var typedCodec = site.GetCodec<TReading>();
-        var responseCodec = site.GetCodec<int>();
+        var site = CreateNStudyPublicStreaming<TContract>(client, assembly, label);
+        var reconcile = site.Method("ReconcileAsync");
+        var mirror = site.Method("MirrorAsync");
+        var typedCodec = site.Codecs.GetCodec<TReading>();
+        var responseCodec = site.Codecs.GetCodec<int>();
         var mirrorProxy = typeof(TContract).GetMethod("MirrorAsync")!;
         async Task<int[]> Generated(IAsyncEnumerable<int> readings, CancellationToken ct)
         {
@@ -225,11 +224,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var writer = new NStudyManualDeliveryWriter<TReading>(AsDeliveryReading<TReading>(readings), typedCodec);
             return duplex
                 ? await CollectAsync(ProjectFeed<TReading>(
-                    mirror.Invoke(default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance, typedCodec, writer, metadata, ct), ct))
-                : [await reconcile.InvokeAsync(default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
+                    site.Channel.InvokeDuplexStreamingAsync(mirror, default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
+                        typedCodec, writer, metadata, ct), ct))
+                : [await site.Channel.InvokeClientStreamingAsync(reconcile, default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
                     responseCodec, writer, metadata, ct)];
         }
-        return new(site.PrepareAsync, ct => InvokeValueTaskAsync<int>(site.Service, typeof(TContract), "WaitForApprovalAsync", ct),
+        return new(site.Prepare, ct => InvokeValueTaskAsync<int>(site.Service, typeof(TContract), "WaitForApprovalAsync", ct),
             Generated, Manual);
     }
 

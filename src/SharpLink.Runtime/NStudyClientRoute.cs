@@ -12,6 +12,7 @@ internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
     internal long Token => ack.BindingId;
     internal NStudyTarget Target => ack.Target;
     internal RpcHash128 Hash => ack.Hash;
+    internal NStudyAck Acknowledgement => ack;
 
     internal bool IsOpenOn(RpcSession owner)
     {

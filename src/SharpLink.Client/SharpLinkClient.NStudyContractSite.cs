@@ -330,10 +330,6 @@ internal sealed partial class SharpLinkClient
         }
 
         internal ManualUnary BindUnary(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.Unary));
-        internal ManualOneWay BindOneWay(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.OneWay));
-        internal ManualServerStream BindServerStream(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.ServerStreaming));
-        internal ManualClientStream BindClientStream(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.ClientStreaming));
-        internal ManualDuplex BindDuplex(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.DuplexStreaming));
 
         private RpcMethodDescriptor FindMethod(long methodId, RpcMethodKind kind)
         {
@@ -352,41 +348,6 @@ internal sealed partial class SharpLinkClient
                 IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
                 SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
                 => site.InvokeUnary(method, request, requestCodec, responseCodec, metadata, cancellationToken);
-        }
-
-        internal sealed class ManualOneWay(NStudyContractSite site, RpcMethodDescriptor method)
-        {
-            internal ValueTask InvokeAsync<TRequest, TStreams>(in TRequest request,
-                IRpcCodec<TRequest> requestCodec, in TStreams streams,
-                SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
-                where TStreams : struct, IRpcClientStreamWriter
-                => site.InvokeOneWay(method, request, requestCodec, streams, metadata, cancellationToken);
-        }
-
-        internal sealed class ManualServerStream(NStudyContractSite site, RpcMethodDescriptor method)
-        {
-            internal IAsyncEnumerable<TResponse> Invoke<TRequest, TResponse>(in TRequest request,
-                IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-                SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
-                => site.InvokeServerStream(method, request, requestCodec, responseCodec, metadata, cancellationToken);
-        }
-
-        internal sealed class ManualClientStream(NStudyContractSite site, RpcMethodDescriptor method)
-        {
-            internal ValueTask<TResponse> InvokeAsync<TRequest, TResponse, TStreams>(in TRequest request,
-                IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
-                SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
-                where TStreams : struct, IRpcClientStreamWriter
-                => site.InvokeClientStream(method, request, requestCodec, responseCodec, streams, metadata, cancellationToken);
-        }
-
-        internal sealed class ManualDuplex(NStudyContractSite site, RpcMethodDescriptor method)
-        {
-            internal IAsyncEnumerable<TResponse> Invoke<TRequest, TResponse, TStreams>(in TRequest request,
-                IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
-                SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
-                where TStreams : struct, IRpcClientStreamWriter
-                => site.InvokeDuplex(method, request, requestCodec, responseCodec, streams, metadata, cancellationToken);
         }
 
         private RpcMethodDescriptor ValidateManualMethod(RpcMethodDescriptor method)

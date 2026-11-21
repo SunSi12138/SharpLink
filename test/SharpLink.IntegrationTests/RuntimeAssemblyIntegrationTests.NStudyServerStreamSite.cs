@@ -199,15 +199,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static NStudyPreparedFeed BuildNStudyTypedFeed<TContract, TReading>(
         SharpLinkClient client, Assembly assembly, string label) where TContract : IService
     {
-        var site = client.CreateNStudyContractSite<TContract>(Metadata(label));
-        var method = GetDynamicModule(client, assembly).Manifest.Contracts.Single(c => c.ContractType == typeof(TContract)).Methods.Single();
-        var call = site.BindServerStream(method.MethodId);
+        var site = CreateNStudyPublicStreaming<TContract>(client, assembly, label);
+        var method = site.Method("ReadAsync");
         var proxyRead = typeof(TContract).GetMethod("ReadAsync")!;
-        var requestCodec = site.GetCodec<bool>();
-        var responseCodec = site.GetCodec<TReading>();
-        return new(site.PrepareAsync, site.PrepareExactAsync,
+        var requestCodec = site.Codecs.GetCodec<bool>();
+        var responseCodec = site.Codecs.GetCodec<TReading>();
+        // Inventory tests still use the private observation contract until the public receipt API exists.
+        var exact = (SharpLinkClient.NStudyContractSite)site.Channel;
+        return new(site.Prepare, exact.PrepareExactAsync,
             (follow, ct) => ProjectFeed<TReading>(proxyRead.Invoke(site.Service, [follow, ct])!, ct),
-            (follow, metadata, ct) => ProjectFeed<TReading>(call.Invoke(follow, requestCodec, responseCodec, metadata, ct), ct));
+            (follow, metadata, ct) => ProjectFeed<TReading>(site.Channel.InvokeServerStreamingAsync(method,
+                follow, requestCodec, responseCodec, metadata, ct), ct));
     }
 
     private sealed record NStudyPreparedFeed(

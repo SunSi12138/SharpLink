@@ -209,18 +209,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static NStudyDeliveryCalls CreateNStudyTypedDelivery<TContract, TReading>(
         SharpLinkClient client, Assembly assembly, string generatedLabel) where TContract : IService
     {
-        var site = client.CreateNStudyContractSite<TContract>(Metadata(generatedLabel));
-        var methods = GetDynamicModule(client, assembly).Manifest.Contracts.Single(c => c.ContractType == typeof(TContract)).Methods;
-        var post = site.BindOneWay(methods.Single(m => m.Name == "PostAsync").MethodId);
-        var upload = site.BindOneWay(methods.Single(m => m.Name == "UploadAsync").MethodId);
+        var site = CreateNStudyPublicStreaming<TContract>(client, assembly, generatedLabel);
+        var post = site.Method("PostAsync");
+        var upload = site.Method("UploadAsync");
         var requestCodec = new NStudyManualIntRequestCodec();
-        var itemCodec = site.GetCodec<TReading>();
-        return new(site.PrepareAsync,
+        var itemCodec = site.Codecs.GetCodec<TReading>();
+        return new(site.Prepare,
             ct => InvokeValueTaskAsync<int>(site.Service, typeof(TContract), "WaitForApprovalAsync", ct),
             (value, ct) => InvokeValueTaskAsync(site.Service, typeof(TContract), "PostAsync", value, ct),
-            (value, metadata, ct) => post.InvokeAsync(value, requestCodec, default(RpcNoClientStreams), metadata, ct),
+            (value, metadata, ct) => site.Channel.InvokeOneWayAsync(post, value, requestCodec,
+                default(RpcNoClientStreams), metadata, ct),
             (items, ct) => InvokeValueTaskAsync(site.Service, typeof(TContract), "UploadAsync", AsDeliveryReading<TReading>(items), ct),
-            (items, metadata, ct) => upload.InvokeAsync(default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
+            (items, metadata, ct) => site.Channel.InvokeOneWayAsync(upload, default(RpcEmptyRequest), RpcEmptyRequestCodec.Instance,
                 new NStudyManualDeliveryWriter<TReading>(AsDeliveryReading<TReading>(items), itemCodec), metadata, ct));
     }
 
