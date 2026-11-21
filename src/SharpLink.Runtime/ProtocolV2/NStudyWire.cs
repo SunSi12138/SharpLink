@@ -25,7 +25,7 @@ internal static partial class NStudyWire
     private const int AckBytes = 112;
 
     internal static bool IsBindingFrame(ProtocolV2FrameType type) =>
-        type is Bind or BindAck or Release or Invalidated or RequestAccepted or Coordination;
+        type is Bind or BindAck or Release or Invalidated or RequestAccepted or Coordination or InventoryQuery or InventoryReply;
 
     internal static bool IsRequestFrame(ProtocolV2FrameType type) =>
         type is ProtocolV2FrameType.Request or OneWayInputRequest;
@@ -46,6 +46,8 @@ internal static partial class NStudyWire
             BindAck => size == AckBytes,
             RequestAccepted => size == 0,
             Coordination => size == CoordinationBytes,
+            InventoryQuery => size == 0,
+            InventoryReply => IsInventoryLength(size),
             Invalidated => size is >= sizeof(long) and <= BindingLimit * sizeof(long) &&
                 size % sizeof(long) == 0,
             _ => size == sizeof(long)

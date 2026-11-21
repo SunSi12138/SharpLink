@@ -140,6 +140,8 @@ public static class ProtocolV2FrameParser
         (byte)NStudyWire.RequestAccepted => NStudyWire.RequestAccepted,
         (byte)NStudyWire.OneWayInputRequest => NStudyWire.OneWayInputRequest,
         (byte)NStudyWire.Coordination => NStudyWire.Coordination,
+        (byte)NStudyWire.InventoryQuery => NStudyWire.InventoryQuery,
+        (byte)NStudyWire.InventoryReply => NStudyWire.InventoryReply,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 

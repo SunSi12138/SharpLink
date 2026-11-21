@@ -205,13 +205,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var proxyRead = typeof(TContract).GetMethod("ReadAsync")!;
         var requestCodec = site.GetCodec<bool>();
         var responseCodec = site.GetCodec<TReading>();
-        return new(site.PrepareAsync,
+        return new(site.PrepareAsync, site.PrepareExactAsync,
             (follow, ct) => ProjectFeed<TReading>(proxyRead.Invoke(site.Service, [follow, ct])!, ct),
             (follow, metadata, ct) => ProjectFeed<TReading>(call.Invoke(follow, requestCodec, responseCodec, metadata, ct), ct));
     }
 
     private sealed record NStudyPreparedFeed(
         Func<TimeSpan, CancellationToken, ValueTask<NStudyAck>> Prepare,
+        Func<NStudyObservedTarget, TimeSpan, CancellationToken, ValueTask<NStudyAck>> PrepareExact,
         Func<bool, CancellationToken, IAsyncEnumerable<int>> Generated,
         Func<bool, SharpLinkMetadata, CancellationToken, IAsyncEnumerable<int>> Manual);
 

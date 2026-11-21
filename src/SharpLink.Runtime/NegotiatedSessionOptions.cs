@@ -78,7 +78,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
                     ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Bind or NStudyWire.BindAck or
                     NStudyWire.Release or NStudyWire.Invalidated or NStudyWire.RequestAccepted or
-                    NStudyWire.OneWayInputRequest or NStudyWire.Coordination,
+                    NStudyWire.OneWayInputRequest or NStudyWire.Coordination or NStudyWire.InventoryQuery or NStudyWire.InventoryReply,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

@@ -274,6 +274,9 @@ internal sealed partial class SharpLinkServer
                                     await HandleNStudyBindAsync(connection, header.RequestId,
                                         NStudyWire.ReadBind(payload), ct).ConfigureAwait(false);
                                     break;
+                                case NStudyWire.InventoryQuery:
+                                    await HandleNStudyInventoryAsync(connection, header.RequestId, ct).ConfigureAwait(false);
+                                    break;
                                 case NStudyWire.Release:
                                     session.EnsureNStudyReady(RpcSessionRole.Server);
                                     connection.NStudyBindings.Release(NStudyWire.ReadRelease(payload));

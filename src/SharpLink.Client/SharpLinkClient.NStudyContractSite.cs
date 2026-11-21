@@ -32,6 +32,10 @@ internal sealed partial class SharpLinkClient
             => _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection) &&
                _route.TryGetTarget(out var route) && route.IsOpenOn(connection.Session);
 
+        internal bool Matches(NStudyObservedTarget? target)
+            => target is not { } observed ||
+                Ack.Authority == observed.Authority && Ack.Target == observed.Target;
+
         internal static SharpLinkException Unavailable()
             => new(SharpLinkErrorCode.Unavailable, "The private RPC site needs a current prepared Session.");
     }
@@ -62,6 +66,14 @@ internal sealed partial class SharpLinkClient
         internal Func<NStudyAck, CancellationToken, ValueTask>? BeforePublishingPreparationForTests { get; set; }
 
         internal ValueTask<NStudyAck> PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken)
+            => PrepareAsync(timeout, cancellationToken, null);
+
+        internal ValueTask<NStudyAck> PrepareExactAsync(NStudyObservedTarget observed, TimeSpan timeout,
+            CancellationToken cancellationToken)
+            => PrepareAsync(timeout, cancellationToken, observed);
+
+        private ValueTask<NStudyAck> PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken,
+            NStudyObservedTarget? observed)
         {
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
             ArgumentOutOfRangeException.ThrowIfGreaterThan(timeout, SharpLinkTimer.MaximumDelay);
@@ -69,14 +81,18 @@ internal sealed partial class SharpLinkClient
             var deadline = RpcDeadline.Create(timeout, _client._runtimeContext.TimeProvider);
             EnsureLocalReady();
             var connection = _client.RequireSingleNStudyConnection();
-            if (Volatile.Read(ref _prepared) is { } current && current.IsReadyOn(connection))
+            if (observed is { } exact && (exact.Contract != _registration.Descriptor.ContractId ||
+                exact.Hash != _hash || exact.Target == default || !connection.Session.HasNStudyAuthority(exact.Authority)))
+                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                    "The observed registration does not belong to this contract and physical Session.");
+            if (Volatile.Read(ref _prepared) is { } current && current.Matches(observed) && current.IsReadyOn(connection))
                 return ValueTask.FromResult(ConfirmWaiter(current, connection, deadline, cancellationToken));
 
-            return AwaitPreparationAsync(connection, deadline, cancellationToken);
+            return AwaitPreparationAsync(connection, deadline, cancellationToken, observed);
         }
 
         private async ValueTask<NStudyAck> AwaitPreparationAsync(ClientConnection connection, RpcDeadline deadline,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, NStudyObservedTarget? observed)
         {
             _client.ReserveNStudyPrepareWaiter();
             try
@@ -86,20 +102,20 @@ internal sealed partial class SharpLinkClient
                 NStudyPreparedSite? alreadyReady = null;
                 lock (_prepareGate)
                 {
-                    if (_prepared is { } current && current.IsReadyOn(connection))
+                    if (_prepared is { } current && current.Matches(observed) && current.IsReadyOn(connection))
                     {
                         alreadyReady = current;
                         operation = null!;
                     }
                     else if (_preparation is { } pending)
                     {
-                        if (!ReferenceEquals(pending.Connection, connection))
+                        if (!ReferenceEquals(pending.Connection, connection) || pending.Observation != observed)
                             throw NStudyPreparedSite.Unavailable();
                         operation = pending;
                     }
                     else
                     {
-                        operation = _preparation = new PrepareOperation(connection);
+                        operation = _preparation = new PrepareOperation(connection, observed);
                         start = true;
                     }
                 }
@@ -177,8 +193,13 @@ internal sealed partial class SharpLinkClient
                 try
                 {
                     EnsureLocalReady();
-                    _client.ValidateRemoteContractAssembly(_registration);
-                    bound = await BindNStudyContractOnAsync(connection, contract, _hash, default, ct).ConfigureAwait(false);
+                    // Query authority and local hash were checked before starting. An exact Bind
+                    // still validates current remote registration under the peer's registry gate;
+                    // a lagging unsolicited manifest is not the authority for this path.
+                    if (operation.Observation is null)
+                        _client.ValidateRemoteContractAssembly(_registration);
+                    bound = await BindNStudyContractOnAsync(connection, contract, _hash,
+                        operation.Observation?.Target ?? default, ct).ConfigureAwait(false);
                     if (BeforePublishingPreparationForTests is { } beforePublish)
                         await beforePublish(bound, ct).ConfigureAwait(false);
                     ct.ThrowIfCancellationRequested();
@@ -228,9 +249,10 @@ internal sealed partial class SharpLinkClient
                 operation.Completion.TrySetResult(ready!);
         }
 
-        private sealed class PrepareOperation(ClientConnection connection)
+        private sealed class PrepareOperation(ClientConnection connection, NStudyObservedTarget? observation)
         {
             internal ClientConnection Connection { get; } = connection;
+            internal NStudyObservedTarget? Observation { get; } = observation;
             internal TaskCompletionSource<NStudyPreparedSite> Completion { get; } =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
         }

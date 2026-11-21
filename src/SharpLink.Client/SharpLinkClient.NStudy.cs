@@ -22,6 +22,20 @@ internal sealed partial class SharpLinkClient
 
     private void ReturnNStudyPrepareWaiter() => Interlocked.Decrement(ref _nStudyPrepareWaiters);
 
+    internal async Task<NStudyInventorySnapshot> QueryNStudyRemoteInventoryAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var connection = RequireSingleNStudyConnection();
+        var snapshot = await connection.Session.QueryNStudyInventoryAsync(cancellationToken).ConfigureAwait(false);
+        if (snapshot.Status != NStudyInventoryStatus.Current)
+            throw new SharpLinkException(snapshot.Status == NStudyInventoryStatus.CapacityExceeded
+                ? SharpLinkErrorCode.ResourceExhausted : SharpLinkErrorCode.Unavailable,
+                $"Private inventory outcome: {snapshot.Status}.");
+        if (!connection.CanAcceptCalls || !ReferenceEquals(RequireSingleNStudyConnection(), connection))
+            throw NStudyPreparedSite.Unavailable();
+        return snapshot;
+    }
+
     // Cold entry used only in the private N profile; one explicitly selected
     // Ready connection. A normal invocation never waits for or creates a Bind.
     internal async Task<NStudyAck> PrepareNStudyContractAsync(long contract, RpcHash128 hash,
