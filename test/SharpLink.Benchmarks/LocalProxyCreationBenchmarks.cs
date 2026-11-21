@@ -9,6 +9,7 @@ using BenchmarkDotNet.Engines;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 
 namespace SharpLink.Benchmarks;
 
