@@ -19,7 +19,7 @@ internal sealed partial class ClientAssemblyRegistry
         var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>();
         foreach (var pair in currentProxies)
             nextProxies[pair.Key] = new SharpLinkClient.ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module,
-                pair.Value.Codecs, pair.Value.NStudyAssemblyHash);
+                pair.Value.Codecs, pair.Value.NStudyAssemblyHash, pair.Value.NStudyPreparation);
         var byId = nextProxies.Values.ToDictionary(
             static registration => registration.Descriptor.ContractId,
             static registration => registration);

@@ -39,12 +39,14 @@ internal sealed partial class SharpLinkClient
             SharpLinkGeneratedContractDescriptor descriptor,
             SharpLinkDynamicModule? module,
             IRpcCodecProvider codecs,
-            RpcHash128 nStudyAssemblyHash)
+            RpcHash128 nStudyAssemblyHash,
+            NStudyPreparationCell? preparationCell = null)
         {
             Descriptor = descriptor;
             Module = module;
             Codecs = codecs;
             NStudyAssemblyHash = nStudyAssemblyHash;
+            NStudyPreparation = preparationCell ?? new();
         }
 
         internal SharpLinkGeneratedContractDescriptor Descriptor { get; }
@@ -54,6 +56,8 @@ internal sealed partial class SharpLinkClient
         internal IRpcCodecProvider Codecs { get; }
 
         internal RpcHash128 NStudyAssemblyHash { get; }
+
+        internal NStudyPreparationCell NStudyPreparation { get; }
 
         internal object? Proxy;
     }

@@ -8,7 +8,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [NotInParallel]
     [Arguments("tcp")]
     [Arguments("shared-memory")]
-    public async Task NStudyPublicProxyPreparesTheServiceItCreatedBeforeConnecting(string transport)
+    public async Task NStudyPublicGeneratedAndHandwrittenCallersSharePreparation(string transport)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -31,10 +31,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         ISharpLinkClient client = built;
         var handle = client.CreateProxy<INStudyUnarySiteProbe>(new RpcProxyOptions { Metadata = Metadata("public-proxy") });
         var service = handle.Service;
+        var local = memory is null
+            ? client.GetLocalContract<INStudyUnarySiteProbe>()
+            : client.GetLocalContract(typeof(INStudyUnarySiteProbe).Assembly, contract.ContractId);
+        var manual = client.CreateContractChannel(local, new RpcProxyOptions { Metadata = Metadata("handwritten-default") });
+        var method = contract.Methods.Single().Invocation!.Value;
+        var requestCodec = new NStudyManualIntRequestCodec();
+        var responseCodec = RpcGeneratedCodecResolver.GetProvider(manual.RuntimeContext,
+            typeof(INStudyUnarySiteProbe).Assembly).GetCodec<int>();
         Ensure(client.State == SharpLinkConnectionState.Created && built.ReadyConnectionCount == 0 &&
-               built.PendingCallCount == 0 && observer.Calls.IsEmpty,
-            "the public factory returns a local service before connecting or sending any requests");
-        trace.Record("PublicFactoryReturnsLocalServiceBeforeConnection");
+               built.PendingCallCount == 0 && observer.Calls.IsEmpty && ReferenceEquals(client.RuntimeContext, manual.RuntimeContext),
+            "both factories are local and the handwritten caller keeps the original runtime context");
+        trace.Record("PublicFactoriesAreLocalAndShareTheRuntimeContext");
 
         await server.StartAsync(ct);
         await client.ConnectAsync(ct);
@@ -44,23 +52,29 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                peer.AuthenticationContext?.Subject == "n-validation" &&
                (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
             "ordinary connect leaves the real authenticated physical Session unbound");
-        trace.Record("ConnectDoesNotPrepareThePublicProxy");
+        trace.Record("ConnectDoesNotPrepareEitherPublicCaller");
 
-        await handle.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        if (memory is null)
+            await handle.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        else
+            await manual.PrepareAsync(TimeSpan.FromSeconds(5), ct);
         var binding = session.CaptureNStudyBinding(contract.ContractId);
         Ensure(session.NStudyBindOperationForDiagnostics == 1 && peer.NStudyBindings.Snapshot() == (1, 0, 0) &&
                observer.Calls.IsEmpty && ReferenceEquals(handle.Service, service),
             "public Prepare installs exactly one route without calling business or replacing the proxy");
-        trace.Record("PublicPrepareBindsExactlyOnceWithoutSendingBusiness");
+        trace.Record("EitherPublicCallerCanPrepareWithoutBusinessWork");
 
         Ensure(await service.ReportAsync(42, ct) == 142, "the pre-created service uses that actual route");
-        var ready = handle.PrepareAsync(TimeSpan.FromSeconds(5), ct);
-        Ensure(ready.IsCompletedSuccessfully, "already prepared public handle stays synchronous");
+        var ready = memory is null ? manual.PrepareAsync(TimeSpan.FromSeconds(5), ct) : handle.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        Ensure(ready.IsCompletedSuccessfully, "the other public caller reuses the same preparation synchronously");
         await ready;
-        Ensure(await handle.Service.ReportAsync(43, ct) == 143 &&
-               observer.Calls.Select(call => call.Label).SequenceEqual(["public-proxy", "public-proxy"]) &&
+        Ensure(await manual.InvokeUnaryAsync(method, 43, requestCodec, responseCodec, null, ct) == 143 &&
+               await manual.InvokeUnaryAsync(method, 44, requestCodec, responseCodec, Metadata("handwritten-per-call"), ct) == 144 &&
+               requestCodec.Writes == 2 && observer.Calls.Select(call => call.Label)
+                   .SequenceEqual(["public-proxy", "handwritten-default", "handwritten-per-call"]) &&
+               observer.Calls.All(call => call.Method == method && call.HasDeadline) &&
                session.NStudyBindOperationForDiagnostics == 1 && session.CaptureNStudyBinding(contract.ContractId) == binding,
-            "the same prepared service reuses its exact binding and captures the original public metadata");
-        trace.Record("PublicServiceReusesItsBindingAndPreservesMetadata");
+            "one prepared route serves actual generated and handwritten calls with original metadata, method facts and deadline");
+        trace.Record("GeneratedAndHandwrittenUseOneExactRouteWithTheirOwnMetadata");
     }
 }

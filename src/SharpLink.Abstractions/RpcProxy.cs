@@ -10,12 +10,12 @@ public sealed class RpcProxyOptions
 /// <summary>A generated service and the explicit preparation for its own calls.</summary>
 public sealed class RpcProxy<TContract> where TContract : IService
 {
-    private readonly IRpcProxyPreparation _preparation;
+    private readonly IRpcContractChannel _channel;
 
-    internal RpcProxy(TContract service, IRpcProxyPreparation preparation)
+    internal RpcProxy(TContract service, IRpcContractChannel channel)
     {
         Service = service;
-        _preparation = preparation;
+        _channel = channel;
     }
 
     /// <summary>Gets the service that uses this proxy's prepared route.</summary>
@@ -25,10 +25,5 @@ public sealed class RpcProxy<TContract> where TContract : IService
     /// <param name="timeout">The maximum time to wait for preparation.</param>
     /// <param name="cancellationToken">Cancels this caller's preparation wait.</param>
     public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
-        => _preparation.PrepareAsync(timeout, cancellationToken);
-}
-
-internal interface IRpcProxyPreparation
-{
-    ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken);
+        => _channel.PrepareAsync(timeout, cancellationToken);
 }

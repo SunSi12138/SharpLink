@@ -445,6 +445,22 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
         => throw new NotSupportedException("This client does not support prepared RPC proxies.");
 
+    /// <summary>Gets the runtime context used by this client and its contract channels.</summary>
+    IRpcRuntimeContext RuntimeContext
+        => throw new NotSupportedException("This client does not expose a runtime context.");
+
+    /// <summary>Captures the current local registration of the specified generated contract.</summary>
+    RpcLocalContract GetLocalContract<TContract>() where TContract : IService
+        => throw new NotSupportedException("This client does not support local RPC contract selection.");
+
+    /// <summary>Captures the contract belonging to this exact registered assembly instance.</summary>
+    RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId)
+        => throw new NotSupportedException("This client does not support local RPC contract selection.");
+
+    /// <summary>Creates a local channel for the selected registration, without connecting or preparing a route.</summary>
+    IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
+        => throw new NotSupportedException("This client does not support prepared RPC contract channels.");
+
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;
