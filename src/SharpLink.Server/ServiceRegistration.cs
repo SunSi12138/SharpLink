@@ -129,10 +129,11 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         foreach (var declared in contract.Methods)
         {
             if (!table.TryPrepareMethod(declared.MethodId, out var prepared) || prepared.Execute is null ||
-                prepared.Descriptor.MethodId != declared.MethodId || prepared.Descriptor.ContractId != contract.ContractId ||
-                prepared.Descriptor.Kind != declared.Kind)
+                declared.Invocation is not { } method || prepared.Descriptor != method ||
+                method.MethodId != declared.MethodId || method.ContractId != contract.ContractId ||
+                method.Kind != declared.Kind || method.SupportsCancellation != declared.SupportsCancellation)
                 throw new InvalidOperationException("The private registration needs exact generated method facts.");
-            methods.Add(declared.MethodId, new(prepared.Descriptor, prepared.SupportsCancellation, slot));
+            methods.Add(method.MethodId, new(method, slot));
             executors[slot++] = prepared.Execute;
         }
         _nStudyExecutors = executors;

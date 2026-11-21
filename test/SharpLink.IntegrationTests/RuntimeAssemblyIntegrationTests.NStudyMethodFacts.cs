@@ -59,17 +59,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         {
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var aBinding = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, default, ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, manifest.RpcAssemblyHash, default, ct);
+            var aProxy = client.CreateProxy<INStudyFactsProbe>();
+            var bProxy = client.CreateProxy<IShutdownCleanupProbe>();
+            await aProxy.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+            await bProxy.PrepareAsync(TimeSpan.FromSeconds(5), ct);
             var session = NStudyClientSession(client);
+            var aBinding = session.CaptureNStudyRoute(aCid).Acknowledgement;
+            var bBinding = session.CaptureNStudyRoute(bCid).Acknowledgement;
             var peer = NStudyServerConnection(server);
             Ensure(peer.NStudyPhysicalIdentity == aBinding.Authority.PhysicalSession &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "real Session and generated contract are authenticated");
             trace.Record("GeneratedEntriesPreparedOnlyDuringRegistration", aBinding, bBinding);
-            var a = client.Get<INStudyFactsProbe>();
-            var b = client.Get<IShutdownCleanupProbe>();
+            var a = aProxy.Service;
+            var b = bProxy.Service;
             var holding = a.OccupyAsync(ct).AsTask();
             await probe.Started.WaitAsync(ct);
             var batch = Enumerable.Repeat((byte)17, 1024 * 1024 + 64).ToArray();
@@ -88,7 +92,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(server.DecodeStartedWorkCountForDiagnostics == 1 && receiver.Decoded == 1 &&
                    recorder.Methods.TryGetValue(methodId, out var measured) && measured.ContractId == aCid &&
                    measured.Kind == RpcMethodKind.Unary && measured.IsIdempotent && measured.HasMethodTimeout &&
-                   measured.MethodTimeout == TimeSpan.FromSeconds(15) && count.Snapshot() == cold &&
+                   measured.MethodTimeout == TimeSpan.FromSeconds(15) && measured.SupportsCancellation &&
+                   measured == aContract.Methods.Single(item => item.MethodId == methodId).Invocation &&
+                   count.Snapshot() == cold &&
                    count.Invocations(methodId) == 1,
                 "one real persistent decode and the same generated method facts reach the server interceptor");
             trace.Record("PersistentWorkerAndInterceptorReuseExactMethodFacts", aBinding);
@@ -114,7 +120,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             }
             await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0), ct);
             Ensure(mapper.Method is { } output && output.ContractId == aCid && output.MethodId == outputId &&
-                   output.Kind == RpcMethodKind.ServerStreaming && count.Snapshot() == cold &&
+                   output.Kind == RpcMethodKind.ServerStreaming && output.SupportsCancellation &&
+                   output == aContract.Methods.Single(item => item.MethodId == outputId).Invocation &&
+                   count.Snapshot() == cold &&
                    count.Invocations(outputId) == 1 && !recorder.Methods.ContainsKey(outputId) &&
                    await b.TouchAsync(2, ct) == 102,
                 "output mapper keeps the actual original descriptor with no interceptor and no Stub metadata re-read");
@@ -165,12 +173,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             if (!((IRpcGeneratedPreparedMethods)inner).TryPrepareMethod(methodId, out method))
                 return false;
             var execute = method.Execute;
+            var declared = method.Descriptor;
             method = method with
             {
-                Execute = (service, bridge, request, arguments, output, cancellationToken) =>
+                Execute = (object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor facts,
+                    long request, ReadOnlySequence<byte> arguments, IBufferWriter<byte>? output, CancellationToken cancellationToken) =>
                 {
+                    Ensure(facts == declared, "the generated executor receives the original complete descriptor");
                     count.Executed.AddOrUpdate(methodId, 1, static (_, calls) => calls + 1);
-                    return execute(service, bridge, request, arguments, output, cancellationToken);
+                    return execute(service, bridge, in facts, request, arguments, output, cancellationToken);
                 }
             };
             return true;

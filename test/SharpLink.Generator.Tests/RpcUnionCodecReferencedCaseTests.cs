@@ -47,12 +47,12 @@ namespace SharpLink.Abstractions
             support,
             101UL,
             202UL,
-            "sharplink-n999-api6-prepared-contract-channel-v1");
+            "sharplink-n999-api6-prepared-executor-facts-v2");
         var secondOwner = CreateReferencedUnionCaseOwner(
             support,
             303UL,
             404UL,
-            "sharplink-n999-api6-prepared-contract-channel-v1");
+            "sharplink-n999-api6-prepared-executor-facts-v2");
         var incompatibleOwner = CreateReferencedUnionCaseOwner(
             support,
             101UL,

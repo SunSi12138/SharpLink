@@ -365,7 +365,7 @@ internal sealed partial class SharpLinkServer
 
             var supportsCooperativeCancellation =
                 (isCancellable || serviceInfo.Module is not null) &&
-                facts.SupportsCancellation;
+                facts.Descriptor.SupportsCancellation;
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,

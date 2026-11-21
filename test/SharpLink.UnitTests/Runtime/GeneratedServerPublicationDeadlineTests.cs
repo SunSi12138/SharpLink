@@ -45,9 +45,8 @@ public class GeneratedServerPublicationDeadlineTests
                 0,
                 stream,
                 new AdvancingIntCodec(timeProvider),
-                payloadNullable: false,
-                contractId: 101,
-                methodId: 202,
+                new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming, true, false, false, null)
+                { SupportsCancellation = true },
                 CancellationToken.None).AsTask();
 
             timeProvider.Advance(TimeSpan.FromSeconds(1));
@@ -97,9 +96,8 @@ public class GeneratedServerPublicationDeadlineTests
                     0,
                     SingleValue(7),
                     codec,
-                    payloadNullable: false,
-                    contractId: 101,
-                    methodId: 202,
+                    new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming, true, false, false, null)
+                    { SupportsCancellation = true },
                     CancellationToken.None);
             }
             catch (Exception exception)

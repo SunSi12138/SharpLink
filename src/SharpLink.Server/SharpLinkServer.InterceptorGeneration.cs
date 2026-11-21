@@ -42,7 +42,8 @@ internal sealed partial class SharpLinkServer
 
             try
             {
-                await execute(service, generatedBridge, context.RequestId, context.InterceptorArguments,
+                var method = context.Method;
+                await execute(service, generatedBridge, in method, context.RequestId, context.InterceptorArguments,
                     output, context.CancellationToken).ConfigureAwait(false);
                 if (context.Status == SharpLinkInvocationStatus.Pending)
                     context.Status = SharpLinkInvocationStatus.Succeeded;

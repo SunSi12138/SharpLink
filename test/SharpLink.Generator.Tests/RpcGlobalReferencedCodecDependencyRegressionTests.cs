@@ -25,7 +25,7 @@ using System;
     6,
     2,
     "2.0.0-test",
-    "sharplink-n999-api6-prepared-contract-channel-v1")]
+    "sharplink-n999-api6-prepared-executor-facts-v2")]
 
 namespace SharpLink.Abstractions
 {

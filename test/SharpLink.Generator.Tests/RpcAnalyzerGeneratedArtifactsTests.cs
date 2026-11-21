@@ -57,7 +57,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal study API 6 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 6, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-n999-api6-prepared-contract-channel-v1", StringComparison.Ordinal),
+               manifest.Contains("sharplink-n999-api6-prepared-executor-facts-v2", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -199,6 +199,10 @@ public sealed class HelloService : IHelloService
         Ensure(!stub[firstBody..].Contains("methodHash", StringComparison.Ordinal) &&
                !stub[firstBody..].Contains("TryPrepareMethod", StringComparison.Ordinal),
             "typed execution bodies never select a method again");
+        Ensure(CountOccurrences(stub, "in RpcMethodDescriptor method") == 6 &&
+               CountOccurrences(stub, "method, cancellationToken);") == 2 &&
+               stub[firstBody..].Contains("method.ResponseNullable", StringComparison.Ordinal),
+            "the selected executor and output bridge consume the captured facts");
         var proxy = generated.FirstOrDefault(static text => text.Contains("private sealed class __Proxy_"));
         if (proxy is null)
             throw new Exception("Expected generated proxy source.");

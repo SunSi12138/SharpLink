@@ -307,7 +307,8 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context,
+                methodDescriptor);
             if (!telemetry.IsEnabled)
                 return invocation;
             if (invocation.IsCompletedSuccessfully)
@@ -407,7 +408,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        in RpcMethodDescriptor method)
     {
         if (context.Authentication?.IsExpired() == true)
         {
@@ -418,7 +420,7 @@ internal sealed partial class SharpLinkServer
         var interceptors = (context as SharpLinkServerInvocationContext)?.InterceptorGeneration as ServerInterceptorGeneration;
         if (interceptors is null || interceptors.Count == 0)
         {
-            return execute(service, generatedBridge, requestId, arguments, output, cancellationToken);
+            return execute(service, generatedBridge, in method, requestId, arguments, output, cancellationToken);
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
@@ -605,12 +607,10 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> callCancellations,
         RpcSession session,
         long requestId,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
         Exception exception)
     {
-        RpcMethodDescriptor? capturedMethod = null;
-        if (callCancellations.TryCapture(
+        if (exception is OperationCanceledException && callCancellations.TryCapture(
                 requestId,
                 static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
                 out var callLease) &&
@@ -618,9 +618,7 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
-                capturedMethod = callLease.State.NStudyOutputMethod;
-                if (exception is OperationCanceledException)
-                    exception = MapServerCancellationException(callLease.State, callLease.State.Deadline);
+                exception = MapServerCancellationException(callLease.State, callLease.State.Deadline);
             }
             finally
             {
@@ -630,8 +628,7 @@ internal sealed partial class SharpLinkServer
 
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
-        if (SharpLinkCallContext.Current is { } callContext &&
-            capturedMethod is { } method && method.ContractId == contractId && method.MethodId == methodId)
+        if (SharpLinkCallContext.Current is { } callContext)
         {
             return MapServiceException(
                 exception,

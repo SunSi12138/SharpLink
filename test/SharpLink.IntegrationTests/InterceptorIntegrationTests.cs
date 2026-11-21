@@ -494,7 +494,9 @@ public class InterceptorIntegrationTests
     {
         await using var harness = await InterceptorHarness.CreateAsync(
             requestTimeout: TimeSpan.FromMilliseconds(150));
-        var service = harness.Client.Get<IInterceptorTestService>();
+        var proxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = proxy.Service;
 
         var deadlineStream = service.WaitStreamAsync(CancellationToken.None).GetAsyncEnumerator();
         try

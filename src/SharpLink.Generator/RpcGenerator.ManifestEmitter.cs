@@ -4,7 +4,7 @@ public partial class RpcGenerator
 {
     private const int GeneratedManifestApi = 6;
     private const int GeneratedProtocolVersion = 2;
-    private const string GeneratedAbiIdentity = "sharplink-n999-api6-prepared-contract-channel-v1";
+    private const string GeneratedAbiIdentity = "sharplink-n999-api6-prepared-executor-facts-v2";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -200,7 +200,7 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    \"{EscapeString(method.Name)}\",");
                 sb.AppendLine($"                    {method.Hash}L,");
                 sb.AppendLine($"                    RpcMethodKind.{GetMethodKind(method)},");
-                sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
+                sb.AppendLine($"                    {(StubSupportsCancellation(method) ? "true" : "false")},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\")");

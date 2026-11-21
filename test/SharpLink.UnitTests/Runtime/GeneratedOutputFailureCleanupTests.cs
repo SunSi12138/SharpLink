@@ -43,7 +43,7 @@ public sealed class GeneratedOutputFailureCleanupTests
                 using var context = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(session.Id, null, deadline, clock));
                 observations.Record("context-installed");
                 var logical = new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
-                    73, 0, stream, new IntCodec(), false, 101, 202, CancellationToken.None).AsTask();
+                    73, 0, stream, new IntCodec(), new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming, true, false, false, null) { SupportsCancellation = true }, CancellationToken.None).AsTask();
                 observations.Record("logical-valuetask-returned:" + logical.Status);
                 var published = returned.TrySetResult(logical);
                 observations.Record($"returned-published:won={published}:state={returned.Task.Status}");
@@ -408,7 +408,7 @@ public sealed class GeneratedOutputFailureCleanupTests
         try
         {
             await new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
-                73, 0, stream, new IntCodec(), false, 101, 202, CancellationToken.None);
+                73, 0, stream, new IntCodec(), new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming, true, false, false, null) { SupportsCancellation = true }, CancellationToken.None);
         }
         catch (Exception error) { actual = error; }
         Ensure(ReferenceEquals(actual, stream.Failure), "normal untimed synchronous failure must retain its exact original cause");

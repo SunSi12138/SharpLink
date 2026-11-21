@@ -28,6 +28,7 @@ public readonly record struct RpcMethodDescriptor
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
     private const byte HasMethodTimeoutValueFlag = 1 << 5;
+    private const byte SupportsCancellationFlag = 1 << 6;
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>
@@ -125,6 +126,13 @@ public readonly record struct RpcMethodDescriptor
     {
         get => (_flags & ResponseNullableFlag) != 0;
         init => _flags = SetFlag(_flags, ResponseNullableFlag, value);
+    }
+
+    /// <summary>Gets whether the generated method observes a cancellation token or owns a stream.</summary>
+    public bool SupportsCancellation
+    {
+        get => (_flags & SupportsCancellationFlag) != 0;
+        init => _flags = SetFlag(_flags, SupportsCancellationFlag, value);
     }
 
     private readonly byte _flags;

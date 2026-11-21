@@ -100,7 +100,7 @@ internal sealed partial class SharpLinkServer
 
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
-            facts.SupportsCancellation;
+            method.SupportsCancellation;
         callState ??= CreateTrackedCallState(
             connection,
             requestId,
@@ -116,8 +116,6 @@ internal sealed partial class SharpLinkServer
                 serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
             if (method.HasClientStreams)
                 callState.RequireNStudyStreamAcceptance();
-            if (method.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
-                callState.NStudyOutputMethod = method;
         }
         if (decodedRequestOwner is not null)
         {

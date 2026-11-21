@@ -7,10 +7,11 @@ public interface IRpcGeneratedPreparedMethods
     bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method);
 }
 
-/// <summary>Describes one generated entry and the cancellation behavior needed before execution.</summary>
+/// <summary>Pairs complete method facts with the generated execution body.</summary>
 public readonly record struct RpcGeneratedPreparedMethod(
-    RpcMethodDescriptor Descriptor, bool SupportsCancellation, RpcGeneratedMethodExecutor Execute);
+    RpcMethodDescriptor Descriptor, RpcGeneratedMethodExecutor Execute);
 
 /// <summary>Runs an already-selected generated body using the registration's bound Codecs.</summary>
 public delegate ValueTask RpcGeneratedMethodExecutor(object service, IRpcGeneratedServerBridge bridge,
-    long requestId, ReadOnlySequence<byte> arguments, IBufferWriter<byte>? output, CancellationToken cancellationToken);
+    in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> arguments, IBufferWriter<byte>? output,
+    CancellationToken cancellationToken);

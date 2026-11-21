@@ -55,7 +55,7 @@ using SharpLink.Sdk;
     6,
     2,
     "2.0.0",
-    "sharplink-n999-api6-prepared-contract-channel-v1")]
+    "sharplink-n999-api6-prepared-executor-facts-v2")]
 
 namespace ReferencedUnion
 {
