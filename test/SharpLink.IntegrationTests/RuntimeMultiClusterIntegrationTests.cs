@@ -307,7 +307,8 @@ public sealed class RuntimeMultiClusterIntegrationTests
                sessionA.NStudyBindOperationForDiagnostics == initialOperations + 1,
             "A actually bound before B reported the ordinary missing deployment");
         await WaitUntilAsync(() => first.OpenBindings == 0, ct);
-        var prematureCall = await CaptureExceptionAsync(cohort.Service.GetEndpointIdAsync().AsTask());
+        async Task CallUnpreparedAsync() => _ = await cohort.Service.GetEndpointIdAsync();
+        var prematureCall = await CaptureExceptionAsync(CallUnpreparedAsync());
         Ensure(prematureCall is SharpLinkException { Code: SharpLinkErrorCode.Unavailable } &&
                pendingDeployment.OpenBindings == 0, "the unsuccessful cohort did not expose or leak A's provisional binding");
 
