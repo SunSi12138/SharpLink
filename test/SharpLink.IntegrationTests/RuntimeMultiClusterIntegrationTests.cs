@@ -206,9 +206,11 @@ public sealed class RuntimeMultiClusterIntegrationTests
 
     [Test]
     [NotInParallel]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task PreparedFixedPoolSharesWorkWithoutMovingThePinnedHandle(bool useSharedMemory)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task PreparedFixedPoolSharesWorkWithoutMovingThePinnedHandle(bool useSharedMemory, bool expandOnDemand)
     {
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         var ct = budget.Token;
@@ -216,15 +218,16 @@ public sealed class RuntimeMultiClusterIntegrationTests
         await using var server = await ServerScope.StartAsync("fixed-pool", useSharedMemory, interceptor: observer);
         var builder = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(4)).UseConnectionPool(pool =>
         {
-            pool.MinConnections = 2;
+            pool.MinConnections = expandOnDemand ? 1 : 2;
             pool.MaxConnections = 2;
         });
         server.ConfigureClient(builder);
         await using var client = builder.Build();
         await client.ConnectAsync(ct);
-        await WaitUntilAsync(() => server.ActiveConnections == 2, ct);
+        var expectedInitialSessions = expandOnDemand ? 1 : 2;
+        await WaitUntilAsync(() => server.ActiveConnections == expectedInitialSessions, ct);
         Ensure(server.OpenBindings == 0,
-            "both physical connection handshakes complete without preparing the contract");
+            "the initial physical connection handshakes do not prepare the contract");
 
         var pinned = client.CreateProxy<IConnectionBehaviorService>();
         var balanced = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
@@ -234,13 +237,27 @@ public sealed class RuntimeMultiClusterIntegrationTests
         var pinnedSession = observer.UnarySessions.Single();
 
         await balanced.PrepareAsync(TimeSpan.FromSeconds(4), ct);
-        Ensure(server.OpenBindings == 2, "explicit pool Prepare reuses the first binding and binds the other physical Session");
+        Ensure(server.OpenBindings == expectedInitialSessions, "initial Prepare takes only currently Ready Sessions");
         var stream = ReadStreamAsync();
         try
         {
             Ensure(await observer.StreamStarted.Task.WaitAsync(ct) == pinnedSession,
                 "the pinned handle keeps using its original Session after the cohort is prepared");
-            Ensure(await balanced.Service.PingAsync(9) == 10 && observer.UnarySessions.Count == 2 &&
+            if (expandOnDemand)
+            {
+                Ensure(await balanced.Service.PingAsync(7) == 8 && observer.UnarySessions.Last() == pinnedSession,
+                    "the first overlap requests transport expansion but uses the prepared Session");
+                await WaitUntilAsync(() => client.GetReadinessSnapshot().ReadyConnections == 2 &&
+                    server.ActiveConnections == 2, ct);
+                Ensure(await balanced.Service.PingAsync(8) == 9 &&
+                       observer.UnarySessions.Last() == pinnedSession && server.OpenBindings == 1,
+                    "a new Ready Session carries no business traffic until explicit Prepare");
+                await balanced.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+                Ensure(server.OpenBindings == 2, "explicit Prepare extends the cohort to the second Session");
+            }
+
+            Ensure(await balanced.Service.PingAsync(9) == 10 &&
+                   observer.UnarySessions.Count == (expandOnDemand ? 4 : 2) &&
                    observer.UnarySessions.Last() != pinnedSession,
                 "ordinary work can use the other prepared Session while the pinned Session is busy");
         }

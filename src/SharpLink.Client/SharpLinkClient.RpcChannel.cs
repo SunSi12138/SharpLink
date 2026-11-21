@@ -318,7 +318,12 @@ internal sealed partial class SharpLinkClient
             if (selected is null)
                 break;
             if (selected.TryReserveExactCallAdmission())
+            {
+                // Expand the transport pool under load, without binding or using the new Session here.
+                if (selected.ActiveCallCount != 0)
+                    EnsureExpansion();
                 return selected;
+            }
         }
 
         throw NStudyPreparedSite.Unavailable();

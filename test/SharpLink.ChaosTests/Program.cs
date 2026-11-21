@@ -24,6 +24,8 @@ namespace SharpLink.ChaosTests;
 public static class Program
 {
     private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PrepareTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan CohortObservationInterval = TimeSpan.FromMilliseconds(100);
     private static readonly string[] OperationNames =
     [
         "Unary",
@@ -120,7 +122,9 @@ public static class Program
 
         phase = "ConnectingClient";
         await client.ConnectAsync(duration.Token).ConfigureAwait(false);
-        var service = client.Get<IChaosService>();
+        var proxy = client.CreateProxy<IChaosService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await proxy.PrepareAsync(RecoveryTimeout, duration.Token).ConfigureAwait(false);
+        var service = proxy.Service;
         phase = "Warmup";
         await WarmUpAsync(service, duration.Token).ConfigureAwait(false);
         soakStarted = Stopwatch.GetTimestamp();
@@ -304,7 +308,7 @@ public static class Program
             {
                 while (true)
                 {
-                    await Task.Delay(options.RestartInterval, duration.Token).ConfigureAwait(false);
+                    await WaitForNextRestartAsync().ConfigureAwait(false);
                     clientLogs.Clear();
                     serverLogs.Clear();
                     Interlocked.Increment(ref faultGeneration);
@@ -328,7 +332,7 @@ public static class Program
                         return;
                     }
                     Interlocked.Increment(ref restartCount);
-                    if (!await WaitForRecoveryAsync(service, recoveryTimeout.Token).ConfigureAwait(false))
+                    if (!await WaitForRecoveryAsync(proxy, recoveryTimeout.Token).ConfigureAwait(false))
                     {
                         RecordUnexpectedFailure(CreateRecoveryTimeoutException(client.State, clientLogs.Snapshot()));
                         await duration.CancelAsync().ConfigureAwait(false);
@@ -347,6 +351,24 @@ public static class Program
             {
                 RecordUnexpectedFailure(exception);
                 await duration.CancelAsync().ConfigureAwait(false);
+            }
+        }
+
+        async Task WaitForNextRestartAsync()
+        {
+            // The control loop owns preparation. Workers never rebind a business call.
+            var started = Stopwatch.GetTimestamp();
+            while (true)
+            {
+                var remaining = options.RestartInterval - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero)
+                    return;
+                var delay = remaining < CohortObservationInterval ? remaining : CohortObservationInterval;
+                await Task.Delay(delay, duration.Token).ConfigureAwait(false);
+                if (Stopwatch.GetElapsedTime(started) >= options.RestartInterval)
+                    return;
+                if (client.GetReadinessSnapshot().ReadyConnections > 0)
+                    await proxy.PrepareAsync(PrepareTimeout, duration.Token).ConfigureAwait(false);
             }
         }
 
@@ -679,7 +701,7 @@ public static class Program
     }
 
     private static async Task<bool> WaitForRecoveryAsync(
-        IChaosService service,
+        RpcProxy<IChaosService> proxy,
         CancellationToken cancellationToken)
     {
         var deadline = Stopwatch.GetTimestamp() +
@@ -689,11 +711,17 @@ public static class Program
         {
             try
             {
-                var probe = await service.AddAsync(20, 22).ConfigureAwait(false);
+                if (consecutiveSuccesses == 0)
+                    await proxy.PrepareAsync(PrepareTimeout, cancellationToken).ConfigureAwait(false);
+                var probe = await proxy.Service.AddAsync(20, 22).ConfigureAwait(false);
                 if (probe != 42)
                     throw new InvalidDataException("Recovery probe result was corrupted.");
                 if (++consecutiveSuccesses >= ConsecutiveRecoveryProbeCount)
                     return true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
             }
             catch (Exception exception) when (exception is SocketException or IOException or ObjectDisposedException or
                                               SharpLinkException
