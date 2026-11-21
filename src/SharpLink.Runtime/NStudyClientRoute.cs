@@ -13,6 +13,12 @@ internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
     internal NStudyTarget Target => ack.Target;
     internal RpcHash128 Hash => ack.Hash;
 
+    internal bool IsOpenOn(RpcSession owner)
+    {
+        lock (_gate)
+            return !_retired && ReferenceEquals(owner, session);
+    }
+
     internal bool TryEnter(RpcSession owner)
     {
         lock (_gate)

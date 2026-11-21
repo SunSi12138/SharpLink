@@ -186,6 +186,8 @@ public sealed class HelloService : IHelloService
         var generated = RunGeneratorAndGetSources(source);
         var allGenerated = string.Join("\n", generated);
         var stub = generated.Single(static text => text.Contains("private sealed class __Stub_"));
+        Ensure(CountOccurrences(allGenerated, "Invocation = new RpcMethodDescriptor(") == 6,
+            "the manifest supplies invocation facts for normal manual selection without creating a server stub");
         var firstBody = stub.IndexOf("private ValueTask __Invoke_", StringComparison.Ordinal);
         Ensure(firstBody >= 0 && CountOccurrences(stub, "private ValueTask __Invoke_") == 6 &&
                CountOccurrences(stub, "method = new(new RpcMethodDescriptor(") == 6,

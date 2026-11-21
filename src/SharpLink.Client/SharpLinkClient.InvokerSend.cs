@@ -16,7 +16,8 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken = default,
         IRequestEmissionFailureObserver? failureObserver = null,
         PendingRequestTable? publicationTable = null,
-        int oneWayInputCount = 0)
+        int oneWayInputCount = 0,
+        NStudyClientRoute? exactRoute = null)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
@@ -40,7 +41,9 @@ internal sealed partial class SharpLinkClient
             flags |= ProtocolV2FrameFlags.HasMetadata;
         }
 
-        var binding = session.CaptureNStudyRoute(contractId);
+        var binding = exactRoute ?? session.CaptureNStudyRoute(contractId);
+        if (exactRoute is not null && !exactRoute.IsOpenOn(session))
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The prepared private site no longer owns this Session route.");
         var writer = session.RentFrameWriter();
         var ownsWriter = true;
         try

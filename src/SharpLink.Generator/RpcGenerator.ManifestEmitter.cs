@@ -201,7 +201,8 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
-                sb.AppendLine($"                    \"{method.Fingerprint}\"),");
+                sb.AppendLine($"                    \"{method.Fingerprint}\")");
+                sb.AppendLine($"                {{ Invocation = {GetMethodDescriptorExpression(contract, method)} }},");
             }
             sb.AppendLine("            }),");
             sb.AppendLine($"            static (channel, codecs) => __CreateProxy_{GetContractArtifactIdentity(contract)}(channel, codecs),");

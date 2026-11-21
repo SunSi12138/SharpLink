@@ -9,6 +9,11 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TResponse> responseCodec,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
+        => InvokeUnary(method, request, requestCodec, responseCodec, metadata, cancellationToken, null);
+
+    internal ValueTask<TResponse> InvokeUnary<TRequest, TResponse>(RpcMethodDescriptor method,
+        in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+        SharpLinkMetadata? metadata, CancellationToken cancellationToken, NStudyPreparedUnary? prepared)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
@@ -16,7 +21,7 @@ internal sealed partial class SharpLinkClient
         RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: true, interceptors);
+            method, metadata, includeClientDefault: true, interceptors) with { PreparedUnary = prepared };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -383,7 +388,7 @@ internal sealed partial class SharpLinkClient
             // Connection selection is the first step that can block, so the pre-registration
             // checkpoint below is the first place a fresh sample carries new information. A sample
             // here would only repeat the stage-local validation the call control already did.
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            connection = GetReadyConnection(method, retrySelection: null, outcome, control.PreparedUnary);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             var operation = connection.PendingCalls.Rent(
@@ -450,7 +455,8 @@ internal sealed partial class SharpLinkClient
                     control.Metadata,
                     cancellationToken: CancellationToken.None,
                     failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null,
-                    publicationTable: connection.PendingCalls);
+                    publicationTable: connection.PendingCalls,
+                    exactRoute: control.PreparedUnary?.RequireRoute());
             }
         }
         catch (Exception exception)

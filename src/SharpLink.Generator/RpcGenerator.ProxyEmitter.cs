@@ -117,15 +117,8 @@ public partial class RpcGenerator
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         var suffix = GetMethodSuffix(method);
-        var kind = GetMethodKind(method);
-        var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
-        var clientStreamCount = GetStreamParameters(method).Length;
-        var hasClientStreams = clientStreamCount != 0;
-        var methodTimeout = method.TimeoutTicks is { } ticks
-            ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
-            : "null";
         sb.AppendLine(
-            $"    private static readonly RpcMethodDescriptor {GetProxyMemberFieldName(model, $"__method_{suffix}")} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
+            $"    private static readonly RpcMethodDescriptor {GetProxyMemberFieldName(model, $"__method_{suffix}")} = {GetMethodDescriptorExpression(model, method)};");
 
         if (GetPayloadParameters(method).Length != 0)
             sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))} {GetProxyMemberFieldName(model, $"__requestCodec_{suffix}")};");

@@ -7,13 +7,19 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method, in TRequest request,
         IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
+        => InvokeUnaryWithModule(inner, module, method, request, requestCodec, responseCodec, metadata, cancellationToken, null);
+
+    internal static ValueTask<TResponse> InvokeUnaryWithModule<TRequest, TResponse>(SharpLinkClient inner,
+        SharpLinkDynamicModule module, RpcMethodDescriptor method, in TRequest request,
+        IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken, SharpLinkClient.NStudyPreparedUnary? prepared)
     {
         if (!module.TryAcquire(false, out var lease))
             return ValueTask.FromException<TResponse>(Draining());
         var combined = Combine(cancellationToken, module.ForcedCancellation);
         try
         {
-            var call = inner.InvokeUnaryAsync(method, request, requestCodec, responseCodec, metadata, combined.Token);
+            var call = inner.InvokeUnary(method, request, requestCodec, responseCodec, metadata, combined.Token, prepared);
             if (call.IsCompletedSuccessfully)
             {
                 lease.Dispose();

@@ -207,7 +207,7 @@ public partial class RpcGenerator
         => method.HasCancellationToken || method.IsStreamReturn ||
            method.Parameters.Any(static parameter => parameter.IsStream);
 
-    private static string GetStubMethodDescriptorExpression(RpcInterfaceModel model, RpcMethodModel method)
+    private static string GetMethodDescriptorExpression(RpcInterfaceModel model, RpcMethodModel method)
     {
         var kind = GetMethodKind(method);
         var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
@@ -227,7 +227,7 @@ public partial class RpcGenerator
         foreach (var method in model.Methods)
         {
             sb.AppendLine($"            case {method.Hash}L:");
-            sb.AppendLine($"                descriptor = {GetStubMethodDescriptorExpression(model, method)};");
+            sb.AppendLine($"                descriptor = {GetMethodDescriptorExpression(model, method)};");
             sb.AppendLine("                return true;");
         }
         sb.AppendLine("            default:");
@@ -246,7 +246,7 @@ public partial class RpcGenerator
         foreach (var method in model.Methods)
         {
             sb.AppendLine($"            case {method.Hash}L:");
-            sb.AppendLine($"                method = new({GetStubMethodDescriptorExpression(model, method)}, {(StubSupportsCancellation(method) ? "true" : "false")}, __Invoke_{GetMethodSuffix(method)});");
+            sb.AppendLine($"                method = new({GetMethodDescriptorExpression(model, method)}, {(StubSupportsCancellation(method) ? "true" : "false")}, __Invoke_{GetMethodSuffix(method)});");
             sb.AppendLine("                return true;");
         }
         sb.AppendLine("            default: method = default; return false;");

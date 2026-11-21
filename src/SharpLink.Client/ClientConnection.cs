@@ -126,6 +126,9 @@ internal sealed class ClientConnection :
         return false;
     }
 
+    // A caller prepared for a physical Session may not follow a refresh redirect.
+    internal bool TryReserveExactCallAdmission() => TryReserveOwnCallAdmission(notifyTestHook: true);
+
     internal bool TryReserveSessionRefreshCommit()
     {
         _client.NotifyBeforeSessionRefreshEligibilityCommitForTest(this);

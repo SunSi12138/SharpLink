@@ -8,12 +8,13 @@ internal sealed partial class SharpLinkClient
         NStudyTarget expected, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var ready = Volatile.Read(ref _readyConnections);
-        if (ready.Length != 1)
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
-                "The private binding study requires exactly one ready connection.");
-        var session = ready[0].Session;
-        var ack = await session.PrepareNStudyBindAsync(new NStudyBind(contract, hash, expected), ct).ConfigureAwait(false);
+        return await BindNStudyContractOnAsync(RequireSingleNStudyConnection(), contract, hash, expected, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<NStudyAck> BindNStudyContractOnAsync(ClientConnection connection, long contract,
+        RpcHash128 hash, NStudyTarget expected, CancellationToken ct)
+    {
+        var ack = await connection.Session.PrepareNStudyBindAsync(new NStudyBind(contract, hash, expected), ct).ConfigureAwait(false);
         if (ack.Status != NStudyBindStatus.Bound)
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, $"Private Bind outcome: {ack.Status}.");
         return ack;
@@ -22,11 +23,16 @@ internal sealed partial class SharpLinkClient
     internal Task<bool> ReleaseNStudyContractAsync(long contract, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        return RequireSingleNStudyConnection().Session.ReleaseNStudyBindingAsync(contract, ct);
+    }
+
+    private ClientConnection RequireSingleNStudyConnection()
+    {
         var ready = Volatile.Read(ref _readyConnections);
         if (ready.Length != 1)
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
                 "The private binding study requires exactly one ready connection.");
-        return ready[0].Session.ReleaseNStudyBindingAsync(contract, ct);
+        return ready[0];
     }
 
     private static void RequireNStudyShape(in RpcMethodDescriptor method)

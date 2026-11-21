@@ -234,16 +234,14 @@ internal sealed partial class SharpLinkClient
     private ClientConnection GetReadyConnection(
         RpcMethodDescriptor method,
         EndpointRetrySelectionState? retrySelection,
-        AttemptOutcomeState? attemptOutcome)
+        AttemptOutcomeState? attemptOutcome,
+        NStudyPreparedUnary? prepared = null)
     {
         if (_cluster is not null)
             return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
 
-        if (attemptOutcome is null || _fixedEndpoint is null)
-            return GetReadyConnection();
-
-        if (ReadyConnectionCount == 0)
-            return GetReadyConnection();
+        if (attemptOutcome is null || _fixedEndpoint is null || ReadyConnectionCount == 0)
+            return prepared is null ? GetReadyConnection() : ReservePreparedUnary(prepared);
 
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
@@ -254,13 +252,24 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            return GetReadyConnection();
+            return prepared is null ? GetReadyConnection() : ReservePreparedUnary(prepared);
         }
         catch (Exception exception)
         {
             attemptOutcome.CompleteLocalFailure(exception);
             throw;
         }
+    }
+
+    private ClientConnection ReservePreparedUnary(NStudyPreparedUnary prepared)
+    {
+        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
+            throw CreateConnectionClosedException("Client is not accepting new calls.");
+        if (!prepared.TryGetConnection(out var connection) ||
+            !prepared.RequireRoute().IsOpenOn(connection.Session) ||
+            !connection.TryReserveExactCallAdmission())
+            throw NStudyPreparedUnary.Unavailable();
+        return connection;
     }
 
     private bool RemoveReadyConnection(ClientConnection connection)

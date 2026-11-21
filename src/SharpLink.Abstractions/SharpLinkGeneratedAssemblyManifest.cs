@@ -78,7 +78,11 @@ public sealed record SharpLinkGeneratedMethodDescriptor(
     bool SupportsCancellation,
     string RequestSchema,
     string ResponseSchema,
-    string Fingerprint);
+    string Fingerprint)
+{
+    /// <summary>Gets the invocation facts emitted for this method, when supplied by its generator.</summary>
+    public RpcMethodDescriptor? Invocation { get; init; }
+}
 
 /// <summary>Describes the contract-owned generated artifacts in one assembly.</summary>
 public sealed record SharpLinkGeneratedContractDescriptor(
