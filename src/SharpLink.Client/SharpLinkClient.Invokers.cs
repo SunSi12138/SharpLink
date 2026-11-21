@@ -503,7 +503,7 @@ internal sealed partial class SharpLinkClient
                     cancellationToken: CancellationToken.None,
                     failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null,
                     publicationTable: connection.PendingCalls,
-                    exactRoute: control.PreparedSite?.RequireRoute());
+                    exactRoute: control.PreparedSite?.RequireRoute(connection));
             }
         }
         catch (Exception exception)
@@ -682,7 +682,7 @@ internal sealed partial class SharpLinkClient
                     observeEmission: control.Deadline.HasValue,
                     cancellationToken: CancellationToken.None,
                     publicationTable: null,
-                    exactRoute: control.PreparedSite?.RequireRoute());
+                    exactRoute: control.PreparedSite?.RequireRoute(connection));
                 if (control.Deadline.HasValue)
                 {
                     // Plain OneWay has no pending owner to enforce an emission deadline.
@@ -793,7 +793,7 @@ internal sealed partial class SharpLinkClient
                     cancellationToken: streamCancellationToken,
                     publicationTable: table,
                     oneWayInputCount: method.ClientStreamCount,
-                    exactRoute: control.PreparedSite?.RequireRoute());
+                    exactRoute: control.PreparedSite?.RequireRoute(connection));
                 await emission.ConfigureAwait(false);
                 // No receipt is involved: the exact local head append is sufficient.
                 if (table.TryStartNStudyProducer(requestId, admission))
@@ -921,7 +921,7 @@ internal sealed partial class SharpLinkClient
                     // cancels when it reaches a terminal reason.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls,
-                    exactRoute: control.PreparedSite?.RequireRoute()).ConfigureAwait(false);
+                    exactRoute: control.PreparedSite?.RequireRoute(connection)).ConfigureAwait(false);
                 if (await admission.Acceptance.ConfigureAwait(false) && table.TryStartNStudyProducer(requestId, admission))
                 {
                     var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, admission, producerLease);
@@ -1008,7 +1008,7 @@ internal sealed partial class SharpLinkClient
                     observeEmission: control.Deadline.HasValue,
                     cancellationToken: registration.TerminalSignal?.Token ?? CancellationToken.None,
                     publicationTable: connection.PendingCalls,
-                    exactRoute: control.PreparedSite?.RequireRoute()).ConfigureAwait(false);
+                    exactRoute: control.PreparedSite?.RequireRoute(connection)).ConfigureAwait(false);
             }
             finally
             {
@@ -1073,7 +1073,7 @@ internal sealed partial class SharpLinkClient
                 // to release the producer side from a stalled transport write.
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls,
-                exactRoute: control.PreparedSite?.RequireRoute()).ConfigureAwait(false);
+                exactRoute: control.PreparedSite?.RequireRoute(connection)).ConfigureAwait(false);
             if (await admission.Acceptance.ConfigureAwait(false) &&
                 connection.PendingCalls.TryStartNStudyProducer(requestId, admission))
             {

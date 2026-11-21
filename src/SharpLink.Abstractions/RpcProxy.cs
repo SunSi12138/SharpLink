@@ -5,6 +5,10 @@ public sealed class RpcProxyOptions
 {
     /// <summary>Gets metadata to attach to calls made by this proxy.</summary>
     public SharpLinkMetadata? Metadata { get; init; }
+
+    /// <summary>Prepares the current Ready Sessions of a cluster and balances calls only among them.</summary>
+    /// <remarks>New Sessions remain ineligible until another explicit Prepare. The default pins one Session.</remarks>
+    public bool BalancePreparedEndpoints { get; init; }
 }
 
 /// <summary>A generated service and the explicit preparation for its own calls.</summary>
@@ -21,7 +25,7 @@ public sealed class RpcProxy<TContract> where TContract : IService
     /// <summary>Gets the service that uses this proxy's prepared route.</summary>
     public TContract Service { get; }
 
-    /// <summary>Prepares this proxy on the current ready connection within a finite timeout.</summary>
+    /// <summary>Prepares this proxy's selected Ready Session or endpoint cohort within a finite timeout.</summary>
     /// <param name="timeout">The maximum time to wait for preparation.</param>
     /// <param name="cancellationToken">Cancels this caller's preparation wait.</param>
     public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)

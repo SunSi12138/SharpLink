@@ -22,7 +22,8 @@ internal sealed partial class SharpLinkClient
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
             AttemptOutcomeState? attemptOutcome,
-            bool reserveCall = true);
+            bool reserveCall = true,
+            NStudyPreparedSite? prepared = null);
         bool TryGetEndpointCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate);
         void HandleConnectionFailure(ClientConnection connection, Exception exception);
         void MarkConnectionDraining(ClientConnection connection);
@@ -41,7 +42,7 @@ internal sealed partial class SharpLinkClient
         private object? _snapshot;
         private ulong _excludedMask;
 
-        public ulong GetExcludedMask(object snapshot, int count)
+        public ulong GetExcludedMask(object snapshot, int count, ulong unavailable = 0)
         {
             if (!ReferenceEquals(_snapshot, snapshot))
             {
@@ -49,7 +50,7 @@ internal sealed partial class SharpLinkClient
                 _excludedMask = 0;
             }
             var availableMask = count == 64 ? ulong.MaxValue : (1UL << count) - 1;
-            if ((_excludedMask & availableMask) == availableMask)
+            if (((_excludedMask | unavailable) & availableMask) == availableMask)
                 _excludedMask = 0;
             return _excludedMask;
         }

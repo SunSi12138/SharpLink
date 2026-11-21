@@ -190,8 +190,8 @@ internal sealed partial class SharpLinkClient
             };
         }
 
-        public static ClientConnection? SelectConnection(DynamicEndpointState endpoint, bool reserveCall)
-            => EndpointSelectionKernel.SelectConnection(endpoint.ReadyConnections, reserveCall);
+        public static ClientConnection? SelectConnection(DynamicEndpointState endpoint, bool reserveCall, NStudyPreparedSite? prepared)
+            => EndpointSelectionKernel.SelectConnection(endpoint.ReadyConnections, reserveCall, prepared);
 
         public void Clear()
         {

@@ -8,7 +8,8 @@ internal sealed partial class SharpLinkClient
     {
         var metadata = ValidateNStudyFactory(options);
         var registration = _assemblyRegistry.ResolveNStudyLocalRegistration(typeof(T));
-        var site = new NStudyContractSite<T>(this, registration, metadata, registration.NStudyPreparation.Get());
+        var site = new NStudyContractSite<T>(this, registration, metadata, registration.NStudyPreparation.Get(),
+            balancePreparedEndpoints: options?.BalancePreparedEndpoints == true);
         return new(site.Service, site);
     }
 
@@ -30,7 +31,8 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(local);
         var metadata = ValidateNStudyFactory(options);
         var registration = _assemblyRegistry.ResolveNStudyLocalContract(local);
-        return new NStudyContractSite(this, registration, metadata, registration.NStudyPreparation.Get());
+        return new NStudyContractSite(this, registration, metadata, registration.NStudyPreparation.Get(),
+            balancePreparedEndpoints: options?.BalancePreparedEndpoints == true);
     }
 
     private SharpLinkMetadata? ValidateNStudyFactory(RpcProxyOptions? options)
@@ -39,6 +41,8 @@ internal sealed partial class SharpLinkClient
         if (metadata is { Count: > 0 } && ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata) > _protocolOptions.MaxMetadataBytes)
             throw new ArgumentOutOfRangeException(nameof(options), "Proxy metadata exceeds the client size limit.");
         EnsureNStudyFactoryAvailable();
+        if (options?.BalancePreparedEndpoints == true && _cluster is null)
+            throw new NotSupportedException("Balancing prepared endpoints requires an endpoint-cluster client.");
         return metadata;
     }
 
@@ -58,7 +62,49 @@ internal sealed partial class SharpLinkClient
         return new NStudyContractSite<T>(this, registration, metadata, new());
     }
 
-    internal sealed class NStudyPreparedSite(ClientConnection connection, NStudyClientRoute route, NStudyAck ack)
+    internal sealed class NStudyPreparedSite
+    {
+        private readonly NStudyPreparedRoute? _single;
+        private readonly NStudyPreparedRoute[]? _cohort;
+
+        internal NStudyPreparedSite(NStudyPreparedRoute single) => _single = single;
+        internal NStudyPreparedSite(NStudyPreparedRoute[] cohort) => _cohort = cohort;
+
+        internal bool IsBalanced => _cohort is not null;
+        internal NStudyAck Ack => (_single ?? _cohort![0]).Ack;
+
+        internal bool TryGetConnection(out ClientConnection connection)
+        {
+            connection = null!;
+            return _single?.TryGetConnection(out connection) == true;
+        }
+
+        internal NStudyPreparedRoute? Find(ClientConnection connection)
+        {
+            if (_cohort is null)
+                return _single!.IsReadyOn(connection) ? _single : null;
+            foreach (var route in _cohort)
+                if (route.IsReadyOn(connection))
+                    return route;
+            return null;
+        }
+
+        internal NStudyClientRoute RequireRoute(ClientConnection connection) =>
+            Find(connection)?.RequireRoute() ?? throw Unavailable();
+
+        internal bool CanSelectFrom(ClientConnection[] connections)
+        {
+            foreach (var connection in connections)
+                if (connection.CanAcceptCalls && Find(connection) is not null)
+                    return true;
+            return false;
+        }
+
+        internal static SharpLinkException Unavailable()
+            => new(SharpLinkErrorCode.Unavailable, "The private RPC site needs a current prepared Session.");
+    }
+
+    internal sealed class NStudyPreparedRoute(ClientConnection connection, NStudyClientRoute route, NStudyAck ack)
     {
         // A prepared site is not an owner of a retired physical Session.
         private readonly WeakReference<ClientConnection> _connection = new(connection);
@@ -66,17 +112,12 @@ internal sealed partial class SharpLinkClient
         internal NStudyAck Ack { get; } = ack;
 
         internal bool TryGetConnection(out ClientConnection connection) => _connection.TryGetTarget(out connection!);
-        internal NStudyClientRoute RequireRoute() => _route.TryGetTarget(out var route) ? route : throw Unavailable();
+        internal NStudyClientRoute RequireRoute() =>
+            _route.TryGetTarget(out var route) ? route : throw NStudyPreparedSite.Unavailable();
         internal bool IsReadyOn(ClientConnection connection)
             => _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection) &&
                _route.TryGetTarget(out var route) && route.IsOpenOn(connection.Session);
 
-        internal bool Matches(NStudyObservedTarget? target)
-            => target is not { } observed ||
-                Ack.Authority == observed.Authority && Ack.Target == observed.Target;
-
-        internal static SharpLinkException Unavailable()
-            => new(SharpLinkErrorCode.Unavailable, "The private RPC site needs a current prepared Session.");
     }
 
     internal sealed class NStudyPreparationCell
@@ -87,15 +128,18 @@ internal sealed partial class SharpLinkClient
 
     internal sealed class NStudyContractPreparation
     {
+        internal const int MaximumCohortSize = 64;
         internal readonly Lock Gate = new();
         internal NStudyPreparedSite? Ready;
+        internal NStudyPreparedSite? BalancedReady;
         internal PrepareOperation? InFlight;
     }
 
-    internal sealed class PrepareOperation(ClientConnection? connection, NStudyObservedTarget? observation)
+    internal sealed class PrepareOperation(ClientConnection? connection, NStudyObservedTarget? observation, ClientConnection[]? cohort)
     {
         internal ClientConnection? FixedConnection { get; } = connection;
         internal NStudyObservedTarget? Observation { get; } = observation;
+        internal ClientConnection[]? Cohort { get; } = cohort;
         internal TaskCompletionSource<NStudyPreparedSite> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -107,16 +151,19 @@ internal sealed partial class SharpLinkClient
         private readonly RpcHash128 _hash;
         private readonly SharpLinkMetadata? _metadata;
         private readonly NStudyContractPreparation _preparation;
+        private readonly bool _balancePreparedEndpoints;
         private readonly FrozenDictionary<long, RpcMethodDescriptor>? _manualMethods;
 
         internal NStudyContractSite(SharpLinkClient client, ClientProxyRegistration registration,
-            SharpLinkMetadata? metadata, NStudyContractPreparation preparation, bool manual = true)
+            SharpLinkMetadata? metadata, NStudyContractPreparation preparation, bool manual = true,
+            bool balancePreparedEndpoints = false)
         {
             _client = client;
             _registration = registration;
             _hash = registration.NStudyAssemblyHash;
             _metadata = metadata;
             _preparation = preparation;
+            _balancePreparedEndpoints = balancePreparedEndpoints;
             var contract = registration.Descriptor;
             if (contract.Methods.Any(method =>
                     method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay or RpcMethodKind.ServerStreaming or
@@ -150,6 +197,17 @@ internal sealed partial class SharpLinkClient
             cancellationToken.ThrowIfCancellationRequested();
             var deadline = RpcDeadline.Create(timeout, _client._runtimeContext.TimeProvider);
             EnsureLocalReady();
+            ClientConnection[]? cohort = null;
+            if (_balancePreparedEndpoints)
+            {
+                if (observed is not null)
+                    throw new NotSupportedException("An exact observed registration names one physical Session, not a cohort.");
+                cohort = _client._cluster!.CaptureReadyConnections();
+                if (cohort.Length == 0)
+                    throw NStudyPreparedSite.Unavailable();
+                if (cohort.Length > NStudyContractPreparation.MaximumCohortSize)
+                    throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Too many Ready Sessions for one prepared cohort.");
+            }
             // Only the shared operation leader consults a cluster endpoint selector. Reusing a
             // live Ready site must not consult it again, even if the ranking policy changes.
             var connection = _client._cluster is null || observed is not null
@@ -158,14 +216,14 @@ internal sealed partial class SharpLinkClient
                 exact.Hash != _hash || exact.Target == default || !connection!.Session.HasNStudyAuthority(exact.Authority)))
                 throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
                     "The observed registration does not belong to this contract and physical Session.");
-            if (Volatile.Read(ref _preparation.Ready) is { } current && CanReuse(current, connection, observed))
-                return ValueTask.FromResult(ConfirmWaiter(current, deadline, cancellationToken));
+            if (ReadPrepared() is { } current && CanReuse(current, connection, observed, cohort))
+                return ValueTask.FromResult(ConfirmWaiter(current, cohort, deadline, cancellationToken));
 
-            return AwaitPreparationAsync(connection, deadline, cancellationToken, observed);
+            return AwaitPreparationAsync(connection, deadline, cancellationToken, observed, cohort);
         }
 
         private async ValueTask<NStudyAck> AwaitPreparationAsync(ClientConnection? connection, RpcDeadline deadline,
-            CancellationToken cancellationToken, NStudyObservedTarget? observed)
+            CancellationToken cancellationToken, NStudyObservedTarget? observed, ClientConnection[]? cohort)
         {
             _client.ReserveNStudyPrepareWaiter();
             try
@@ -175,25 +233,26 @@ internal sealed partial class SharpLinkClient
                 NStudyPreparedSite? alreadyReady = null;
                 lock (_preparation.Gate)
                 {
-                    if (_preparation.Ready is { } current && CanReuse(current, connection, observed))
+                    if (ReadPrepared() is { } current && CanReuse(current, connection, observed, cohort))
                     {
                         alreadyReady = current;
                         operation = null!;
                     }
                     else if (_preparation.InFlight is { } pending)
                     {
-                        if (!ReferenceEquals(pending.FixedConnection, connection) || pending.Observation != observed)
+                        if (!ReferenceEquals(pending.FixedConnection, connection) || pending.Observation != observed ||
+                            (pending.Cohort is null) != (cohort is null))
                             throw NStudyPreparedSite.Unavailable();
                         operation = pending;
                     }
                     else
                     {
-                        operation = _preparation.InFlight = new PrepareOperation(connection, observed);
+                        operation = _preparation.InFlight = new PrepareOperation(connection, observed, cohort);
                         start = true;
                     }
                 }
                 if (alreadyReady is not null)
-                    return ConfirmWaiter(alreadyReady, deadline, cancellationToken);
+                    return ConfirmWaiter(alreadyReady, cohort, deadline, cancellationToken);
 
                 if (start)
                     StartPreparation(operation);
@@ -209,24 +268,44 @@ internal sealed partial class SharpLinkClient
                         .ConfigureAwait(false);
                 }
                 catch (TimeoutException) { throw CreateDeadlineExceededException(); }
-                return ConfirmWaiter(prepared, deadline, cancellationToken);
+                return ConfirmWaiter(prepared, cohort, deadline, cancellationToken);
             }
             finally { _client.ReturnNStudyPrepareWaiter(); }
         }
 
-        private static bool CanReuse(NStudyPreparedSite prepared, ClientConnection? expected, NStudyObservedTarget? observed) =>
-            prepared.Matches(observed) && prepared.TryGetConnection(out var connection) &&
-            (expected is null || ReferenceEquals(expected, connection)) && connection.CanAcceptCalls && prepared.IsReadyOn(connection);
+        private NStudyPreparedSite? ReadPrepared() => _balancePreparedEndpoints
+            ? Volatile.Read(ref _preparation.BalancedReady) : Volatile.Read(ref _preparation.Ready);
 
-        private NStudyAck ConfirmWaiter(NStudyPreparedSite prepared, RpcDeadline deadline,
+        private static bool CanReuse(NStudyPreparedSite prepared, ClientConnection? expected,
+            NStudyObservedTarget? observed, ClientConnection[]? cohort)
+        {
+            if (cohort is not null)
+            {
+                foreach (var peer in cohort)
+                    if (!peer.CanAcceptCalls || prepared.Find(peer) is null)
+                        return false;
+                return true;
+            }
+            return (observed is not { } exact || prepared.Ack.Authority == exact.Authority && prepared.Ack.Target == exact.Target) &&
+                prepared.TryGetConnection(out var connection) && (expected is null || ReferenceEquals(expected, connection)) &&
+                connection.CanAcceptCalls && prepared.Find(connection) is not null;
+        }
+
+        private NStudyAck ConfirmWaiter(NStudyPreparedSite prepared, ClientConnection[]? cohort, RpcDeadline deadline,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (deadline.IsExpired(_client._runtimeContext.TimeProvider))
                 throw CreateDeadlineExceededException();
             EnsureLocalReady();
-            if (!prepared.TryGetConnection(out var connection) || !prepared.IsReadyOn(connection) ||
-                !_client.IsNStudyPreparationConnectionCurrent(connection))
+            if (cohort is not null)
+            {
+                foreach (var peer in cohort)
+                    if (prepared.Find(peer) is null || !_client.IsNStudyPreparationConnectionCurrent(peer))
+                        throw NStudyPreparedSite.Unavailable();
+            }
+            else if (!prepared.TryGetConnection(out var connection) || prepared.Find(connection) is null ||
+                     !_client.IsNStudyPreparationConnectionCurrent(connection))
                 throw NStudyPreparedSite.Unavailable();
             return prepared.Ack;
         }
@@ -255,65 +334,129 @@ internal sealed partial class SharpLinkClient
         {
             NStudyPreparedSite? ready = null;
             Exception? failure = null;
+            var clock = _client._runtimeContext.TimeProvider;
+            var deadline = RpcDeadline.Create(RpcSession.NStudyTimeout, clock);
+            using var timer = new CancellationTokenSource(RpcSession.NStudyTimeout, clock);
             try
             {
-                var contract = _registration.Descriptor.ContractId;
-                var clock = _client._runtimeContext.TimeProvider;
-                var deadline = RpcDeadline.Create(RpcSession.NStudyTimeout, clock);
-                using var timer = new CancellationTokenSource(RpcSession.NStudyTimeout, clock);
-                EnsureLocalReady();
-                var connection = operation.FixedConnection ?? _client._cluster!.GetReadyConnection(
-                    method: null, retrySelection: null, attemptOutcome: null, reserveCall: false);
-                var session = connection.Session;
-                using var budget = CancellationTokenSource.CreateLinkedTokenSource(timer.Token,
-                    _client._shutdownCts.Token, session.LifetimeToken);
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(timer.Token, _client._shutdownCts.Token);
                 var ct = budget.Token;
-                var bound = default(NStudyAck);
-                try
+                EnsureLocalReady();
+                if (operation.Cohort is { } cohort)
                 {
-                    EnsureLocalReady();
-                    // Query authority and local hash were checked before starting. An exact Bind
-                    // still validates current remote registration under the peer's registry gate;
-                    // a lagging unsolicited manifest is not the authority for this path.
-                    ct.ThrowIfCancellationRequested();
-                    if (!_client.IsNStudyPreparationConnectionCurrent(connection))
-                        throw NStudyPreparedSite.Unavailable();
-                    if (operation.Observation is null)
-                        _client.ValidateNStudyRemoteContractOn(_registration, session);
-                    bound = await BindNStudyContractOnAsync(connection, contract, _hash,
-                        operation.Observation?.Target ?? default, ct).ConfigureAwait(false);
-                    if (BeforePublishingPreparationForTests is { } beforePublish)
-                        await beforePublish(bound, ct).ConfigureAwait(false);
-                    ct.ThrowIfCancellationRequested();
-                    if (deadline.IsExpired(clock))
-                        throw CreateDeadlineExceededException();
-                    EnsureLocalReady();
-                    var route = session.CaptureNStudyRoute(contract);
-                    if (route.Token != bound.BindingId || route.Target != bound.Target || route.Hash != _hash ||
-                        !route.IsOpenOn(session) || !_client.IsNStudyPreparationConnectionCurrent(connection))
-                        throw NStudyPreparedSite.Unavailable();
-                    ready = new NStudyPreparedSite(connection, route, bound);
+                    ready = await PrepareCohortAsync(cohort, deadline, ct).ConfigureAwait(false);
                 }
-                catch (Exception error)
+                else
                 {
-                    if (bound.BindingId != 0 && session.HasNStudyBinding(contract, bound.BindingId))
-                    {
-                        try { await session.ReleaseNStudyBindingAsync(contract, ct, bound.BindingId).ConfigureAwait(false); }
-                        catch (Exception cleanup) when (cleanup is not OutOfMemoryException and not StackOverflowException)
-                        {
-                            if (session.HasNStudyBinding(contract, bound.BindingId))
-                                session.NotifyDisconnected(cleanup);
-                        }
-                    }
-                    if (error is OperationCanceledException && timer.IsCancellationRequested)
-                        throw CreateDeadlineExceededException();
-                    if (error is OperationCanceledException && _client._shutdownCts.IsCancellationRequested)
-                        throw CreateConnectionClosedException("Client is not accepting Prepare.");
-                    throw;
+                    var connection = operation.FixedConnection ?? _client._cluster!.GetReadyConnection(
+                        method: null, retrySelection: null, attemptOutcome: null, reserveCall: false);
+                    var route = operation.Observation is null ? FindExistingRoute(connection) : null;
+                    route ??= await PreparePhysicalAsync(connection, operation.Observation, deadline, ct).ConfigureAwait(false);
+                    ready = new NStudyPreparedSite(route);
                 }
+            }
+            catch (OperationCanceledException) when (timer.IsCancellationRequested)
+            {
+                failure = CreateDeadlineExceededException();
+            }
+            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+            {
+                failure = CreateConnectionClosedException("Client is not accepting Prepare.");
             }
             catch (Exception error) { failure = error; }
             finally { FinishPreparation(operation, ready, failure); }
+        }
+
+        private NStudyPreparedRoute? FindExistingRoute(ClientConnection connection) =>
+            Volatile.Read(ref _preparation.Ready)?.Find(connection) ??
+            Volatile.Read(ref _preparation.BalancedReady)?.Find(connection);
+
+        private async Task<NStudyPreparedSite> PrepareCohortAsync(ClientConnection[] peers, RpcDeadline deadline, CancellationToken ct)
+        {
+            var routes = new NStudyPreparedRoute[peers.Length];
+            var installed = new List<(ClientConnection Peer, NStudyPreparedRoute Route)>();
+            try
+            {
+                for (var i = 0; i < peers.Length; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var peer = peers[i];
+                    var route = FindExistingRoute(peer);
+                    if (route is null)
+                    {
+                        route = await PreparePhysicalAsync(peer, null, deadline, ct).ConfigureAwait(false);
+                        installed.Add((peer, route));
+                    }
+                    routes[i] = route;
+                }
+                EnsureLocalReady();
+                ct.ThrowIfCancellationRequested();
+                if (deadline.IsExpired(_client._runtimeContext.TimeProvider))
+                    throw CreateDeadlineExceededException();
+                for (var i = 0; i < peers.Length; i++)
+                    if (!routes[i].IsReadyOn(peers[i]) || !_client.IsNStudyPreparationConnectionCurrent(peers[i]))
+                        throw NStudyPreparedSite.Unavailable();
+                return new NStudyPreparedSite(routes);
+            }
+            catch
+            {
+                // Do not replace the published cohort with a partial one or release a route
+                // reused from a previously published pinned/cohort preparation.
+                foreach (var (peer, route) in installed)
+                    await ReleaseFailedPreparationAsync(peer.Session, route.Ack, ct).ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        private async ValueTask<NStudyPreparedRoute> PreparePhysicalAsync(ClientConnection connection,
+            NStudyObservedTarget? observation, RpcDeadline deadline, CancellationToken operationToken)
+        {
+            var contract = _registration.Descriptor.ContractId;
+            var session = connection.Session;
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(operationToken, session.LifetimeToken);
+            var ct = budget.Token;
+            var bound = default(NStudyAck);
+            try
+            {
+                EnsureLocalReady();
+                ct.ThrowIfCancellationRequested();
+                if (!_client.IsNStudyPreparationConnectionCurrent(connection))
+                    throw NStudyPreparedSite.Unavailable();
+                // Exact observations bypass only the broadcast manifest, not the peer's registry gate.
+                if (observation is null)
+                    _client.ValidateNStudyRemoteContractOn(_registration, session);
+                bound = await BindNStudyContractOnAsync(connection, contract, _hash,
+                    observation?.Target ?? default, ct).ConfigureAwait(false);
+                if (BeforePublishingPreparationForTests is { } beforePublish)
+                    await beforePublish(bound, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (deadline.IsExpired(_client._runtimeContext.TimeProvider))
+                    throw CreateDeadlineExceededException();
+                EnsureLocalReady();
+                var route = session.CaptureNStudyRoute(contract);
+                if (route.Token != bound.BindingId || route.Target != bound.Target || route.Hash != _hash ||
+                    !route.IsOpenOn(session) || !_client.IsNStudyPreparationConnectionCurrent(connection))
+                    throw NStudyPreparedSite.Unavailable();
+                return new NStudyPreparedRoute(connection, route, bound);
+            }
+            catch
+            {
+                await ReleaseFailedPreparationAsync(session, bound, ct).ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        private async ValueTask ReleaseFailedPreparationAsync(RpcSession session, NStudyAck bound, CancellationToken ct)
+        {
+            var contract = _registration.Descriptor.ContractId;
+            if (bound.BindingId == 0 || !session.HasNStudyBinding(contract, bound.BindingId))
+                return;
+            try { await session.ReleaseNStudyBindingAsync(contract, ct, bound.BindingId).ConfigureAwait(false); }
+            catch (Exception cleanup) when (cleanup is not OutOfMemoryException and not StackOverflowException)
+            {
+                if (session.HasNStudyBinding(contract, bound.BindingId))
+                    session.NotifyDisconnected(cleanup);
+            }
         }
 
         private void FinishPreparation(PrepareOperation operation, NStudyPreparedSite? ready, Exception? error)
@@ -321,7 +464,12 @@ internal sealed partial class SharpLinkClient
             lock (_preparation.Gate)
             {
                 if (ready is not null)
-                    Volatile.Write(ref _preparation.Ready, ready);
+                {
+                    if (ready.IsBalanced)
+                        Volatile.Write(ref _preparation.BalancedReady, ready);
+                    else
+                        Volatile.Write(ref _preparation.Ready, ready);
+                }
                 _preparation.InFlight = null;
             }
             if (error is not null)
@@ -404,7 +552,7 @@ internal sealed partial class SharpLinkClient
         {
             if (method.ContractId != _registration.Descriptor.ContractId || method.Kind != kind)
                 throw new InvalidOperationException("The method does not use this private contract receiver.");
-            return Volatile.Read(ref _preparation.Ready) ?? throw NStudyPreparedSite.Unavailable();
+            return ReadPrepared() ?? throw NStudyPreparedSite.Unavailable();
         }
 
         ValueTask<TResponse> IRpcContractChannel.InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
@@ -460,8 +608,8 @@ internal sealed partial class SharpLinkClient
     internal sealed class NStudyContractSite<T> : NStudyContractSite, IRpcChannel where T : IService
     {
         internal NStudyContractSite(SharpLinkClient client, ClientProxyRegistration registration,
-            SharpLinkMetadata? metadata, NStudyContractPreparation preparation)
-            : base(client, registration, metadata, preparation, manual: false)
+            SharpLinkMetadata? metadata, NStudyContractPreparation preparation, bool balancePreparedEndpoints = false)
+            : base(client, registration, metadata, preparation, manual: false, balancePreparedEndpoints: balancePreparedEndpoints)
             => Service = (T)registration.Descriptor.ProxyFactory(this, registration.Codecs);
 
         internal T Service { get; }

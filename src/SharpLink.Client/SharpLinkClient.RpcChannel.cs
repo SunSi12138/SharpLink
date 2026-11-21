@@ -238,9 +238,9 @@ internal sealed partial class SharpLinkClient
         NStudyPreparedSite? prepared = null)
     {
         if (_cluster is not null)
-            return prepared is null
-                ? _cluster.GetReadyConnection(method, retrySelection, attemptOutcome)
-                : ReserveClusterPreparedSite(prepared, attemptOutcome);
+            return prepared is { IsBalanced: false }
+                ? ReserveClusterPreparedSite(prepared, attemptOutcome)
+                : _cluster.GetReadyConnection(method, retrySelection, attemptOutcome, prepared: prepared);
 
         if (attemptOutcome is null || _fixedEndpoint is null || ReadyConnectionCount == 0)
             return prepared is null ? GetReadyConnection() : ReservePreparedSite(prepared);
@@ -267,7 +267,7 @@ internal sealed partial class SharpLinkClient
     {
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
-        if (!prepared.TryGetConnection(out var owner) || !prepared.IsReadyOn(owner) ||
+        if (!prepared.TryGetConnection(out var owner) || prepared.Find(owner) is null ||
             !TryGetNStudyClusterCandidate(owner, out var candidate))
             throw NStudyPreparedSite.Unavailable();
         if (outcome is not null && !outcome.TryAcquire(candidate))
@@ -289,7 +289,7 @@ internal sealed partial class SharpLinkClient
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         if (!prepared.TryGetConnection(out var connection) ||
-            !prepared.RequireRoute().IsOpenOn(connection.Session) ||
+            prepared.Find(connection) is null ||
             !connection.TryReserveExactCallAdmission())
             throw NStudyPreparedSite.Unavailable();
         return connection;
