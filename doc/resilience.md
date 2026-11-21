@@ -46,11 +46,13 @@ var readiness = await client.WaitForReadinessAsync(
 
 等待不会提高配置的 convergence target，也不会为 caller threshold 额外扩容；从 `Created` 等尚未建立 connectivity 的状态调用时，它会先启动或加入既有 `ConnectAsync` 生命周期。固定拓扑最多等待 1 个 endpoint；静态拓扑最多等待其构建时目标；动态拓扑最多等待配置的 `MinReadyEndpoints`，因此可以跨越当前不足或空 snapshot，等待 resolver 将来发布更大的拓扑。调用方取消只取消自己的等待。`Reconnecting` 会继续等待；初始 `ConnectAsync` 失败会原样传播，如果 race 中直接观察到 `Faulted` 则以 `Unavailable` 结束；Client 进入 `Draining` 或 `Stopped` 时以 `ConnectionClosed` 结束。Resolver 接受空 snapshot 时 readiness 为 `0/0/0/0`，且 `MeetsTarget=false`，但这不会改变 `ConnectAsync` 已有的 connectivity 语义。
 
+在 #999 的准备式代理上，`Ready` 只表示连接可用，`PrepareAsync` 才让指定契约可以使用它。设置 `RpcProxyOptions.BalancePreparedEndpoints` 后，策略在已准备的连接之间选路；仍可按原有配额扩连接池，但扩容或重连得到的新连接要在下一次显式准备后才加入。有已准备且仍健康的连接时，不必等待新连接准备就能继续处理调用。
+
 ## Retry
 
 Retry 默认关闭，只对标注 `[Idempotent]` 的 Unary 生效。`MaxAttempts` 是总尝试数（含首次），范围 1–10。Streaming 与 OneWay 不 retry；业务拒绝和明确参数错误不应通过换 endpoint 重试。
 
-每次 retry 重新选择 endpoint 并受原调用 deadline 约束。backoff、jitter 不能突破剩余 deadline。自定义 `ISharpLinkRetryPolicy` 应只根据 `SharpLinkRetryContext` 返回决定，不执行阻塞 I/O。
+每次 retry 在本次调用已准备的候选内重新选路，并受原调用 deadline 约束。backoff、jitter 不能突破剩余 deadline。自定义 `ISharpLinkRetryPolicy` 应只根据 `SharpLinkRetryContext` 返回决定，不执行阻塞 I/O。
 
 ## Endpoint admission 与 Circuit Breaker
 

@@ -144,7 +144,8 @@ internal sealed partial class SharpLinkClient
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
-                    if (prepared is null && reserveCall && connection.ActiveCallCount != 0)
+                    // Expansion opens transport only. It does not add the new Session to a prepared cohort.
+                    if (reserveCall && connection.ActiveCallCount != 0)
                         EnsureExpansion(endpoints[selectedIndex]);
                     return connection;
                 }
