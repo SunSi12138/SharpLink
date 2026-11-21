@@ -16,6 +16,7 @@ namespace SharpLink.StreamLoadTest;
 
 public static class Program
 {
+    private static readonly TimeSpan s_prepareTimeout = TimeSpan.FromSeconds(10);
     private static PerformanceEvidenceCollector? s_evidenceCollector;
 
     public static async Task Main(string[] args)
@@ -217,7 +218,10 @@ public static class Program
     {
         await client.ConnectAsync();
 
-        var rpc = client.Get<IStreamLoadService>();
+        var proxy = client.CreateProxy<IStreamLoadService>(new RpcProxyOptions
+        {
+            BalancePreparedEndpoints = options.MaxConnections > 1
+        });
         var results = new List<StageResult>();
         foreach (var operation in ResolveOperations(options.Operation))
         {
@@ -226,10 +230,11 @@ public static class Program
                 var warmupDurationSeconds = 0d;
                 if (options.WarmupSeconds > 0)
                 {
+                    await proxy.PrepareAsync(s_prepareTimeout);
                     Console.WriteLine($"[Warmup] op={operation} c={concurrency} for {options.WarmupSeconds}s");
                     var warmupStarted = Stopwatch.GetTimestamp();
                     _ = await ExecuteStageAsync(
-                        rpc,
+                        proxy.Service,
                         operation,
                         options,
                         options.WarmupSeconds,
@@ -239,8 +244,10 @@ public static class Program
                     warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
                 }
 
+                // Include newly Ready Sessions at the boundary, never inside a timed worker.
+                await proxy.PrepareAsync(s_prepareTimeout);
                 var result = await ExecuteStageAsync(
-                    rpc,
+                    proxy.Service,
                     operation,
                     options,
                     options.DurationSeconds,

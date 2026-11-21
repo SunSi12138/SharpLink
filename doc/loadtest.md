@@ -23,6 +23,12 @@ dotnet build test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -v minimal
 dotnet build test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj -v minimal
 ```
 
+## #999 验证分支的连接准备
+
+`LoadTest` 和 `StreamLoadTest` 在每次预热及正式阶段开始前显式 `PrepareAsync`，准备时间不计入阶段耗时。独立 tail observer 也在正式阶段开始前准备自己的连接。多连接模式只在该阶段已准备的连接间分配调用；预热期间扩出来的新连接可以在正式阶段前加入，正式阶段中新就绪的连接须等到下一次准备。
+
+做稳态对照时，两边应使用相同、已就绪的连接集合。固定端点池可将 `--min-connections` 和 `--max-connections` 设为相同值；不要把 `--warmup 0` 的自适应池当成已扩满的池。
+
 ## 快速开始
 
 1. LoadTest（本机 TCP）
