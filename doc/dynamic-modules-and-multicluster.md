@@ -125,9 +125,9 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ### Proxy 与 endpoint 语义
 
-- Add 后新 `Get<T>()` 选择新 slot；若调用要求立即远端可用，应先显式 `WaitForReadyAsync(cluster)`。
-- Replace 后新 `Get<T>()` 绑定新 child；Replace 前缓存的 Proxy 继续绑定旧 child，并在旧 child开始停止后拒绝新调用。
-- Remove 后新 `Get<T>()` 立即失败；旧 Proxy 最终观察到 child 已停止。
+- Add 后 `CreateProxy<T>()` 选择当前 slot；发起调用前先等待 `WaitForReadyAsync(cluster)`，再在句柄上 `PrepareAsync`。
+- Replace 后新建代理会选择新 child，但仍需准备；原代理留在旧 child，并在旧 child 开始停止后拒绝新调用。
+- Remove 后无法为已撤销的路由新建代理；原代理最终观察到 child 已停止。
 - 不自动重绑定旧 Proxy，因此 RPC 热路径没有 coordinator 查询或额外的 slot indirection。
 - `UseCluster(...)` 只配置一个 child 内部的多 endpoint pool，不代表 coordinator slot。
 - DNS/dynamic resolver 自身的 endpoint 更新不需要 Replace；冻结的静态 endpoint、transport、pool 或负载均衡配置变化使用 `ReplaceClusterAsync`。
@@ -145,9 +145,8 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ```csharp
 await client.WaitForRemoteContractAsync(contractId, expectedHash, cancellationToken);
-var proxy = client.Get<IContract>();
-// 多集群只等待目标 slot：
-await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, cancellationToken);
+var proxy = client.CreateProxy<IContract>();
+await proxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
 ```
 
 普通屏障在所有当前 Ready 连接都广告目标 ID 和完全相同哈希时完成，至少需要一条 Ready 连接。
@@ -157,10 +156,10 @@ await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, can
 只结束自己的等待。初次等待加入连接生命周期，重连重新观察新连接的清单，停机终止等待。
 注销后的缺失合同等待后续注册或取消，不保留代理、Type 或 Assembly。
 
-每条连接独立按 manifest generation 排序，不能比较不同连接的 generation。成功是当前观察，
-不是 lease，随后重连、注销或替换仍可能使同步 `Get` 失败。相同 ID/hash 已可见时立即成功，
-包括哈希相同的替换；它不证明业务实现或 Artifact generation 已发布。`Get` 继续保持同步，
-不会偷偷发起网络调用。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
+多集群可调用 `clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, cancellationToken)`，只等待目标 slot。
+每条连接独立按 manifest generation 排序，不能比较不同连接的 generation。屏障成功只证明当前已看到匹配的 ID/hash，
+不保证实现代次仍在，也不会建立绑定。`CreateProxy` 在本地同步执行；只有 `PrepareAsync` 让契约在选定连接上可调用。
+重连、注销或替换后，旧绑定可能失效；应为当前兼容契约重新准备。
 
 ## 跨端 generation synchronization
 

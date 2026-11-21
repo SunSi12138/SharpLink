@@ -12,7 +12,7 @@ SharpLink 是一个面向 .NET 10 的高性能 RPC 框架。契约、代理、St
 
 ## 安装与 package map
 
-当前 `dev` 的版本线为 `3.0.0`，Generated API 5 要求同版本包及精确 ABI identity；3.0 尚未发布时，请使用源码项目引用或本地打包的 NuGet feed。3.0 包可用后按项目职责安装：
+下面的示例使用 #999 验证分支的 `CreateProxy` / `PrepareAsync`。请在两端使用同一次构建的 SDK/runtime：仓库内用项目引用，独立项目用该构建的本地 NuGet feed，并将下方 `3.0.0` 换成实际包版本。已发布的 2.x 包请使用对应版本的示例。按项目职责安装：
 
 | Project role | Install | Why |
 | --- | --- | --- |
@@ -88,19 +88,21 @@ Server 的 canonical lifecycle 是 `StartAsync / WaitForShutdownAsync / StopAsyn
 
 Canonical source: [`samples/QuickStart.Client/Program.cs`](samples/QuickStart.Client/Program.cs)
 
-Client 建连、等待 Ready、获取生成代理并发起一次真实 Unary RPC：
+Client 先创建本地代理句柄；连接 Ready 后，为该契约准备连接，再用 `.Service` 发起一次真实 Unary RPC：
 
 ```csharp
+using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 await using var client = SharpClientBuilder.Create()
     .UseRequestTimeout(TimeSpan.FromSeconds(5))
     .UseTcp("127.0.0.1", 50051)
     .Build();
 
+var proxy = client.CreateProxy<IGreetingService>();
 await client.ConnectAsync(timeout.Token);
 await client.WaitForReadinessAsync(1, timeout.Token);
+await proxy.PrepareAsync(TimeSpan.FromSeconds(5), timeout.Token);
 
-var greeting = client.Get<IGreetingService>();
-var reply = await greeting.GreetAsync(
+var reply = await proxy.Service.GreetAsync(
     new GreetingRequest { Name = "SharpLink" },
     timeout.Token);
 ```
@@ -126,11 +128,11 @@ Client sample 在退出前显式 `StopAsync()`，并继续由 `await using` 做�
 
 | 用户问题 | 简短答案 | 进一步阅读 |
 | --- | --- | --- |
-| timeout/deadline 覆盖什么？ | 一个 RPC logical deadline 从调用创建开始，约束 endpoint admission/reselection、deadline-bearing request 的本地 emission 等待、response/stream lifetime、retry 与 backoff；到期不等于撤回已入队字节。generated Unary 的 pending table 满时默认立即本地 `ResourceExhausted`，不会排队等 slot。此前的 `ConnectAsync`、transport dial、handshake、`WaitForReadinessAsync` **不计入这个 RPC deadline**；handshake 有独立 `HandshakeTimeout`。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
-| `ConnectAsync` 成功意味着什么？ | 它完成 topology 自己的 connectivity 边界，不等于所有 endpoint fully ready。启动流量前必须要求 N 个 Ready endpoint 时，显式 `WaitForReadinessAsync(N)`。 | [`doc/resilience.md`](doc/resilience.md) |
+| timeout/deadline 覆盖什么？ | 一个 RPC logical deadline 从调用创建开始，约束 endpoint admission/reselection、deadline-bearing request 的本地 emission 等待、response/stream lifetime、retry 与 backoff；到期不等于撤回已入队字节。generated Unary 的 pending table 满时默认立即本地 `ResourceExhausted`，不会排队等 slot。此前的 `ConnectAsync`、transport dial、handshake、`WaitForReadinessAsync` 和 `PrepareAsync` **不计入这个 RPC deadline**；handshake 有独立 `HandshakeTimeout`。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
+| Ready 后为什么还要 `PrepareAsync`？ | `ConnectAsync` 完成拓扑的建连条件；`WaitForReadinessAsync(N)` 等待指定数量的节点就绪。`PrepareAsync` 才校验契约并绑定到可调用的连接。 | [`doc/resilience.md`](doc/resilience.md) |
 | `await OneWay` 成功意味着什么？ | 只说明本地发送边界成功：无 deadline 的普通 OneWay 到 SendPump admission；带 deadline 的 OneWay 还观察 transport flush。它不证明 Server 收到、handler 执行或副作用已提交；需要远端成功确认时使用 request/response RPC。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md) |
 | 运行时 multi-cluster mutation 被拒绝怎么判断？ | `AddClusterAsync` / `ReplaceClusterAsync` / `RemoveClusterAsync` 返回各自的 structured result；对预期 control-plane rejection 按 `SharpLinkClusterMutationFailureCode` 分支，不解析异常文本。Add 成功只表示 publication committed，需要立即 RPC 时再 `WaitForReadyAsync(cluster)`；Replace/Remove 的 cleanup 状态与 publication 成败分开报告。 | [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
-| replacement 后旧 proxy 怎样？ | `ReplaceClusterAsync` 前取得的 multi-cluster proxy 固定绑定旧 child，要使用新 child 必须重新 `Get<T>()`；server-side module/service replacement 与 endpoint topology/policy 更新不会要求重取普通 client proxy，但已开始的 call/physical attempt 不会中途迁移。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
+| replacement 后旧 proxy 怎样？ | `ReplaceClusterAsync` 后要在新 child 上 `CreateProxy` 并准备。普通 proxy 的契约绑定失效或连接更换后，需为当前兼容契约重新准备；已开始的调用不会迁到新连接。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) |
 | timeout/disconnect 后能直接 retry？ | 自动 retry 仅适用于 `[Idempotent]` Unary，并共享原 logical deadline；默认只重试 `Unavailable` / `ConnectionClosed`。timeout 或 disconnect **不证明 Server 没执行过请求**，因此只有业务上可安全重复的操作才应声明幂等并允许重试。 | [`doc/public-rpc-semantics.md`](doc/public-rpc-semantics.md)、[`doc/resilience.md`](doc/resilience.md) |
 
 ## Production-shaped template
@@ -141,7 +143,7 @@ Client sample 在退出前显式 `StopAsync()`，并继续由 `await using` 做�
 - [`samples/ProductionTemplate.Server`](samples/ProductionTemplate.Server/)
 - [`samples/ProductionTemplate.Client`](samples/ProductionTemplate.Client/)
 
-Server 模板覆盖 TLS、连接/调用 admission、pending/stream 上限、结构化日志、SharpLink ActivitySource 观测和 30 秒 graceful drain；Client 模板覆盖 TLS hostname 校验、请求 timeout、pending 上限、日志/trace、Ready 与显式 Stop。
+Server 模板覆盖 TLS、连接/调用 admission、pending/stream 上限、结构化日志、SharpLink ActivitySource 观测和 30 秒 graceful drain；Client 模板覆盖 TLS hostname 校验、请求 timeout、pending 上限、日志/trace、Ready 后的契约准备与显式 Stop。
 
 模板不会生成或信任测试证书。Server 从 deployment 提供的 PKCS#12 读取证书：
 
