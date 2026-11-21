@@ -93,6 +93,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     internal bool HasPayloadOwnerForDiagnostics => Volatile.Read(ref _payloadOwner) is not null;
     internal bool NStudyAcceptancePending => Volatile.Read(ref _nStudyAcceptancePending);
+    internal RpcMethodDescriptor? NStudyOutputMethod { get; set; }
 
     internal void RequireNStudyStreamAcceptance() => Volatile.Write(ref _nStudyAcceptancePending, true);
 
@@ -158,6 +159,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
         state._nStudyAcceptancePending = false;
+        state.NStudyOutputMethod = null;
         state._admissionProgramUse = null;
         state._admissionLease = null;
         state._payloadPool = null;
@@ -459,6 +461,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;
+        NStudyOutputMethod = null;
 
         while (true)
         {

@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkServer
     // The post-admission resource skeleton mirrors the immediate method and requires parity tests.
     private ValueTask DispatchAdmittedOneWayRpc(
         QueuedServiceSelection serviceSelection,
-        RpcMethodDescriptor descriptor,
+        NStudyMethodFacts facts,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -22,6 +22,7 @@ internal sealed partial class SharpLinkServer
         try
         {
             var session = connection.Session;
+            var descriptor = facts.Descriptor;
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
@@ -229,7 +230,7 @@ internal sealed partial class SharpLinkServer
 
             var supportsCooperativeCancellation =
                 (isCancellable || serviceInfo.Module is not null) &&
-                serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+                facts.SupportsCancellation;
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,
@@ -251,7 +252,7 @@ internal sealed partial class SharpLinkServer
                 : serverLoopToken;
 
             var callContext = CreateCallContext(
-                connection, serviceInfo.Stub, request.MethodHash, requestId,
+                connection, descriptor, requestId,
                 request.RpcDeadline, request.Metadata, invokeToken);
             try
             {
@@ -270,7 +271,7 @@ internal sealed partial class SharpLinkServer
                     serviceInfo,
                     connection,
                     session,
-                    request.MethodHash,
+                    descriptor,
                     requestId,
                     request.Arguments,
                     output: null,
@@ -305,9 +306,7 @@ internal sealed partial class SharpLinkServer
                     connection,
                     callContext,
                     session,
-                    serviceInfo.Stub,
-                    request.MethodHash,
-                    descriptor.ClientStreamCount,
+                    descriptor,
                     invokeToken,
                     requestOwner));
             }
@@ -317,7 +316,7 @@ internal sealed partial class SharpLinkServer
                 if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                        ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
+                        ex, callContext, session, descriptor, requestId, invokeToken));
                 }
                 ReleaseOneWayDispatchResources(
                     callState,

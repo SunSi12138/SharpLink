@@ -252,8 +252,8 @@ internal sealed partial class SharpLinkServer
 
         return connection.NStudyBindings.IsRetired(bindingId) ||
             (connection.NStudyBindings.TryResolve(bindingId, out var registration) &&
-             registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor) &&
-             descriptor.Kind == RpcMethodKind.OneWay && !descriptor.HasClientStreams)
+             registration.TryGetNStudyMethod(methodId, out var facts) &&
+             facts.Descriptor.Kind == RpcMethodKind.OneWay && !facts.Descriptor.HasClientStreams)
             ? 0 : UnresolvedClientStreamCount;
     }
 

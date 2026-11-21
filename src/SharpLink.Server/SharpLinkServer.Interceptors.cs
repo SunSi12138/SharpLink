@@ -6,13 +6,14 @@ internal sealed partial class SharpLinkServer
         ServiceRegistration registration,
         ServerConnectionState connection,
         RpcSession session,
-        long methodId,
+        RpcMethodDescriptor methodDescriptor,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
+        var methodId = methodDescriptor.MethodId;
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
                 requestId,
@@ -28,17 +29,16 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context,
+                methodDescriptor);
         }
 
         var isStream = false;
         var hasRequestStreams = false;
         StreamManager.InputStreamDrain inputDrain = default;
-        RpcMethodDescriptor? methodDescriptor = null;
         if (registration.HasModule)
         {
-            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
-            methodDescriptor = descriptor;
+            var descriptor = methodDescriptor;
             isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
             hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
@@ -85,8 +85,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+            var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
             if (!inputDrain.IsEmpty)
                 return CompleteDynamicOneWayInputAsync(ValueTask.FromException(exception),
@@ -110,8 +109,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+            var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -202,7 +200,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor,
+        RpcMethodDescriptor methodDescriptor,
         StreamManager.InputStreamDrain inputDrain)
     {
         if (!lease.RequiresDisposal)
@@ -262,7 +260,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor,
+        RpcMethodDescriptor methodDescriptor,
         StreamManager.InputStreamDrain inputDrain)
     {
         ServiceLease lease;
@@ -272,8 +270,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+            var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -305,10 +302,9 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        RpcMethodDescriptor? methodDescriptor = null)
+        RpcMethodDescriptor methodDescriptor)
     {
-        var telemetry = StartServerTelemetryCall(
-            methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+        var telemetry = StartServerTelemetryCall(methodDescriptor, requestId);
         try
         {
             var invocation = InvokeServiceCoreAsync(
@@ -350,7 +346,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        RpcMethodDescriptor methodDescriptor)
     {
         Exception? terminalException = null;
         try
@@ -588,15 +584,14 @@ internal sealed partial class SharpLinkServer
         Exception exception,
         SharpLinkCallContextSnapshot callContext,
         RpcSession session,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         long requestId,
         CancellationToken cancellationToken)
     {
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
-                GetMethodDescriptor(stub, methodId),
+                method,
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
@@ -637,8 +632,8 @@ internal sealed partial class SharpLinkServer
         long methodId,
         Exception exception)
     {
-        if (exception is OperationCanceledException &&
-            callCancellations.TryCapture(
+        RpcMethodDescriptor? capturedMethod = null;
+        if (callCancellations.TryCapture(
                 requestId,
                 static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
                 out var callLease) &&
@@ -646,9 +641,9 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
-                exception = MapServerCancellationException(
-                    callLease.State,
-                    callLease.State.Deadline);
+                capturedMethod = callLease.State.NStudyOutputMethod;
+                if (exception is OperationCanceledException)
+                    exception = MapServerCancellationException(callLease.State, callLease.State.Deadline);
             }
             finally
             {
@@ -659,14 +654,13 @@ internal sealed partial class SharpLinkServer
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
         if (SharpLinkCallContext.Current is { } callContext &&
-            Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
+            capturedMethod is { } method && method.ContractId == contractId && method.MethodId == methodId)
         {
             return MapServiceException(
                 exception,
                 callContext,
                 session,
-                serviceInfo.Stub,
-                methodId,
+                method,
                 requestId,
                 CancellationToken.None);
         }

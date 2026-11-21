@@ -542,8 +542,8 @@ internal sealed partial class SharpLinkServer
                     instance: null,
                     callerOwned: false);
                 var registration = definition.Build(_serviceProvider, module);
-                registration.NStudyContractHash = contract.Manifest.RpcAssemblyHash;
                 createdServices.Add(registration);
+                registration.PrepareNStudyMethods(contract.Manifest, contract.Contract);
                 nextServices.Add(service.ContractId, registration);
             }
 

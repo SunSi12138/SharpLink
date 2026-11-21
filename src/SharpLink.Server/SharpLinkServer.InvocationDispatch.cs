@@ -80,8 +80,8 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var nMethod) ||
-                !IsSupportedNStudyTwoWayShape(nMethod, flags))
+            if (!serviceInfo.TryGetNStudyMethod(request.MethodHash, out var facts) ||
+                !IsSupportedNStudyTwoWayShape(facts.Descriptor, flags))
             {
                 return session.SendRpcErrorWithBackpressureAsync(requestId,
                     new SharpLinkException(SharpLinkErrorCode.Unimplemented,
@@ -100,7 +100,7 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
-                var descriptor = nMethod;
+                var descriptor = facts.Descriptor;
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
@@ -165,7 +165,7 @@ internal sealed partial class SharpLinkServer
                         admittedCallState,
                         admissionProgram,
                         binding,
-                        descriptor.HasClientStreams);
+                        facts);
                 }
 
                 var decision = admissionTask.Result;
@@ -234,7 +234,7 @@ internal sealed partial class SharpLinkServer
                     payload,
                     request,
                     serviceInfo,
-                    nMethod.HasClientStreams,
+                    facts,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -366,7 +366,7 @@ internal sealed partial class SharpLinkServer
                 flags,
                 request,
                 serviceInfo,
-                nMethod.HasClientStreams,
+                facts,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,
@@ -402,8 +402,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -456,8 +455,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-                        stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -489,8 +487,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -562,8 +559,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-                        stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);

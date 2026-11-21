@@ -46,10 +46,10 @@ internal sealed partial class SharpLinkServer
 
             // Only the exact method's shape can reach a typed route. The independent
             // count is enough to discard input even if the exact method isn't available.
-            if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor) ||
-                descriptor.Kind != RpcMethodKind.OneWay ||
-                descriptor.HasClientStreams != (declaredClientStreamCount != 0) ||
-                descriptor.ClientStreamCount != declaredClientStreamCount)
+            if (!serviceInfo.TryGetNStudyMethod(request.MethodHash, out var facts) ||
+                facts.Descriptor.Kind != RpcMethodKind.OneWay ||
+                facts.Descriptor.HasClientStreams != (declaredClientStreamCount != 0) ||
+                facts.Descriptor.ClientStreamCount != declaredClientStreamCount)
             {
                 if (admittedCallState is not null)
                 {
@@ -64,6 +64,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
+            var descriptor = facts.Descriptor;
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 DrainRejectedOneWayStreams(
@@ -162,7 +163,7 @@ internal sealed partial class SharpLinkServer
                         flags,
                         requestCancellationMap,
                         serverLoopToken,
-                        descriptor,
+                        facts,
                         admittedCallState,
                         admissionProgram,
                         binding));
@@ -364,7 +365,7 @@ internal sealed partial class SharpLinkServer
 
             var supportsCooperativeCancellation =
                 (isCancellable || serviceInfo.Module is not null) &&
-                serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+                facts.SupportsCancellation;
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,
@@ -386,7 +387,7 @@ internal sealed partial class SharpLinkServer
                 : serverLoopToken;
 
             var callContext = CreateCallContext(
-                connection, serviceInfo.Stub, request.MethodHash, requestId,
+                connection, descriptor, requestId,
                 request.RpcDeadline, request.Metadata, invokeToken);
             try
             {
@@ -405,7 +406,7 @@ internal sealed partial class SharpLinkServer
                     serviceInfo,
                     connection,
                     session,
-                    request.MethodHash,
+                    descriptor,
                     requestId,
                     request.Arguments,
                     output: null,
@@ -440,9 +441,7 @@ internal sealed partial class SharpLinkServer
                     connection,
                     callContext,
                     session,
-                    serviceInfo.Stub,
-                    request.MethodHash,
-                    descriptor.ClientStreamCount,
+                    descriptor,
                     invokeToken,
                     requestOwner));
             }
@@ -452,7 +451,7 @@ internal sealed partial class SharpLinkServer
                 if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                        ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
+                        ex, callContext, session, descriptor, requestId, invokeToken));
                 }
                 ReleaseOneWayDispatchResources(
                     callState,

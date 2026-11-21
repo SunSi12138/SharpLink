@@ -111,10 +111,30 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal SharpLinkDynamicModule? Module { get; }
     private readonly Guid _nStaticRegistration = Guid.NewGuid();
-    internal RpcHash128 NStudyContractHash { get; set; }
+    private FrozenDictionary<long, NStudyMethodFacts> _nStudyMethods = FrozenDictionary<long, NStudyMethodFacts>.Empty;
+    internal RpcHash128 NStudyContractHash { get; private set; }
     internal NStudyTarget NStudyTarget => Module is { } module
         ? new(module.NStudyRegistration, module.NStudyPublication)
         : new(_nStaticRegistration, 1);
+
+    internal void PrepareNStudyMethods(ISharpLinkGeneratedAssemblyManifest manifest,
+        SharpLinkGeneratedContractDescriptor contract)
+    {
+        var methods = new Dictionary<long, NStudyMethodFacts>(contract.Methods.Count);
+        foreach (var declared in contract.Methods)
+        {
+            if (!Stub.TryGetMethodDescriptor(declared.MethodId, out var descriptor) ||
+                descriptor.MethodId != declared.MethodId || descriptor.ContractId != contract.ContractId ||
+                descriptor.Kind != declared.Kind)
+                throw new InvalidOperationException("The private registration needs exact generated method facts.");
+            methods.Add(declared.MethodId, new(descriptor, Stub.SupportsCancellation(declared.MethodId)));
+        }
+        _nStudyMethods = methods.ToFrozenDictionary();
+        NStudyContractHash = manifest.RpcAssemblyHash;
+    }
+
+    internal bool TryGetNStudyMethod(long method, out NStudyMethodFacts facts) =>
+        _nStudyMethods.TryGetValue(method, out facts);
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.
     private readonly WeakReference<ServiceRegistration>? _queuedWeakIdentity;
