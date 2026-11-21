@@ -185,6 +185,14 @@ public sealed class HelloService : IHelloService
 
         var generated = RunGeneratorAndGetSources(source);
         var allGenerated = string.Join("\n", generated);
+        var stub = generated.Single(static text => text.Contains("private sealed class __Stub_"));
+        var firstBody = stub.IndexOf("private ValueTask __Invoke_", StringComparison.Ordinal);
+        Ensure(firstBody >= 0 && CountOccurrences(stub, "private ValueTask __Invoke_") == 6 &&
+               CountOccurrences(stub, "method = new(new RpcMethodDescriptor(") == 6,
+            "cold prepared entries and typed execution bodies must be one-to-one");
+        Ensure(!stub[firstBody..].Contains("methodHash", StringComparison.Ordinal) &&
+               !stub[firstBody..].Contains("TryPrepareMethod", StringComparison.Ordinal),
+            "typed execution bodies never select a method again");
         var proxy = generated.FirstOrDefault(static text => text.Contains("private sealed class __Proxy_"));
         if (proxy is null)
             throw new Exception("Expected generated proxy source.");

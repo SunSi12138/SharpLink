@@ -111,10 +111,9 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
 
     internal object? InterceptorGeneration { get; }
     internal bool InterceptorTerminalReached { get; set; }
-    internal object? InterceptorStub { get; set; }
+    internal RpcGeneratedMethodExecutor? InterceptorExecutor { get; set; }
     internal object? InterceptorService { get; set; }
     internal object? InterceptorGeneratedBridge { get; set; }
-    internal long InterceptorMethodId { get; set; }
     internal ReadOnlySequence<byte> InterceptorArguments { get; set; }
     internal object? InterceptorOutput { get; set; }
     internal TimeProvider? InterceptorTimeProvider { get; set; }

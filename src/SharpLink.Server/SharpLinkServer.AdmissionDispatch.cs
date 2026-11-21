@@ -406,7 +406,7 @@ internal sealed partial class SharpLinkServer
                     serviceInfo,
                     connection,
                     session,
-                    descriptor,
+                    facts,
                     requestId,
                     request.Arguments,
                     output: null,

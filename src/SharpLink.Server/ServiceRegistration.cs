@@ -112,6 +112,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal SharpLinkDynamicModule? Module { get; }
     private readonly Guid _nStaticRegistration = Guid.NewGuid();
     private FrozenDictionary<long, NStudyMethodFacts> _nStudyMethods = FrozenDictionary<long, NStudyMethodFacts>.Empty;
+    private RpcGeneratedMethodExecutor[] _nStudyExecutors = [];
     internal RpcHash128 NStudyContractHash { get; private set; }
     internal NStudyTarget NStudyTarget => Module is { } module
         ? new(module.NStudyRegistration, module.NStudyPublication)
@@ -120,21 +121,30 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal void PrepareNStudyMethods(ISharpLinkGeneratedAssemblyManifest manifest,
         SharpLinkGeneratedContractDescriptor contract)
     {
+        if (Stub is not IRpcGeneratedPreparedMethods table)
+            throw new InvalidOperationException("This private profile requires generated prepared method entries.");
         var methods = new Dictionary<long, NStudyMethodFacts>(contract.Methods.Count);
+        var executors = new RpcGeneratedMethodExecutor[contract.Methods.Count];
+        var slot = 0;
         foreach (var declared in contract.Methods)
         {
-            if (!Stub.TryGetMethodDescriptor(declared.MethodId, out var descriptor) ||
-                descriptor.MethodId != declared.MethodId || descriptor.ContractId != contract.ContractId ||
-                descriptor.Kind != declared.Kind)
+            if (!table.TryPrepareMethod(declared.MethodId, out var prepared) || prepared.Execute is null ||
+                prepared.Descriptor.MethodId != declared.MethodId || prepared.Descriptor.ContractId != contract.ContractId ||
+                prepared.Descriptor.Kind != declared.Kind)
                 throw new InvalidOperationException("The private registration needs exact generated method facts.");
-            methods.Add(declared.MethodId, new(descriptor, Stub.SupportsCancellation(declared.MethodId)));
+            methods.Add(declared.MethodId, new(prepared.Descriptor, prepared.SupportsCancellation, slot));
+            executors[slot++] = prepared.Execute;
         }
+        _nStudyExecutors = executors;
         _nStudyMethods = methods.ToFrozenDictionary();
         NStudyContractHash = manifest.RpcAssemblyHash;
     }
 
     internal bool TryGetNStudyMethod(long method, out NStudyMethodFacts facts) =>
         _nStudyMethods.TryGetValue(method, out facts);
+
+    // Only dereference the slot on the same registration after its start claim.
+    internal RpcGeneratedMethodExecutor GetNStudyExecutor(int slot) => _nStudyExecutors[slot];
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.
     private readonly WeakReference<ServiceRegistration>? _queuedWeakIdentity;

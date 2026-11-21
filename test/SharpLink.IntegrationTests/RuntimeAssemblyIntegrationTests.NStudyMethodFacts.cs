@@ -52,8 +52,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var client = NewNStudyClient(clientSource, port, memoryName,
             settings => settings.UseRuntime(options => options.Compression.Providers.Add(sender)));
         var cold = count.Snapshot();
-        Ensure(cold == (aContract.Methods.Count, aContract.Methods.Count),
-            "the actual generated descriptor and cancellation facts are prepared once for each registered method");
+        Ensure(cold == (aContract.Methods.Count, 0) &&
+               !RuntimeHelpers.IsReferenceOrContainsReferences<NStudyMethodFacts>(),
+            "each registered method is prepared once; the queued facts and executor slot hold no object reference");
         try
         {
             await server.StartAsync(ct);
@@ -66,7 +67,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "real Session and generated contract are authenticated");
-            trace.Record("GeneratedStubMetadataReadOnlyDuringRegistration", aBinding, bBinding);
+            trace.Record("GeneratedEntriesPreparedOnlyDuringRegistration", aBinding, bBinding);
             var a = client.Get<INStudyFactsProbe>();
             var b = client.Get<IShutdownCleanupProbe>();
             var holding = a.OccupyAsync(ct).AsTask();
@@ -76,7 +77,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
             await WaitForNStudyAsync(() => kernel.QueuedCalls == 1, ct);
             Ensure(receiver.Decoded == 0 && sender.Compressed > 0 && count.Snapshot() == cold &&
-                   !recorder.Methods.ContainsKey(methodId) && await b.TouchAsync(1, ct) == 101,
+                   count.Invocations(methodId) == 0 && !recorder.Methods.ContainsKey(methodId) &&
+                   await b.TouchAsync(1, ct) == 101,
                 "actual compressed business goes to admission before provider decode and interception, with no Stub metadata access");
             trace.Record("QueuedCompressedHeadUsesPrecomputedFactsBeforeDecode", aBinding);
 
@@ -86,13 +88,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(server.DecodeStartedWorkCountForDiagnostics == 1 && receiver.Decoded == 1 &&
                    recorder.Methods.TryGetValue(methodId, out var measured) && measured.ContractId == aCid &&
                    measured.Kind == RpcMethodKind.Unary && measured.IsIdempotent && measured.HasMethodTimeout &&
-                   measured.MethodTimeout == TimeSpan.FromSeconds(15) && count.Snapshot() == cold,
+                   measured.MethodTimeout == TimeSpan.FromSeconds(15) && count.Snapshot() == cold &&
+                   count.Invocations(methodId) == 1,
                 "one real persistent decode and the same generated method facts reach the server interceptor");
             trace.Record("PersistentWorkerAndInterceptorReuseExactMethodFacts", aBinding);
 
             // Exercise ordinary application error mapping without interceptor
             // context. The original streaming call supplies its own method facts.
             server.ReplaceInterceptors([]);
+            Ensure(await a.MeasureAsync([17, 18], ct) == 19 && count.Invocations(methodId) == 2 &&
+                   count.Snapshot() == cold && recorder.Visits(methodId) == 1,
+                "direct and intercepted calls reach the same prepared method without a legacy ID dispatch");
+            trace.Record("DirectAndInterceptedCallsUseOnePreparedEntry", aBinding);
             await using var samples = a.ReadSamplesAsync(ct).GetAsyncEnumerator(ct);
             Ensure(await samples.MoveNextAsync().AsTask().WaitAsync(ct) && samples.Current == 7,
                 "normal generated output arrives before the application's unavailable sample");
@@ -108,7 +115,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 0, 0), ct);
             Ensure(mapper.Method is { } output && output.ContractId == aCid && output.MethodId == outputId &&
                    output.Kind == RpcMethodKind.ServerStreaming && count.Snapshot() == cold &&
-                   !recorder.Methods.ContainsKey(outputId) && await b.TouchAsync(2, ct) == 102,
+                   count.Invocations(outputId) == 1 && !recorder.Methods.ContainsKey(outputId) &&
+                   await b.TouchAsync(2, ct) == 102,
                 "output mapper keeps the actual original descriptor with no interceptor and no Stub metadata re-read");
             trace.Record("OutputErrorMapsOriginalFactsWithoutInterceptorOrStubRead", aBinding, bBinding);
         }
@@ -118,9 +126,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private sealed class NStudyFactsInterceptor : ISharpLinkServerInterceptor
     {
         internal ConcurrentDictionary<long, RpcMethodDescriptor> Methods { get; } = new();
+        private readonly ConcurrentDictionary<long, int> _visits = new();
+        internal int Visits(long method) => _visits.GetValueOrDefault(method);
         public ValueTask InvokeAsync(SharpLinkServerInvocationContext context, SharpLinkServerInvocationDelegate next)
         {
             Methods[context.Method.MethodId] = context.Method;
+            _visits.AddOrUpdate(context.Method.MethodId, 1, static (_, count) => count + 1);
             return next(context);
         }
     }
@@ -137,34 +148,67 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private sealed class NStudyStubMetadataCounts
     {
-        internal int Descriptors;
-        internal int Cancellation;
-        internal (int, int) Snapshot() => (Volatile.Read(ref Descriptors), Volatile.Read(ref Cancellation));
+        internal int Prepared;
+        internal int Legacy;
+        internal readonly ConcurrentDictionary<long, int> Executed = new();
+        internal int Invocations(long method) => Executed.GetValueOrDefault(method);
+        internal (int, int) Snapshot() => (Volatile.Read(ref Prepared), Volatile.Read(ref Legacy));
     }
 
-    private sealed class NStudyCountingStub(IRpcStub inner, NStudyStubMetadataCounts count) : IRpcStub
+    private sealed class NStudyCountingStub(IRpcStub inner, NStudyStubMetadataCounts count)
+        : IRpcStub, IRpcGeneratedPreparedMethods
     {
         public long InterfaceHash => inner.InterfaceHash;
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
+        {
+            Interlocked.Increment(ref count.Prepared);
+            if (!((IRpcGeneratedPreparedMethods)inner).TryPrepareMethod(methodId, out method))
+                return false;
+            var execute = method.Execute;
+            method = method with
+            {
+                Execute = (service, bridge, request, arguments, output, cancellationToken) =>
+                {
+                    count.Executed.AddOrUpdate(methodId, 1, static (_, calls) => calls + 1);
+                    return execute(service, bridge, request, arguments, output, cancellationToken);
+                }
+            };
+            return true;
+        }
         public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
         {
-            Interlocked.Increment(ref count.Descriptors);
+            Interlocked.Increment(ref count.Legacy);
             return inner.TryGetMethodDescriptor(methodHash, out descriptor);
         }
         public bool SupportsCancellation(long methodHash)
         {
-            Interlocked.Increment(ref count.Cancellation);
+            Interlocked.Increment(ref count.Legacy);
             return inner.SupportsCancellation(methodHash);
         }
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args) => inner.InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
+            ReadOnlySequence<byte> args)
+        {
+            Interlocked.Increment(ref count.Legacy);
+            return inner.InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
+        }
         public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args, CancellationToken cancellationToken) =>
-            inner.InvokeNoReturnCancellableAsync(service, bridge, methodHash, requestId, args, cancellationToken);
+            ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref count.Legacy);
+            return inner.InvokeNoReturnCancellableAsync(service, bridge, methodHash, requestId, args, cancellationToken);
+        }
         public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args, IBufferWriter<byte> output) => inner.InvokeAsync(service, bridge, methodHash, requestId, args, output);
+            ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+        {
+            Interlocked.Increment(ref count.Legacy);
+            return inner.InvokeAsync(service, bridge, methodHash, requestId, args, output);
+        }
         public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId,
-            ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken) =>
-            inner.InvokeCancellableAsync(service, bridge, methodHash, requestId, args, output, cancellationToken);
+            ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref count.Legacy);
+            return inner.InvokeCancellableAsync(service, bridge, methodHash, requestId, args, output, cancellationToken);
+        }
     }
 
     private sealed class NStudyCountingManifest(

@@ -6,25 +6,25 @@ internal sealed partial class SharpLinkServer
         ServiceRegistration registration,
         ServerConnectionState connection,
         RpcSession session,
-        RpcMethodDescriptor methodDescriptor,
+        NStudyMethodFacts facts,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
-        var methodId = methodDescriptor.MethodId;
+        var methodDescriptor = facts.Descriptor;
+        var execute = registration.GetNStudyExecutor(facts.ExecutorSlot);
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
                 requestId,
                 out var singleton))
         {
             return InvokeServiceTrackedAsync(
-                registration.Stub,
+                execute,
                 singleton,
                 session,
                 connection.GeneratedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -61,11 +61,10 @@ internal sealed partial class SharpLinkServer
                     out dynamicSingletonLease))
             {
                 var invocation = InvokeServiceTrackedAsync(
-                    registration.Stub,
+                    execute,
                     dynamicSingleton,
                     session,
                     connection.GeneratedBridge,
-                    methodId,
                     requestId,
                     arguments,
                     output,
@@ -118,10 +117,9 @@ internal sealed partial class SharpLinkServer
         {
             return InvokeServiceAfterAcquisitionAsync(
                 acquisition,
-                registration.Stub,
+                execute,
                 session,
                 connection.GeneratedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -133,11 +131,10 @@ internal sealed partial class SharpLinkServer
         }
 
         return InvokeAcquiredServiceAsync(
-            registration.Stub,
+            execute,
             acquisition.Result,
             session,
             connection.GeneratedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -189,11 +186,10 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         ServiceLease lease,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -206,11 +202,10 @@ internal sealed partial class SharpLinkServer
         if (!lease.RequiresDisposal)
         {
             return InvokeServiceTrackedAsync(
-                stub,
+                execute,
                 lease.Service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -224,8 +219,8 @@ internal sealed partial class SharpLinkServer
             ValueTask invocation;
             try
             {
-                invocation = InvokeServiceTrackedAsync(stub, lease.Service, session, generatedBridge,
-                    methodId, requestId, arguments, output, cancellationToken, context, methodDescriptor);
+                invocation = InvokeServiceTrackedAsync(execute, lease.Service, session, generatedBridge,
+                    requestId, arguments, output, cancellationToken, context, methodDescriptor);
             }
             catch (Exception exception)
             {
@@ -234,11 +229,10 @@ internal sealed partial class SharpLinkServer
             return CompleteDynamicOneWayInputAsync(invocation, lease, inputDrain);
         }
         return InvokeServiceWithLeaseAsync(
-            stub,
+            execute,
             lease,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -250,10 +244,9 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
         ValueTask<ServiceLease> acquisition,
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -276,11 +269,10 @@ internal sealed partial class SharpLinkServer
         }
 
         await InvokeAcquiredServiceAsync(
-            stub,
+            execute,
             lease,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -292,11 +284,10 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeServiceTrackedAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -308,11 +299,10 @@ internal sealed partial class SharpLinkServer
         try
         {
             var invocation = InvokeServiceCoreAsync(
-                stub,
+                execute,
                 service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -335,11 +325,10 @@ internal sealed partial class SharpLinkServer
     }
 
     private async ValueTask InvokeServiceWithLeaseAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         ServiceLease lease,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -352,11 +341,10 @@ internal sealed partial class SharpLinkServer
         try
         {
             await InvokeServiceTrackedAsync(
-                stub,
+                execute,
                 lease.Service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -411,11 +399,10 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeServiceCoreAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -431,20 +418,15 @@ internal sealed partial class SharpLinkServer
         var interceptors = (context as SharpLinkServerInvocationContext)?.InterceptorGeneration as ServerInterceptorGeneration;
         if (interceptors is null || interceptors.Count == 0)
         {
-            return output is null
-                ? stub.InvokeNoReturnCancellableAsync(
-                    service, generatedBridge, methodId, requestId, arguments, cancellationToken)
-                : stub.InvokeCancellableAsync(
-                    service, generatedBridge, methodId, requestId, arguments, output, cancellationToken);
+            return execute(service, generatedBridge, requestId, arguments, output, cancellationToken);
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
             interceptors,
-            stub,
+            execute,
             service,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -454,11 +436,10 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
         ServerInterceptorGeneration interceptors,
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -478,10 +459,9 @@ internal sealed partial class SharpLinkServer
         {
             await InvokeComposedServerInterceptorsAsync(
                 interceptors,
-                stub,
+                execute,
                 service,
                 generatedBridge,
-                methodId,
                 requestId,
                 ReadOnlySequence<byte>.Empty,
                 output,
@@ -497,10 +477,9 @@ internal sealed partial class SharpLinkServer
             var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
             await InvokeComposedServerInterceptorsAsync(
                 interceptors,
-                stub,
+                execute,
                 service,
                 generatedBridge,
-                methodId,
                 requestId,
                 ownedArguments,
                 output,
@@ -515,10 +494,9 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask InvokeComposedServerInterceptorsAsync(
         ServerInterceptorGeneration interceptors,
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -526,10 +504,9 @@ internal sealed partial class SharpLinkServer
         SharpLinkServerInvocationContext context)
     {
         var timeProvider = _runtimeContext.TimeProvider;
-        context.InterceptorStub = stub;
+        context.InterceptorExecutor = execute;
         context.InterceptorService = service;
         context.InterceptorGeneratedBridge = generatedBridge;
-        context.InterceptorMethodId = methodId;
         context.InterceptorArguments = arguments;
         context.InterceptorOutput = output;
         context.InterceptorTimeProvider = timeProvider;
@@ -555,7 +532,7 @@ internal sealed partial class SharpLinkServer
         finally
         {
             context.Elapsed = timeProvider.GetElapsedTime(context.InterceptorStarted);
-            context.InterceptorStub = null;
+            context.InterceptorExecutor = null;
             context.InterceptorService = null;
             context.InterceptorGeneratedBridge = null;
             context.InterceptorArguments = default;

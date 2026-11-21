@@ -30,8 +30,8 @@ internal sealed partial class SharpLinkServer
         private static async ValueTask InvokeTerminalAsync(SharpLinkServerInvocationContext context)
         {
             context.InterceptorTerminalReached = true;
-            var stub = context.InterceptorStub as IRpcStub
-                ?? throw new InvalidOperationException("The Server interceptor terminal stub is unavailable.");
+            var execute = context.InterceptorExecutor
+                ?? throw new InvalidOperationException("The Server interceptor terminal entry is unavailable.");
             var service = context.InterceptorService
                 ?? throw new InvalidOperationException("The Server interceptor terminal service is unavailable.");
             var generatedBridge = context.InterceptorGeneratedBridge as IRpcGeneratedServerBridge
@@ -42,18 +42,8 @@ internal sealed partial class SharpLinkServer
 
             try
             {
-                if (output is null)
-                {
-                    await stub.InvokeNoReturnCancellableAsync(
-                        service, generatedBridge, context.InterceptorMethodId, context.RequestId,
-                        context.InterceptorArguments, context.CancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await stub.InvokeCancellableAsync(
-                        service, generatedBridge, context.InterceptorMethodId, context.RequestId,
-                        context.InterceptorArguments, output, context.CancellationToken).ConfigureAwait(false);
-                }
+                await execute(service, generatedBridge, context.RequestId, context.InterceptorArguments,
+                    output, context.CancellationToken).ConfigureAwait(false);
                 if (context.Status == SharpLinkInvocationStatus.Pending)
                     context.Status = SharpLinkInvocationStatus.Succeeded;
             }
