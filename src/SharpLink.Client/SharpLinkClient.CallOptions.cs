@@ -211,5 +211,5 @@ internal sealed partial class SharpLinkClient
         SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed,
         TimeProvider? TimeProvider = null,
         ClientRetryGeneration? RetryGeneration = null,
-        NStudyPreparedUnary? PreparedUnary = null);
+        NStudyPreparedSite? PreparedSite = null);
 }

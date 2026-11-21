@@ -13,7 +13,7 @@ internal sealed partial class SharpLinkClient
 
     internal ValueTask<TResponse> InvokeUnary<TRequest, TResponse>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata, CancellationToken cancellationToken, NStudyPreparedUnary? prepared)
+        SharpLinkMetadata? metadata, CancellationToken cancellationToken, NStudyPreparedSite? prepared)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
@@ -21,7 +21,7 @@ internal sealed partial class SharpLinkClient
         RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: true, interceptors) with { PreparedUnary = prepared };
+            method, metadata, includeClientDefault: true, interceptors) with { PreparedSite = prepared };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -49,13 +49,19 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
+        => InvokeOneWay(method, request, requestCodec, streams, metadata, cancellationToken, null);
+
+    internal ValueTask InvokeOneWay<TRequest, TStreams>(RpcMethodDescriptor method,
+        in TRequest request, IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken, NStudyPreparedSite? prepared)
+        where TStreams : struct, IRpcClientStreamWriter
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
         RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors);
+            method, metadata, includeClientDefault: false, interceptors) with { PreparedSite = prepared };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -388,7 +394,7 @@ internal sealed partial class SharpLinkClient
             // Connection selection is the first step that can block, so the pre-registration
             // checkpoint below is the first place a fresh sample carries new information. A sample
             // here would only repeat the stage-local validation the call control already did.
-            connection = GetReadyConnection(method, retrySelection: null, outcome, control.PreparedUnary);
+            connection = GetReadyConnection(method, retrySelection: null, outcome, control.PreparedSite);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
             var operation = connection.PendingCalls.Rent(
@@ -456,7 +462,7 @@ internal sealed partial class SharpLinkClient
                     cancellationToken: CancellationToken.None,
                     failureObserver: control.Deadline.HasValue ? connection.PendingCalls : null,
                     publicationTable: connection.PendingCalls,
-                    exactRoute: control.PreparedUnary?.RequireRoute());
+                    exactRoute: control.PreparedSite?.RequireRoute());
             }
         }
         catch (Exception exception)
@@ -552,7 +558,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            connection = GetReadyConnection(method, retrySelection: null, outcome, control.PreparedSite);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -634,7 +640,8 @@ internal sealed partial class SharpLinkClient
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
                     cancellationToken: CancellationToken.None,
-                    publicationTable: null);
+                    publicationTable: null,
+                    exactRoute: control.PreparedSite?.RequireRoute());
                 if (control.Deadline.HasValue)
                 {
                     // Plain OneWay has no pending owner to enforce an emission deadline.
@@ -682,7 +689,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            connection = GetReadyConnection(method, retrySelection: null, outcome, control.PreparedSite);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
         }
@@ -744,7 +751,8 @@ internal sealed partial class SharpLinkClient
                     // The pending call owns producer cancellation and request publication.
                     cancellationToken: streamCancellationToken,
                     publicationTable: table,
-                    oneWayInputCount: method.ClientStreamCount);
+                    oneWayInputCount: method.ClientStreamCount,
+                    exactRoute: control.PreparedSite?.RequireRoute());
                 await emission.ConfigureAwait(false);
                 // No receipt is involved: the exact local head append is sufficient.
                 if (table.TryStartNStudyProducer(requestId, admission))

@@ -34,7 +34,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var port = memory is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
         await using var client = NewNStudyClient(source, port, memory, settings => settings.UseTimeProvider(clock));
-        var site = client.CreateNStudyUnarySite<INStudyUnarySiteProbe>(Metadata("shared-generated"));
+        var site = client.CreateNStudyContractSite<INStudyUnarySiteProbe>(Metadata("shared-generated"));
         var manual = site.BindUnary(contract.Methods.Single().MethodId);
         var observedAck = new TaskCompletionSource<NStudyAck>(TaskCreationOptions.RunContinuationsAsynchronously);
         var continuePublication = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -145,7 +145,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var port = memory is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
         await using var client = NewNStudyClient(clientSource, port, memory, settings => settings.AddInterceptor(clientObserver));
-        var site = client.CreateNStudyUnarySite<INStudyUnarySiteProbe>(Metadata("generated"));
+        var site = client.CreateNStudyContractSite<INStudyUnarySiteProbe>(Metadata("generated"));
         var manual = site.BindUnary(method.MethodId);
         var requestCodec = new NStudyManualIntRequestCodec();
         var responseCodec = site.GetCodec<int>();

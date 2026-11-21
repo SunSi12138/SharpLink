@@ -235,13 +235,13 @@ internal sealed partial class SharpLinkClient
         RpcMethodDescriptor method,
         EndpointRetrySelectionState? retrySelection,
         AttemptOutcomeState? attemptOutcome,
-        NStudyPreparedUnary? prepared = null)
+        NStudyPreparedSite? prepared = null)
     {
         if (_cluster is not null)
             return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
 
         if (attemptOutcome is null || _fixedEndpoint is null || ReadyConnectionCount == 0)
-            return prepared is null ? GetReadyConnection() : ReservePreparedUnary(prepared);
+            return prepared is null ? GetReadyConnection() : ReservePreparedSite(prepared);
 
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
@@ -252,7 +252,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            return prepared is null ? GetReadyConnection() : ReservePreparedUnary(prepared);
+            return prepared is null ? GetReadyConnection() : ReservePreparedSite(prepared);
         }
         catch (Exception exception)
         {
@@ -261,14 +261,14 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private ClientConnection ReservePreparedUnary(NStudyPreparedUnary prepared)
+    private ClientConnection ReservePreparedSite(NStudyPreparedSite prepared)
     {
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         if (!prepared.TryGetConnection(out var connection) ||
             !prepared.RequireRoute().IsOpenOn(connection.Session) ||
             !connection.TryReserveExactCallAdmission())
-            throw NStudyPreparedUnary.Unavailable();
+            throw NStudyPreparedSite.Unavailable();
         return connection;
     }
 

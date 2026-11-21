@@ -12,7 +12,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     internal static ValueTask<TResponse> InvokeUnaryWithModule<TRequest, TResponse>(SharpLinkClient inner,
         SharpLinkDynamicModule module, RpcMethodDescriptor method, in TRequest request,
         IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken, SharpLinkClient.NStudyPreparedUnary? prepared)
+        CancellationToken cancellationToken, SharpLinkClient.NStudyPreparedSite? prepared)
     {
         if (!module.TryAcquire(false, out var lease))
             return ValueTask.FromException<TResponse>(Draining());
@@ -34,13 +34,20 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
         IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default) where TStreams : struct, IRpcClientStreamWriter
+        => InvokeOneWayWithModule(inner, module, method, request, requestCodec, streams, metadata, cancellationToken, null);
+
+    internal static ValueTask InvokeOneWayWithModule<TRequest, TStreams>(SharpLinkClient inner,
+        SharpLinkDynamicModule module, RpcMethodDescriptor method, in TRequest request,
+        IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken, SharpLinkClient.NStudyPreparedSite? prepared)
+        where TStreams : struct, IRpcClientStreamWriter
     {
         if (!module.TryAcquire(method.HasClientStreams, out var lease))
             return ValueTask.FromException(Draining());
         var combined = Combine(cancellationToken, module.ForcedCancellation);
         try
         {
-            var call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, metadata, combined.Token);
+            var call = inner.InvokeOneWay(method, request, requestCodec, streams, metadata, combined.Token, prepared);
             if (call.IsCompletedSuccessfully)
             {
                 lease.Dispose();

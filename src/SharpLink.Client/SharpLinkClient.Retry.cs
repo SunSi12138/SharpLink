@@ -238,7 +238,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, selection, outcome, control.PreparedUnary);
+            connection = GetReadyConnection(method, selection, outcome, control.PreparedSite);
             try
             {
                 EnsureLogicalCallProgress(control);

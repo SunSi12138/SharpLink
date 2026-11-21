@@ -2,21 +2,23 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    // Private checkpoint: the existing ABI supplies a real generated proxy, but
-    // only a unary-only contract may be constructed for this receiver.
-    internal NStudyUnarySite<T> CreateNStudyUnarySite<T>(SharpLinkMetadata? metadata = null) where T : IService
+    // Private checkpoint: the existing ABI supplies the real generated proxy.
+    // Cold selection requires every method to work on this receiver.
+    internal NStudyContractSite<T> CreateNStudyContractSite<T>(SharpLinkMetadata? metadata = null) where T : IService
     {
         if (_cluster is not null)
-            throw new NotSupportedException("The private unary site requires a single-endpoint client.");
+            throw new NotSupportedException("The private contract site requires a single-endpoint client.");
         if (!Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
             throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
         if (registration.Descriptor.Methods.Any(method =>
-                method.Kind != RpcMethodKind.Unary || method.Invocation is not { Kind: RpcMethodKind.Unary }))
-            throw new NotSupportedException("The private unary site requires a generated unary-only contract.");
-        return new NStudyUnarySite<T>(this, registration, FindOwningManifest(registration).RpcAssemblyHash, metadata);
+                method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay) ||
+                method.Invocation is not { } invocation || invocation.Kind != method.Kind ||
+                invocation.ContractId != registration.Descriptor.ContractId || invocation.MethodId != method.MethodId))
+            throw new NotSupportedException("The private contract site requires generated Unary or OneWay methods.");
+        return new NStudyContractSite<T>(this, registration, FindOwningManifest(registration).RpcAssemblyHash, metadata);
     }
 
-    internal sealed class NStudyPreparedUnary(ClientConnection connection, NStudyClientRoute route, NStudyAck ack)
+    internal sealed class NStudyPreparedSite(ClientConnection connection, NStudyClientRoute route, NStudyAck ack)
     {
         // A prepared site is not an owner of a retired physical Session.
         private readonly WeakReference<ClientConnection> _connection = new(connection);
@@ -33,17 +35,17 @@ internal sealed partial class SharpLinkClient
             => new(SharpLinkErrorCode.Unavailable, "The private RPC site needs a current prepared Session.");
     }
 
-    internal sealed class NStudyUnarySite<T> : IRpcChannel where T : IService
+    internal sealed class NStudyContractSite<T> : IRpcChannel where T : IService
     {
         private readonly SharpLinkClient _client;
         private readonly ClientProxyRegistration _registration;
         private readonly RpcHash128 _hash;
         private readonly SharpLinkMetadata? _metadata;
         private readonly Lock _prepareGate = new();
-        private NStudyPreparedUnary? _prepared;
+        private NStudyPreparedSite? _prepared;
         private PrepareOperation? _preparation;
 
-        internal NStudyUnarySite(SharpLinkClient client, ClientProxyRegistration registration,
+        internal NStudyContractSite(SharpLinkClient client, ClientProxyRegistration registration,
             RpcHash128 hash, SharpLinkMetadata? metadata)
         {
             _client = client;
@@ -80,7 +82,7 @@ internal sealed partial class SharpLinkClient
             {
                 PrepareOperation operation;
                 var start = false;
-                NStudyPreparedUnary? alreadyReady = null;
+                NStudyPreparedSite? alreadyReady = null;
                 lock (_prepareGate)
                 {
                     if (_prepared is { } current && current.IsReadyOn(connection))
@@ -91,7 +93,7 @@ internal sealed partial class SharpLinkClient
                     else if (_preparation is { } pending)
                     {
                         if (!ReferenceEquals(pending.Connection, connection))
-                            throw NStudyPreparedUnary.Unavailable();
+                            throw NStudyPreparedSite.Unavailable();
                         operation = pending;
                     }
                     else
@@ -110,7 +112,7 @@ internal sealed partial class SharpLinkClient
                 var remaining = deadline.GetRemaining(clock);
                 if (remaining <= TimeSpan.Zero)
                     throw CreateDeadlineExceededException();
-                NStudyPreparedUnary prepared;
+                NStudyPreparedSite prepared;
                 try
                 {
                     prepared = await operation.Completion.Task.WaitAsync(remaining, clock, cancellationToken)
@@ -122,7 +124,7 @@ internal sealed partial class SharpLinkClient
             finally { _client.ReturnNStudyPrepareWaiter(); }
         }
 
-        private NStudyAck ConfirmWaiter(NStudyPreparedUnary prepared, ClientConnection connection, RpcDeadline deadline,
+        private NStudyAck ConfirmWaiter(NStudyPreparedSite prepared, ClientConnection connection, RpcDeadline deadline,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -131,7 +133,7 @@ internal sealed partial class SharpLinkClient
             EnsureLocalReady();
             if (!prepared.IsReadyOn(connection) || !connection.CanAcceptCalls ||
                 !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
-                throw NStudyPreparedUnary.Unavailable();
+                throw NStudyPreparedSite.Unavailable();
             return prepared.Ack;
         }
 
@@ -143,7 +145,7 @@ internal sealed partial class SharpLinkClient
             {
                 registered = !_client._poolStopping;
                 if (registered)
-                    _client.TrackFrameworkTask(operation.Completion.Task, "NStudyUnaryPrepare",
+                    _client.TrackFrameworkTask(operation.Completion.Task, "NStudySitePrepare",
                         TaskObservationMode.ExternallyObserved);
             }
             if (registered)
@@ -157,7 +159,7 @@ internal sealed partial class SharpLinkClient
 
         private async Task RunPreparationAsync(PrepareOperation operation)
         {
-            NStudyPreparedUnary? ready = null;
+            NStudyPreparedSite? ready = null;
             Exception? failure = null;
             try
             {
@@ -186,8 +188,8 @@ internal sealed partial class SharpLinkClient
                     if (route.Token != bound.BindingId || route.Target != bound.Target || route.Hash != _hash ||
                         !route.IsOpenOn(session) || !connection.CanAcceptCalls ||
                         !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
-                        throw NStudyPreparedUnary.Unavailable();
-                    ready = new NStudyPreparedUnary(connection, route, bound);
+                        throw NStudyPreparedSite.Unavailable();
+                    ready = new NStudyPreparedSite(connection, route, bound);
                 }
                 catch (Exception error)
                 {
@@ -211,7 +213,7 @@ internal sealed partial class SharpLinkClient
             finally { FinishPreparation(operation, ready, failure); }
         }
 
-        private void FinishPreparation(PrepareOperation operation, NStudyPreparedUnary? ready, Exception? error)
+        private void FinishPreparation(PrepareOperation operation, NStudyPreparedSite? ready, Exception? error)
         {
             lock (_prepareGate)
             {
@@ -228,7 +230,7 @@ internal sealed partial class SharpLinkClient
         private sealed class PrepareOperation(ClientConnection connection)
         {
             internal ClientConnection Connection { get; } = connection;
-            internal TaskCompletionSource<NStudyPreparedUnary> Completion { get; } =
+            internal TaskCompletionSource<NStudyPreparedSite> Completion { get; } =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
@@ -237,42 +239,50 @@ internal sealed partial class SharpLinkClient
             if (_client._shutdownCts.IsCancellationRequested || _client.State == SharpLinkConnectionState.Stopped)
                 throw CreateConnectionClosedException("Client is not accepting new calls.");
             if (_registration.Module is { State: not SharpLinkDynamicModuleState.Running })
-                throw NStudyPreparedUnary.Unavailable();
+                throw NStudyPreparedSite.Unavailable();
         }
 
-        internal ManualUnary BindUnary(long methodId)
+        internal ManualUnary BindUnary(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.Unary));
+        internal ManualOneWay BindOneWay(long methodId) => new(this, FindMethod(methodId, RpcMethodKind.OneWay));
+
+        private RpcMethodDescriptor FindMethod(long methodId, RpcMethodKind kind)
         {
             foreach (var generated in _registration.Descriptor.Methods)
             {
                 if (generated.MethodId == methodId && generated.Invocation is { } method &&
-                    method.ContractId == _registration.Descriptor.ContractId &&
-                    method.MethodId == methodId && method.Kind == RpcMethodKind.Unary)
-                    return new ManualUnary(this, method);
+                    method.Kind == kind)
+                    return method;
             }
-            throw new ArgumentOutOfRangeException(nameof(methodId), "No such local generated unary method.");
+            throw new ArgumentOutOfRangeException(nameof(methodId), $"No such local generated {kind} method.");
         }
 
-        internal sealed class ManualUnary(NStudyUnarySite<T> site, RpcMethodDescriptor method)
+        internal sealed class ManualUnary(NStudyContractSite<T> site, RpcMethodDescriptor method)
         {
             internal ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(in TRequest request,
                 IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
                 SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
-                => site.Invoke(method, request, requestCodec, responseCodec, metadata, cancellationToken);
+                => site.InvokeUnary(method, request, requestCodec, responseCodec, metadata, cancellationToken);
+        }
+
+        internal sealed class ManualOneWay(NStudyContractSite<T> site, RpcMethodDescriptor method)
+        {
+            internal ValueTask InvokeAsync<TRequest, TStreams>(in TRequest request,
+                IRpcCodec<TRequest> requestCodec, in TStreams streams,
+                SharpLinkMetadata? metadata = null, CancellationToken cancellationToken = default)
+                where TStreams : struct, IRpcClientStreamWriter
+                => site.InvokeOneWay(method, request, requestCodec, streams, metadata, cancellationToken);
         }
 
         ValueTask<TResponse> IRpcChannel.InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
-            => Invoke(method, request, requestCodec, responseCodec, metadata, cancellationToken);
+            => InvokeUnary(method, request, requestCodec, responseCodec, metadata, cancellationToken);
 
-        private ValueTask<TResponse> Invoke<TRequest, TResponse>(RpcMethodDescriptor method,
+        private ValueTask<TResponse> InvokeUnary<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (method.ContractId != _registration.Descriptor.ContractId || method.Kind != RpcMethodKind.Unary)
-                throw new InvalidOperationException("The method does not use this private contract receiver.");
-            var prepared = Volatile.Read(ref _prepared) ?? throw NStudyPreparedUnary.Unavailable();
+            var prepared = RequirePrepared(method, RpcMethodKind.Unary, cancellationToken);
             return _registration.Module is { } module
                 ? SharpLinkModuleRpcChannel.InvokeUnaryWithModule(_client, module, method, request, requestCodec,
                     responseCodec, metadata ?? _metadata, cancellationToken, prepared)
@@ -282,21 +292,40 @@ internal sealed partial class SharpLinkClient
 
         ValueTask IRpcChannel.InvokeOneWayAsync<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
             IRpcCodec<TRequest> codec, in TStreams streams, SharpLinkMetadata? metadata, CancellationToken ct)
-            => throw NotUnary();
+            => InvokeOneWay(method, request, codec, streams, metadata, ct);
+
+        private ValueTask InvokeOneWay<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
+            IRpcCodec<TRequest> codec, in TStreams streams, SharpLinkMetadata? metadata, CancellationToken ct)
+            where TStreams : struct, IRpcClientStreamWriter
+        {
+            var prepared = RequirePrepared(method, RpcMethodKind.OneWay, ct);
+            return _registration.Module is { } module
+                ? SharpLinkModuleRpcChannel.InvokeOneWayWithModule(_client, module, method, request, codec, streams,
+                    metadata ?? _metadata, ct, prepared)
+                : _client.InvokeOneWay(method, request, codec, streams, metadata ?? _metadata, ct, prepared);
+        }
+
+        private NStudyPreparedSite RequirePrepared(RpcMethodDescriptor method, RpcMethodKind kind, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (method.ContractId != _registration.Descriptor.ContractId || method.Kind != kind)
+                throw new InvalidOperationException("The method does not use this private contract receiver.");
+            return Volatile.Read(ref _prepared) ?? throw NStudyPreparedSite.Unavailable();
+        }
 
         ValueTask<TResponse> IRpcChannel.InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
-            SharpLinkMetadata? metadata, CancellationToken ct) => throw NotUnary();
+            SharpLinkMetadata? metadata, CancellationToken ct) => throw UnsupportedStreaming();
 
         IAsyncEnumerable<TResponse> IRpcChannel.InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
-            SharpLinkMetadata? metadata, CancellationToken ct) => throw NotUnary();
+            SharpLinkMetadata? metadata, CancellationToken ct) => throw UnsupportedStreaming();
 
         IAsyncEnumerable<TResponse> IRpcChannel.InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
-            SharpLinkMetadata? metadata, CancellationToken ct) => throw NotUnary();
+            SharpLinkMetadata? metadata, CancellationToken ct) => throw UnsupportedStreaming();
 
-        private static NotSupportedException NotUnary()
-            => new("This private generated receiver supports unary-only contracts.");
+        private static NotSupportedException UnsupportedStreaming()
+            => new("This private generated receiver supports Unary and OneWay methods.");
     }
 }
