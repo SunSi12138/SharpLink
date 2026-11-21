@@ -236,8 +236,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             BindingFlags.NonPublic)!.GetValue(client)!).Single();
 
     private static ServerConnectionState NStudyServerConnection(SharpLinkServer server)
-        => ((ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry", BindingFlags.Instance |
-            BindingFlags.NonPublic)!.GetValue(server)!).SnapshotActive().Single();
+        => NStudyServerRegistry(server).SnapshotActive().Single();
+
+    private static ServerConnectionRegistry NStudyServerRegistry(SharpLinkServer server)
+        => (ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry", BindingFlags.Instance |
+            BindingFlags.NonPublic)!.GetValue(server)!;
 
     private static int NStudyCount(Type type, string name) => (int)type.GetProperty(name)!.GetValue(null)!;
 

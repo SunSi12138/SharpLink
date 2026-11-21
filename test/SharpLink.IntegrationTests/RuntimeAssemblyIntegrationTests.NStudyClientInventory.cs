@@ -100,10 +100,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitForNStudyAsync(() => client.ReadyConnectionCount == 1 &&
                 !ReferenceEquals(session, NStudyClientSession(client)), ct);
             var fresh = NStudyClientSession(client);
-            var freshPeer = NStudyServerConnection(server);
+            // Rolling refresh may leave the previous server peer draining while the
+            // new client peer is already Ready. Select the actual new physical peer.
+            var freshAuthority = (await client.QueryNStudyRemoteInventoryAsync(ct)).Authority;
+            var freshPeer = NStudyServerRegistry(server).SnapshotActive()
+                .Single(peer => peer.NStudyPhysicalIdentity == freshAuthority.PhysicalSession);
             var afterRefresh = await server.QueryNStudyClientInventoryAsync(freshPeer, ct);
             var freshA = afterRefresh.Select(aCid);
-            Ensure(afterRefresh.Authority.PhysicalSession == freshPeer.NStudyPhysicalIdentity &&
+            Ensure(afterRefresh.Authority == freshAuthority &&
                    afterRefresh.Authority.PhysicalSession != r2.Authority.PhysicalSession &&
                    afterRefresh.Authority.Server == r2.Authority.Server &&
                    afterRefresh.Authority.RegistryEpoch == r2.Authority.RegistryEpoch &&
