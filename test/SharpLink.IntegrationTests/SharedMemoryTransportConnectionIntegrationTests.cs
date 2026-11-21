@@ -467,7 +467,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
 
         Ensure(harness.Client.State == SharpLinkConnectionState.Ready,
             "shared-memory idle heartbeat connection state");
-        Ensure(await harness.Client.Get<IConnectionBehaviorService>().PingAsync(50) == 51,
+        Ensure(await harness.Proxy.Service.PingAsync(50) == 51,
             "shared-memory ping after idle heartbeat interval");
     }
 
@@ -475,7 +475,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     public async Task SharedMemoryConnectAndBasicRpcShouldWork()
     {
         await using var harness = await SharedMemoryHarness.CreateAsync();
-        var service = harness.Client.Get<IConnectionBehaviorService>();
+        var service = harness.Proxy.Service;
 
         Ensure(await service.PingAsync(41) == 42, "shared-memory ping");
     }
@@ -505,7 +505,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         meterListener.Start();
 
         await using var harness = await SharedMemoryHarness.CreateAsync();
-        var service = harness.Client.Get<IConnectionBehaviorService>();
+        var service = harness.Proxy.Service;
         var payload = new string('x', 256 * 1024);
 
         var response = await service.EchoAsync(payload);
@@ -563,32 +563,63 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     public async Task SharedMemoryServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await SharedMemoryHarness.CreateAsync();
-        var service = harness.Client.Get<IConnectionBehaviorService>();
+        var service = harness.Proxy.Service;
         Ensure(await service.PingAsync(1) == 2, "shared-memory warmup ping");
 
         var pending = service.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "shared-memory pending after server dispose");
     }
 
     [Test]
-    public async Task SharedMemoryClientShouldReconnectAfterServerRestart()
+    public async Task SharedMemoryNewClientShouldConnectAfterServerRestart()
     {
         var name = $"sharplink-shm-int-{Guid.NewGuid():N}";
         await using (var first = await SharedMemoryHarness.CreateAsync(name))
         {
-            var service = first.Client.Get<IConnectionBehaviorService>();
+            var service = first.Proxy.Service;
             Ensure(await service.PingAsync(2) == 3, "first shared-memory ping");
         }
 
         await using var second = await SharedMemoryHarness.CreateAsync(name);
-        var secondService = second.Client.Get<IConnectionBehaviorService>();
+        var secondService = second.Proxy.Service;
         Ensure(await secondService.PingAsync(3) == 4, "second shared-memory ping");
     }
 
-    private static async Task EnsureThrowsSharpLinkFast(Task task, string name)
+    [Test]
+    public async Task SharedMemorySameProxyShouldReprepareAfterServerRestart()
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = budget.Token;
+        var name = $"sharplink-shm-int-{Guid.NewGuid():N}";
+        await using var original = await SharedMemoryHarness.CreateAsync(name);
+        var proxy = original.Proxy;
+        Ensure(await proxy.Service.PingAsync(2) == 3, "first prepared session serves");
+
+        await original.DisposeServerOnlyAsync();
+        while (original.Client.GetReadinessSnapshot().ReadyConnections != 0)
+            await Task.Delay(10, ct);
+
+        var replacementService = new ConnectionBehaviorService { EndpointId = "replacement" };
+        await using var replacement = SharedMemoryHarness.BuildServer(name, replacementService);
+        await replacement.StartAsync(ct);
+        await original.Client.WaitForReadinessAsync(1, ct);
+        await EnsureThrowsSharpLinkFast(proxy.Service.PingAsync(3).AsTask(),
+            "replacement ready without preparation", SharpLinkErrorCode.Unavailable);
+        Ensure(OpenBindings() == 0, "the replacement session has not been bound");
+
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "replacement" && OpenBindings() == 1,
+            "explicit preparation of the same handle binds to the replacement server");
+
+        int OpenBindings() => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)replacement)
+            .Values.Sum(connection => connection.NStudyBindings.Snapshot().Open);
+    }
+
+    private static async Task EnsureThrowsSharpLinkFast(Task task, string name,
+        SharpLinkErrorCode expected = SharpLinkErrorCode.ConnectionClosed)
     {
         try
         {
@@ -601,7 +632,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         }
         catch (SharpLinkException ex)
         {
-            Ensure(ex.Code == SharpLinkErrorCode.ConnectionClosed, $"{name} error code");
+            Ensure(ex.Code == expected, $"{name} error code");
         }
     }
 
@@ -805,26 +836,30 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         private bool _clientDisposed;
 
         public ISharpLinkClient Client { get; }
+        public RpcProxy<IConnectionBehaviorService> Proxy { get; }
+        public Task PendingCallStarted { get; }
 
         private SharedMemoryHarness(
             ISharpLinkServer server,
             Task serverTask,
             CancellationTokenSource serverCts,
-            ISharpLinkClient client)
+            ISharpLinkClient client,
+            RpcProxy<IConnectionBehaviorService> proxy,
+            Task pendingCallStarted)
         {
             _server = server;
             _serverTask = serverTask;
             _serverCts = serverCts;
             Client = client;
+            Proxy = proxy;
+            PendingCallStarted = pendingCallStarted;
         }
 
         public static Task<SharedMemoryHarness> CreateAsync()
             => CreateAsync($"sharplink-shm-int-{Guid.NewGuid():N}");
 
-        public static async Task<SharedMemoryHarness> CreateAsync(string name)
-        {
-            var cts = new CancellationTokenSource();
-            var server = SharpLinkServerBuilder.Create()
+        public static ISharpLinkServer BuildServer(string name, ConnectionBehaviorService service)
+            => SharpLinkServerBuilder.Create()
                 .UseSharedMemory(name, options =>
                 {
                     options.CapacityPerDirectionBytes = 64 * 1024;
@@ -832,7 +867,14 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
                 })
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+                .ReplaceService<IConnectionBehaviorService>(service)
                 .Build();
+
+        public static async Task<SharedMemoryHarness> CreateAsync(string name)
+        {
+            var cts = new CancellationTokenSource();
+            var pendingCallStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var server = BuildServer(name, new ConnectionBehaviorService { SlowUnaryStarted = pendingCallStarted });
             var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseSharedMemory(name, options =>
                 {
@@ -854,8 +896,28 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
                 }
             }, CancellationToken.None);
 
-            await client.ConnectAsync(cts.Token);
-            return new SharedMemoryHarness(server, serverTask, cts, client);
+            try
+            {
+                await client.ConnectAsync(cts.Token);
+                var proxy = client.CreateProxy<IConnectionBehaviorService>();
+                await proxy.PrepareAsync(TimeSpan.FromSeconds(4), cts.Token);
+                return new SharedMemoryHarness(server, serverTask, cts, client, proxy, pendingCallStarted.Task);
+            }
+            catch
+            {
+                try
+                {
+                    await client.DisposeAsync();
+                    await cts.CancelAsync();
+                    await server.DisposeAsync();
+                    await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+                }
+                finally
+                {
+                    cts.Dispose();
+                }
+                throw;
+            }
         }
 
         public async ValueTask DisposeServerOnlyAsync()

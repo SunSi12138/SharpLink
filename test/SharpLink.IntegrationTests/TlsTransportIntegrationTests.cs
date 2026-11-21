@@ -85,6 +85,14 @@ public class TlsTransportIntegrationTests
         await WaitUntilAsync(() =>
             concreteClient.ReadyConnectionCount != 0 &&
             concreteClient.State == SharpLinkConnectionState.Ready);
+        try
+        {
+            _ = await proxy.Service.AddAsync(20, 22);
+            throw new InvalidOperationException("The new TLS session must not inherit the old binding.");
+        }
+        catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.Unavailable)
+        {
+        }
         await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
         Ensure(await proxy.Service.AddAsync(20, 22) == 42, "TLS reconnect uses a new explicit preparation");
     }
@@ -194,7 +202,9 @@ public class TlsTransportIntegrationTests
             offline: true);
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(3, 4) == 7,
+        var proxy = client.CreateProxy<ITlsIntegrationService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await proxy.Service.AddAsync(3, 4) == 7,
             "client certificate context mutual TLS RPC");
     }
 
