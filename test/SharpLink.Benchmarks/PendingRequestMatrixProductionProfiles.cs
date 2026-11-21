@@ -116,7 +116,8 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         try
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
-            var rpc = client.Get<IBenchmarkRpc>();
+            var rpc = await BenchmarkEnvironment.PrepareServiceAsync<IBenchmarkRpc>(client, shutdown.Token)
+                .ConfigureAwait(false);
             foreach (var payloadBytes in new[] { 0, 256, 4096 })
             {
                 for (var warmup = 0; warmup < 16; warmup++)
@@ -205,7 +206,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
             if (saturationService is not null)
             {
                 Require(metricScope is not null, "Feature-heavy saturation evidence requires metrics.");
-                await RunFeatureHeavyProductionSaturationAsync(cells, client, saturationService, metricScope!)
+                await RunFeatureHeavyProductionSaturationAsync(cells, client, saturationService, metricScope!, shutdown.Token)
                     .ConfigureAwait(false);
             }
         }
@@ -223,10 +224,12 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         List<object> cells,
         ISharpLinkClient client,
         PendingProductionSaturationRpcService service,
-        PendingMetricScope metricScope)
+        PendingMetricScope metricScope,
+        CancellationToken cancellationToken)
     {
         const double deadlineSeconds = 0.75;
-        var rpc = client.Get<IPendingProductionSaturationRpc>();
+        var rpc = await BenchmarkEnvironment.PrepareServiceAsync<IPendingProductionSaturationRpc>(client, cancellationToken)
+            .ConfigureAwait(false);
         Require(await rpc.QuickAsync(-1).ConfigureAwait(false) == -1,
             "Feature-heavy saturation session baseline probe returned the wrong result.");
         var sessionBefore = service.LastSessionId;

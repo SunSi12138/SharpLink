@@ -91,12 +91,13 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
     public static async Task<FeatureBenchmarkCase> CreateAsync(ServerFeatureScenario scenario)
     {
         var telemetry = FeatureTelemetryScope.ForServer(scenario);
+        BenchmarkEnvironment? environment = null;
         try
         {
             var dynamicRegistration = scenario is
                 ServerFeatureScenario.DynamicRegisteredStaticHit or
                 ServerFeatureScenario.DynamicServiceActual;
-            var environment = await BenchmarkEnvironment.CreateAsync(
+            environment = await BenchmarkEnvironment.CreateAsync(
                 configureServer: builder => ConfigureServer(builder, scenario),
                 createClientBuilder: static port => CreateFixedClient(port),
                 configureBuiltServer: server => ConfigureBuiltServer(server, scenario, dynamicRegistration))
@@ -104,11 +105,11 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
 
             if (scenario == ServerFeatureScenario.DynamicServiceActual)
             {
-                var proxy = environment.Get<IDynamicPluginService>();
+                var service = await environment.PrepareServiceAsync<IDynamicPluginService>().ConfigureAwait(false);
                 return new FeatureBenchmarkCase(
                     environment,
                     telemetry,
-                    () => proxy.UnaryAsync(10, CancellationToken.None),
+                    () => service.UnaryAsync(10, CancellationToken.None),
                     expectedResult: 11);
             }
 
@@ -120,7 +121,15 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
         }
         catch
         {
-            telemetry.Dispose();
+            try
+            {
+                if (environment is not null)
+                    await environment.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                telemetry.Dispose();
+            }
             throw;
         }
     }

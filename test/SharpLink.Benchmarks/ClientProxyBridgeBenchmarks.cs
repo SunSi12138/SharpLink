@@ -21,7 +21,7 @@ namespace SharpLink.Benchmarks;
 /// <para>
 /// The "channel" is modelled as a non-inlinable method that returns the same
 /// <see cref="ValueTask{TResult}"/> shape the generated proxy receives from
-/// <see cref="IRpcChannel.InvokeUnaryAsync{TRequest,TResponse}"/>. Four source shapes are compared:
+/// <see cref="IRpcContractChannel.InvokeUnaryAsync{TRequest,TResponse}"/>. Four source shapes are compared:
 /// a synchronously-completed <c>ValueTask&lt;int&gt;</c>, a completed pooled
 /// <see cref="IValueTaskSource{TResult}"/>, a genuinely suspended
 /// <see cref="IValueTaskSource{TResult}"/> (completes on another thread), and the no-result

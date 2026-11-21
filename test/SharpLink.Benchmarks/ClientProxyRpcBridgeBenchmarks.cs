@@ -66,9 +66,18 @@ public class ClientProxyRpcBridgeBenchmarks
 
         _client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
+            .DisableRequestTimeout()
             .Build();
-        await _client.ConnectAsync(_shutdown.Token);
-        _rpc = _client.Get<IClientBridgeRpc>();
+        try
+        {
+            await _client.ConnectAsync(_shutdown.Token);
+            _rpc = await BenchmarkEnvironment.PrepareServiceAsync<IClientBridgeRpc>(_client, _shutdown.Token);
+        }
+        catch
+        {
+            await Cleanup();
+            throw;
+        }
         _streamValues = Values(16);
     }
 
