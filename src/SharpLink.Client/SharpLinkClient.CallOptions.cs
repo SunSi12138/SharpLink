@@ -212,5 +212,6 @@ internal sealed partial class SharpLinkClient
         TimeProvider? TimeProvider = null,
         ClientRetryGeneration? RetryGeneration = null,
         NStudyPreparedSite? PreparedSite = null,
-        NStudyServerOutputLifetime? OutputLifetime = null);
+        NStudyServerOutputLifetime? OutputLifetime = null,
+        SharpLinkClientStreamModuleLeaseOwner? InputLifetime = null);
 }
