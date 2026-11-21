@@ -86,7 +86,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
             1,
             [Endpoint("resolver-first", first.Port), Endpoint("resolver-second", second.Port)]));
-        var selector = new PreferFirstEndpoint();
+        var selector = new ObserveEndpointSelection("resolver-first");
         var admission = new ObservePreparedEndpointAdmission();
         await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
@@ -166,6 +166,43 @@ public sealed class RuntimeMultiClusterIntegrationTests
         Record("NormalRemovalReleasesResolverAndLeavesBootstrapReady");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task StaticEndpointPolicyUpdateDoesNotMoveThePreparedProxy()
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = budget.Token;
+        await using var first = await ServerScope.StartAsync("static-a");
+        await using var second = await ServerScope.StartAsync("static-b");
+        var initial = new ObserveEndpointSelection("static-a");
+        var updated = new ObserveEndpointSelection("static-b");
+        var admission = new ObservePreparedEndpointAdmission();
+        await using var client = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(4))
+            .UseEndpoints([Endpoint("static-a", first.Port), Endpoint("static-b", second.Port)], SharpLinkTransportFactories.Sockets())
+            .UseEndpointSelector(initial).UseEndpointAdmission(admission)
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+        var proxy = client.CreateProxy<IConnectionBehaviorService>();
+        await client.ConnectAsync(ct);
+        await client.WaitForReadinessAsync(2, ct);
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(initial.Calls == 1 && initial.LastOptions == 2 && first.OpenBindings == 1 && second.OpenBindings == 0 &&
+               admission.Attempts.IsEmpty, "the static cluster uses its selector only for the initial Prepare");
+
+        client.UpdateEndpointSelector(updated);
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "static-a", "a policy change does not migrate an already prepared proxy");
+        await WaitUntilAsync(() => admission.Reports.Count == 1, ct);
+        Ensure(initial.Calls == 1 && updated.Calls == 0 && first.OpenBindings == 1 && second.OpenBindings == 0 &&
+               admission.Attempts.Single().Id == "static-a" && admission.Reports.Single().Id == "static-a",
+            "the policy and terminal report observe only the originally prepared static endpoint");
+    }
+
     private static Exception? CaptureException(Action action)
     {
         try
@@ -211,7 +248,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
             await Task.Delay(5, ct);
     }
 
-    private sealed class PreferFirstEndpoint : ISharpLinkEndpointSelector
+    private sealed class ObserveEndpointSelection(string preferred) : ISharpLinkEndpointSelector
     {
         internal int Calls { get; private set; }
         internal int LastOptions { get; private set; }
@@ -225,7 +262,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
             {
                 if ((context.ExcludedMask & (1UL << i)) != 0)
                     continue;
-                if (context[i].Endpoint.Id == "resolver-first")
+                if (context[i].Endpoint.Id == preferred)
                     return i;
                 if (first < 0)
                     first = i;
