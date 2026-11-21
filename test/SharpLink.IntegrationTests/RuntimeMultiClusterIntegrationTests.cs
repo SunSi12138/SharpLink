@@ -239,7 +239,9 @@ public sealed class RuntimeMultiClusterIntegrationTests
         Record("InitialCohortOpensOneActualRoute", "resolver-first");
 
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [a, b]));
-        await client.WaitForReadinessAsync(2, ct);
+        // This client can start with one endpoint. Observe the second Ready endpoint
+        // without changing that configured startup threshold.
+        await WaitUntilAsync(() => client.GetReadinessSnapshot().ReadyEndpoints == 2, ct);
         var previousAttempts = admission.Attempts.Count;
         admission.PauseFirst = true;
         var denied = await CaptureExceptionAsync(proxy.Service.GetEndpointIdAsync().AsTask());
