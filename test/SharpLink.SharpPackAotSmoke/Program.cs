@@ -70,7 +70,8 @@ public static class Program
         try
         {
             await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
-            var service = client.Get<IExternalSharpPackAotService>();
+            var proxy = client.CreateProxy<IExternalSharpPackAotService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5), timeout.Token).ConfigureAwait(false);
             var payload = new ExternalAotPayload
             {
                 Id = 313,
@@ -85,7 +86,7 @@ public static class Program
                 }
             };
 
-            var echoed = await service.EchoAsync(payload).ConfigureAwait(false);
+            var echoed = await proxy.Service.EchoAsync(payload).ConfigureAwait(false);
             if (echoed.Id != 313 ||
                 echoed.Children.Count != 2 ||
                 echoed.Children[1].Name != "第二" ||

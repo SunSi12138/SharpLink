@@ -14,8 +14,10 @@ public static class Program
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseSharedMemory(args[0])
             .Build();
+        var proxy = client.CreateProxy<IReferencedPackageService>();
         await client.ConnectAsync(timeout.Token);
-        var result = await client.Get<IReferencedPackageService>().IdentifyAsync(41);
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5), timeout.Token);
+        var result = await proxy.Service.IdentifyAsync(41);
         if (!string.Equals(result, "package-service:42", StringComparison.Ordinal))
             throw new InvalidOperationException($"Unexpected referenced package service result '{result}'.");
 

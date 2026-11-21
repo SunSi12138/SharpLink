@@ -215,12 +215,16 @@ public static class Program
                 expectedActiveEndpoints: 1,
                 expectedTargetReadyEndpoints: 1);
 
-            var proxy = client.Get<IPackageSmokeService>();
+            var rpc = client.CreateProxy<IPackageSmokeService>();
+            await rpc.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            var proxy = rpc.Service;
             var result = await proxy.AddAsync(20, 22);
             if (result != 42)
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
 
-            var generationControl = client.Get<ISharpLinkGenerationControl>();
+            var discovery = client.CreateProxy<ISharpLinkGenerationControl>();
+            await discovery.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            var generationControl = discovery.Service;
             var peerInventory = await generationControl.GetInventoryAsync(cancellationToken);
             if (peerInventory.EndpointEpoch != "package-smoke-server-epoch" ||
                 peerInventory.Revision != 1 ||
@@ -361,7 +365,9 @@ public static class Program
         if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
             throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
         await client.WaitForReadyAsync("runtime", cancellationToken);
-        if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+        var original = client.CreateProxy<IPackageSmokeService>();
+        await original.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        if (await original.Service.AddAsync(20, 22) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 
         var replacement = await client.ReplaceClusterAsync(
@@ -377,7 +383,9 @@ public static class Program
         {
             throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
         }
-        if (await client.Get<IPackageSmokeService>().AddAsync(19, 23) != 42)
+        var replacementProxy = client.CreateProxy<IPackageSmokeService>();
+        await replacementProxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        if (await replacementProxy.Service.AddAsync(19, 23) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
 
         var removal = await client.RemoveClusterAsync(
@@ -447,7 +455,9 @@ public static class Program
                 client.GetReadinessSnapshot(),
                 expectedActiveEndpoints: 2,
                 expectedTargetReadyEndpoints: 2);
-            if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            var staticProxy = client.CreateProxy<IPackageSmokeService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+            await staticProxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            if (await staticProxy.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
             await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
@@ -467,7 +477,9 @@ public static class Program
                 dynamicClient.GetReadinessSnapshot(),
                 expectedActiveEndpoints: 2,
                 expectedTargetReadyEndpoints: 2);
-            if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            var dynamicProxy = dynamicClient.CreateProxy<IPackageSmokeService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+            await dynamicProxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            if (await dynamicProxy.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
         finally
