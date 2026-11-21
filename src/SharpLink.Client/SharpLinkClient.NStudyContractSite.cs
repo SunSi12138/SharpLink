@@ -50,8 +50,7 @@ internal sealed partial class SharpLinkClient
             throw CreateConnectionClosedException("Client is not accepting new contract sites.");
     }
 
-    // Private checkpoint: the existing ABI supplies the real generated proxy.
-    // Cold selection requires every method to work on this receiver.
+    // Internal fixtures isolate their cold preparation state but use the same typed receiver.
     internal NStudyContractSite<T> CreateNStudyContractSite<T>(SharpLinkMetadata? metadata = null) where T : IService
     {
         EnsureNStudyFactoryAvailable();
@@ -121,7 +120,29 @@ internal sealed partial class SharpLinkClient
     internal sealed class NStudyPreparationCell
     {
         private NStudyContractPreparation? _state;
+        private FrozenDictionary<long, RpcMethodDescriptor>? _methods;
+
         internal NStudyContractPreparation Get() => LazyInitializer.EnsureInitialized(ref _state);
+
+        internal FrozenDictionary<long, RpcMethodDescriptor> GetMethods(SharpLinkGeneratedContractDescriptor contract)
+            => Volatile.Read(ref _methods) ?? PublishMethods(contract);
+
+        private FrozenDictionary<long, RpcMethodDescriptor> PublishMethods(SharpLinkGeneratedContractDescriptor contract)
+        {
+            var methods = new Dictionary<long, RpcMethodDescriptor>(contract.Methods.Count);
+            foreach (var method in contract.Methods)
+            {
+                if (method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay or RpcMethodKind.ServerStreaming or
+                        RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming) ||
+                    method.Invocation is not { } invocation || invocation.Kind != method.Kind ||
+                    invocation.ContractId != contract.ContractId || invocation.MethodId != method.MethodId ||
+                    !methods.TryAdd(method.MethodId, invocation))
+                    throw new NotSupportedException("The private site requires matching generated method facts.");
+            }
+
+            var frozen = methods.ToFrozenDictionary();
+            return Interlocked.CompareExchange(ref _methods, frozen, null) ?? frozen;
+        }
     }
 
     internal sealed class NStudyContractPreparation
@@ -150,11 +171,10 @@ internal sealed partial class SharpLinkClient
         private readonly SharpLinkMetadata? _metadata;
         private readonly NStudyContractPreparation _preparation;
         private readonly bool _balancePreparedEndpoints;
-        private readonly FrozenDictionary<long, RpcMethodDescriptor>? _manualMethods;
+        private readonly FrozenDictionary<long, RpcMethodDescriptor> _methods;
 
         internal NStudyContractSite(SharpLinkClient client, ClientProxyRegistration registration,
-            SharpLinkMetadata? metadata, NStudyContractPreparation preparation, bool manual = true,
-            bool balancePreparedEndpoints = false)
+            SharpLinkMetadata? metadata, NStudyContractPreparation preparation, bool balancePreparedEndpoints = false)
         {
             _client = client;
             _registration = registration;
@@ -162,15 +182,7 @@ internal sealed partial class SharpLinkClient
             _metadata = metadata;
             _preparation = preparation;
             _balancePreparedEndpoints = balancePreparedEndpoints;
-            var contract = registration.Descriptor;
-            if (contract.Methods.Any(method =>
-                    method.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay or RpcMethodKind.ServerStreaming or
-                        RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming) ||
-                    method.Invocation is not { } invocation || invocation.Kind != method.Kind ||
-                    invocation.ContractId != contract.ContractId || invocation.MethodId != method.MethodId))
-                throw new NotSupportedException("The private site requires matching generated method facts.");
-            if (manual)
-                _manualMethods = contract.Methods.ToFrozenDictionary(method => method.MethodId, method => method.Invocation!.Value);
+            _methods = registration.NStudyPreparation.GetMethods(registration.Descriptor);
         }
 
         public IRpcRuntimeContext RuntimeContext => _client.RuntimeContext;
@@ -486,12 +498,8 @@ internal sealed partial class SharpLinkClient
 
         private RpcMethodDescriptor FindMethod(long methodId, RpcMethodKind kind)
         {
-            foreach (var generated in _registration.Descriptor.Methods)
-            {
-                if (generated.MethodId == methodId && generated.Invocation is { } method &&
-                    method.Kind == kind)
-                    return method;
-            }
+            if (_methods.TryGetValue(methodId, out var method) && method.Kind == kind)
+                return method;
             throw new ArgumentOutOfRangeException(nameof(methodId), $"No such local generated {kind} method.");
         }
 
@@ -503,9 +511,9 @@ internal sealed partial class SharpLinkClient
                 => site.InvokeUnary(method, request, requestCodec, responseCodec, metadata, cancellationToken);
         }
 
-        private RpcMethodDescriptor ValidateManualMethod(RpcMethodDescriptor method)
+        private RpcMethodDescriptor ValidateMethod(RpcMethodDescriptor method)
         {
-            if (_manualMethods is null || !_manualMethods.TryGetValue(method.MethodId, out var canonical) || canonical != method)
+            if (!_methods.TryGetValue(method.MethodId, out var canonical) || canonical != method)
                 throw new ArgumentException("The method does not match the local contract's generated declaration.", nameof(method));
             return canonical;
         }
@@ -513,9 +521,9 @@ internal sealed partial class SharpLinkClient
         ValueTask<TResponse> IRpcContractChannel.InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
-            => InvokeUnary(ValidateManualMethod(method), request, requestCodec, responseCodec, metadata, cancellationToken);
+            => InvokeUnary(ValidateMethod(method), request, requestCodec, responseCodec, metadata, cancellationToken);
 
-        protected ValueTask<TResponse> InvokeUnary<TRequest, TResponse>(RpcMethodDescriptor method,
+        private ValueTask<TResponse> InvokeUnary<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken cancellationToken)
         {
@@ -530,9 +538,9 @@ internal sealed partial class SharpLinkClient
 
         ValueTask IRpcContractChannel.InvokeOneWayAsync<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
             IRpcCodec<TRequest> codec, in TStreams streams, SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeOneWay(ValidateManualMethod(method), request, codec, streams, metadata, ct);
+            => InvokeOneWay(ValidateMethod(method), request, codec, streams, metadata, ct);
 
-        protected ValueTask InvokeOneWay<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
+        private ValueTask InvokeOneWay<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
             IRpcCodec<TRequest> codec, in TStreams streams, SharpLinkMetadata? metadata, CancellationToken ct)
             where TStreams : struct, IRpcClientStreamWriter
         {
@@ -554,9 +562,9 @@ internal sealed partial class SharpLinkClient
         ValueTask<TResponse> IRpcContractChannel.InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
             SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeClientStream(ValidateManualMethod(method), request, codec, responseCodec, streams, metadata, ct);
+            => InvokeClientStream(ValidateMethod(method), request, codec, responseCodec, streams, metadata, ct);
 
-        protected ValueTask<TResponse> InvokeClientStream<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
+        private ValueTask<TResponse> InvokeClientStream<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
             SharpLinkMetadata? metadata, CancellationToken ct)
             where TStreams : struct, IRpcClientStreamWriter
@@ -573,9 +581,9 @@ internal sealed partial class SharpLinkClient
         IAsyncEnumerable<TResponse> IRpcContractChannel.InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeServerStream(ValidateManualMethod(method), request, codec, responseCodec, metadata, ct);
+            => InvokeServerStream(ValidateMethod(method), request, codec, responseCodec, metadata, ct);
 
-        protected IAsyncEnumerable<TResponse> InvokeServerStream<TRequest, TResponse>(RpcMethodDescriptor method,
+        private IAsyncEnumerable<TResponse> InvokeServerStream<TRequest, TResponse>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
             SharpLinkMetadata? metadata, CancellationToken ct)
         {
@@ -587,9 +595,9 @@ internal sealed partial class SharpLinkClient
         IAsyncEnumerable<TResponse> IRpcContractChannel.InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
             SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeDuplex(ValidateManualMethod(method), request, codec, responseCodec, streams, metadata, ct);
+            => InvokeDuplex(ValidateMethod(method), request, codec, responseCodec, streams, metadata, ct);
 
-        protected IAsyncEnumerable<TResponse> InvokeDuplex<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
+        private IAsyncEnumerable<TResponse> InvokeDuplex<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
             in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
             SharpLinkMetadata? metadata, CancellationToken ct)
             where TStreams : struct, IRpcClientStreamWriter
@@ -599,39 +607,13 @@ internal sealed partial class SharpLinkClient
                 codec, responseCodec, streams, metadata ?? _metadata, ct, prepared);
         }
     }
-    // The private generated ABI still consumes IRpcChannel until the atomic cutover.
-    // Both entries use the same receiver implementation and local-generation Prepare state.
-    internal sealed class NStudyContractSite<T> : NStudyContractSite, IRpcChannel where T : IService
+    internal sealed class NStudyContractSite<T> : NStudyContractSite where T : IService
     {
         internal NStudyContractSite(SharpLinkClient client, ClientProxyRegistration registration,
             SharpLinkMetadata? metadata, NStudyContractPreparation preparation, bool balancePreparedEndpoints = false)
-            : base(client, registration, metadata, preparation, manual: false, balancePreparedEndpoints: balancePreparedEndpoints)
+            : base(client, registration, metadata, preparation, balancePreparedEndpoints)
             => Service = (T)registration.Descriptor.ProxyFactory(this, registration.Codecs);
 
         internal T Service { get; }
-
-        ValueTask<TResponse> IRpcChannel.InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method,
-            in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
-            SharpLinkMetadata? metadata, CancellationToken cancellationToken)
-            => InvokeUnary(method, request, requestCodec, responseCodec, metadata, cancellationToken);
-
-        ValueTask IRpcChannel.InvokeOneWayAsync<TRequest, TStreams>(RpcMethodDescriptor method, in TRequest request,
-            IRpcCodec<TRequest> codec, in TStreams streams, SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeOneWay(method, request, codec, streams, metadata, ct);
-
-        ValueTask<TResponse> IRpcChannel.InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
-            in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
-            SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeClientStream(method, request, codec, responseCodec, streams, metadata, ct);
-
-        IAsyncEnumerable<TResponse> IRpcChannel.InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
-            in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec,
-            SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeServerStream(method, request, codec, responseCodec, metadata, ct);
-
-        IAsyncEnumerable<TResponse> IRpcChannel.InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
-            in TRequest request, IRpcCodec<TRequest> codec, IRpcCodec<TResponse> responseCodec, in TStreams streams,
-            SharpLinkMetadata? metadata, CancellationToken ct)
-            => InvokeDuplex(method, request, codec, responseCodec, streams, metadata, ct);
     }
 }

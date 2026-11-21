@@ -1,10 +1,15 @@
 namespace SharpLink.Client;
 
-internal sealed class SharpLinkMetadataRpcChannel(
+// Temporary adapter for old Get/GetWithMetadata callers in the private study.
+// Prepared generated and handwritten callers never use this adapter.
+internal sealed class LegacyRpcContractReceiver(
     IRpcChannel inner,
-    SharpLinkMetadata metadata) : IRpcChannel
+    SharpLinkMetadata? metadata = null) : IRpcContractChannel
 {
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
+
+    public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException("This legacy receiver cannot prepare a contract."));
 
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method,
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,

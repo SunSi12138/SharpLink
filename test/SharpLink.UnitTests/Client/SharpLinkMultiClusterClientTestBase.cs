@@ -145,9 +145,9 @@ public abstract class SharpLinkMultiClusterClientTestBase
     protected interface IOrdersContract : IService;
     protected interface IUnroutedContract : IService;
 
-    protected sealed class OrdersProxy(IRpcChannel channel) : IOrdersContract
+    protected sealed class OrdersProxy(IRpcContractChannel channel) : IOrdersContract
     {
-        internal IRpcChannel Channel { get; } = channel;
+        internal IRpcContractChannel Channel { get; } = channel;
     }
 
     protected sealed class Manifest : ISharpLinkGeneratedAssemblyManifest

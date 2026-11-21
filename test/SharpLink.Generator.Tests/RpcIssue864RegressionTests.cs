@@ -26,7 +26,7 @@ public interface INameCollision : SharpLink.Sdk.IService
         var generated = result.GeneratedTrees.Select(t => t.GetText().ToString()).ToArray();
         var proxy = generated.Single(t => t.Contains("private sealed class __Proxy_", StringComparison.Ordinal));
         var streams = string.Join("\n", generated.Where(t => t.Contains("IRpcClientStreamWriter", StringComparison.Ordinal)));
-        Ensure(proxy.Contains("private readonly IRpcChannel _channel_;", StringComparison.Ordinal) &&
+        Ensure(proxy.Contains("private readonly IRpcContractChannel _channel_;", StringComparison.Ordinal) &&
                proxy.Contains("this._channel_.InvokeUnaryAsync", StringComparison.Ordinal),
             "method and parameter names must not capture the channel field");
         Ensure(streams.Contains("this._x = x;", StringComparison.Ordinal) &&

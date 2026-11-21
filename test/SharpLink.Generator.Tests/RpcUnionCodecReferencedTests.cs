@@ -52,10 +52,10 @@ using SharpLink.Sdk;
 [assembly: SharpLinkGeneratedCodecIdentityAttribute(typeof(ReferencedUnion.IValue), 11UL, 12UL)]
 [assembly: SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(ReferencedUnion.Manifest),
-    5,
+    6,
     2,
     "2.0.0",
-    "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
+    "sharplink-n999-api6-prepared-contract-channel-v1")]
 
 namespace ReferencedUnion
 {
