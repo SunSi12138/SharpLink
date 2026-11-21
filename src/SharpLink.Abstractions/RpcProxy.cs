@@ -6,7 +6,7 @@ public sealed class RpcProxyOptions
     /// <summary>Gets metadata to attach to calls made by this proxy.</summary>
     public SharpLinkMetadata? Metadata { get; init; }
 
-    /// <summary>Prepares the current Ready Sessions of a cluster and balances calls only among them.</summary>
+    /// <summary>Prepares the current Ready Sessions of the client and balances calls only among them.</summary>
     /// <remarks>New Sessions remain ineligible until another explicit Prepare. The default pins one Session.</remarks>
     public bool BalancePreparedEndpoints { get; init; }
 }

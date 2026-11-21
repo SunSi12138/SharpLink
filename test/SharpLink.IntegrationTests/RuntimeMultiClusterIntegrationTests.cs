@@ -206,6 +206,65 @@ public sealed class RuntimeMultiClusterIntegrationTests
 
     [Test]
     [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PreparedFixedPoolSharesWorkWithoutMovingThePinnedHandle(bool useSharedMemory)
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var ct = budget.Token;
+        var observer = new ObserveFixedPoolCalls();
+        await using var server = await ServerScope.StartAsync("fixed-pool", useSharedMemory, interceptor: observer);
+        var builder = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(4)).UseConnectionPool(pool =>
+        {
+            pool.MinConnections = 2;
+            pool.MaxConnections = 2;
+        });
+        server.ConfigureClient(builder);
+        await using var client = builder.Build();
+        await client.ConnectAsync(ct);
+        await WaitUntilAsync(() => server.ActiveConnections == 2, ct);
+        Ensure(server.OpenBindings == 0,
+            "both physical connection handshakes complete without preparing the contract");
+
+        var pinned = client.CreateProxy<IConnectionBehaviorService>();
+        var balanced = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await pinned.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(await pinned.Service.PingAsync(3) == 4 && server.OpenBindings == 1,
+            "pinned Prepare opens only one binding in a multi-connection pool");
+        var pinnedSession = observer.UnarySessions.Single();
+
+        await balanced.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(server.OpenBindings == 2, "explicit pool Prepare reuses the first binding and binds the other physical Session");
+        var stream = ReadStreamAsync();
+        try
+        {
+            Ensure(await observer.StreamStarted.Task.WaitAsync(ct) == pinnedSession,
+                "the pinned handle keeps using its original Session after the cohort is prepared");
+            Ensure(await balanced.Service.PingAsync(9) == 10 && observer.UnarySessions.Count == 2 &&
+                   observer.UnarySessions.Last() != pinnedSession,
+                "ordinary work can use the other prepared Session while the pinned Session is busy");
+        }
+        finally
+        {
+            observer.ReleaseStream.TrySetResult();
+            await stream.WaitAsync(ct);
+        }
+
+        Ensure(stream.Result.SequenceEqual([0, 1]) && await pinned.Service.PingAsync(4) == 5 &&
+               observer.UnarySessions.Last() == pinnedSession && server.OpenBindings == 2,
+            "both Sessions stay usable, with no implicit Bind or pinned route change");
+
+        async Task<List<int>> ReadStreamAsync()
+        {
+            var values = new List<int>();
+            await foreach (var item in pinned.Service.SlowRangeAsync(2, 1, ct).WithCancellation(ct))
+                values.Add(item);
+            return values;
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task PreparedEndpointBalancingUsesOnlyExplicitlyBoundSessions()
     {
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(24));
@@ -387,6 +446,28 @@ public sealed class RuntimeMultiClusterIntegrationTests
         }
     }
 
+    private sealed class ObserveFixedPoolCalls : ISharpLinkServerInterceptor
+    {
+        internal ConcurrentQueue<string> UnarySessions { get; } = new();
+        internal TaskCompletionSource<string> StreamStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseStream { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask InvokeAsync(SharpLinkServerInvocationContext context, SharpLinkServerInvocationDelegate next)
+        {
+            if (context.Method.Kind == RpcMethodKind.ServerStreaming)
+            {
+                StreamStarted.TrySetResult(context.SessionId);
+                await ReleaseStream.Task.WaitAsync(context.CancellationToken);
+            }
+            else
+            {
+                UnarySessions.Enqueue(context.SessionId);
+            }
+
+            await next(context);
+        }
+    }
+
     private sealed class ObservePreparedEndpointAdmission : ISharpLinkEndpointAdmissionPolicy
     {
         internal bool PauseFirst { get; set; }
@@ -466,9 +547,12 @@ public sealed class RuntimeMultiClusterIntegrationTests
                 client.UseTcp(IPAddress.Loopback.ToString(), Port);
         }
 
-        internal static Task<ServerScope> StartAsync(string endpointId, bool sharedMemory = false, bool exposeProbe = true)
+        internal static Task<ServerScope> StartAsync(string endpointId, bool sharedMemory = false, bool exposeProbe = true,
+            ISharpLinkServerInterceptor? interceptor = null)
         {
             var builder = SharpLinkServerBuilder.Create();
+            if (interceptor is not null)
+                builder.AddInterceptor(interceptor);
             if (exposeProbe)
                 builder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
             else

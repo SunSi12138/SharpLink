@@ -288,11 +288,40 @@ internal sealed partial class SharpLinkClient
     {
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
+        if (prepared.IsBalanced)
+            return ReserveFixedPoolPreparedCohort(prepared);
+
         if (!prepared.TryGetConnection(out var connection) ||
             prepared.Find(connection) is null ||
             !connection.TryReserveExactCallAdmission())
             throw NStudyPreparedSite.Unavailable();
         return connection;
+    }
+
+    private ClientConnection ReserveFixedPoolPreparedCohort(NStudyPreparedSite prepared)
+    {
+        for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
+        {
+            ClientConnection? selected = null;
+            var leastLoad = long.MaxValue;
+            foreach (var candidate in Volatile.Read(ref _readyConnections))
+            {
+                if (!candidate.CanAcceptCalls || prepared.Find(candidate) is null)
+                    continue;
+                var load = (long)candidate.ActiveCallCount + candidate.CallAdmissionReservationCount;
+                if (load < leastLoad)
+                {
+                    selected = candidate;
+                    leastLoad = load;
+                }
+            }
+            if (selected is null)
+                break;
+            if (selected.TryReserveExactCallAdmission())
+                return selected;
+        }
+
+        throw NStudyPreparedSite.Unavailable();
     }
 
     private bool RemoveReadyConnection(ClientConnection connection)

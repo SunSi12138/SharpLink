@@ -41,8 +41,6 @@ internal sealed partial class SharpLinkClient
         if (metadata is { Count: > 0 } && ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata) > _protocolOptions.MaxMetadataBytes)
             throw new ArgumentOutOfRangeException(nameof(options), "Proxy metadata exceeds the client size limit.");
         EnsureNStudyFactoryAvailable();
-        if (options?.BalancePreparedEndpoints == true && _cluster is null)
-            throw new NotSupportedException("Balancing prepared endpoints requires an endpoint-cluster client.");
         return metadata;
     }
 
@@ -202,7 +200,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (observed is not null)
                     throw new NotSupportedException("An exact observed registration names one physical Session, not a cohort.");
-                cohort = _client._cluster!.CaptureReadyConnections();
+                cohort = _client.CaptureNStudyReadyConnections();
                 if (cohort.Length == 0)
                     throw NStudyPreparedSite.Unavailable();
                 if (cohort.Length > NStudyContractPreparation.MaximumCohortSize)
@@ -210,8 +208,7 @@ internal sealed partial class SharpLinkClient
             }
             // Only the shared operation leader consults a cluster endpoint selector. Reusing a
             // live Ready site must not consult it again, even if the ranking policy changes.
-            var connection = _client._cluster is null || observed is not null
-                ? _client.RequireSingleNStudyConnection() : null;
+            var connection = observed is not null ? _client.RequireSingleNStudyConnection() : null;
             if (observed is { } exact && (exact.Contract != _registration.Descriptor.ContractId ||
                 exact.Hash != _hash || exact.Target == default || !connection!.Session.HasNStudyAuthority(exact.Authority)))
                 throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
@@ -348,8 +345,7 @@ internal sealed partial class SharpLinkClient
                 }
                 else
                 {
-                    var connection = operation.FixedConnection ?? _client._cluster!.GetReadyConnection(
-                        method: null, retrySelection: null, attemptOutcome: null, reserveCall: false);
+                    var connection = operation.FixedConnection ?? _client.SelectNStudyPreparationConnection();
                     var route = operation.Observation is null ? FindExistingRoute(connection) : null;
                     route ??= await PreparePhysicalAsync(connection, operation.Observation, deadline, ct).ConfigureAwait(false);
                     ready = new NStudyPreparedSite(route);

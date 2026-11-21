@@ -77,9 +77,24 @@ internal sealed partial class SharpLinkClient
             connection.CanAcceptCalls;
     }
 
+    private ClientConnection[] CaptureNStudyReadyConnections() =>
+        _cluster?.CaptureReadyConnections() ?? Volatile.Read(ref _readyConnections);
+
+    private ClientConnection SelectNStudyPreparationConnection()
+    {
+        if (_cluster is { } cluster)
+            return cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null, reserveCall: false);
+
+        foreach (var candidate in Volatile.Read(ref _readyConnections))
+            if (candidate.CanAcceptCalls)
+                return candidate;
+
+        throw NStudyPreparedSite.Unavailable();
+    }
+
     private bool IsNStudyPreparationConnectionCurrent(ClientConnection connection) =>
         _cluster is null
-            ? connection.CanAcceptCalls && ReferenceEquals(RequireSingleNStudyConnection(), connection)
+            ? connection.CanAcceptCalls && Array.IndexOf(Volatile.Read(ref _readyConnections), connection) >= 0
             : TryGetNStudyClusterCandidate(connection, out _);
 
     private static void RequireNStudyShape(in RpcMethodDescriptor method)
