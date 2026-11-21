@@ -46,8 +46,6 @@ internal sealed partial class SharpLinkClient
     {
         if (Volatile.Read(ref _stopStarted) != 0 || State is SharpLinkConnectionState.Faulted)
             throw CreateConnectionClosedException("Client is not accepting new contract sites.");
-        if (_cluster is not null)
-            throw new NotSupportedException("The private contract site requires a single-endpoint client.");
     }
 
     // Private checkpoint: the existing ABI supplies the real generated proxy.
@@ -94,9 +92,9 @@ internal sealed partial class SharpLinkClient
         internal PrepareOperation? InFlight;
     }
 
-    internal sealed class PrepareOperation(ClientConnection connection, NStudyObservedTarget? observation)
+    internal sealed class PrepareOperation(ClientConnection? connection, NStudyObservedTarget? observation)
     {
-        internal ClientConnection Connection { get; } = connection;
+        internal ClientConnection? FixedConnection { get; } = connection;
         internal NStudyObservedTarget? Observation { get; } = observation;
         internal TaskCompletionSource<NStudyPreparedSite> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -152,18 +150,21 @@ internal sealed partial class SharpLinkClient
             cancellationToken.ThrowIfCancellationRequested();
             var deadline = RpcDeadline.Create(timeout, _client._runtimeContext.TimeProvider);
             EnsureLocalReady();
-            var connection = _client.RequireSingleNStudyConnection();
+            // Only the shared operation leader consults a cluster endpoint selector. Reusing a
+            // live Ready site must not consult it again, even if the ranking policy changes.
+            var connection = _client._cluster is null || observed is not null
+                ? _client.RequireSingleNStudyConnection() : null;
             if (observed is { } exact && (exact.Contract != _registration.Descriptor.ContractId ||
-                exact.Hash != _hash || exact.Target == default || !connection.Session.HasNStudyAuthority(exact.Authority)))
+                exact.Hash != _hash || exact.Target == default || !connection!.Session.HasNStudyAuthority(exact.Authority)))
                 throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
                     "The observed registration does not belong to this contract and physical Session.");
-            if (Volatile.Read(ref _preparation.Ready) is { } current && current.Matches(observed) && current.IsReadyOn(connection))
-                return ValueTask.FromResult(ConfirmWaiter(current, connection, deadline, cancellationToken));
+            if (Volatile.Read(ref _preparation.Ready) is { } current && CanReuse(current, connection, observed))
+                return ValueTask.FromResult(ConfirmWaiter(current, deadline, cancellationToken));
 
             return AwaitPreparationAsync(connection, deadline, cancellationToken, observed);
         }
 
-        private async ValueTask<NStudyAck> AwaitPreparationAsync(ClientConnection connection, RpcDeadline deadline,
+        private async ValueTask<NStudyAck> AwaitPreparationAsync(ClientConnection? connection, RpcDeadline deadline,
             CancellationToken cancellationToken, NStudyObservedTarget? observed)
         {
             _client.ReserveNStudyPrepareWaiter();
@@ -174,14 +175,14 @@ internal sealed partial class SharpLinkClient
                 NStudyPreparedSite? alreadyReady = null;
                 lock (_preparation.Gate)
                 {
-                    if (_preparation.Ready is { } current && current.Matches(observed) && current.IsReadyOn(connection))
+                    if (_preparation.Ready is { } current && CanReuse(current, connection, observed))
                     {
                         alreadyReady = current;
                         operation = null!;
                     }
                     else if (_preparation.InFlight is { } pending)
                     {
-                        if (!ReferenceEquals(pending.Connection, connection) || pending.Observation != observed)
+                        if (!ReferenceEquals(pending.FixedConnection, connection) || pending.Observation != observed)
                             throw NStudyPreparedSite.Unavailable();
                         operation = pending;
                     }
@@ -192,7 +193,7 @@ internal sealed partial class SharpLinkClient
                     }
                 }
                 if (alreadyReady is not null)
-                    return ConfirmWaiter(alreadyReady, connection, deadline, cancellationToken);
+                    return ConfirmWaiter(alreadyReady, deadline, cancellationToken);
 
                 if (start)
                     StartPreparation(operation);
@@ -208,20 +209,24 @@ internal sealed partial class SharpLinkClient
                         .ConfigureAwait(false);
                 }
                 catch (TimeoutException) { throw CreateDeadlineExceededException(); }
-                return ConfirmWaiter(prepared, connection, deadline, cancellationToken);
+                return ConfirmWaiter(prepared, deadline, cancellationToken);
             }
             finally { _client.ReturnNStudyPrepareWaiter(); }
         }
 
-        private NStudyAck ConfirmWaiter(NStudyPreparedSite prepared, ClientConnection connection, RpcDeadline deadline,
+        private static bool CanReuse(NStudyPreparedSite prepared, ClientConnection? expected, NStudyObservedTarget? observed) =>
+            prepared.Matches(observed) && prepared.TryGetConnection(out var connection) &&
+            (expected is null || ReferenceEquals(expected, connection)) && connection.CanAcceptCalls && prepared.IsReadyOn(connection);
+
+        private NStudyAck ConfirmWaiter(NStudyPreparedSite prepared, RpcDeadline deadline,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (deadline.IsExpired(_client._runtimeContext.TimeProvider))
                 throw CreateDeadlineExceededException();
             EnsureLocalReady();
-            if (!prepared.IsReadyOn(connection) || !connection.CanAcceptCalls ||
-                !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
+            if (!prepared.TryGetConnection(out var connection) || !prepared.IsReadyOn(connection) ||
+                !_client.IsNStudyPreparationConnectionCurrent(connection))
                 throw NStudyPreparedSite.Unavailable();
             return prepared.Ack;
         }
@@ -252,12 +257,14 @@ internal sealed partial class SharpLinkClient
             Exception? failure = null;
             try
             {
-                var connection = operation.Connection;
-                var session = connection.Session;
                 var contract = _registration.Descriptor.ContractId;
                 var clock = _client._runtimeContext.TimeProvider;
                 var deadline = RpcDeadline.Create(RpcSession.NStudyTimeout, clock);
                 using var timer = new CancellationTokenSource(RpcSession.NStudyTimeout, clock);
+                EnsureLocalReady();
+                var connection = operation.FixedConnection ?? _client._cluster!.GetReadyConnection(
+                    method: null, retrySelection: null, attemptOutcome: null, reserveCall: false);
+                var session = connection.Session;
                 using var budget = CancellationTokenSource.CreateLinkedTokenSource(timer.Token,
                     _client._shutdownCts.Token, session.LifetimeToken);
                 var ct = budget.Token;
@@ -268,8 +275,11 @@ internal sealed partial class SharpLinkClient
                     // Query authority and local hash were checked before starting. An exact Bind
                     // still validates current remote registration under the peer's registry gate;
                     // a lagging unsolicited manifest is not the authority for this path.
+                    ct.ThrowIfCancellationRequested();
+                    if (!_client.IsNStudyPreparationConnectionCurrent(connection))
+                        throw NStudyPreparedSite.Unavailable();
                     if (operation.Observation is null)
-                        _client.ValidateRemoteContractAssembly(_registration);
+                        _client.ValidateNStudyRemoteContractOn(_registration, session);
                     bound = await BindNStudyContractOnAsync(connection, contract, _hash,
                         operation.Observation?.Target ?? default, ct).ConfigureAwait(false);
                     if (BeforePublishingPreparationForTests is { } beforePublish)
@@ -280,8 +290,7 @@ internal sealed partial class SharpLinkClient
                     EnsureLocalReady();
                     var route = session.CaptureNStudyRoute(contract);
                     if (route.Token != bound.BindingId || route.Target != bound.Target || route.Hash != _hash ||
-                        !route.IsOpenOn(session) || !connection.CanAcceptCalls ||
-                        !ReferenceEquals(_client.RequireSingleNStudyConnection(), connection))
+                        !route.IsOpenOn(session) || !_client.IsNStudyPreparationConnectionCurrent(connection))
                         throw NStudyPreparedSite.Unavailable();
                     ready = new NStudyPreparedSite(connection, route, bound);
                 }

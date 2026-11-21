@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -73,49 +74,96 @@ public sealed class RuntimeMultiClusterIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task RuntimeDynamicResolverShouldUpdateEndpointsWithoutReplacingTheSlot()
+    public async Task RuntimeDynamicResolverRequiresExactPreparationAndPreservesEndpointAdmission()
     {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var ct = budget.Token;
+        var seq = 0;
+        void Record(string edge, string? endpoint = null)
+            => Console.WriteLine("NMULTI " + JsonSerializer.Serialize(new { seq = ++seq, transport = "tcp", edge, endpoint }));
         await using var first = await ServerScope.StartAsync("resolver-first");
         await using var second = await ServerScope.StartAsync("resolver-second");
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
             1,
-            [Endpoint("resolver-first", first.Port)]));
+            [Endpoint("resolver-first", first.Port), Endpoint("resolver-second", second.Port)]));
+        var selector = new PreferFirstEndpoint();
+        var admission = new ObservePreparedEndpointAdmission();
         await using var client = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .AddCluster(
                 "bootstrap",
-                child => child.UseTcp(IPAddress.Loopback.ToString(), first.Port),
+                first.ConfigureClient,
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.StartAsync();
-        await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+        await client.StartAsync(ct);
+        await client.WaitForReadyAsync("bootstrap", ct);
 
-        await client.AddClusterAsync(
+        var added = await client.AddClusterAsync(
             "runtime",
             child => child
                 .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+                .UseEndpointSelector(selector)
+                .UseEndpointAdmission(admission)
                 .UseCluster(options =>
                 {
-                    options.MinReadyEndpoints = 1;
-                    options.MaxConnections = 1;
+                    options.MinReadyEndpoints = 2;
+                    options.MaxConnections = 2;
                     options.MaxConnectionsPerEndpoint = 1;
-                }));
-        await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
-        var proxy = client.Get<IConnectionBehaviorService>();
-        Ensure(await proxy.GetEndpointIdAsync() == "resolver-first",
-            "runtime resolver slot must use its initial endpoint");
+                }), cancellationToken: ct);
+        Ensure(added.Succeeded, $"the resolver-backed slot starts normally: {added.Message}");
+        await client.WaitForReadyAsync("runtime", ct);
+        await WaitUntilAsync(() => first.ActiveConnections == 2 && second.ActiveConnections == 1, ct);
+        var proxy = client.CreateProxy<IConnectionBehaviorService>();
+        Ensure(selector.Calls == 0 && admission.Attempts.IsEmpty && first.OpenBindings == 0 && second.OpenBindings == 0,
+            "factory and Ready require neither endpoint selection nor Bind nor call admission");
+        Record("ResolverStartsTwoLiveUnpreparedEndpoints");
+
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        var alreadyReady = proxy.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(alreadyReady.IsCompletedSuccessfully && selector.Calls == 1 && selector.LastOptions == 2 &&
+               admission.Attempts.IsEmpty && first.OpenBindings == 1 && second.OpenBindings == 0,
+            "public Prepare uses one normal selector, no call policy and one actual binding on the chosen peer");
+        await alreadyReady;
+        Record("ExplicitPrepareSelectsAndBindsOnlyFirst", "resolver-first");
+
+        admission.PauseFirst = true;
+        var denied = await CaptureExceptionAsync(proxy.Service.GetEndpointIdAsync().AsTask());
+        Ensure(denied is SharpLinkException { Code: SharpLinkErrorCode.Unavailable } &&
+               admission.Attempts.Count == 1 && admission.Attempts.Single().Id == "resolver-first" &&
+               admission.Reports.IsEmpty && selector.Calls == 1 && second.OpenBindings == 0,
+            "ordinary endpoint admission rejection does not try another Ready endpoint");
+        admission.PauseFirst = false;
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "resolver-first", "the admitted call uses the same prepared Session");
+        await WaitUntilAsync(() => admission.Reports.Count == 1, ct);
+        Record("AttemptPolicyGovernsOnlyPreparedEndpoint", "resolver-first");
 
         resolver.Publish(new SharpLinkEndpointSnapshot(
             2,
             [Endpoint("resolver-second", second.Port)]));
-        await WaitUntilAsync(
-            async () => await proxy.GetEndpointIdAsync() == "resolver-second",
-            TimeSpan.FromSeconds(4));
+        await WaitUntilAsync(() => first.ActiveConnections == 1, ct);
+        var removed = await CaptureExceptionAsync(proxy.Service.GetEndpointIdAsync().AsTask());
+        Ensure(removed is SharpLinkException { Code: SharpLinkErrorCode.Unavailable } && selector.Calls == 1 &&
+               admission.Attempts.Count == 2 && second.OpenBindings == 0,
+            "a normally retired Session does not borrow a binding or apply its policy decision to another peer");
+        Record("ResolverUpdateRetiresOldSessionWithoutReroutingCalls");
 
-        Ensure(await proxy.GetEndpointIdAsync() == "resolver-second",
-            "resolver publication must update the existing slot without ReplaceClusterAsync");
-        var removal = await client.RemoveClusterAsync("runtime", TimeSpan.FromSeconds(2));
-        Ensure(removal.ReferencesReleased && resolver.DisposeCount == 1,
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4), ct);
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "resolver-second", "the same public proxy explicitly prepares the replacement route");
+        await WaitUntilAsync(() => admission.Reports.Count == 2, ct);
+        var attempts = admission.Attempts.ToArray();
+        var reports = admission.Reports.ToArray();
+        Ensure(selector.Calls == 2 && selector.LastOptions == 1 && first.OpenBindings == 0 && second.OpenBindings == 1 &&
+               attempts.Select(attempt => attempt.Id).SequenceEqual(["resolver-first", "resolver-first", "resolver-second"]) &&
+               attempts[1].Generation != attempts[2].Generation &&
+               reports.SequenceEqual([(attempts[1].Id, attempts[1].Generation, SharpLinkEndpointOutcomeKind.Success),
+                                      (attempts[2].Id, attempts[2].Generation, SharpLinkEndpointOutcomeKind.Success)]),
+            "success reports retain the actual prepared endpoint and topology generation");
+        Record("ExplicitReprepareUsesSecondAndReportsItsOwnGeneration", "resolver-second");
+
+        var removal = await client.RemoveClusterAsync("runtime", TimeSpan.FromSeconds(4), ct);
+        Ensure(removal.ReferencesReleased && resolver.DisposeCount == 1 &&
+               (await client.CheckHealthAsync("bootstrap", ct)).Status == SharpLinkHealthStatus.Ready,
             "removed dynamic-resolver slot must release its resolver exactly once");
+        Record("NormalRemovalReleasesResolverAndLeavesBootstrapReady");
     }
 
     private static Exception? CaptureException(Action action)
@@ -157,23 +205,49 @@ public sealed class RuntimeMultiClusterIntegrationTests
             Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
         };
 
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
+        while (!condition())
+            await Task.Delay(5, ct);
+    }
+
+    private sealed class PreferFirstEndpoint : ISharpLinkEndpointSelector
+    {
+        internal int Calls { get; private set; }
+        internal int LastOptions { get; private set; }
+
+        public int Select(in SharpLinkEndpointSelectionContext context)
         {
-            try
+            Calls++;
+            LastOptions = context.Count;
+            var first = -1;
+            for (var i = 0; i < context.Count; i++)
             {
-                if (await condition())
-                    return;
+                if ((context.ExcludedMask & (1UL << i)) != 0)
+                    continue;
+                if (context[i].Endpoint.Id == "resolver-first")
+                    return i;
+                if (first < 0)
+                    first = i;
             }
-            catch (SharpLinkException)
-            {
-            }
-            await Task.Delay(20);
+            return first;
+        }
+    }
+
+    private sealed class ObservePreparedEndpointAdmission : ISharpLinkEndpointAdmissionPolicy
+    {
+        internal bool PauseFirst { get; set; }
+        internal ConcurrentQueue<(string Id, long Generation)> Attempts { get; } = new();
+        internal ConcurrentQueue<(string Id, long Generation, SharpLinkEndpointOutcomeKind Kind)> Reports { get; } = new();
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(in SharpLinkEndpointCandidate endpoint, in RpcMethodDescriptor method)
+        {
+            Attempts.Enqueue((endpoint.Endpoint.Id, endpoint.Generation));
+            return new(!PauseFirst || endpoint.Endpoint.Id != "resolver-first", endpoint.Generation, null);
         }
 
-        Ensure(await condition(), "condition did not become true before the timeout");
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+            => Reports.Enqueue((outcome.Endpoint.Endpoint.Id, token, outcome.Kind));
     }
 
     private sealed class ControllableResolver(SharpLinkEndpointSnapshot initial) : ISharpLinkEndpointResolver
@@ -226,6 +300,9 @@ public sealed class RuntimeMultiClusterIntegrationTests
         }
 
         internal int Port { get; }
+        internal int ActiveConnections => ServerRegistryTestAccessor.ActiveConnectionCount((SharpLinkServer)_server);
+        internal int OpenBindings => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)_server).Values
+            .Sum(connection => connection.NStudyBindings.Snapshot().Open);
         private string? MemoryName { get; }
 
         internal void ConfigureClient(SharpClientBuilder client)

@@ -112,6 +112,19 @@ internal sealed partial class SharpLinkClient
     private ISharpLinkGeneratedAssemblyManifest FindOwningManifest(ClientProxyRegistration registration)
         => _assemblyRegistry.FindOwningManifest(registration);
 
+    private void ValidateNStudyRemoteContractOn(ClientProxyRegistration registration, RpcSession session)
+    {
+        foreach (var binding in Volatile.Read(ref _remoteContractManifestSnapshot))
+        {
+            if (!ReferenceEquals(binding.Session, session))
+                continue;
+            ValidateRemoteContractAssembly(registration, FindOwningManifest(registration),
+                registration.NStudyAssemblyHash, session, binding.Manifest);
+            return;
+        }
+        throw NStudyPreparedSite.Unavailable();
+    }
+
     private static void ValidateRemoteContractAssembly(
         ClientProxyRegistration registration,
         ISharpLinkGeneratedAssemblyManifest localManifest,

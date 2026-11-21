@@ -219,7 +219,11 @@ internal sealed partial class SharpLinkClient :
             TransitionTo(SharpLinkConnectionState.Draining);
         _assemblyRegistry.BeginShutdown();
         _cluster!.BeginStop();
-        _frameworkTasks.Seal();
+        lock (_poolGate)
+        {
+            _poolStopping = true;
+            _frameworkTasks.Seal();
+        }
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         PulseReadySignal();

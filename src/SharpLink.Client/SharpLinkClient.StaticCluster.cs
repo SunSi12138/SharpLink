@@ -102,7 +102,8 @@ internal sealed partial class SharpLinkClient
         public ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
-            AttemptOutcomeState? attemptOutcome)
+            AttemptOutcomeState? attemptOutcome,
+            bool reserveCall = true)
         {
             var snapshot = _topology.SelectionSnapshot;
             var selectionPolicy = _topology.CaptureSelectionPolicy();
@@ -130,11 +131,11 @@ internal sealed partial class SharpLinkClient
                     excluded |= 1UL << selectedIndex;
                     continue;
                 }
-                var connection = SelectConnection(endpoints[selectedIndex]);
+                var connection = EndpointSelectionKernel.SelectConnection(endpoints[selectedIndex].ReadyConnections, reserveCall);
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
-                    if (connection.ActiveCallCount != 0)
+                    if (reserveCall && connection.ActiveCallCount != 0)
                         EnsureExpansion(endpoints[selectedIndex]);
                     return connection;
                 }
@@ -736,9 +737,6 @@ internal sealed partial class SharpLinkClient
                 ReadyConnections: publication.ReadyConnections,
                 TargetReadyEndpoints: TargetReadyEndpointCount));
         }
-
-        private static ClientConnection? SelectConnection(EndpointState endpoint)
-            => EndpointSelectionKernel.SelectConnection(endpoint.ReadyConnections);
 
         private EndpointState? FindEndpointLocked(ClientConnection connection)
         {

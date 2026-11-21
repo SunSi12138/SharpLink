@@ -69,6 +69,19 @@ internal sealed partial class SharpLinkClient
         return ready[0];
     }
 
+    private bool TryGetNStudyClusterCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate)
+    {
+        candidate = default;
+        // Retirement closes each exact connection's gate before it is released from topology.
+        return _cluster is { } cluster && cluster.TryGetEndpointCandidate(connection, out candidate) &&
+            connection.CanAcceptCalls;
+    }
+
+    private bool IsNStudyPreparationConnectionCurrent(ClientConnection connection) =>
+        _cluster is null
+            ? connection.CanAcceptCalls && ReferenceEquals(RequireSingleNStudyConnection(), connection)
+            : TryGetNStudyClusterCandidate(connection, out _);
+
     private static void RequireNStudyShape(in RpcMethodDescriptor method)
     {
         var supported = method.Kind switch
