@@ -18,7 +18,7 @@ public class CompressionPersistentDecodeReviewTests
             maxConcurrentDecodes: 1,
             maxDecodedBytes: 128L * 1024 * 1024);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single persistent decode worker started");
-        var service = harness.Client.Get<IPersistentDecodeReviewService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         using var cancellation = new CancellationTokenSource();
         var payload = Enumerable.Repeat((byte)0x2a, LargePayloadBytes).ToArray();
 
@@ -76,7 +76,7 @@ public class CompressionPersistentDecodeReviewTests
             maxConcurrentDecodes: 1,
             clientRequestTimeout: TimeSpan.FromMilliseconds(750));
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "persistent decode worker started");
-        var service = harness.Client.Get<IPersistentDecodeReviewService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         var payload = Enumerable.Repeat((byte)0x39, LargePayloadBytes).ToArray();
 
         var call = service.MeasureNonCancellableAsync(payload).AsTask();

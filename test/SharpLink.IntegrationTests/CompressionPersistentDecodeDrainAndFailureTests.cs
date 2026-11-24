@@ -15,7 +15,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         Ensure(harness.DecodeAccepting, "persistent decode executor must accept work after server start");
 
-        var service = harness.Client.Get<IPersistentDecodeControlPlaneService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeControlPlaneService>();
         var workerCount = harness.DecodeWorkerCount;
         var cancellations = Enumerable.Range(0, workerCount + 1)
             .Select(static _ => new CancellationTokenSource())
@@ -108,8 +108,8 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
-        var call = harness.Client.Get<IPersistentDecodeControlPlaneService>()
-            .MeasureAsync(CreateLargePayload(0xA1), cancellation.Token)
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeControlPlaneService>();
+        var call = service.MeasureAsync(CreateLargePayload(0xA1), cancellation.Token)
             .AsTask();
 
         await EnsureRpcFailureAsync(call, expectedCode, scenario);
