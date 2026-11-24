@@ -16,19 +16,20 @@ public class OneWayInboundDrainIntegrationTests
         });
         var interceptor = new ShortCircuitOneWayServerInterceptor();
         harness.Server.ReplaceInterceptors([interceptor]);
+        var service = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
+        var drain = new OneWayDrainObservation(harness.Client, harness.Server);
         try
         {
-            var service = harness.Client.Get<ICompressionService>();
             var send = service.NotifyStreamBytesAsync(ManyPayloads(128, 32)).AsTask();
 
             await interceptor.Entered.WaitAsync(PhaseTimeout);
-            await Task.Delay(75);
+            await drain.WaitForCreditBlockAsync(PhaseTimeout);
             Ensure(!send.IsCompleted,
                 "sender should exhaust the small receive window while the OneWay invocation is still gated");
 
             interceptor.Release();
             await send.WaitAsync(PhaseTimeout);
-            await Task.Delay(50);
+            await drain.WaitForDrainAsync(PhaseTimeout);
 
             Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
                 "short-circuited OneWay invocation must not reach the generated service method");
@@ -53,18 +54,20 @@ public class OneWayInboundDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IOneWayInboundDrainService>();
+        var drain = new OneWayDrainObservation(harness.Client, harness.Server);
         try
         {
             var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
 
             await OneWayInboundDrainService.Entered.WaitAsync(PhaseTimeout);
-            await Task.Delay(75);
+            await drain.WaitForCreditBlockAsync(PhaseTimeout);
             Ensure(!send.IsCompleted,
                 "typed-attached unread stream should hold enough credit to stall a sender beyond the receive window");
 
             OneWayInboundDrainService.Release();
             await send.WaitAsync(PhaseTimeout);
+            await drain.WaitForDrainAsync(PhaseTimeout);
 
             Ensure(OneWayInboundDrainService.EnumeratedItemCount == 0,
                 "the service must return without enumerating the typed inbound stream");

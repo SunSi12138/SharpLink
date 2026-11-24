@@ -16,7 +16,8 @@ public class OneWayOuterDrainRejectionIntegrationTests
         });
         var interceptor = new HoldUnaryServerInterceptor();
         harness.Server.ReplaceInterceptors([interceptor]);
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IOneWayInboundDrainService>();
+        var drain = new OneWayDrainObservation(harness.Client, harness.Server);
 
         try
         {
@@ -28,6 +29,7 @@ public class OneWayOuterDrainRejectionIntegrationTests
             var rejectedSend = service.IgnoreStreamAfterGateAsync(
                 ManyPayloads(128, 32)).AsTask();
             await rejectedSend.WaitAsync(PhaseTimeout);
+            await drain.WaitForDrainAsync(PhaseTimeout);
 
             Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
                 "a OneWay request rejected by the outer connection-drain gate must not invoke the service");

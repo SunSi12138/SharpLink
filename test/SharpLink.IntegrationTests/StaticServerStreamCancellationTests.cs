@@ -29,7 +29,7 @@ public sealed class StaticServerStreamCancellationTests
         {
             await server.StartAsync().AsTask().WaitAsync(guard);
             await client.ConnectAsync().AsTask().WaitAsync(guard);
-            var service = client.Get<IStaticCancellationService>();
+            var service = await client.PrepareTestServiceAsync<IStaticCancellationService>();
             var session = await service.GetSessionIdAsync().AsTask().WaitAsync(guard);
             Ensure(session != "missing-session", "the probe must run on a real server session");
 

@@ -51,7 +51,7 @@ public sealed class TerminalObserverDrainIntegrationTests
         try
         {
             await client.ConnectAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            var proxy = client.Get<ITerminalObserverDrainProbe>();
+            var proxy = await client.PrepareTestServiceAsync<ITerminalObserverDrainProbe>();
             Ensure(await proxy.EchoAsync(41).AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42, "healthy generated TCP RPC prerequisite");
             var output = transport.Output!;
             // Observation only: the connection was created by public Connect/handshake. No private
