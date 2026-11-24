@@ -249,7 +249,6 @@ public class SharpLinkClientTimeBudgetTests
             typeof(SharpLinkClientTimeBudgetTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(client, module);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
             MethodId: 289,
@@ -260,13 +259,16 @@ public class SharpLinkClientTimeBudgetTests
             MethodTimeout: TimeSpan.FromSeconds(5));
         var request = default(RpcEmptyRequest);
 
-        var stream = channel.InvokeServerStreamingAsync(
+        var stream = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+            client,
+            module,
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             client.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default);
+            cancellationToken: default,
+            prepared: SharpLinkClient.NStudyPreparedSite.Unprepared);
 
         // The dynamic wrapper freezes the logical lifetime at proxy invocation. Let that lifetime
         // expire without running timers, then make the module drain before enumeration. The earlier

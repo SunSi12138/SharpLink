@@ -858,8 +858,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var moduleProducerLifetime = control.PreparedSite is null
-            ? SharpLinkClientStreamModuleLeaseContext.Current : control.InputLifetime;
+        var moduleProducerLifetime = control.InputLifetime;
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
@@ -1035,8 +1034,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var moduleProducerLifetime = control.PreparedSite is null
-            ? SharpLinkClientStreamModuleLeaseContext.Current : control.InputLifetime;
+        var moduleProducerLifetime = control.InputLifetime;
         SharpLinkDynamicModuleLease producerLease = default;
         NStudyProducerAdmission? admission = null;
         var registrationLease = dispatcher.RetainForRegistration();
