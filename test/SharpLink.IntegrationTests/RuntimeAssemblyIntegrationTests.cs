@@ -13,7 +13,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-unload");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
         Ensure(InvokeProbeBlocking(proxy, plugin.ContractType) == 10, "ALC probe call");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
         var payload = Activator.CreateInstance(payloadType)!;
@@ -25,6 +25,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 proxy, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None) == 25,
             "ALC SharpPack payload call");
         var tracked = CapturePluginRuntimeObjects(harness.Client, plugin.ContractAssembly);
+        tracked.Add("PreparedGeneratedService", proxy);
         tracked.Add("ContractAssembly", plugin.ContractAssembly);
         tracked.Add("ServiceAssembly", plugin.ServiceAssembly);
         tracked.Add("ContractType", plugin.ContractType);
@@ -51,7 +52,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
 
         if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
         {
@@ -375,6 +376,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Func<TimeSpan, CancellationToken, ValueTask> Prepare)
     {
         internal ValueTask PrepareAsync(CancellationToken ct = default) => Prepare(TimeSpan.FromSeconds(5), ct);
+    }
+
+    private static async ValueTask<object> PrepareGeneratedServiceAsync(ISharpLinkClient client, Type contractType)
+    {
+        var proxy = CreatePreparedGeneratedProxy(client, contractType);
+        await proxy.PrepareAsync();
+        return proxy.Service;
     }
 
     private static object GetProxy(ISharpLinkClient client, Type contractType)

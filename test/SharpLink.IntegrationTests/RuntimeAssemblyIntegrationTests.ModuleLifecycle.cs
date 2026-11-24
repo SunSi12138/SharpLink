@@ -78,7 +78,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "duplicate diagnostics contain ALC identity");
 
         await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
         var unary = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 7, CancellationToken.None);
         Ensure(unary == 8, "dynamic unary");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
@@ -162,7 +162,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("dynamic-dormant-streams");
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
         var serverStream = InvokeStream(
             proxy, plugin.ContractType, "ServerStreamAsync", 1, CancellationToken.None);
         var duplexStream = InvokeStream(
@@ -195,7 +195,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
         var clientModule = GetDynamicModule(harness.Client, plugin.ContractAssembly);
         var serverModule = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
         await using (var enumerator = InvokeStream(
@@ -260,7 +260,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await RegisterAllAsync(harness, plugin);
         plugin.ResetServiceState();
 
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var producerRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
