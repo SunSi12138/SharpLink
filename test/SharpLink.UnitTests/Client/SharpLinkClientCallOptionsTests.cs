@@ -16,7 +16,8 @@ public class SharpLinkClientCallControlTests
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport);
 
-        var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(client));
+        var exception = await CaptureSharpLinkException(
+            ClientInvokerTestHelper.InvokeUnaryAsync(client, SharpLinkClient.NStudyPreparedSite.Unprepared));
         Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "fail-fast error code");
     }
 
@@ -29,7 +30,8 @@ public class SharpLinkClientCallControlTests
             builder => builder.UseRequestTimeout(TimeSpan.MaxValue));
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var request = await transport.Connection
             .WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(2));
@@ -51,7 +53,8 @@ public class SharpLinkClientCallControlTests
             builder => builder.UseEndpointAdmission(policy));
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await transport.Connection.InjectFrameAsync(
             ProtocolV2FrameType.Response,
@@ -85,25 +88,32 @@ public class SharpLinkClientCallControlTests
             });
         await client.ConnectAsync();
 
-        var occupied = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var occupied = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var occupiedRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var streams = default(RpcNoClientStreams);
-        var oneWayFailure = await CaptureSharpLinkException(channel.InvokeOneWayAsync(
+        var streams = default(UnexpectedStreamProducer);
+        var oneWayFailure = await CaptureSharpLinkException(channel.InvokeOneWay(
             OneWayClientStreamingMethod,
             in request,
             RpcEmptyRequestCodec.Instance,
             in streams,
-            default).AsTask());
+            metadata: null,
+            cancellationToken: default,
+            prepared).AsTask());
         Ensure(oneWayFailure.Code == SharpLinkErrorCode.ResourceExhausted, "one-way stream registration failure");
 
-        var stream = channel.InvokeServerStreamingAsync(
+        var stream = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+            channel,
+            null,
             ServerStreamingMethod,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
-            default);
+            null,
+            default,
+            prepared);
         await using var enumerator = stream.GetAsyncEnumerator();
         var serverFailure = await CaptureSharpLinkException(enumerator.MoveNextAsync().AsTask());
         Ensure(serverFailure.Code == SharpLinkErrorCode.ResourceExhausted, "server stream registration failure");
@@ -115,6 +125,12 @@ public class SharpLinkClientCallControlTests
         Ensure(await occupied == 0, "occupied pending call completion");
     }
 
+    private readonly struct UnexpectedStreamProducer : IRpcClientStreamWriter
+    {
+        public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("A rejected registration must not start its producer.");
+    }
+
     private static readonly RpcMethodDescriptor OneWayClientStreamingMethod = new(
         1,
         31,
@@ -122,7 +138,8 @@ public class SharpLinkClientCallControlTests
         HasResponsePayload: false,
         HasClientStreams: true,
         HasMethodTimeout: false,
-        MethodTimeout: null);
+        MethodTimeout: null,
+        ClientStreamCount: 1);
 
     private static readonly RpcMethodDescriptor ServerStreamingMethod = new(
         1,

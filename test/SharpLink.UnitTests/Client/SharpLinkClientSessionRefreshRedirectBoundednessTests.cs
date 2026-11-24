@@ -227,7 +227,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
         // retirement of that generation can never complete while the refreshes roll forward.
         var streamingCts = new CancellationTokenSource();
         var enumerator = ClientInvokerTestHelper
-            .InvokeServerStreaming(client, streamingCts.Token, pinnedSite)
+            .InvokeServerStreaming(client, pinnedSite, streamingCts.Token)
             .GetAsyncEnumerator(streamingCts.Token);
         var firstMove = enumerator.MoveNextAsync().AsTask();
         try

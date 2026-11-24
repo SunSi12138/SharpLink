@@ -116,7 +116,8 @@ public sealed class SharpLinkClientSupportSnapshotAcceptanceTests
         var metadata = new SharpLinkMetadata(
             new KeyValuePair<string, string>("authorization", metadataSecret));
 
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, metadata).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared, metadata).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         var synthetic = connection.PendingCalls.Rent<int>(out var syntheticId);
 

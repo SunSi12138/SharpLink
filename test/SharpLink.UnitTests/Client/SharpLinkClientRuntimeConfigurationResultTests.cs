@@ -54,12 +54,13 @@ public sealed class SharpLinkClientRuntimeConfigurationResultTests
                 .UseRequestTimeout(TimeSpan.FromSeconds(10)));
         await client.ConnectAsync();
 
-        var oldGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var oldGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
 
         var update = client.TryUpdateRequestTimeout(TimeSpan.FromSeconds(1));
         Ensure(update.Succeeded, "structured timeout update should publish");
-        var newGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var newGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
 
         timeProvider.Advance(TimeSpan.FromSeconds(1));

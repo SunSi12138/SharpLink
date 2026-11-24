@@ -187,12 +187,13 @@ public sealed class SharpLinkClientRuntimeCircuitBreakerTests
             });
         await client.ConnectAsync();
 
-        var failing = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var failing = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var failingRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, failingRequest, SharpLinkErrorCode.Unavailable);
         await EnsureThrows<SharpLinkException>(failing);
 
-        var rejected = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var rejected = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var rejection = await EnsureThrows<SharpLinkException>(rejected);
         Ensure(rejection.Code == SharpLinkErrorCode.Unavailable, "open breaker rejection code");
 
@@ -200,7 +201,7 @@ public sealed class SharpLinkClientRuntimeCircuitBreakerTests
         var disabled = client.GetCircuitBreakerPolicySnapshot();
         Ensure(!disabled.Enabled, "runtime disable must publish disabled breaker state");
 
-        var bypassed = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var bypassed = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var bypassRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)bypassRequest.RequestId));
         Ensure(await bypassed == 0, "disabled breaker must bypass old Open state");
@@ -219,7 +220,7 @@ public sealed class SharpLinkClientRuntimeCircuitBreakerTests
         Ensure(enabled.Enabled && enabled.MinimumThroughput == 1,
             "runtime publication must copy options instead of retaining the mutable caller object");
 
-        var fresh = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var fresh = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var freshRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)freshRequest.RequestId));
         Ensure(await fresh == 0, "re-enabled breaker must start fresh Closed rather than revive the retired Open state");

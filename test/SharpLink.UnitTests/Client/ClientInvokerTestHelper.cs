@@ -49,11 +49,15 @@ internal static class ClientInvokerTestHelper
 
     internal static Task<SharpLinkClient.NStudyPreparedSite> PrepareAsync(
         SharpLinkClient client, params TestClientTransportFactory[] transports)
-        => PrepareConnectionsAsync(client, Array.ConvertAll(transports, factory => factory.Connection));
+        => PrepareConnectionsAsync(client, Array.ConvertAll(transports, factory => factory.Connection), transports.Length > 1);
 
     internal static Task<SharpLinkClient.NStudyPreparedSite> PrepareAsync(
         SharpLinkClient client, TestTransportConnection transport)
-        => PrepareConnectionsAsync(client, transport);
+        => PrepareConnectionsAsync(client, [transport], balance: false);
+
+    internal static Task<SharpLinkClient.NStudyPreparedSite> PrepareCohortAsync(
+        SharpLinkClient client, params TestTransportConnection[] transports)
+        => PrepareConnectionsAsync(client, transports, balance: true);
 
     internal static async Task<SharpLinkClient.NStudyPreparedSite> PreparePublishedAsync(
         SharpLinkClient client, TestTransportConnection transport, TimeSpan timeout)
@@ -70,7 +74,7 @@ internal static class ClientInvokerTestHelper
     }
 
     private static async Task<SharpLinkClient.NStudyPreparedSite> PrepareConnectionsAsync(
-        SharpLinkClient client, params TestTransportConnection[] transports)
+        SharpLinkClient client, TestTransportConnection[] transports, bool balance)
     {
         if (transports.Length == 0)
             throw new ArgumentException("Specify the connected test transport(s) to prepare.", nameof(transports));
@@ -83,7 +87,7 @@ internal static class ClientInvokerTestHelper
                 ?? throw new InvalidOperationException("The test transport does not own a Ready session.");
             routes[i] = await transport.BindInvocationRouteAsync(connection, FixtureContractId, bindingSlot: i);
         }
-        return transports.Length == 1 ? new(routes[0]) : new(routes);
+        return balance ? new(routes) : new(routes[0]);
     }
 
     private static readonly MethodInfo SCaptureReady = typeof(SharpLinkClient).GetMethod(
@@ -98,9 +102,9 @@ internal static class ClientInvokerTestHelper
 
     public static ValueTask<int> InvokeUnaryAsync(
         SharpLinkClient client,
+        SharpLinkClient.NStudyPreparedSite prepared,
         SharpLinkMetadata? metadata = null,
-        CancellationToken cancellationToken = default,
-        SharpLinkClient.NStudyPreparedSite? prepared = null)
+        CancellationToken cancellationToken = default)
     {
         var request = default(RpcEmptyRequest);
         return client.InvokeUnary(
@@ -115,9 +119,9 @@ internal static class ClientInvokerTestHelper
 
     public static ValueTask<int> InvokeIdempotentUnaryAsync(
         SharpLinkClient client,
+        SharpLinkClient.NStudyPreparedSite prepared,
         SharpLinkMetadata? metadata = null,
-        CancellationToken cancellationToken = default,
-        SharpLinkClient.NStudyPreparedSite? prepared = null)
+        CancellationToken cancellationToken = default)
     {
         var request = default(RpcEmptyRequest);
         return client.InvokeUnary(
@@ -131,7 +135,7 @@ internal static class ClientInvokerTestHelper
     }
 
     public static ValueTask InvokeOneWayAsync(
-        SharpLinkClient client, SharpLinkClient.NStudyPreparedSite? prepared = null)
+        SharpLinkClient client, SharpLinkClient.NStudyPreparedSite prepared)
     {
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
@@ -147,16 +151,13 @@ internal static class ClientInvokerTestHelper
 
     public static IAsyncEnumerable<int> InvokeServerStreaming(
         SharpLinkClient client,
-        CancellationToken cancellationToken = default,
-        SharpLinkClient.NStudyPreparedSite? prepared = null)
+        SharpLinkClient.NStudyPreparedSite prepared,
+        CancellationToken cancellationToken = default)
     {
         var request = default(RpcEmptyRequest);
         var responseCodec = client.RuntimeContext.Codecs.GetCodec<int>();
-        return prepared is null
-            ? client.InvokeServerStreamingAsync(
-                SServerStreamingMethod, in request, RpcEmptyRequestCodec.Instance, responseCodec, null, cancellationToken)
-            : SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
-                client, null, SServerStreamingMethod, in request, RpcEmptyRequestCodec.Instance,
-                responseCodec, null, cancellationToken, prepared);
+        return SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+            client, null, SServerStreamingMethod, in request, RpcEmptyRequestCodec.Instance,
+            responseCodec, null, cancellationToken, prepared);
     }
 }
