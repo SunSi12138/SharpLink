@@ -10,7 +10,7 @@
 
 ## 换代中断后，先查清单再重试
 
-手动审批期间连接若被滚动刷新，`JoinVersionChangeAsync` 可能以取消结束，即使应用没有取消。取消或断线不等于对方拒绝，也不能据此判断服务端是否已经发布。服务端的 `ActivationSent` 只表示发出了激活消息；客户端的 `Resumed` 才表示它已准备好新路由。
+手动审批期间连接若被滚动刷新，`JoinVersionChangeAsync` 可能抛出错误码为 `Unavailable` 的 `SharpLinkException`，即使应用没有取消。取消或断线不等于对方拒绝，也不能据此判断服务端是否已经发布。服务端的 `ActivationSent` 只表示发出了激活消息；客户端的 `Resumed` 才表示它已准备好新路由。
 
 1. 等新连接就绪，用 `GetLocalVersionInventory()` 和 `QueryPeerVersionInventoryAsync(...)` 核对双方当前注册。比较注册 ID；契约哈希相同也可能换了服务实现。
 2. 对要继续使用的代理重新执行有时限的 `PrepareAsync`。查询清单不会准备代理，旧连接的绑定不能沿用。

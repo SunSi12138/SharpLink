@@ -160,11 +160,18 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception error)
         {
+            // Check the original lifetime before abort cleanup can disconnect the Session.
+            var endedSession = expectedSession.HasValue && error is OperationCanceledException &&
+                !cancellationToken.IsCancellationRequested && !timer.IsCancellationRequested &&
+                session.LifetimeToken.IsCancellationRequested;
             // Before accepting an offer there is no ambiguous remote transition to unwind.
             // Atomically close that enrollment so a racing offer cannot claim an exiting scope.
             if (!session.SupportsNStudyOfferAdmission || ownership.CloseEnrollmentForAbort() ||
                 error is not OperationCanceledException)
                 session.NotifyDisconnected(error);
+            if (endedSession)
+                throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
+                    "The selected connection ended during version coordination.", error);
             throw;
         }
         finally

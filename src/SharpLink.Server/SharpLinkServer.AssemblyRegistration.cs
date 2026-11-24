@@ -292,7 +292,7 @@ internal sealed partial class SharpLinkServer
                     if (!await coordinated.NegotiateAsync().ConfigureAwait(false))
                     {
                         rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                            "A local version decision declined the staged group.", newAssembly);
+                            "Version coordination did not complete for the staged group.", newAssembly);
                         return SharpLinkAssemblyReplacementResult.Failure(rollbackError);
                     }
                 }
