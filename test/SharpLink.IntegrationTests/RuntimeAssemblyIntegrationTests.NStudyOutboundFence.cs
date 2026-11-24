@@ -128,7 +128,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         }
     }
 
-    private sealed class NStudyOutboundProbe
+    private sealed class NStudyOutboundProbe(Func<NStudyWriterFrame, bool>? holdControl = null)
     {
         private long _blockingBinding;
         private int _recording;
@@ -145,6 +145,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         internal void StartRecording() => Volatile.Write(ref _recording, 1);
         internal void Release() => ContinueFlush.TrySetResult();
+        internal bool ShouldHold(NStudyWriterFrame frame) =>
+            (frame.Binding != 0 && frame.Binding == BlockingBinding) || holdControl?.Invoke(frame) == true;
     }
 
     private readonly record struct NStudyWriterFrame(
@@ -156,6 +158,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
             => new NStudyFenceConnection(await inner.ConnectAsync(cancellationToken), probe);
 
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    private sealed class NStudyFenceListener(IServerTransportListener inner, NStudyOutboundProbe probe)
+        : IServerTransportListener
+    {
+        public EndPoint? LocalEndPoint => inner.LocalEndPoint;
+        public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => new NStudyFenceConnection(await inner.AcceptAsync(cancellationToken), probe);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
@@ -207,8 +218,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         public override async ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
         {
-            if (_batch.Any(frame => frame.Binding != 0 && frame.Binding == probe.BlockingBinding) &&
-                probe.FlushEntered.TrySetResult())
+            if (_batch.Any(probe.ShouldHold) && probe.FlushEntered.TrySetResult())
                 await probe.ContinueFlush.Task.WaitAsync(cancellationToken);
             var result = await inner.FlushAsync(cancellationToken);
             if (!result.IsCanceled && !result.IsCompleted)
