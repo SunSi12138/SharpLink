@@ -35,6 +35,8 @@ internal readonly struct ServerCallCancellationLease
 
     internal long Generation { get; }
 
+    internal StreamTerminalOwner TerminalOwner => new(State.StreamOwnerId, Generation);
+
     internal ServerCallCancellationState State
         => _state ?? throw new InvalidOperationException("The server call cancellation lease is empty.");
 
@@ -54,6 +56,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private static readonly ConcurrentStack<ServerCallCancellationState> Pool = new();
     private static Action<ServerCallCancellationState>? s_beforeRequestActivationForTests;
     private static int s_retainedCount;
+    private static long s_nextStreamOwnerId;
 
     private readonly Lock _lifetimeGate = new();
     private readonly Lock _terminalGate = new();
@@ -80,6 +83,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     }
 
     public long RequestId { get; private set; }
+    internal long StreamOwnerId { get; } = Interlocked.Increment(ref s_nextStreamOwnerId);
 
     public RpcDeadline Deadline { get; private set; }
 

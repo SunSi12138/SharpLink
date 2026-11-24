@@ -5,7 +5,8 @@ internal sealed partial class SharpLinkServer
     private static bool TryAcceptInboundStreamProgress(
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         long requestId,
-        out bool hasOwningCallState)
+        out bool hasOwningCallState,
+        out StreamTerminalOwner terminalOwner)
     {
         if (!requestCancellationMap.TryCapture(
                 requestId,
@@ -14,18 +15,20 @@ internal sealed partial class SharpLinkServer
         {
             // No owning state yet: preserve pre-admission buffering.
             hasOwningCallState = false;
+            terminalOwner = default;
             return true;
         }
 
         return TryAcceptCapturedInboundStreamProgress(
-            requestCancellationMap, requestId, callLease, out hasOwningCallState);
+            requestCancellationMap, requestId, callLease, out hasOwningCallState, out terminalOwner);
     }
 
     private static bool TryAcceptCapturedInboundStreamProgress(
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         long requestId,
         ServerCallCancellationLease callLease,
-        out bool hasOwningCallState)
+        out bool hasOwningCallState,
+        out StreamTerminalOwner terminalOwner)
     {
         // Losing a pooled generation is not a terminal decision. Retry current ownership;
         // removal falls back to ordinary existing-route handling, never terminal abandonment.
@@ -39,6 +42,7 @@ internal sealed partial class SharpLinkServer
                     requestId, static (id, state) => state.CaptureLease(id), out callLease))
             {
                 hasOwningCallState = false;
+                terminalOwner = default;
                 return true;
             }
         }
@@ -49,6 +53,7 @@ internal sealed partial class SharpLinkServer
         {
             var accepted = callLease.State.TryAcceptStreamDataDeferredCancellation(
                 out var notifyCancellation);
+            terminalOwner = accepted ? default : callLease.TerminalOwner;
             if (notifyCancellation)
             {
                 // The connection read loop owns frame parsing for every call on this transport.
@@ -127,10 +132,11 @@ internal sealed partial class SharpLinkServer
                             !TryAcceptInboundStreamProgress(
                                 requestCancellationMap,
                                 streamRequestId,
-                                out hasOwningStreamCallState))
+                                out hasOwningStreamCallState,
+                                out var terminalOwner))
                         {
                             await DrainTerminalStreamProgressAsync(
-                                session, header.Type, header.Flags, streamRequestId, payload, decoded: false)
+                                session, header.Type, header.Flags, streamRequestId, payload, decoded: false, terminalOwner)
                                 .ConfigureAwait(false);
                             continue;
                         }
@@ -214,10 +220,11 @@ internal sealed partial class SharpLinkServer
                                         !TryAcceptInboundStreamProgress(
                                             requestCancellationMap,
                                             failedRequestId,
-                                            out _))
+                                            out _,
+                                            out var failedTerminalOwner))
                                     {
                                         await DrainTerminalStreamProgressAsync(
-                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
+                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false, failedTerminalOwner)
                                             .ConfigureAwait(false);
                                         continue;
                                     }
@@ -240,12 +247,13 @@ internal sealed partial class SharpLinkServer
                             !TryAcceptInboundStreamProgress(
                                 requestCancellationMap,
                                 streamRequestId,
-                                out _))
+                                out _,
+                                out var decodedTerminalOwner))
                         {
                             try
                             {
                                 await DrainTerminalStreamProgressAsync(
-                                    session, header.Type, header.Flags, streamRequestId, payload, decoded: true)
+                                    session, header.Type, header.Flags, streamRequestId, payload, decoded: true, decodedTerminalOwner)
                                     .ConfigureAwait(false);
                             }
                             finally

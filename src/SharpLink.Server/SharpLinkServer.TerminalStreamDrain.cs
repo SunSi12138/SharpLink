@@ -8,7 +8,8 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         long requestId,
         ReadOnlySequence<byte> payload,
-        bool decoded)
+        bool decoded,
+        StreamTerminalOwner terminalOwner)
     {
         if (!decoded)
             session.ValidateInboundPayloadEnvelope(type, flags, payload);
@@ -19,7 +20,7 @@ internal sealed partial class SharpLinkServer
                 : Math.Max(1, checked((int)payload.Length - sizeof(ushort)));
             var streamId = TryReadStreamId(ref payload);
             if (session.StreamManager.TryDiscardTerminalStreamData(
-                    requestId, streamId, payload, encodedBytes, out var dispatch))
+                    requestId, streamId, payload, encodedBytes, out var dispatch, terminalOwner))
                 await dispatch.ConfigureAwait(false);
             return;
         }
@@ -32,6 +33,6 @@ internal sealed partial class SharpLinkServer
                 session.RuntimeContext.Protocol.MaxErrorMessageBytes);
             exception = new SharpLinkException(error.Code, error.Message);
         }
-        session.StreamManager.TryCompleteTerminalStream(requestId, completedStreamId, exception);
+        session.StreamManager.TryCompleteTerminalStream(requestId, completedStreamId, exception, terminalOwner);
     }
 }

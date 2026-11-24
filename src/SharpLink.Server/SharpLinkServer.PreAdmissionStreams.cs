@@ -126,7 +126,8 @@ internal sealed partial class SharpLinkServer
                         "Compressed stream decoding did not return an owner."),
                     _runtimeContext.Buffers);
             },
-            retainUntilLocalCompletion);
+            retainUntilLocalCompletion,
+            retainUntilLocalCompletion ? callState.CaptureLease(requestId).TerminalOwner : default);
     }
 
     private void ReservePreInvocationRequestStreams(
@@ -134,7 +135,7 @@ internal sealed partial class SharpLinkServer
         int clientStreamCount,
         long requestId,
         CancellationToken cancellationToken,
-        bool retainUntilLocalCompletion = false)
+        StreamTerminalOwner retainedInputOwner = default)
     {
         if (clientStreamCount == 0)
             return;
@@ -142,7 +143,7 @@ internal sealed partial class SharpLinkServer
         // Keep captured callback state inside the streaming-only method. A lambda in
         // this scope would allocate its display class before the no-stream return.
         ReservePreInvocationRequestStreamsCore(
-            session, clientStreamCount, requestId, cancellationToken, retainUntilLocalCompletion);
+            session, clientStreamCount, requestId, cancellationToken, retainedInputOwner);
     }
 
     private void ReservePreInvocationRequestStreamsCore(
@@ -150,7 +151,7 @@ internal sealed partial class SharpLinkServer
         int clientStreamCount,
         long requestId,
         CancellationToken cancellationToken,
-        bool retainUntilLocalCompletion)
+        StreamTerminalOwner retainedInputOwner)
     {
         var streamManager = session.StreamManager;
         Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload> decodeCompressed = compressedPayload =>
@@ -181,7 +182,8 @@ internal sealed partial class SharpLinkServer
                 static _ => { },
                 static () => { },
                 decodeCompressed,
-                retainUntilLocalCompletion);
+                retainUntilLocalCompletion: retainedInputOwner.IsPresent,
+                retainedInputOwner: retainedInputOwner);
             return;
         }
 
@@ -209,8 +211,9 @@ internal sealed partial class SharpLinkServer
                             SharpLinkErrorCode.ResourceExhausted,
                             $"Deferred client-stream retention exceeded the {maxRetainedBytes}-byte limit without negotiated flow control.")),
                     decodeCompressed,
-                    retainUntilLocalCompletion,
-                    maxRetainedBytes));
+                    retainUntilLocalCompletion: retainedInputOwner.IsPresent,
+                    maxRetainedBytes: maxRetainedBytes,
+                    retainedInputOwner: retainedInputOwner));
         }
     }
 

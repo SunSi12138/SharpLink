@@ -259,12 +259,17 @@ internal sealed partial class SharpLinkServer
                 // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install
                 // the same promoted route here, before interceptors can short-circuit, and retain it
                 // until local OneWay completion so typed-input abandonment has a stable owner.
-                ReservePreInvocationRequestStreams(
-                    session,
-                    descriptor.ClientStreamCount,
-                    requestId,
-                    invokeToken,
-                    retainUntilLocalCompletion: true);
+                if (descriptor.ClientStreamCount != 0)
+                {
+                    // An immediate, non-cancellable call may not have a tracked state
+                    // yet. Establish its exact owner before the mailbox becomes visible.
+                    callState = EnsureTrackedCallState(
+                        connection, callState, requestId, request.RpcDeadline,
+                        serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                    ReservePreInvocationRequestStreams(
+                        session, descriptor.ClientStreamCount, requestId, invokeToken,
+                        callState.CaptureLease(requestId).TerminalOwner);
+                }
 
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(

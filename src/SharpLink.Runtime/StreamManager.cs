@@ -519,7 +519,8 @@ internal sealed partial class StreamManager
         Action<int> releaseBytes,
         Action capacityExceeded,
         Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
-        bool retainUntilLocalCompletion = false)
+        bool retainUntilLocalCompletion = false,
+        StreamTerminalOwner retainedInputOwner = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamCount);
         for (var index = 1; index <= streamCount; index++)
@@ -533,7 +534,8 @@ internal sealed partial class StreamManager
                     releaseBytes,
                     capacityExceeded,
                     decodeCompressed,
-                    retainUntilLocalCompletion));
+                    retainUntilLocalCompletion,
+                    retainedInputOwner: retainedInputOwner));
         }
     }
 

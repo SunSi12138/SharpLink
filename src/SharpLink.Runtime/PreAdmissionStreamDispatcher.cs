@@ -12,7 +12,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     Action capacityExceeded,
     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
     bool retainUntilLocalCompletion = false,
-    int maxRetainedBytes = int.MaxValue)
+    int maxRetainedBytes = int.MaxValue,
+    StreamTerminalOwner retainedInputOwner = default)
     : IStreamConsumptionAwareDispatcher, IStreamDispatchLease, IStreamDispatchState
 {
     private const int MaxBufferedElements = 4096;
@@ -37,7 +38,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     private bool _discarding;
     private bool _localAbandonRequested;
     private bool _retainUntilLocalCompletion = retainUntilLocalCompletion;
-    internal bool RetainsOneWayInput => Volatile.Read(ref _retainUntilLocalCompletion);
+    private readonly StreamTerminalOwner _retainedInputOwner = retainUntilLocalCompletion ? retainedInputOwner : default;
     private bool _attachmentInProgress;
     private int _configurationVersion;
     private int _replayedDuringAttach;
