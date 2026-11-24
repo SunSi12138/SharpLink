@@ -366,7 +366,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static PreparedGeneratedProxy CreatePreparedGeneratedProxyTyped<T>(ISharpLinkClient client) where T : IService
     {
         var proxy = client.CreateProxy<T>();
-        return new(proxy.Service, client.GetLocalContract<T>().ContractId, proxy.PrepareAsync);
+        var manifest = GetDynamicModule(client, typeof(T).Assembly).Manifest;
+        var contract = manifest.Contracts.Single(item => item.ContractType == typeof(T));
+        return new(proxy.Service, contract.ContractId, proxy.PrepareAsync);
     }
 
     private sealed record PreparedGeneratedProxy(object Service, long ContractId,
