@@ -15,7 +15,8 @@ internal sealed partial class RpcSession
 
     private static bool UsesNStudyOfferAdmission(in NStudyCoordinationMessage message) =>
         message.Phase is NStudyPhase.Offer or NStudyPhase.Enrolled ||
-        message.DeclineReason > NStudyDeclineReason.CandidateChanged;
+        message.DeclineReason is NStudyDeclineReason.PeerDisabled or
+            NStudyDeclineReason.ApprovalRequired or NStudyDeclineReason.PeerNotEnrolled;
 
     private Task ObserveNStudyOffer(NStudyChange change, Func<NStudyCoordinationMode> readLivePolicy)
     {

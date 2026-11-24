@@ -16,20 +16,20 @@ internal sealed partial class NStudyApprovalScheduler
 
     internal int ActiveCount => Volatile.Read(ref _activeCount);
 
-    internal async ValueTask<bool> DecideAsync(NStudyChange change,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>> approve, ILogger logger,
+    internal async ValueTask<SharpLinkVersionDecision> DecideAsync(NStudyChange change,
+        Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>> approve, ILogger logger,
         TimeProvider clock, RpcDeadline controlDeadline, CancellationToken controlToken)
     {
         controlToken.ThrowIfCancellationRequested();
         var budget = controlDeadline.GetRemaining(clock) - DeclineReserve;
         if (budget <= TimeSpan.Zero)
-            return false;
+            return SharpLinkVersionDecision.Reject;
 
         if (budget > ApprovalTimeout)
             budget = ApprovalTimeout;
         var approvalDeadline = RpcDeadline.Create(budget, clock);
         if (!TryEnter())
-            return false;
+            return SharpLinkVersionDecision.Reject;
         var application = new CancellationTokenSource();
         var work = Task.Run(() => InvokeAsync(change, approve, logger, application.Token));
         var decidedOnTime = false;
@@ -41,12 +41,12 @@ internal sealed partial class NStudyApprovalScheduler
                 .ConfigureAwait(false);
             controlToken.ThrowIfCancellationRequested();
             decidedOnTime = !approvalDeadline.IsExpired(clock);
-            return decidedOnTime && decision;
+            return decidedOnTime ? decision : SharpLinkVersionDecision.Reject;
         }
         catch (TimeoutException)
         {
             controlToken.ThrowIfCancellationRequested();
-            return false;
+            return SharpLinkVersionDecision.Reject;
         }
         finally
         {
@@ -66,20 +66,23 @@ internal sealed partial class NStudyApprovalScheduler
         }
     }
 
-    private static async Task<bool> InvokeAsync(NStudyChange change,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>> approve, ILogger logger, CancellationToken token)
+    private static async Task<SharpLinkVersionDecision> InvokeAsync(NStudyChange change,
+        Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>> approve, ILogger logger, CancellationToken token)
     {
         if (token.IsCancellationRequested)
-            return false;
+            return SharpLinkVersionDecision.Reject;
         try
         {
-            return await approve(change, token).ConfigureAwait(false);
+            var decision = await approve(change, token).ConfigureAwait(false);
+            return decision is SharpLinkVersionDecision.Approve or SharpLinkVersionDecision.Reject or SharpLinkVersionDecision.Defer
+                ? decision
+                : throw new InvalidOperationException("The version approval callback returned an unknown decision.");
         }
         catch (Exception error)
         {
             if (error is not OperationCanceledException || !token.IsCancellationRequested)
                 ReportFailure(logger, error);
-            return false;
+            return SharpLinkVersionDecision.Reject;
         }
     }
 

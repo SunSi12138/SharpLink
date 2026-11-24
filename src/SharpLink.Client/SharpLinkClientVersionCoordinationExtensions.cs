@@ -22,12 +22,14 @@ public static class SharpLinkClientVersionCoordinationExtensions
     /// <summary>Joins one server-staged change for this exact local contract and physical session.</summary>
     /// <remarks>
     /// Requires the single Ready session, a prepared source route, and counterpart server participation.
-    /// In Manual mode supply an approval callback; false refuses this attempt. Automatic mode still requires this call.
+    /// In Manual mode supply a decision callback; both peers must support deferral.
+    /// Defer settles this attempt without approval; retry explicitly for a fresh decision.
+    /// Automatic mode still requires this call.
     /// Only a result with Resumed set confirms the client has prepared the new route.
     /// </remarks>
     public static ValueTask<SharpLinkClientVersionChangeResult> JoinVersionChangeAsync(
         this ISharpLinkClient client, RpcLocalContract localContract, SharpLinkVersionParticipant participant,
-        Func<SharpLinkVersionChange, CancellationToken, ValueTask<bool>>? approveLocally = null,
+        Func<SharpLinkVersionChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? approveLocally = null,
         CancellationToken cancellationToken = default)
         => GetBuiltInClient(client).JoinVersionChangeAsync(localContract, participant, approveLocally, cancellationToken);
 

@@ -22,12 +22,13 @@ internal sealed partial class SharpLinkClient
         NStudyInitiator localChoice,
         Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
         CancellationToken cancellationToken)
-        => (await NegotiateNStudyReplacementCoreAsync(localChoice, approveLocally, null, null, cancellationToken)
+        => (await NegotiateNStudyReplacementCoreAsync(localChoice, NStudyVersionProjection.AdaptApproval(approveLocally),
+            null, null, cancellationToken)
             .ConfigureAwait(false)).Activation;
 
     internal async ValueTask<SharpLinkClientVersionChangeResult> JoinVersionChangeAsync(
         RpcLocalContract local, SharpLinkVersionParticipant participant,
-        Func<SharpLinkVersionChange, CancellationToken, ValueTask<bool>>? approveLocally,
+        Func<SharpLinkVersionChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? approveLocally,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(local);
@@ -46,7 +47,7 @@ internal sealed partial class SharpLinkClient
 
     private async Task<NStudyClientOutcome> NegotiateNStudyReplacementCoreAsync(
         NStudyInitiator localChoice,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
+        Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? approveLocally,
         ClientProxyRegistration? expectedRegistration, SharpLinkVersionSession? expectedSession,
         CancellationToken cancellationToken)
     {
@@ -61,7 +62,8 @@ internal sealed partial class SharpLinkClient
             if (!session.HasNStudyAuthority(new(peer.ServerInstanceId, peer.ServerRegistryEpoch, peer.PhysicalSessionId)))
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "Version coordination does not target the current Ready session.");
         }
-        using var ownership = session.EnterNStudyCoordination(mode, localChoice, approveLocally);
+        using var ownership = session.EnterNStudyCoordination(mode, localChoice, approveLocally,
+            requirePolicyDeferral: expectedSession.HasValue);
         var clock = _runtimeContext.TimeProvider;
         var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
         using var timer = new CancellationTokenSource(controlDeadline.GetRemaining(clock), clock);
@@ -116,8 +118,9 @@ internal sealed partial class SharpLinkClient
                 // install them, and the local registry is rechecked after policy awaits.
                 if (module.Manifest.RpcAssemblyHash != change.Hash)
                     return await RefuseAsync(change, NStudyDeclineReason.LocalAssetIncompatible).ConfigureAwait(false);
-                if (!await ownership.DecideAsync(change, _logger, controlDeadline, ct).ConfigureAwait(false))
-                    return await RefuseAsync(change, NStudyDeclineReason.Policy).ConfigureAwait(false);
+                var decision = await ownership.DecideAsync(change, _logger, controlDeadline, ct).ConfigureAwait(false);
+                if (decision != SharpLinkVersionDecision.Approve)
+                    return await RefuseAsync(change, NStudyVersionProjection.FromNonApproval(decision)).ConfigureAwait(false);
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     return await RefuseAsync(change, NStudyDeclineReason.LocalAssetMissing).ConfigureAwait(false);
                 var preparation = registration.NStudyPreparation.Get();

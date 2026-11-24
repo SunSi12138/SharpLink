@@ -11,6 +11,17 @@ public enum SharpLinkVersionCoordinationMode
     Automatic
 }
 
+/// <summary>The application decision for the current Manual version attempt.</summary>
+public enum SharpLinkVersionDecision
+{
+    /// <summary>Refuses the current attempt.</summary>
+    Reject,
+    /// <summary>Allows the framework to continue validating and preparing this attempt.</summary>
+    Approve,
+    /// <summary>Ends the current attempt without approval. A later attempt needs a fresh decision.</summary>
+    Defer
+}
+
 /// <summary>Identifies which endpoint proposes the coordinated change.</summary>
 public enum SharpLinkVersionInitiator
 {
@@ -45,7 +56,9 @@ public enum SharpLinkVersionDeclineReason
     /// <summary>The peer requires an explicit manual decision and did not enroll.</summary>
     ApprovalRequired,
     /// <summary>The peer did not join the attempt.</summary>
-    PeerNotEnrolled
+    PeerNotEnrolled,
+    /// <summary>An application deferred this attempt without authorizing its publication or resume.</summary>
+    PolicyDeferred
 }
 
 /// <summary>Reports what the client achieved for the named proposal.</summary>
@@ -94,7 +107,9 @@ public enum SharpLinkVersionChangeStage
     /// <summary>The attempt ended with a refusal.</summary>
     Declined,
     /// <summary>The attempt did not complete. Inspect local inventory for the current publication.</summary>
-    Failed
+    Failed,
+    /// <summary>An application deferred this attempt. No approval carries over to a retry.</summary>
+    Deferred
 }
 
 /// <summary>A best-effort notification. Query inventory to recover missing updates.</summary>

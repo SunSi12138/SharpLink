@@ -19,15 +19,22 @@ internal static class NStudyVersionProjection
             _ => throw new ArgumentOutOfRangeException(nameof(initiator))
         };
 
-    internal static Func<NStudyChange, CancellationToken, ValueTask<bool>>? ToApproval(
-        Func<SharpLinkVersionChange, CancellationToken, ValueTask<bool>>? approval)
+    internal static Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? ToApproval(
+        Func<SharpLinkVersionChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? approval)
         => approval is null ? null : (change, ct) => approval(ToChange(change), ct);
+
+    internal static Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? AdaptApproval(
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approval)
+        => approval is null ? null : async (change, ct) => await approval(change, ct).ConfigureAwait(false)
+            ? SharpLinkVersionDecision.Approve : SharpLinkVersionDecision.Reject;
 
     internal static Func<NStudyVersionNotice, CancellationToken, ValueTask> ToObserver(
         Func<SharpLinkVersionChangeNotice, CancellationToken, ValueTask> observer)
     {
         ArgumentNullException.ThrowIfNull(observer);
-        return (notice, ct) => observer(new(ToStage(notice.Kind), ToChange(notice.Change),
+        return (notice, ct) => observer(new(
+            notice.Kind == NStudyVersionNoticeKind.Declined && notice.DeclineReason == NStudyDeclineReason.PolicyDeferred
+                ? SharpLinkVersionChangeStage.Deferred : ToStage(notice.Kind), ToChange(notice.Change),
             notice.LocalPublicationOccurred, ToDeclineReason(notice.DeclineReason)), ct);
     }
 
@@ -52,8 +59,12 @@ internal static class NStudyVersionProjection
             NStudyDeclineReason.PeerDisabled => SharpLinkVersionDeclineReason.PeerDisabled,
             NStudyDeclineReason.ApprovalRequired => SharpLinkVersionDeclineReason.ApprovalRequired,
             NStudyDeclineReason.PeerNotEnrolled => SharpLinkVersionDeclineReason.PeerNotEnrolled,
+            NStudyDeclineReason.PolicyDeferred => SharpLinkVersionDeclineReason.PolicyDeferred,
             _ => throw new ArgumentOutOfRangeException(nameof(reason))
         };
+
+    internal static NStudyDeclineReason FromNonApproval(SharpLinkVersionDecision decision)
+        => decision == SharpLinkVersionDecision.Defer ? NStudyDeclineReason.PolicyDeferred : NStudyDeclineReason.Policy;
 
     internal static SharpLinkVersionDeclarationResult ToDeclaration(NStudyTargetDeclarationReply reply)
     {

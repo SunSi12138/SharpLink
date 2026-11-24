@@ -15,16 +15,16 @@ public sealed class NStudyApprovalSchedulerTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var count = 0;
 
-        async ValueTask<bool> AwaitDecisionAsync(NStudyChange _, CancellationToken token)
+        async ValueTask<SharpLinkVersionDecision> AwaitDecisionAsync(NStudyChange _, CancellationToken token)
         {
             if (Interlocked.Increment(ref count) == NStudyApprovalScheduler.Capacity)
                 entered.TrySetResult();
             await release.Task;
-            return !token.IsCancellationRequested;
+            return token.IsCancellationRequested ? SharpLinkVersionDecision.Reject : SharpLinkVersionDecision.Approve;
         }
 
         var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
-        Task<bool> Start() => endpoint.DecideAsync(default, AwaitDecisionAsync, NullLogger.Instance,
+        Task<SharpLinkVersionDecision> Start() => endpoint.DecideAsync(default, AwaitDecisionAsync, NullLogger.Instance,
             clock, controlDeadline, guard.Token).AsTask();
 
         var attempts = Enumerable.Range(0, NStudyApprovalScheduler.Capacity).Select(_ => Start()).ToArray();
@@ -34,9 +34,11 @@ public sealed class NStudyApprovalSchedulerTests
             Ensure(endpoint.ActiveCount == NStudyApprovalScheduler.Capacity, "the physical endpoint quota is full");
             clock.Advance(TimeSpan.FromSeconds(3));
             var expired = await Task.WhenAll(attempts).WaitAsync(guard.Token);
-            Ensure(expired.All(decision => !decision) && endpoint.ActiveCount == NStudyApprovalScheduler.Capacity,
+            Ensure(expired.All(decision => decision == SharpLinkVersionDecision.Reject) &&
+                   endpoint.ActiveCount == NStudyApprovalScheduler.Capacity,
                 "logical policy expiry does not remove physically pending callbacks");
-            Ensure(!await Start().WaitAsync(guard.Token) && count == NStudyApprovalScheduler.Capacity,
+            Ensure(await Start().WaitAsync(guard.Token) == SharpLinkVersionDecision.Reject &&
+                   count == NStudyApprovalScheduler.Capacity,
                 "another attempt declines without starting or queuing a ninth callback");
         }
         finally
@@ -45,8 +47,8 @@ public sealed class NStudyApprovalSchedulerTests
         }
 
         await WaitForExitAsync(endpoint, guard.Token);
-        Ensure(await endpoint.DecideAsync(default, static (_, _) => ValueTask.FromResult(true), NullLogger.Instance,
-                clock, controlDeadline, guard.Token),
+        Ensure(await endpoint.DecideAsync(default, static (_, _) => ValueTask.FromResult(SharpLinkVersionDecision.Approve),
+                NullLogger.Instance, clock, controlDeadline, guard.Token) == SharpLinkVersionDecision.Approve,
             "physically completed approvals return endpoint capacity");
     }
 
@@ -60,11 +62,11 @@ public sealed class NStudyApprovalSchedulerTests
         var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        async ValueTask<bool> AwaitDecisionAsync(NStudyChange _, CancellationToken token)
+        async ValueTask<SharpLinkVersionDecision> AwaitDecisionAsync(NStudyChange _, CancellationToken token)
         {
             entered.SetResult(token);
             await release.Task;
-            return true;
+            return SharpLinkVersionDecision.Approve;
         }
 
         var attempt = endpoint.DecideAsync(default, AwaitDecisionAsync, NullLogger.Instance,
@@ -100,10 +102,26 @@ public sealed class NStudyApprovalSchedulerTests
         var approved = await endpoint.DecideAsync(default, (_, _) =>
         {
             Interlocked.Increment(ref calls);
-            return ValueTask.FromResult(true);
+            return ValueTask.FromResult(SharpLinkVersionDecision.Approve);
         }, NullLogger.Instance, clock, RpcDeadline.Create(TimeSpan.FromMilliseconds(500), clock), CancellationToken.None);
-        Ensure(!approved && calls == 0 && endpoint.ActiveCount == 0,
+        Ensure(approved == SharpLinkVersionDecision.Reject && calls == 0 && endpoint.ActiveCount == 0,
             "reserve the remaining control budget for the orderly decline");
+    }
+
+    [Test]
+    public async Task CompletedManualDecisionKeepsApproveRejectAndDeferDistinct()
+    {
+        var clock = new ManualTimeProvider();
+        var scheduler = new NStudyApprovalScheduler();
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        foreach (var decision in new[]
+                 { SharpLinkVersionDecision.Approve, SharpLinkVersionDecision.Reject, SharpLinkVersionDecision.Defer })
+        {
+            var result = await scheduler.DecideAsync(default, (_, _) => ValueTask.FromResult(decision),
+                NullLogger.Instance, clock, RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock), guard.Token);
+            Ensure(result == decision, $"An on-time {decision} must survive the scheduler.");
+            await WaitForExitAsync(scheduler, guard.Token);
+        }
     }
 
     private static async Task WaitForExitAsync(NStudyApprovalScheduler endpoint, CancellationToken ct)

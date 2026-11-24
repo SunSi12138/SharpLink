@@ -4,7 +4,7 @@ using SharpLink.Client;
 using SharpLink.Sdk;
 using SharpLink.Server;
 
-if (args is ["coordinate", ("tcp" or "shared-memory"), ("manual" or "automatic" or "cohort"), var plugins])
+if (args is ["coordinate", ("tcp" or "shared-memory"), ("manual" or "automatic" or "cohort" or "follower-defer"), var plugins])
 {
     await CoordinationSmoke.RunAsync(args[1], args[2], Path.GetFullPath(plugins));
     return;

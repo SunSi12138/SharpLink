@@ -105,6 +105,36 @@ public class NegotiatedSessionOptionsTests
     }
 
     [Test]
+    public async Task ManualDeferralPolicyOnEarlierSessionShouldLeaveAutomaticAvailable()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "pre-deferral-policy", input.Reader, output.Writer, RpcSessionTestFixture.ClientOptions(),
+            completeHandshake: false);
+        Ensure(session.TryCompleteHandshake(
+            CreateOptions(NStudyWire.CoordinationCapability | NStudyWire.OfferAdmissionCapability, 4096)),
+            "a valid prior coordination session can become Ready");
+
+        var decisions = 0;
+        var failure = CaptureSharpLinkException(() =>
+        {
+            using var _ = session.EnterNStudyCoordination(NStudyCoordinationMode.Manual, NStudyInitiator.Client,
+                (_, _) =>
+                {
+                    decisions++;
+                    return ValueTask.FromResult(SharpLinkVersionDecision.Defer);
+                }, requirePolicyDeferral: true);
+        });
+        Ensure(failure.Code == SharpLinkErrorCode.FailedPrecondition && decisions == 0 &&
+               session.ProtocolPhase == RpcSessionProtocolPhase.Ready,
+            "the missing capability rejects only the new Manual operation, before selection or callback");
+        using var automatic = session.EnterNStudyCoordination(NStudyCoordinationMode.Automatic, NStudyInitiator.Client,
+            manualDecision: null, requirePolicyDeferral: true);
+        Ensure(automatic.Mode == NStudyCoordinationMode.Automatic, "the earlier Session still supports Automatic");
+    }
+
+    [Test]
     public async Task InvalidHandshakeOptionsShouldFaultWithoutPublishingReady()
     {
         using var context = new SharpLinkRuntimeContextBuilder()

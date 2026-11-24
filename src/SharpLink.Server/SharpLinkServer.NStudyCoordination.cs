@@ -3,7 +3,12 @@ using System.Reflection;
 namespace SharpLink.Server;
 
 internal readonly record struct NStudyPeerOffer(ServerConnectionState Peer, NStudyInitiator Initiator,
-    Func<NStudyChange, CancellationToken, ValueTask<bool>>? ApproveLocally);
+    Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? DecideLocally)
+{
+    internal NStudyPeerOffer(ServerConnectionState peer, NStudyInitiator initiator,
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally)
+        : this(peer, initiator, NStudyVersionProjection.AdaptApproval(approveLocally)) { }
+}
 internal readonly record struct NStudyPeerActivation(NStudyChange? Change, Guid ClientRegistration,
     NStudyDeclineReason DeclineReason, bool ActivationSent, bool Terminated);
 internal readonly record struct NStudyCohortActivation(SharpLinkAssemblyReplacementResult Replacement,
@@ -26,7 +31,7 @@ internal sealed partial class SharpLinkServer
 
     internal async ValueTask<SharpLinkServerVersionChangeResult> ReplaceAssemblyCoordinatedAsync(
         Assembly oldAssembly, Assembly newAssembly, long contract, IReadOnlyList<SharpLinkVersionParticipant> participants,
-        TimeSpan gracefulTimeout, Func<SharpLinkVersionChange, CancellationToken, ValueTask<bool>>? approveLocally,
+        TimeSpan gracefulTimeout, Func<SharpLinkVersionChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? approveLocally,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(participants);
@@ -45,7 +50,7 @@ internal sealed partial class SharpLinkServer
                 NStudyVersionProjection.ToInitiator(participant.Initiator), approval);
         }
         var result = await StageNStudyReplacementOnSessionsAsync(offers, oldAssembly, newAssembly, contract,
-            gracefulTimeout, cancellationToken, requireEnabled: true).ConfigureAwait(false);
+            gracefulTimeout, cancellationToken, publicPolicy: true).ConfigureAwait(false);
         var peers = new SharpLinkVersionPeerResult[selected.Length];
         for (var i = 0; i < peers.Length; i++)
         {
@@ -71,14 +76,14 @@ internal sealed partial class SharpLinkServer
 
     internal async Task<NStudyCohortActivation> StageNStudyReplacementOnSessionsAsync(
         IReadOnlyList<NStudyPeerOffer> offers, Assembly oldAssembly, Assembly newAssembly, long contract,
-        TimeSpan gracefulTimeout, CancellationToken cancellationToken, bool requireEnabled = false)
+        TimeSpan gracefulTimeout, CancellationToken cancellationToken, bool publicPolicy = false)
     {
         ValidateReplacementInputs(oldAssembly, newAssembly, gracefulTimeout);
         ArgumentOutOfRangeException.ThrowIfLessThan(offers.Count, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(offers.Count, NStudyApprovalScheduler.Capacity);
         cancellationToken.ThrowIfCancellationRequested();
         var mode = NStudyVersionCoordinationMode;
-        if (requireEnabled && mode == NStudyCoordinationMode.Disabled)
+        if (publicPolicy && mode == NStudyCoordinationMode.Disabled)
             throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Local policy disabled version coordination.");
         var clock = _runtimeContext.TimeProvider;
         var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
@@ -98,7 +103,8 @@ internal sealed partial class SharpLinkServer
                 if (!_connectionRegistry.TryGetValue(peer.Session.Id, out var current) || !ReferenceEquals(current, peer))
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected data Session is no longer a server peer.");
                 var authority = ReadNStudySessionAuthority(peer);
-                participants.Add(NStudyParticipant.Acquire(offer, authority, mode, _logger, controlDeadline, controlBudget.Token));
+                participants.Add(NStudyParticipant.Acquire(offer, authority, mode, _logger, controlDeadline,
+                    controlBudget.Token, requirePolicyDeferral: publicPolicy));
             }
             // The application names the first peer as the commit authorizer.
             // The other selected data Sessions authorize only their own resume.
@@ -252,9 +258,10 @@ internal sealed partial class SharpLinkServer
             _activationSent, Terminated);
 
         internal static NStudyParticipant Acquire(NStudyPeerOffer offer, NStudyAuthority authority,
-            NStudyCoordinationMode mode, ILogger logger, RpcDeadline controlDeadline, CancellationToken ct)
+            NStudyCoordinationMode mode, ILogger logger, RpcDeadline controlDeadline, CancellationToken ct,
+            bool requirePolicyDeferral)
         {
-            var scope = offer.Peer.Session.EnterNStudyCoordination(mode, offer.Initiator, offer.ApproveLocally);
+            var scope = offer.Peer.Session.EnterNStudyCoordination(mode, offer.Initiator, offer.DecideLocally, requirePolicyDeferral);
             try
             {
                 var budget = CancellationTokenSource.CreateLinkedTokenSource(ct,
@@ -324,9 +331,10 @@ internal sealed partial class SharpLinkServer
                 else
                     await SendAsync(NStudyPhase.Propose).ConfigureAwait(false);
 
-                if (!await scope.DecideAsync(change, logger, controlDeadline, ControlToken).ConfigureAwait(false))
+                var localDecision = await scope.DecideAsync(change, logger, controlDeadline, ControlToken).ConfigureAwait(false);
+                if (localDecision != SharpLinkVersionDecision.Approve)
                 {
-                    await DeclineAsync(NStudyDeclineReason.Policy).ConfigureAwait(false);
+                    await DeclineAsync(NStudyVersionProjection.FromNonApproval(localDecision)).ConfigureAwait(false);
                     return false;
                 }
                 if (!CanContinue)

@@ -17,6 +17,8 @@ internal sealed partial class RpcSession
     private NStudyCoordinationMode _nStudyHandshakeCoordinationMode;
 
     internal bool SupportsNStudyCoordination => (NegotiatedCapabilities & NStudyWire.CoordinationCapability) != 0;
+    private bool SupportsNStudyPolicyDeferral => SupportsNStudyCoordination &&
+        (NegotiatedCapabilities & NStudyWire.PolicyDeferralCapability) != 0;
     internal NStudyCoordinationMode NStudyHandshakeCoordinationMode => _nStudyHandshakeCoordinationMode;
 
     // Handshake capability belongs to the physical Session. Application policy
@@ -31,9 +33,13 @@ internal sealed partial class RpcSession
     }
 
     internal NStudyCoordinationScope EnterNStudyCoordination(NStudyCoordinationMode mode, NStudyInitiator initiator,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision)
+        Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? manualDecision,
+        bool requirePolicyDeferral = false)
     {
         EnsureNStudyCoordinationAvailable();
+        if (requirePolicyDeferral && mode == NStudyCoordinationMode.Manual && !SupportsNStudyPolicyDeferral)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                "Manual version policy requires both peers to support deferral.");
         lock (_nStudyCoordinationGate)
         {
             if (_nStudyCoordinationScope is not null)
@@ -72,8 +78,7 @@ internal sealed partial class RpcSession
     {
         EnsureNStudyCoordinationAvailable();
         var message = NStudyWire.ReadCoordination(id, payload);
-        if (UsesNStudyOfferAdmission(message) && !SupportsNStudyOfferAdmission)
-            throw InvalidNStudy("Offer admission was not negotiated on this physical Session.");
+        ValidateNStudyCoordinationCapabilities(message);
 
         var fromClient = message.Phase is NStudyPhase.Ready or NStudyPhase.Declined or NStudyPhase.Enrolled ||
             (message.Phase == NStudyPhase.Propose && message.Change.Initiator == NStudyInitiator.Client);
@@ -164,8 +169,7 @@ internal sealed partial class RpcSession
     internal async ValueTask SendNStudyCoordinationAsync(NStudyCoordinationMessage message, CancellationToken ct)
     {
         EnsureNStudyCoordinationAvailable();
-        if (UsesNStudyOfferAdmission(message) && !SupportsNStudyOfferAdmission)
-            throw InvalidNStudy("Offer admission was not negotiated on this physical Session.");
+        ValidateNStudyCoordinationCapabilities(message);
         ct.ThrowIfCancellationRequested();
         var writer = RentFrameWriter();
         var transferred = false;
@@ -232,8 +236,16 @@ internal sealed partial class RpcSession
             throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Version coordination was not negotiated by both peers.");
     }
 
+    private void ValidateNStudyCoordinationCapabilities(NStudyCoordinationMessage message)
+    {
+        if (UsesNStudyOfferAdmission(message) && !SupportsNStudyOfferAdmission)
+            throw InvalidNStudy("Offer admission was not negotiated on this physical Session.");
+        if (message.DeclineReason == NStudyDeclineReason.PolicyDeferred && !SupportsNStudyPolicyDeferral)
+            throw InvalidNStudy("Policy deferral was not negotiated on this physical Session.");
+    }
+
     internal sealed class NStudyCoordinationScope(RpcSession session, NStudyCoordinationMode mode,
-        NStudyInitiator initiator, Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision) : IDisposable
+        NStudyInitiator initiator, Func<NStudyChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? manualDecision) : IDisposable
     {
         internal NStudyCoordinationMode Mode => mode;
         internal NStudyInitiator Initiator => initiator;
@@ -257,14 +269,15 @@ internal sealed partial class RpcSession
 
         // A live policy update never recategorizes a decision admitted under the old policy,
         // and never changes what this Session is able to send or read while settling it.
-        internal ValueTask<bool> DecideAsync(NStudyChange change, ILogger logger,
+        internal ValueTask<SharpLinkVersionDecision> DecideAsync(NStudyChange change, ILogger logger,
             RpcDeadline controlDeadline, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
             return mode == NStudyCoordinationMode.Manual
                 ? session.RuntimeContext.NStudyApprovals.DecideAsync(change, manualDecision!, logger,
                     session.RuntimeContext.TimeProvider, controlDeadline, ct)
-                : ValueTask.FromResult(mode == NStudyCoordinationMode.Automatic);
+                : ValueTask.FromResult(mode == NStudyCoordinationMode.Automatic
+                    ? SharpLinkVersionDecision.Approve : SharpLinkVersionDecision.Reject);
         }
 
         public void Dispose()

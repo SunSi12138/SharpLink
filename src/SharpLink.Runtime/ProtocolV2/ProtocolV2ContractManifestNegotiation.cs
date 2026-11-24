@@ -17,7 +17,7 @@ internal static class ProtocolV2ContractManifestNegotiation
             capabilities |= ProtocolV2Capabilities.SessionRefresh;
         if (enableNStudyCoordination)
             capabilities |= NStudyWire.CoordinationCapability | NStudyWire.TargetDeclarationCapability |
-                NStudyWire.OfferAdmissionCapability;
+                NStudyWire.OfferAdmissionCapability | NStudyWire.PolicyDeferralCapability;
         if (compressionProviders.Count != 0)
             capabilities |= ProtocolV2Capabilities.Compression;
         return ProtocolV2NegotiationPolicy.Create(

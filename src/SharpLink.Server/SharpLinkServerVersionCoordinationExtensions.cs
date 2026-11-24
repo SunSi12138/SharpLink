@@ -19,14 +19,17 @@ public static class SharpLinkServerVersionCoordinationExtensions
     /// <summary>Stages and negotiates replacement of an installed assembly group with an application-provided assembly.</summary>
     /// <remarks>
     /// The first participant authorizes the server publication; other participants govern only their own resume.
-    /// In Manual mode the callback must approve each participant separately. Automatic mode still requires
-    /// explicit participation by each client. An activation sent by the server is not proof of client resume.
+    /// In Manual mode each session must support deferral, and the callback decides each participant separately.
+    /// Defer ends that peer's attempt without approval. The primary can defer publication; other participants
+    /// cannot veto publication approved by the primary. Retry with a fresh attempt, not a saved vote.
+    /// Automatic mode still requires explicit participation by each client.
+    /// An activation sent by the server is not proof of client resume.
     /// Cancellation after publication does not roll it back; query local inventory to reconcile.
     /// </remarks>
     public static ValueTask<SharpLinkServerVersionChangeResult> ReplaceAssemblyCoordinatedAsync(
         this ISharpLinkServer server, Assembly oldAssembly, Assembly newAssembly, long contractId,
         IReadOnlyList<SharpLinkVersionParticipant> participants, TimeSpan gracefulTimeout,
-        Func<SharpLinkVersionChange, CancellationToken, ValueTask<bool>>? approveLocally = null,
+        Func<SharpLinkVersionChange, CancellationToken, ValueTask<SharpLinkVersionDecision>>? approveLocally = null,
         CancellationToken cancellationToken = default)
         => GetBuiltInServer(server).ReplaceAssemblyCoordinatedAsync(oldAssembly, newAssembly, contractId,
             participants, gracefulTimeout, approveLocally, cancellationToken);

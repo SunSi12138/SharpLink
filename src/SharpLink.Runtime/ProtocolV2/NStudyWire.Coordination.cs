@@ -6,7 +6,7 @@ internal enum NStudyPhase : byte { Candidate = 1, Propose, Prepare, Ready, Activ
 internal enum NStudyDeclineReason : byte
 {
     None, Policy, LocalAssetMissing, LocalAssetIncompatible, SourceUnavailable, CandidateChanged,
-    PeerDisabled, ApprovalRequired, PeerNotEnrolled
+    PeerDisabled, ApprovalRequired, PeerNotEnrolled, PolicyDeferred
 }
 internal readonly record struct NStudyChange(
     ulong Id, NStudyInitiator Initiator, NStudyAuthority Authority, long Contract, RpcHash128 Hash,
@@ -19,6 +19,8 @@ internal static partial class NStudyWire
     internal const ProtocolV2Capabilities CoordinationCapability = (ProtocolV2Capabilities)(1UL << 7);
     // Private optional extension to the existing fixed-width coordination exchange.
     internal const ProtocolV2Capabilities OfferAdmissionCapability = (ProtocolV2Capabilities)(1UL << 9);
+    // The new decision uses the existing Declined phase, with an optional new reason.
+    internal const ProtocolV2Capabilities PolicyDeferralCapability = (ProtocolV2Capabilities)(1UL << 10);
     internal const ProtocolV2FrameType Coordination = (ProtocolV2FrameType)250;
     private const int CoordinationBytes = 139;
 
@@ -67,7 +69,7 @@ internal static partial class NStudyWire
             change.Original == default || change.Target == default ||
             change.Original.Registration == change.Target.Registration ||
             change.Target.Publication <= change.Original.Publication ||
-            message.DeclineReason > NStudyDeclineReason.PeerNotEnrolled ||
+            message.DeclineReason > NStudyDeclineReason.PolicyDeferred ||
             (message.Phase == NStudyPhase.Declined) != (message.DeclineReason != NStudyDeclineReason.None) ||
             (message.Phase == NStudyPhase.Ready) != (message.ClientRegistration != Guid.Empty))
             throw Invalid("Invalid private version transition.");
