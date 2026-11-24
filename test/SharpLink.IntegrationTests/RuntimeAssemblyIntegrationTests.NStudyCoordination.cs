@@ -92,13 +92,27 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var oldCall = InvokeValueTaskAsync<int>(a, contracts.ContractType, "BlockAsync", ct).AsTask();
             await ReadNStudyTask(oldType, "BlockStarted").WaitAsync(ct);
             var replacing = server.StageNStudyReplacementAsync(peer, oldAssembly, newAssembly, aCid, choice,
-                serverDecision.DecideAsync, TimeSpan.FromSeconds(15), ct);
+                async (change, policyToken) =>
+                {
+                    var snapshot = await server.QueryNStudyClientInventoryAsync(peer, policyToken);
+                    var local = snapshot.Select(change.Contract);
+                    Ensure(snapshot.Authority == change.Authority && local.Hash == change.Hash &&
+                           local.Target.Registration == clientContractModule.NStudyRegistration,
+                        "server policy can await the current authenticated peer inventory before approving");
+                    return await serverDecision.DecideAsync(change, policyToken);
+                }, TimeSpan.FromSeconds(15), ct);
             if (choice == NStudyInitiator.Client)
             {
                 Ensure(!serverDecision.Seen.IsCompleted && await b.TouchAsync(1, ct) == 101,
                     "the true server stays at availability until the client elects to propose");
             }
-            var negotiating = client.NegotiateNStudyReplacementAsync(choice, clientDecision.DecideAsync, ct);
+            var negotiating = client.NegotiateNStudyReplacementAsync(choice, async (change, policyToken) =>
+            {
+                Ensure(await b.TouchAsync(5, policyToken) == 105 &&
+                       session.CaptureNStudyBinding(bCid) == bBinding.BindingId,
+                    "client policy can await ordinary unrelated RPC on its original prepared route");
+                return await clientDecision.DecideAsync(change, policyToken);
+            }, ct);
             var offered = await serverDecision.Seen.WaitAsync(ct);
             Ensure(offered.Initiator == choice && offered.Id > declined.Id &&
                    offered.Target != declined.Target && offered.Original == a1.Target &&
@@ -115,6 +129,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    await b.TouchAsync(3, ct) == 103 &&
                    await InvokeValueTaskAsync<int>(a, contracts.ContractType, "UnaryAsync", 8, ct) == 9 &&
                    !oldCall.IsCompleted, "server approval alone neither cuts R1 nor opens R2 before client approval");
+            trace.Record("BothPoliciesCanAwaitWorkOnTheOriginalSession", a1, bBinding);
             trace.Record("ServerApprovalStillWaitsForPreparedClientDecision", a1);
 
             var priorBind = session.NStudyBindOperationForDiagnostics;
