@@ -62,7 +62,7 @@ internal static class ClientInvokerTestHelper
             var transport = transports[i].Connection;
             var connection = Array.Find(ready, peer => ReferenceEquals(peer.Session.Input, transport.Input))
                 ?? throw new InvalidOperationException("The test transport does not own a Ready session.");
-            routes[i] = await transport.BindInvocationRouteAsync(connection, FixtureContractId);
+            routes[i] = await transport.BindInvocationRouteAsync(connection, FixtureContractId, bindingSlot: i);
         }
         return transports.Length == 1 ? new(routes[0]) : new(routes);
     }

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Threading;
 using System.Diagnostics;
 using SharpLink.Client;
@@ -22,9 +23,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.DisableRequestTimeout();
         });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var firstRequest = transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var firstRequest = WaitForBoundRequestAsync(transport, slot: 0);
         if (ReferenceEquals(await Task.WhenAny(firstRequest, invocation), invocation))
         {
             var result = await invocation;
@@ -33,7 +35,7 @@ public sealed class SharpLinkClientRetryBehaviorTests
         }
         var first = await firstRequest;
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
-        var secondRequest = transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var secondRequest = WaitForBoundRequestAsync(transport, slot: 0);
         if (ReferenceEquals(await Task.WhenAny(secondRequest, invocation), invocation))
         {
             var result = await invocation;
@@ -56,17 +58,18 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var transport = new TestClientTransportFactory();
         await using var client = CreateRetryClient(transport, policy: null, maxAttempts: 3);
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var nonIdempotent = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var nonIdempotent = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        var first = await WaitForBoundRequestAsync(transport, slot: 0);
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
         var nonIdempotentError = await EnsureThrows<SharpLinkException>(nonIdempotent);
         Ensure(nonIdempotentError.Code == SharpLinkErrorCode.Unavailable, "non-idempotent result");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "non-idempotent no second request");
 
-        var idempotent = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var resourceExhausted = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var idempotent = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var resourceExhausted = await WaitForBoundRequestAsync(transport, slot: 0);
         await InjectErrorAsync(transport, resourceExhausted, SharpLinkErrorCode.ResourceExhausted);
         var resourceError = await EnsureThrows<SharpLinkException>(idempotent);
         Ensure(resourceError.Code == SharpLinkErrorCode.ResourceExhausted, "resource exhausted result");
@@ -88,9 +91,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
         });
         await deadlineClient.ConnectAsync();
+        var deadlineSite = await ClientInvokerTestHelper.PrepareAsync(deadlineClient, deadlineTransport);
 
-        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(deadlineClient).AsTask();
-        var deadlineRequest = await deadlineTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(deadlineClient, prepared: deadlineSite).AsTask();
+        var deadlineRequest = await WaitForBoundRequestAsync(deadlineTransport, slot: 0);
         await InjectErrorAsync(deadlineTransport, deadlineRequest, SharpLinkErrorCode.Unavailable);
         await deadlinePolicy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(!deadlineInvocation.IsCompleted,
@@ -105,10 +109,11 @@ public sealed class SharpLinkClientRetryBehaviorTests
         await using var cancellationClient = CreateRetryClient(
             cancellationTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromSeconds(1));
         await cancellationClient.ConnectAsync();
+        var cancellationSite = await ClientInvokerTestHelper.PrepareAsync(cancellationClient, cancellationTransport);
         using var cancellation = new CancellationTokenSource();
         var cancellationInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            cancellationClient, cancellationToken: cancellation.Token).AsTask();
-        var cancellationRequest = await cancellationTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            cancellationClient, cancellationToken: cancellation.Token, prepared: cancellationSite).AsTask();
+        var cancellationRequest = await WaitForBoundRequestAsync(cancellationTransport, slot: 0);
         await InjectErrorAsync(cancellationTransport, cancellationRequest, SharpLinkErrorCode.Unavailable);
         cancellation.Cancel();
         await EnsureThrows<OperationCanceledException>(cancellationInvocation);
@@ -123,9 +128,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var policy = new DelayingRetryPolicy(TimeSpan.MaxValue);
         await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var request = await WaitForBoundRequestAsync(transport, slot: 0);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
         await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -147,11 +153,12 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var policy = new DelayingRetryPolicy(TimeSpan.MaxValue);
         await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
         using var cancellation = new CancellationTokenSource();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            client, cancellationToken: cancellation.Token).AsTask();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            client, cancellationToken: cancellation.Token, prepared: prepared).AsTask();
+        var request = await WaitForBoundRequestAsync(transport, slot: 0);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
         await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -186,12 +193,13 @@ public sealed class SharpLinkClientRetryBehaviorTests
                 });
             });
             await client.ConnectAsync();
+            var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
             while (provider.ActiveTimerCount == 0)
                 await Task.Yield();
             var baselineTimerCount = provider.ActiveTimerCount;
 
-            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-            var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+            var request = await WaitForBoundRequestAsync(transport, slot: 0);
             await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
             while (provider.ActiveTimerCount <= baselineTimerCount)
                 await Task.Yield();
@@ -218,9 +226,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
         });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var request = await WaitForBoundRequestAsync(transport, slot: 0);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
         await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
         provider.Advance(TimeSpan.FromSeconds(5));
@@ -244,9 +253,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
             builder.UseRetry(invalidPolicy);
         });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var request = await WaitForBoundRequestAsync(transport, slot: 0);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
         var error = await EnsureThrows<SharpLinkException>(invocation);
 
@@ -273,13 +283,14 @@ public sealed class SharpLinkClientRetryBehaviorTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, first, second);
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var firstAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var firstAttempt = await WaitForBoundRequestAsync(first, slot: 0);
         await InjectErrorAsync(first, firstAttempt, SharpLinkErrorCode.Unavailable);
-        var secondAttempt = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var secondAttempt = await WaitForBoundRequestAsync(second, slot: 1);
         await InjectErrorAsync(second, secondAttempt, SharpLinkErrorCode.Unavailable);
-        var thirdAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var thirdAttempt = await WaitForBoundRequestAsync(first, slot: 0);
         await first.Connection.InjectInt32ResponseAsync(unchecked((long)thirdAttempt.RequestId));
 
         Ensure(await invocation == 0, "candidate reset third attempt result");
@@ -304,9 +315,10 @@ public sealed class SharpLinkClientRetryBehaviorTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, first, second);
 
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var request = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        var request = await WaitForBoundRequestAsync(second, slot: 1);
         await second.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "admitted endpoint response");
@@ -330,10 +342,11 @@ public sealed class SharpLinkClientRetryBehaviorTests
                 builder.UseEndpointAdmission(admission);
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var started = Stopwatch.GetTimestamp();
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var request = await WaitForBoundRequestAsync(transport, slot: 0);
         Ensure(Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(75),
             "retry must wait for the admission retry delay rather than consume the next attempt immediately");
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
@@ -368,14 +381,24 @@ public sealed class SharpLinkClientRetryBehaviorTests
         });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, first, second, third);
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
-        var secondRequest = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared: prepared).AsTask();
+        var secondRequest = await WaitForBoundRequestAsync(second, slot: 1);
         await InjectErrorAsync(second, secondRequest, SharpLinkErrorCode.Unavailable);
-        var thirdRequest = await third.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
-            .WaitAsync(TimeSpan.FromSeconds(5));
+        var thirdRequest = await WaitForBoundRequestAsync(third, slot: 2);
         await third.Connection.InjectInt32ResponseAsync(unchecked((long)thirdRequest.RequestId));
 
         Ensure(await invocation == 0, "untried endpoint retry response");
+    }
+
+    private static async Task<ProtocolV2FrameHeader> WaitForBoundRequestAsync(
+        TestClientTransportFactory transport, int slot)
+    {
+        var frame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(BinaryPrimitives.ReadInt64LittleEndian(frame.Payload) == NStudyWire.BindingId(slot, 1),
+            "the selected connection must emit the binding token prepared on that connection");
+        return frame.Header;
     }
 }

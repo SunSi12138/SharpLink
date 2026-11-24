@@ -144,7 +144,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         => new(await BindInvocationRouteAsync(connection, contractId));
 
     internal async Task<SharpLinkClient.NStudyPreparedRoute> BindInvocationRouteAsync(
-        ClientConnection connection, long contractId)
+        ClientConnection connection, long contractId, int bindingSlot = 0)
     {
         var session = connection.Session;
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -156,7 +156,7 @@ internal sealed class TestTransportConnection : ITransportConnection
 
         var ack = new NStudyAck(NStudyBindStatus.Bound, contractId, request.Hash,
             new NStudyAuthority(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()),
-            NStudyWire.BindingId(0, 1), new NStudyTarget(Guid.NewGuid(), 1));
+            NStudyWire.BindingId(bindingSlot, 1), new NStudyTarget(Guid.NewGuid(), 1));
         using var payload = new PooledByteBufferWriter();
         NStudyWire.WriteAck(payload, ack);
         await InjectFrameAsync(NStudyWire.BindAck, ProtocolV2FrameFlags.None, sent.Header.RequestId,
