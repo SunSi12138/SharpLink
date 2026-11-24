@@ -172,23 +172,12 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
     }
 
     [Test]
-    public async Task RepeatedGetShouldReturnTheSameStaticProxy()
+    public void CoordinatorExposesOnlyThePreparedProxyFactory()
     {
-        await using var client = CreateStaticBuilder()
-            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
-            .Build();
-
-        var first = client.Get<IOrdersContract>();
-        var second = client.Get<IOrdersContract>();
-
-        Ensure(ReferenceEquals(first, second),
-            "repeated Get<T>() within the same static registration generation must return the cached Proxy reference");
-        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 1000; index++)
-            _ = client.Get<IOrdersContract>();
-        var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
-        Ensure(allocatedAfter == allocatedBefore,
-            "steady-state repeated multicluster Get<T>() must not allocate a new Proxy or channel wrapper");
+        Ensure(typeof(ISharpLinkMultiClusterClient).GetMethod("Get") is null &&
+               typeof(SharpLinkMultiClusterClient).GetMethod("Get") is null &&
+               typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.CreateProxy)) is not null,
+            "the coordinator must have one local proxy factory and no legacy public dispatch adapter");
     }
 
     [Test]

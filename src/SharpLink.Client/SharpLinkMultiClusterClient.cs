@@ -121,9 +121,6 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
         => GetProxyChild<TContract>().CreateProxy<TContract>(options);
 
-    public TContract Get<TContract>() where TContract : IService
-        => GetProxyChild<TContract>().Get<TContract>();
-
     private ISharpLinkClient GetProxyChild<TContract>() where TContract : IService
     {
         var state = (SharpLinkMultiClusterState)Volatile.Read(ref _state);

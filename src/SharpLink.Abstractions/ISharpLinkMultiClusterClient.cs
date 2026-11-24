@@ -131,9 +131,6 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
         => throw new NotSupportedException("This multi-cluster client does not support prepared RPC proxies.");
 
-    /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
-    TContract Get<TContract>() where TContract : IService;
-
     /// <summary>Attempts to capture the current status values for a configured cluster slot.</summary>
     /// <remarks>
     /// Built-in SharpLink coordinators return <see langword="false"/> for a valid cluster key that is not currently
