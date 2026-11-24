@@ -270,12 +270,18 @@ internal sealed partial class SharpLinkClient
 
     private ClientConnection ReserveClusterPreparedSite(NStudyPreparedSite prepared, AttemptOutcomeState? outcome)
     {
+        // Without endpoint admission policy, the captured binding and the exact connection's
+        // reservation gate are sufficient. Refresh, endpoint retirement and failure close that
+        // gate; resolving the endpoint again would block an ordinary call on the topology lock.
+        if (outcome is null)
+            return ReservePreparedSite(prepared);
+
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         if (!prepared.TryGetConnection(out var owner) || prepared.Find(owner) is null ||
             !TryGetNStudyClusterCandidate(owner, out var candidate))
             throw NStudyPreparedSite.Unavailable();
-        if (outcome is not null && !outcome.TryAcquire(candidate))
+        if (!outcome.TryAcquire(candidate))
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The endpoint admission policy rejected the prepared endpoint.");
         try
         {
@@ -284,7 +290,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            outcome?.CompleteLocalFailure(exception);
+            outcome.CompleteLocalFailure(exception);
             throw;
         }
     }
