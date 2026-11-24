@@ -169,17 +169,21 @@ public partial class ServiceRegistrationTests
             var successfulStub = new StubMarker(RpcMethodKind.Unary);
             var singleton = ServiceRegistration.CreateSingleton(
                 typeof(object), successfulStub, new object(), ownsService: false, module);
+            PreparedServerDispatchFixture.PrepareRegistration(singleton, successfulStub.DeclareMethod(17));
+            Ensure(successfulStub.DescriptorLookups == 1, "prepare must probe the generated descriptor exactly once");
             await InvokeRegisteredServiceAsync(server, singleton, connection, requestId: 101);
             Ensure(successfulStub.DescriptorLookups == 1,
-                "successful dynamic singleton invocation must probe its descriptor exactly once");
+                "successful dynamic singleton invocation must use the already prepared descriptor");
             Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
             await singleton.DisposeAsync();
 
-            var failingStub = new StubMarker();
+            var failingStub = new StubMarker(RpcMethodKind.Unary);
             var call = ServiceRegistration.CreatePerCall(
                 typeof(object), failingStub, new ThrowingScopeFactory("scope cleanup failed"),
                 static _ => throw new InvalidOperationException("activation failed"),
                 disposeService: true, module);
+            PreparedServerDispatchFixture.PrepareRegistration(call, failingStub.DeclareMethod(17));
+            Ensure(failingStub.DescriptorLookups == 1, "prepare must probe the failing registration descriptor exactly once");
             var failure = await CaptureAsync(() =>
                 InvokeRegisteredServiceAsync(server, call, connection, requestId: 102));
             Ensure(ContainsMessage(failure, "activation failed"),
@@ -206,12 +210,14 @@ public partial class ServiceRegistrationTests
         var method = typeof(SharpLinkServer).GetMethod(
             "InvokeServiceAsync", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
+        if (!registration.TryGetNStudyMethod(17, out var facts))
+            throw new InvalidOperationException("the registration must have the prepared method facts");
         return (ValueTask)(method.Invoke(server,
         [
             registration,
             connection,
             connection.Session,
-            17L,
+            facts,
             requestId,
             ReadOnlySequence<byte>.Empty,
             null,
@@ -695,16 +701,19 @@ public partial class ServiceRegistrationTests
         public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
             Interlocked.Increment(ref _descriptorLookups);
-            if (descriptorKind is not { } kind)
+            if (!descriptorKind.HasValue)
             {
                 method = default;
                 return false;
             }
 
-            method = new(new RpcMethodDescriptor(InterfaceHash, methodId, kind,
-                HasResponsePayload: false, HasClientStreams: false, HasMethodTimeout: false, MethodTimeout: null), Execute);
+            method = new(DeclareMethod(methodId), Execute);
             return true;
         }
+
+        internal RpcMethodDescriptor DeclareMethod(long methodId)
+            => new(InterfaceHash, methodId, descriptorKind ?? throw new InvalidOperationException("no method declaration"),
+                HasResponsePayload: false, HasClientStreams: false, HasMethodTimeout: false, MethodTimeout: null);
 
         public long InterfaceHash => 1;
 

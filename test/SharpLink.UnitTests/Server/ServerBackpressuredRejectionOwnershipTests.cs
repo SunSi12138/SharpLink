@@ -42,17 +42,8 @@ public sealed class ServerBackpressuredRejectionOwnershipTests
             // The ordinary two-way call reaches early rejection with no current binding.
             BinaryPrimitives.WriteInt64LittleEndian(payload, NStudyWire.BindingId(0, 1));
             BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(8), 1);
-            var dispatch = (Task)typeof(SharpLinkServer).GetMethod(
-                "DispatchRequestAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(server,
-                [
-                    connection,
-                    2L,
-                    deadlineExpired ? ProtocolV2FrameFlags.HasTimeBudget : ProtocolV2FrameFlags.None,
-                    new ReadOnlySequence<byte>(payload),
-                    connection.CallCancellations,
-                    CancellationToken.None,
-                    0 // No OneWay input streams.
-                ])!;
+            var dispatch = PreparedServerDispatchFixture.DispatchRequestPayload(server, connection, 2L,
+                deadlineExpired ? ProtocolV2FrameFlags.HasTimeBudget : ProtocolV2FrameFlags.None, new(payload));
             Ensure(!dispatch.IsCompleted, "the fire-and-forget reader dispatch must still await send capacity");
             Ensure(server.ActiveCallCountForDiagnostics == 0 && server.PendingCallAdmissionsForDiagnostics == 0 &&
                 connection.ActiveCalls == 0 && (server.CurrentAdmissionProgramForTests?.ActiveUses ?? 0) == 0,

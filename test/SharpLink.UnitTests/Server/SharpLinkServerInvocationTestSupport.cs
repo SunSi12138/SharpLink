@@ -340,10 +340,10 @@ public partial class SharpLinkServerInvocationTests
         private ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
         {
-            if (!cancellationToken.CanBeCanceled)
-                throw new InvalidOperationException("The test method must use cooperative cancellation.");
             if (Interlocked.Increment(ref _invocationCount) != 1)
                 return ValueTask.CompletedTask;
+            if (!cancellationToken.CanBeCanceled)
+                throw new InvalidOperationException("The first call must use cooperative cancellation.");
 
             FirstInvocationStarted.TrySetResult();
             return new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
@@ -352,10 +352,6 @@ public partial class SharpLinkServerInvocationTests
 
     private sealed class ServerDispatchHarness : IAsyncDisposable
     {
-        private static readonly MethodInfo DispatchMethod = typeof(SharpLinkServer).GetMethod(
-            "DispatchRpcAsync",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server RPC dispatch path");
         private static readonly FieldInfo CallAdmissionField = typeof(SharpLinkServer).GetField(
             "_callAdmission",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -373,11 +369,10 @@ public partial class SharpLinkServerInvocationTests
 
         private readonly Pipe _input = new();
         private readonly PipeWriter _output;
-        private readonly IRpcStub _stub;
+        private readonly PreparedServerDispatchFixture _dispatch;
 
         internal ServerDispatchHarness(IRpcStub stub, PipeWriter output, int maxSendQueueBytes)
         {
-            _stub = stub;
             _output = output;
             Server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .DisableAutomaticServiceRegistration()
@@ -406,6 +401,7 @@ public partial class SharpLinkServerInvocationTests
                 stub,
                 new ThrowingService(),
                 ownsService: false);
+            _dispatch = new(Server, Connection, registration, methodId: 1);
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry",
                     BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -425,24 +421,7 @@ public partial class SharpLinkServerInvocationTests
             => (int)GlobalActiveCallsField.GetValue(CallAdmissionField.GetValue(Server))!;
 
         internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags)
-        {
-            var request = new byte[sizeof(long) * 2];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
-            return (ValueTask)DispatchMethod.Invoke(Server,
-            [
-                Connection,
-                requestId,
-                flags,
-                new ReadOnlySequence<byte>(request),
-                Connection.CallCancellations,
-                CancellationToken.None,
-                null,
-                null,
-                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
-                null
-            ])!;
-        }
+            => new(_dispatch.Dispatch(requestId, flags));
 
         public async ValueTask DisposeAsync()
         {

@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
@@ -160,10 +159,10 @@ public class SharpLinkServerRequestScopeReviewTests
             throw new Exception(failureMessage);
     }
 
-    private readonly record struct ScopeSnapshot(int BeginCount, int DisposeCount, int MaxDepth);
-    private readonly record struct CapturedLog(string Message, string[] Scopes);
+    internal readonly record struct ScopeSnapshot(int BeginCount, int DisposeCount, int MaxDepth);
+    internal readonly record struct CapturedLog(string Message, string[] Scopes);
 
-    private sealed class ScopeCaptureLoggerFactory : ILoggerFactory
+    internal sealed class ScopeCaptureLoggerFactory : ILoggerFactory
     {
         private readonly AsyncLocal<ScopeNode?> _current = new();
         private readonly ConcurrentQueue<CapturedLog> _logs = new();
@@ -280,14 +279,11 @@ public class SharpLinkServerRequestScopeReviewTests
         }
     }
 
-    private sealed class DispatchHarness : IAsyncDisposable
+    internal sealed class DispatchHarness : IAsyncDisposable
     {
         private static readonly MethodInfo BeginSessionScopeMethod = typeof(SharpLinkServer).GetMethod(
             "BeginSessionLogScope", BindingFlags.Static | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find SessionId logging scope helper");
-        private static readonly MethodInfo DispatchRequestMethod = typeof(SharpLinkServer).GetMethod(
-            "DispatchRequestAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find scoped Request dispatch path");
         private static readonly FieldInfo LoggerField = typeof(SharpLinkServer).GetField(
             "_logger", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server logger");
@@ -303,7 +299,7 @@ public class SharpLinkServerRequestScopeReviewTests
 
         private readonly Pipe _input = new();
         private readonly Pipe _output = new();
-        private readonly ControlledStub _stub;
+        private readonly PreparedServerDispatchFixture _dispatch;
         private readonly ILogger _serverLogger;
 
         internal DispatchHarness(
@@ -311,7 +307,6 @@ public class SharpLinkServerRequestScopeReviewTests
             ControlledStub stub,
             bool useThrowingExceptionMapper = false)
         {
-            _stub = stub;
             var builder = SharpLinkServerBuilder.Create()
                 .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .DisableAutomaticServiceRegistration()
@@ -342,6 +337,7 @@ public class SharpLinkServerRequestScopeReviewTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+            _dispatch = new(Server, Connection, registration, ControlledStub.MethodHash);
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
@@ -366,29 +362,10 @@ public class SharpLinkServerRequestScopeReviewTests
             ProtocolV2FrameFlags flags = ProtocolV2FrameFlags.None,
             CancellationToken serverLoopToken = default,
             TimeSpan? timeBudget = null)
-            => (Task)DispatchRequestMethod.Invoke(Server,
-            [
-                Connection,
-                requestId,
-                flags,
-                CreateRequestPayload(timeBudget),
-                Connection.CallCancellations,
-                serverLoopToken
-            ])!;
+            => _dispatch.Dispatch(requestId, flags, serverLoopToken, timeBudget);
 
-        private ReadOnlySequence<byte> CreateRequestPayload(TimeSpan? timeBudget)
-        {
-            var request = new byte[sizeof(long) * (timeBudget.HasValue ? 3 : 2)];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
-            if (timeBudget is { } value)
-            {
-                BinaryPrimitives.WriteInt64LittleEndian(
-                    request.AsSpan(sizeof(long) * 2),
-                    value.Ticks);
-            }
-            return new ReadOnlySequence<byte>(request);
-        }
+        internal Task DispatchPreparedPayload(long requestId, byte[] payload)
+            => _dispatch.DispatchPreparedPayload(requestId, payload);
 
         public async ValueTask DisposeAsync()
         {
@@ -401,7 +378,7 @@ public class SharpLinkServerRequestScopeReviewTests
         }
     }
 
-    private enum StubBehavior
+    internal enum StubBehavior
     {
         CompleteSynchronously,
         ThrowSynchronously,
@@ -410,7 +387,7 @@ public class SharpLinkServerRequestScopeReviewTests
         LogOnCancellation
     }
 
-    private sealed class ControlledStub(
+    internal sealed class ControlledStub(
         StubBehavior behavior,
         ILogger serviceLogger,
         RpcMethodKind kind = RpcMethodKind.Unary) : IRpcStub

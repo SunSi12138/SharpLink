@@ -33,24 +33,24 @@ public partial class SharpLinkServerInvocationTests
             "InvokeServiceWithLeaseAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find leased invocation path");
+        Ensure(new ThrowingStub().TryPrepareMethod(1, out var prepared), "the fixture exposes its executor");
 
         Exception failure;
         try
         {
             var invocation = (ValueTask)method.Invoke(server,
             [
-                new ThrowingStub(),
+                prepared.Execute,
                 lease,
                 session,
                 new RpcSessionGeneratedServerBridge(session),
-                1L,
                 1L,
                 ReadOnlySequence<byte>.Empty,
                 null,
                 CancellationToken.None,
                 new SharpLinkCallContextSnapshot(session.Id, authentication: null),
                 false,
-                null
+                prepared.Descriptor
             ])!;
             await invocation;
             throw new Exception("expected leased invocation failure");

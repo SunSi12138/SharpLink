@@ -1,12 +1,8 @@
 using Microsoft.Extensions.Logging;
-using SharpLink.Server;
-using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using System.Threading;
+using static SharpLink.UnitTests.Server.SharpLinkServerRequestScopeReviewTests;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -14,35 +10,19 @@ public class SharpLinkServerRequestScopeAmbientTests
 {
     private const long FirstRequestId = 409;
     private const long SecondRequestId = 410;
-    private static readonly Type ReviewTestsType = typeof(SharpLinkServerRequestScopeReviewTests);
-    private static readonly Type StubBehaviorType = GetNestedType("StubBehavior");
-    private static readonly Type ControlledStubType = GetNestedType("ControlledStub");
-    private static readonly Type DispatchHarnessType = GetNestedType("DispatchHarness");
-    private static readonly MethodInfo DispatchRequestMethod = typeof(SharpLinkServer).GetMethod(
-        "DispatchRequestAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new Exception("cannot find scoped Request dispatch path");
 
     [Test]
     public async Task PendingRequestsDoNotLeakRequestScopeIntoCallerOrEachOther()
     {
         using var loggerFactory = new DefaultExternalScopeLoggerFactory();
-        var behavior = Enum.Parse(StubBehaviorType, "LogAfterSignal");
-        var stub = CreateInstance(
-            ControlledStubType,
-            behavior,
-            loggerFactory.CreateLogger("AmbientIsolationService"),
-            RpcMethodKind.Unary);
-        var harnessObject = CreateInstance(DispatchHarnessType, loggerFactory, stub, false);
-        var harness = (IAsyncDisposable)harnessObject;
+        var stub = new ControlledStub(StubBehavior.LogAfterSignal,
+            loggerFactory.CreateLogger("AmbientIsolationService"));
+        await using var harness = new DispatchHarness(loggerFactory, stub);
 
         try
         {
-            var server = (SharpLinkServer)GetProperty(harnessObject, "Server");
-            var connection = (ServerConnectionState)GetProperty(harnessObject, "Connection");
-            var rpcStub = (IRpcStub)stub;
-
-            var first = Dispatch(server, connection, rpcStub, FirstRequestId);
-            var second = Dispatch(server, connection, rpcStub, SecondRequestId);
+            var first = harness.DispatchRequest(FirstRequestId);
+            var second = harness.DispatchRequest(SecondRequestId);
 
             await Assert.That(first.IsCompleted).IsFalse();
             await Assert.That(second.IsCompleted).IsFalse();
@@ -53,8 +33,7 @@ public class SharpLinkServerRequestScopeAmbientTests
                 static entry => entry.Message == "Caller log after pending requests.");
             await Assert.That(RequestIds(callerLog).Length).IsEqualTo(0);
 
-            ControlledStubType.GetMethod("Signal", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(stub, null);
+            stub.Signal();
             await Task.WhenAll(first, second);
 
             var serviceLogs = loggerFactory.Logs
@@ -72,29 +51,8 @@ public class SharpLinkServerRequestScopeAmbientTests
         }
         finally
         {
-            await harness.DisposeAsync();
+            stub.Signal();
         }
-    }
-
-    private static Task Dispatch(
-        SharpLinkServer server,
-        ServerConnectionState connection,
-        IRpcStub stub,
-        long requestId)
-    {
-        var payload = new byte[sizeof(long) * 2];
-        BinaryPrimitives.WriteInt64LittleEndian(payload, stub.InterfaceHash);
-        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), 1);
-        return (Task)DispatchRequestMethod.Invoke(
-            server,
-            [
-                connection,
-                requestId,
-                ProtocolV2FrameFlags.None,
-                new ReadOnlySequence<byte>(payload),
-                connection.CallCancellations,
-                CancellationToken.None
-            ])!;
     }
 
     private static long[] RequestIds(CapturedLog log)
@@ -102,23 +60,6 @@ public class SharpLinkServerRequestScopeAmbientTests
             .Where(static scope => scope.StartsWith("RequestId:", StringComparison.Ordinal))
             .Select(static scope => long.Parse(scope.AsSpan("RequestId:".Length)))
             .ToArray();
-
-    private static Type GetNestedType(string name)
-        => ReviewTestsType.GetNestedType(name, BindingFlags.NonPublic)
-            ?? throw new Exception($"cannot find request-scope test fixture type {name}");
-
-    private static object CreateInstance(Type type, params object?[] arguments)
-        => Activator.CreateInstance(
-            type,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            binder: null,
-            args: arguments,
-            culture: null)
-            ?? throw new Exception($"cannot create {type.Name}");
-
-    private static object GetProperty(object instance, string name)
-        => instance.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(instance)!;
 
     private readonly record struct CapturedLog(string Message, string[] Scopes);
 
