@@ -19,7 +19,7 @@ public sealed class SharpLinkMultiClusterAddReadinessTests : SharpLinkMultiClust
         {
             await client.StartAsync();
             await client.WaitForReadyAsync("bootstrap").AsTask().WaitAsync(RaceCoordinationTimeout);
-            var bootstrap = (SharpLinkClient)GetChildChannel(client, "bootstrap");
+            var bootstrap = (SharpLinkClient)GetChildClient(client, "bootstrap");
             // This observes the original Remove-owned stop; it never starts another cleanup.
             var bootstrapShutdown = bootstrap.WaitForShutdownAsync();
 

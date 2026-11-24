@@ -65,7 +65,7 @@ public abstract class SharpLinkMultiClusterClientTestBase
     protected static SharpLinkMultiClusterClientBuilder CreateDynamicBuilder()
         => CreateBuilder([], []);
 
-    protected static IRpcChannel GetChildChannel(
+    protected static ISharpLinkClient GetChildClient(
         ISharpLinkMultiClusterClient client,
         SharpLinkClusterKey cluster)
     {
@@ -73,7 +73,7 @@ public abstract class SharpLinkMultiClusterClientTestBase
         var snapshot = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
             .GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(coordinator)!;
-        return (IRpcChannel)snapshot.Clusters[cluster].Client;
+        return snapshot.Clusters[cluster].Client;
     }
 
     protected static ValueTask<SharpLinkClusterAddResult> AddClusterWithFixedDiscoveryAsync(
@@ -102,12 +102,12 @@ public abstract class SharpLinkMultiClusterClientTestBase
             throw new Exception(message);
     }
 
-    protected static void EnsureCodecIsMissing<T>(IRpcChannel channel)
+    protected static void EnsureCodecIsMissing<T>(IRpcRuntimeContext runtime)
     {
         Exception? failure = null;
         try
         {
-            _ = channel.RuntimeContext.Codecs.GetCodec<T>();
+            _ = runtime.Codecs.GetCodec<T>();
         }
         catch (Exception exception)
         {
