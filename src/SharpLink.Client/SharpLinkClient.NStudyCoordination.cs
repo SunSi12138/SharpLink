@@ -16,12 +16,14 @@ internal sealed partial class SharpLinkClient
         var ready = Volatile.Read(ref _readyConnections);
         if (ready.Length != 1)
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A private coordination attempt needs one Ready Session.");
-        var session = ready[0].Session;
+        var connection = ready[0];
+        var session = connection.Session;
         using var ownership = session.EnterNStudyCoordination();
         session.ValidateNStudyLocalDecision(approveLocally);
         using var timer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timer.Token, session.LifetimeToken);
         var ct = budget.Token;
+        NStudyContractPreparation? reserved = null;
 
         try
         {
@@ -57,6 +59,17 @@ internal sealed partial class SharpLinkClient
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.Policy, ct).ConfigureAwait(false);
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetMissing, ct).ConfigureAwait(false);
+                var preparation = registration.NStudyPreparation.Get();
+                lock (preparation.Gate)
+                {
+                    if (preparation.InFlight is null && !preparation.Coordinating)
+                    {
+                        preparation.Coordinating = true;
+                        reserved = preparation;
+                    }
+                }
+                if (reserved is null)
+                    return await DeclineNStudyAsync(session, change, NStudyDeclineReason.SourceUnavailable, ct).ConfigureAwait(false);
                 await session.FreezeNStudySource(change).WaitAsync(ct).ConfigureAwait(false);
                 await session.SendNStudyCoordinationAsync(new(NStudyPhase.Ready, change, module.NStudyRegistration),
                     ct).ConfigureAwait(false);
@@ -68,8 +81,21 @@ internal sealed partial class SharpLinkClient
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The prepared local contract changed before activation.");
                 var binding = await session.PrepareNStudyBindAsync(new(change.Contract, change.Hash, change.Target),
                     ct, resuming: change).ConfigureAwait(false);
-                if (binding.Status != NStudyBindStatus.Bound || binding.Target != change.Target)
+                if (binding.Status != NStudyBindStatus.Bound || binding.Target != change.Target ||
+                    binding.Authority != change.Authority)
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The exact activated target is no longer bindable.");
+                var route = session.CaptureNStudyRoute(change.Contract);
+                lock (preparation.Gate)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!IsStillLocalNStudyRegistration(change.Contract, registration) ||
+                        !IsNStudyPreparationConnectionCurrent(connection) ||
+                        route.Acknowledgement != binding || !route.IsOpenOn(session))
+                        throw NStudyPreparedSite.Unavailable();
+                    // Publish the acknowledged route for the original pinned receiver.
+                    // Do not bind again, switch connections, or republish a cohort.
+                    Volatile.Write(ref preparation.Ready, new NStudyPreparedSite(new NStudyPreparedRoute(connection, route, binding)));
+                }
                 return new(change, binding, module.NStudyRegistration);
             }
         }
@@ -78,6 +104,14 @@ internal sealed partial class SharpLinkClient
             // Ambiguous control completion cannot reopen a frozen route.
             session.NotifyDisconnected(error);
             throw;
+        }
+        finally
+        {
+            if (reserved is not null)
+            {
+                lock (reserved.Gate)
+                    reserved.Coordinating = false;
+            }
         }
     }
 

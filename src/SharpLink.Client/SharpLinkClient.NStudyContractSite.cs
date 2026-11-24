@@ -154,6 +154,9 @@ internal sealed partial class SharpLinkClient
         internal NStudyPreparedSite? Ready;
         internal NStudyPreparedSite? BalancedReady;
         internal PrepareOperation? InFlight;
+        // Under Gate: prevents an ordinary Prepare from becoming a second
+        // publisher while this registration is resuming a coordinated cut.
+        internal bool Coordinating;
     }
 
     internal sealed class PrepareOperation(ClientConnection? connection, NStudyObservedTarget? observation, ClientConnection[]? cohort)
@@ -248,6 +251,10 @@ internal sealed partial class SharpLinkClient
                     {
                         alreadyReady = current;
                         operation = null!;
+                    }
+                    else if (_preparation.Coordinating)
+                    {
+                        throw NStudyPreparedSite.Unavailable();
                     }
                     else if (_preparation.InFlight is { } pending)
                     {
