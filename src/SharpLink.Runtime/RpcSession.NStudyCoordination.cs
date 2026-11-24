@@ -207,10 +207,10 @@ internal sealed partial class RpcSession
         }
     }
 
-    internal bool HasNStudyCandidateSource(NStudyChange change)
+    internal NStudyClientRoute? ReadNStudyCandidateSource(NStudyChange change)
     {
         lock (_nStudyGate)
-            return _nStudyCandidate == change && _nStudyCandidateSource is not null;
+            return _nStudyCandidate == change ? _nStudyCandidateSource : null;
     }
 
     internal Task FreezeNStudySource(NStudyChange change)

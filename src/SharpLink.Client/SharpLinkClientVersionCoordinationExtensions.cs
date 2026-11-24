@@ -14,14 +14,24 @@ public static class SharpLinkClientVersionCoordinationExtensions
         Func<SharpLinkVersionChangeNotice, CancellationToken, ValueTask> observer)
         => GetBuiltInClient(client).ConfigureNStudyVersionObserver(NStudyVersionProjection.ToObserver(observer));
 
-    /// <summary>Declares an installed dynamic contract on the current Ready connection, without changing either registration.</summary>
+    /// <summary>Declares an installed dynamic contract on the single Ready connection, without changing either registration.</summary>
     public static ValueTask<SharpLinkVersionDeclarationResult> DeclareVersionTargetAsync(
         this ISharpLinkClient client, RpcLocalContract localContract, CancellationToken cancellationToken = default)
         => GetBuiltInClient(client).DeclareVersionTargetAsync(localContract, cancellationToken);
 
+    /// <summary>Declares an installed dynamic contract on the selected connection, without changing either registration.</summary>
+    public static ValueTask<SharpLinkVersionDeclarationResult> DeclareVersionTargetAsync(
+        this ISharpLinkClient client, RpcLocalContract localContract, SharpLinkVersionConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        return GetBuiltInClient(client).DeclareVersionTargetAsync(localContract, cancellationToken, connection);
+    }
+
     /// <summary>Joins one server-staged change for this exact local contract and physical session.</summary>
     /// <remarks>
-    /// Requires the single Ready session, a prepared source route, and counterpart server participation.
+    /// Requires the selected current physical session, its prepared source route, and counterpart server participation.
+    /// Resuming that route neither moves a pinned proxy to another connection nor adds a new cohort member.
     /// In Manual mode supply a decision callback; both peers must support deferral.
     /// Defer settles this attempt without approval; retry explicitly for a fresh decision.
     /// Automatic mode still requires this call.

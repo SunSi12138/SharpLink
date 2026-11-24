@@ -26,14 +26,78 @@ internal sealed partial class SharpLinkClient
     {
         cancellationToken.ThrowIfCancellationRequested();
         var connection = RequireSingleNStudyConnection();
+        var snapshot = await QueryNStudyRemoteInventoryOnAsync(connection, cancellationToken).ConfigureAwait(false);
+        if (!connection.CanAcceptCalls || !ReferenceEquals(RequireSingleNStudyConnection(), connection))
+            throw NStudyPreparedSite.Unavailable();
+        return snapshot;
+    }
+
+    internal async ValueTask<SharpLinkVersionInventory> QueryVersionConnectionAsync(
+        SharpLinkVersionConnection selector, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var connection = RequireVersionConnection(selector);
+        var snapshot = await QueryNStudyRemoteInventoryOnAsync(connection, cancellationToken).ConfigureAwait(false);
+        if (!IsNStudyPreparationConnectionCurrent(connection))
+            throw NStudyPreparedSite.Unavailable();
+        return snapshot.ToVersionInventory(remote: true);
+    }
+
+    private static async Task<NStudyInventorySnapshot> QueryNStudyRemoteInventoryOnAsync(
+        ClientConnection connection, CancellationToken cancellationToken)
+    {
         var snapshot = await connection.Session.QueryNStudyInventoryAsync(cancellationToken).ConfigureAwait(false);
         if (snapshot.Status != NStudyInventoryStatus.Current)
             throw new SharpLinkException(snapshot.Status == NStudyInventoryStatus.CapacityExceeded
                 ? SharpLinkErrorCode.ResourceExhausted : SharpLinkErrorCode.Unavailable,
                 $"Private inventory outcome: {snapshot.Status}.");
-        if (!connection.CanAcceptCalls || !ReferenceEquals(RequireSingleNStudyConnection(), connection))
-            throw NStudyPreparedSite.Unavailable();
         return snapshot;
+    }
+
+    internal IReadOnlyList<SharpLinkVersionConnection> ReadVersionConnections()
+    {
+        var ready = CaptureVersionConnections();
+        var selectors = new List<SharpLinkVersionConnection>(ready.Length);
+        foreach (var connection in ready)
+        {
+            if (!IsNStudyPreparationConnectionCurrent(connection))
+                continue;
+            selectors.Add(new(connection, connection.EndpointId ?? _fixedEndpoint?.Id,
+                connection.Session.ReadObservedNStudyVersionSession()));
+        }
+        return selectors.AsReadOnly();
+    }
+
+    private ClientConnection RequireVersionConnection(SharpLinkVersionConnection selector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+        if (!selector.TryGetConnection(out var connection) || !IsNStudyPreparationConnectionCurrent(connection))
+            throw NStudyPreparedSite.Unavailable();
+        return connection;
+    }
+
+    private ClientConnection RequireVersionConnection(SharpLinkVersionSession peer)
+    {
+        var authority = new NStudyAuthority(peer.ServerInstanceId, peer.ServerRegistryEpoch, peer.PhysicalSessionId);
+        ClientConnection? match = null;
+        foreach (var connection in CaptureVersionConnections())
+        {
+            if (!connection.Session.HasNStudyAuthority(authority) || !IsNStudyPreparationConnectionCurrent(connection))
+                continue;
+            if (match is not null)
+                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                    "The observed version session does not select a unique current connection.");
+            match = connection;
+        }
+        return match ?? throw NStudyPreparedSite.Unavailable();
+    }
+
+    private ClientConnection[] CaptureVersionConnections()
+    {
+        var ready = CaptureNStudyReadyConnections();
+        if (ready.Length > NStudyContractPreparation.MaximumCohortSize)
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Too many Ready connections for version coordination.");
+        return ready;
     }
 
     private static async Task<NStudyAck> BindNStudyContractOnAsync(ClientConnection connection, long contract,

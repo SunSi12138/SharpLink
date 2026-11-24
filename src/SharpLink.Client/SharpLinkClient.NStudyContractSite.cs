@@ -95,6 +95,39 @@ internal sealed partial class SharpLinkClient
         internal NStudyClientRoute RequireRoute(ClientConnection connection) =>
             Find(connection)?.RequireRoute() ?? throw Unavailable();
 
+        internal bool ContainsReceipt(ClientConnection connection, NStudyAck receipt)
+            => _cohort is null ? _single?.MatchesReceipt(connection, receipt) == true
+                : FindCohortReceipt(connection, receipt) >= 0;
+
+        internal NStudyPreparedSite? ResumeReceipt(
+            ClientConnection connection, NStudyAck receipt, NStudyPreparedRoute replacement)
+        {
+            if (_cohort is null)
+                return _single?.MatchesReceipt(connection, receipt) == true ? new(replacement) : null;
+
+            var index = FindCohortReceipt(connection, receipt);
+            if (index < 0)
+                return null;
+            var cohort = (NStudyPreparedRoute[])_cohort.Clone();
+            cohort[index] = replacement;
+            return new(cohort);
+        }
+
+        internal NStudyPreparedSite AppendApprovedMember(NStudyPreparedRoute route)
+            => new([.. _cohort!, route]);
+
+        internal void CopyCohortReceiptsTo(List<NStudyPreparedRoute> destination)
+            => destination.AddRange(_cohort!);
+
+        private int FindCohortReceipt(ClientConnection connection, NStudyAck receipt)
+        {
+            var cohort = _cohort!;
+            for (var i = 0; i < cohort.Length; i++)
+                if (cohort[i].MatchesReceipt(connection, receipt))
+                    return i;
+            return -1;
+        }
+
         internal bool CanSelectFrom(ClientConnection[] connections)
         {
             foreach (var connection in connections)
@@ -117,6 +150,10 @@ internal sealed partial class SharpLinkClient
         internal bool TryGetConnection(out ClientConnection connection) => _connection.TryGetTarget(out connection!);
         internal NStudyClientRoute RequireRoute() =>
             _route.TryGetTarget(out var route) ? route : throw NStudyPreparedSite.Unavailable();
+        // During coordinated resume the old business gate is already closed.
+        // Match the exact earlier publication even though it is no longer callable.
+        internal bool MatchesReceipt(ClientConnection connection, NStudyAck receipt)
+            => Ack == receipt && _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection);
         internal bool IsReadyOn(ClientConnection connection)
             => _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection) &&
                _route.TryGetTarget(out var route) && route.IsOpenOn(connection.Session);
@@ -129,6 +166,10 @@ internal sealed partial class SharpLinkClient
         private FrozenDictionary<long, RpcMethodDescriptor>? _methods;
 
         internal NStudyContractPreparation Get() => LazyInitializer.EnsureInitialized(ref _state);
+
+        // Only a not-yet-published replacement cell receives these dormant receipts.
+        internal void InheritResumeReceipts(NStudyPreparationCell previous)
+            => _state = Volatile.Read(ref previous._state)?.CreateDormantResumeLineage();
 
         internal FrozenDictionary<long, RpcMethodDescriptor> GetMethods(SharpLinkGeneratedContractDescriptor contract)
             => Volatile.Read(ref _methods) ?? PublishMethods(contract);
@@ -154,9 +195,83 @@ internal sealed partial class SharpLinkClient
         internal NStudyPreparedSite? Ready;
         internal NStudyPreparedSite? BalancedReady;
         internal PrepareOperation? InFlight;
-        // Under Gate: prevents an ordinary Prepare from becoming a second
-        // publisher while this registration is resuming a coordinated cut.
-        internal bool Coordinating;
+        private HashSet<ClientConnection>? _coordinating;
+        // Old local-generation membership is evidence for negotiation, not a
+        // callable site. These snapshots contain only value receipts and weak references.
+        private NStudyPreparedSite? _priorPinned;
+        private List<NStudyPreparedRoute>? _priorCohort;
+
+        // Under Gate. An ordinary Prepare remains exclusive, but distinct
+        // physical sessions may each resume a member of the published cohort.
+        internal bool Coordinating => _coordinating is { Count: > 0 };
+
+        internal bool TryReserveResume(ClientConnection connection, NStudyAck source)
+        {
+            if (InFlight is not null || (Ready?.ContainsReceipt(connection, source) != true &&
+                    BalancedReady?.ContainsReceipt(connection, source) != true &&
+                    _priorPinned?.ContainsReceipt(connection, source) != true &&
+                    FindPriorCohortReceipt(connection, source) < 0))
+                return false;
+            return (_coordinating ??= []).Add(connection);
+        }
+
+        internal void PublishResume(ClientConnection connection, NStudyAck source, NStudyPreparedRoute resumed)
+        {
+            var pinned = Ready?.ResumeReceipt(connection, source, resumed);
+            var balanced = BalancedReady?.ResumeReceipt(connection, source, resumed);
+            if (Ready is null && _priorPinned?.ContainsReceipt(connection, source) == true)
+                pinned = new(resumed);
+            var inheritedIndex = FindPriorCohortReceipt(connection, source);
+            if (inheritedIndex >= 0)
+            {
+                balanced ??= BalancedReady?.AppendApprovedMember(resumed) ?? new NStudyPreparedSite([resumed]);
+                _priorCohort!.RemoveAt(inheritedIndex);
+            }
+            if (pinned is null && balanced is null)
+                throw NStudyPreparedSite.Unavailable();
+            if (pinned is not null)
+            {
+                _priorPinned = null;
+                Volatile.Write(ref Ready, pinned);
+            }
+            if (balanced is not null)
+                Volatile.Write(ref BalancedReady, balanced);
+        }
+
+        internal void ReleaseResume(ClientConnection connection) => _coordinating!.Remove(connection);
+
+        private int FindPriorCohortReceipt(ClientConnection connection, NStudyAck source)
+            => _priorCohort?.FindIndex(route => route.MatchesReceipt(connection, source)) ?? -1;
+
+        internal void PublishPrepared(NStudyPreparedSite ready)
+        {
+            if (ready.IsBalanced)
+            {
+                _priorCohort = null;
+                Volatile.Write(ref BalancedReady, ready);
+            }
+            else
+            {
+                _priorPinned = null;
+                Volatile.Write(ref Ready, ready);
+            }
+        }
+
+        internal NStudyContractPreparation? CreateDormantResumeLineage()
+        {
+            lock (Gate)
+            {
+                var pinned = Ready ?? _priorPinned;
+                List<NStudyPreparedRoute>? cohort = null;
+                if (BalancedReady is not null || _priorCohort is { Count: > 0 })
+                {
+                    cohort = _priorCohort is null ? [] : new(_priorCohort);
+                    BalancedReady?.CopyCohortReceiptsTo(cohort);
+                }
+                return pinned is null && cohort is null ? null
+                    : new() { _priorPinned = pinned, _priorCohort = cohort };
+            }
+        }
     }
 
     internal sealed class PrepareOperation(ClientConnection? connection, NStudyObservedTarget? observation, ClientConnection[]? cohort)
@@ -481,12 +596,7 @@ internal sealed partial class SharpLinkClient
             lock (_preparation.Gate)
             {
                 if (ready is not null)
-                {
-                    if (ready.IsBalanced)
-                        Volatile.Write(ref _preparation.BalancedReady, ready);
-                    else
-                        Volatile.Write(ref _preparation.Ready, ready);
-                }
+                    _preparation.PublishPrepared(ready);
                 _preparation.InFlight = null;
             }
             if (error is not null)

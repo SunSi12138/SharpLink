@@ -361,6 +361,7 @@ internal sealed partial class ClientAssemblyRegistry
                             _unregisterOperations.Add(oldAssembly, drainOperation);
                             _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                             newModule.NStudyPublication = NextNStudyPublication;
+                            CarryNStudyResumeReceipts(oldModule, newModule, candidate.Proxies);
                             _proxyLookup.Publish(candidate.Proxies);
                             _generation++;
                             oldModule.TryBeginDraining();

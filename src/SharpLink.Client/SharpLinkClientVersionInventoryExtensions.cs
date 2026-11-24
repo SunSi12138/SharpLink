@@ -7,6 +7,15 @@ public static class SharpLinkClientVersionInventoryExtensions
     public static SharpLinkVersionInventory GetLocalVersionInventory(this ISharpLinkClient client)
         => GetBuiltInClient(client).ReadLocalVersionInventory();
 
+    /// <summary>Lists current physical selectors without querying peers or preparing RPCs.</summary>
+    public static IReadOnlyList<SharpLinkVersionConnection> GetVersionConnections(this ISharpLinkClient client)
+        => GetBuiltInClient(client).ReadVersionConnections();
+
+    /// <summary>Reads peer inventory on this exact current connection, without falling back to another connection.</summary>
+    public static ValueTask<SharpLinkVersionInventory> QueryPeerVersionInventoryAsync(
+        this ISharpLinkClient client, SharpLinkVersionConnection connection, CancellationToken cancellationToken = default)
+        => GetBuiltInClient(client).QueryVersionConnectionAsync(connection, cancellationToken);
+
     /// <summary>Reads the server's inventory on this client's single Ready connection.</summary>
     /// <remarks>
     /// Requires exactly one Ready connection for this operation. Reading inventory does not prepare a proxy

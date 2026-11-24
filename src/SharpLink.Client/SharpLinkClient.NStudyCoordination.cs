@@ -52,16 +52,11 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var connection = RequireSingleNStudyConnection();
-        var session = connection.Session;
         var mode = NStudyVersionCoordinationMode;
-        if (expectedSession is { } peer)
-        {
-            if (mode == NStudyCoordinationMode.Disabled)
-                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Local policy disabled version coordination.");
-            if (!session.HasNStudyAuthority(new(peer.ServerInstanceId, peer.ServerRegistryEpoch, peer.PhysicalSessionId)))
-                throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "Version coordination does not target the current Ready session.");
-        }
+        if (expectedSession.HasValue && mode == NStudyCoordinationMode.Disabled)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Local policy disabled version coordination.");
+        var connection = expectedSession is { } peer ? RequireVersionConnection(peer) : RequireSingleNStudyConnection();
+        var session = connection.Session;
         using var ownership = session.EnterNStudyCoordination(mode, localChoice, approveLocally,
             requirePolicyDeferral: expectedSession.HasValue);
         var clock = _runtimeContext.TimeProvider;
@@ -103,8 +98,9 @@ internal sealed partial class SharpLinkClient
             // application switched off approvals. Decline before acquiring assets or freezing R1.
             if (ownership.Mode == NStudyCoordinationMode.Disabled)
                 return await RefuseAsync(change, NStudyDeclineReason.Policy).ConfigureAwait(false);
-            if (!session.HasNStudyCandidateSource(change))
+            if (session.ReadNStudyCandidateSource(change) is not { } source)
                 return await RefuseAsync(change, NStudyDeclineReason.SourceUnavailable).ConfigureAwait(false);
+            var sourceReceipt = source.Acknowledgement;
 
             var registration = FindNStudyCompatibleLocalRegistration(change.Contract);
             if (expectedRegistration is not null && !ReferenceEquals(expectedRegistration, registration))
@@ -126,11 +122,8 @@ internal sealed partial class SharpLinkClient
                 var preparation = registration.NStudyPreparation.Get();
                 lock (preparation.Gate)
                 {
-                    if (preparation.InFlight is null && !preparation.Coordinating)
-                    {
-                        preparation.Coordinating = true;
+                    if (preparation.TryReserveResume(connection, sourceReceipt))
                         reserved = preparation;
-                    }
                 }
                 if (reserved is null)
                     return await RefuseAsync(change, NStudyDeclineReason.SourceUnavailable).ConfigureAwait(false);
@@ -156,9 +149,7 @@ internal sealed partial class SharpLinkClient
                         !IsNStudyPreparationConnectionCurrent(connection) ||
                         route.Acknowledgement != binding || !route.IsOpenOn(session))
                         throw NStudyPreparedSite.Unavailable();
-                    // Publish the acknowledged route for the original pinned receiver.
-                    // Do not bind again, switch connections, or republish a cohort.
-                    Volatile.Write(ref preparation.Ready, new NStudyPreparedSite(new NStudyPreparedRoute(connection, route, binding)));
+                    preparation.PublishResume(connection, sourceReceipt, new(connection, route, binding));
                 }
                 observation = NStudyVersionNoticeKind.Completed;
                 return new(change, new(change, binding, module.NStudyRegistration), NStudyDeclineReason.None);
@@ -178,7 +169,7 @@ internal sealed partial class SharpLinkClient
             if (reserved is not null)
             {
                 lock (reserved.Gate)
-                    reserved.Coordinating = false;
+                    reserved.ReleaseResume(connection);
             }
             if (observedChange is { } change)
             {

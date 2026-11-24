@@ -8,7 +8,7 @@ using SharpLink.Client;
 using SharpLink.Sdk;
 using SharpLink.Server;
 
-internal static class CoordinationSmoke
+internal static partial class CoordinationSmoke
 {
     internal static async Task RunAsync(string transport, string name, string pluginDirectory)
     {
@@ -76,7 +76,7 @@ internal static class CoordinationSmoke
         // The plugin type is application-loaded; only public generated proxy APIs are called.
         var factory = typeof(CoordinationSmoke).GetMethod(nameof(PreparePlugin), BindingFlags.Static | BindingFlags.NonPublic)!
             .MakeGenericMethod(contractType);
-        var plugin = (PluginProbe)factory.Invoke(null, [client])!;
+        var plugin = (PluginProbe)factory.Invoke(null, [client, null])!;
         var sibling = client.CreateProxy<IVersionInventoryProbe>();
         var timeout = TimeSpan.FromSeconds(5);
         await plugin.Prepare(timeout, ct);
@@ -100,7 +100,7 @@ internal static class CoordinationSmoke
         {
             RequireRegistration(follower.RegisterAssembly(contract), "follower client contract");
             await follower.ConnectAsync(ct);
-            followerPlugin = (PluginProbe)factory.Invoke(null, [follower])!;
+            followerPlugin = (PluginProbe)factory.Invoke(null, [follower, null])!;
             await followerPlugin.Prepare(timeout, ct);
             followerDeclaration = await follower.DeclareVersionTargetAsync(followerPlugin.Local, ct);
             Check(followerDeclaration.Status == (manual ? SharpLinkVersionDeclarationStatus.ApprovalRequired
@@ -315,9 +315,9 @@ internal static class CoordinationSmoke
         }
     }
 
-    private static PluginProbe PreparePlugin<T>(ISharpLinkClient client) where T : IService
+    private static PluginProbe PreparePlugin<T>(ISharpLinkClient client, RpcProxyOptions? options) where T : IService
     {
-        var proxy = client.CreateProxy<T>();
+        var proxy = client.CreateProxy<T>(options);
         var unary = typeof(T).GetMethod("UnaryAsync")!;
         var block = typeof(T).GetMethod("BlockAsync")!;
         return new(client.GetLocalContract<T>(), proxy.PrepareAsync,

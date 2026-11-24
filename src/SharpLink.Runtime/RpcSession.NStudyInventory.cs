@@ -14,6 +14,12 @@ internal sealed partial class RpcSession
             return _nStudyAuthority != default && _nStudyAuthority == authority;
     }
 
+    internal SharpLinkVersionSession? ReadObservedNStudyVersionSession()
+    {
+        lock (_nStudyGate)
+            return _nStudyAuthority == default ? null : NStudyInventorySnapshot.ToVersionSession(_nStudyAuthority);
+    }
+
     internal Task<NStudyInventorySnapshot> QueryNStudyInventoryAsync(CancellationToken cancellationToken)
         => QueryNStudyPeerInventoryAsync(RpcSessionRole.Client, null, cancellationToken);
 
