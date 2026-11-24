@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Channels;
+using SharpLink.Client;
 
 namespace SharpLink.UnitTests;
 
@@ -131,8 +132,10 @@ internal sealed class TestTransportConnection : ITransportConnection
             cancellationToken);
     }
 
-    internal async Task PrepareInvocationRouteAsync(RpcSession session, long contractId)
+    internal async Task<SharpLinkClient.NStudyPreparedSite> PrepareInvocationRouteAsync(
+        ClientConnection connection, long contractId)
     {
+        var session = connection.Session;
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var request = new NStudyBind(contractId, new RpcHash128(1, 1), default);
         var preparing = session.PrepareNStudyBindAsync(request, guard.Token);
@@ -147,9 +150,12 @@ internal sealed class TestTransportConnection : ITransportConnection
         NStudyWire.WriteAck(payload, ack);
         await InjectFrameAsync(NStudyWire.BindAck, ProtocolV2FrameFlags.None, sent.Header.RequestId,
             payload.WrittenMemory, guard.Token);
-        if (await preparing != ack || session.CaptureNStudyBinding(contractId) != ack.BindingId)
+        var confirmed = await preparing;
+        var route = session.CaptureNStudyRoute(contractId);
+        if (confirmed != ack || route.Token != ack.BindingId)
             throw new InvalidOperationException("The fixture did not establish its ordinary bound route.");
         await session.FlushSendQueueAsync(guard.Token);
+        return new SharpLinkClient.NStudyPreparedSite(new SharpLinkClient.NStudyPreparedRoute(connection, route, confirmed));
     }
 
     public async Task InjectFrameAsync(

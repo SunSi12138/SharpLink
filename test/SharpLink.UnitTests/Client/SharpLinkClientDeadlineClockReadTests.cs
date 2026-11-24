@@ -26,17 +26,18 @@ public sealed class SharpLinkClientDeadlineClockReadTests
             transport, builder => builder.UseTimeProvider(timeProvider));
         var method = UnaryMethod(TimeSpan.FromSeconds(5));
         await client.ConnectAsync();
-        await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client).Session, method.ContractId);
-        var channel = (SharpLinkClient)client;
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), method.ContractId);
         var request = default(RpcEmptyRequest);
         var before = timeProvider.TimestampReadCount;
 
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = client.InvokeUnary(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
-            channel.RuntimeContext.Codecs.GetCodec<int>(),
-            metadata: null).AsTask();
+            client.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default,
+            prepared).AsTask();
         var sending = transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         if (await Task.WhenAny(invocation, sending).WaitAsync(TimeSpan.FromSeconds(3)) == invocation)
         {
