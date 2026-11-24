@@ -221,12 +221,21 @@ public sealed class SharpLinkClientDeadlinePublicationTests
 
             stall.Set();
             var published = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
-            var cancelled = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
             Ensure(published?.Header.Type == NStudyWire.OneWayInputRequest,
                 "the accepted Request still reaches the peer after the deadline stopped the caller");
-            Ensure(cancelled?.Header.Type == ProtocolV2FrameType.Cancel &&
-                   cancelled!.Value.Header.RequestId == published!.Value.Header.RequestId,
-                "the deadline must still publish its cancel behind the Request it follows");
+            var tail = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
+            var requestId = published!.Value.Header.RequestId;
+            var cancels = tail.FindAll(static frame => frame.Header.Type == ProtocolV2FrameType.Cancel);
+            var terminals = tail.FindAll(static frame => frame.Header.Type == ProtocolV2FrameType.StreamComplete);
+            Ensure(tail.Count == 2 && cancels.Count == 1 && terminals.Count == 1 &&
+                   tail.TrueForAll(frame => frame.Header.RequestId == requestId),
+                "the accepted head must be followed by one matching Cancel and one input terminal: " +
+                string.Join(", ", tail.ConvertAll(static frame => $"{frame.Header.Type}:{frame.Header.RequestId}")));
+            Ensure(ProtocolV2PayloadCodec.ReadCancelReason(new ReadOnlySequence<byte>(cancels[0].Payload))
+                    == ProtocolV2CancelReason.DeadlineExceeded &&
+                   terminals[0].Header.Flags.HasFlag(ProtocolV2FrameFlags.Error) &&
+                   BinaryPrimitives.ReadUInt16LittleEndian(terminals[0].Payload) == 1,
+                "the typed OneWay input must retire stream 1 and retain the authoritative deadline cancellation");
         }
         finally
         {
