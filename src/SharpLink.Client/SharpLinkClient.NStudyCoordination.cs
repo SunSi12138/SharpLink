@@ -4,8 +4,12 @@ internal readonly record struct NStudyClientActivation(NStudyChange Change, NStu
 
 internal sealed partial class SharpLinkClient
 {
-    // Sampled at the actual handshake; later setting changes apply to future Sessions only.
-    internal NStudyCoordinationMode NStudyVersionCoordinationMode { get; set; }
+    private volatile NStudyCoordinationMode _nStudyVersionCoordinationMode;
+    internal NStudyCoordinationMode NStudyVersionCoordinationMode
+    {
+        get => _nStudyVersionCoordinationMode;
+        set => _nStudyVersionCoordinationMode = value;
+    }
 
     internal async Task<NStudyClientActivation?> NegotiateNStudyReplacementAsync(
         NStudyInitiator localChoice,
@@ -18,8 +22,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A private coordination attempt needs one Ready Session.");
         var connection = ready[0];
         var session = connection.Session;
-        using var ownership = session.EnterNStudyCoordination();
-        session.ValidateNStudyLocalDecision(approveLocally);
+        using var ownership = session.EnterNStudyCoordination(NStudyVersionCoordinationMode, approveLocally);
         var clock = _runtimeContext.TimeProvider;
         var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
         using var timer = new CancellationTokenSource(controlDeadline.GetRemaining(clock), clock);
@@ -44,6 +47,10 @@ internal sealed partial class SharpLinkClient
                 ct, allowDecline: true).ConfigureAwait(false);
             if (prepared.Phase == NStudyPhase.Declined)
                 return null;
+            // A negotiated Session may finish a paired exchange after the local
+            // application switched off approvals. Decline before acquiring assets or freezing R1.
+            if (ownership.Mode == NStudyCoordinationMode.Disabled)
+                return await DeclineNStudyAsync(session, change, NStudyDeclineReason.Policy, ct).ConfigureAwait(false);
             if (!session.HasNStudyCandidateSource(change))
                 return await DeclineNStudyAsync(session, change, NStudyDeclineReason.SourceUnavailable, ct).ConfigureAwait(false);
 
@@ -57,7 +64,7 @@ internal sealed partial class SharpLinkClient
                 // install them, and the local registry is rechecked after policy awaits.
                 if (module.Manifest.RpcAssemblyHash != change.Hash)
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetIncompatible, ct).ConfigureAwait(false);
-                if (!await session.DecideNStudyLocallyAsync(change, approveLocally, _logger, controlDeadline, ct).ConfigureAwait(false))
+                if (!await ownership.DecideAsync(change, _logger, controlDeadline, ct).ConfigureAwait(false))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.Policy, ct).ConfigureAwait(false);
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetMissing, ct).ConfigureAwait(false);

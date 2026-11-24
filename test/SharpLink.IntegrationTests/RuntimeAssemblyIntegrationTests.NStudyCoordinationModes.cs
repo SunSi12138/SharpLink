@@ -70,8 +70,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 server.ReadNStudyTarget(oldAssembly, aCid)), TimeSpan.FromSeconds(5), ct);
             var connection = NStudyClientConnection(client);
             var peer = NStudyServerConnection(server);
-            Ensure(connection.Session.NStudyLocalCoordinationMode == clientMode &&
-                   peer.Session.NStudyLocalCoordinationMode == serverMode &&
+            Ensure(connection.Session.NStudyHandshakeCoordinationMode == clientMode &&
+                   peer.Session.NStudyHandshakeCoordinationMode == serverMode &&
                    connection.Session.SupportsNStudyCoordination == automatic &&
                    peer.Session.SupportsNStudyCoordination == automatic &&
                    a1.Authority == bBinding.Authority && a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
@@ -115,6 +115,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                NStudyCount(newType, "Created") == 0 && await b.TouchAsync(1, ct) == 101,
             "one side alone cannot opt this Session into version coordination");
         trace.Record("UnnegotiatedCoordinationLeavesBothExistingRoutesUsable", a1, bBinding);
+
+        // Changing only application policy cannot manufacture a capability absent
+        // from the original handshake, even if both endpoints now want Automatic.
+        client.NStudyVersionCoordinationMode = server.NStudyVersionCoordinationMode = NStudyCoordinationMode.Automatic;
+        await ExpectNStudyCoordinationUnavailableAsync(client.NegotiateNStudyReplacementAsync(
+            NStudyInitiator.Client, approveLocally: null, ct));
+        await ExpectNStudyCoordinationUnavailableAsync(server.StageNStudyReplacementAsync(
+            peer, oldAssembly, newAssembly, a1.Contract, NStudyInitiator.Server, approveLocally: null,
+            TimeSpan.FromSeconds(15), ct));
+        Ensure(!connection.Session.SupportsNStudyCoordination && !peer.Session.SupportsNStudyCoordination &&
+               connection.Session.CaptureNStudyBinding(a1.Contract) == a1.BindingId &&
+               await b.TouchAsync(4, ct) == 104,
+            "live policy enablement cannot grant a missing physical Session capability");
+        trace.Record("LivePolicyCannotCreateAnUnnegotiatedCapability", a1, bBinding);
+        client.NStudyVersionCoordinationMode = connection.Session.NStudyHandshakeCoordinationMode;
+        server.NStudyVersionCoordinationMode = peer.Session.NStudyHandshakeCoordinationMode;
 
         // Disabled coordination must not suppress a normal local registry
         // retirement or allow later business to reach the old registration.

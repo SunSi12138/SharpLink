@@ -14,44 +14,24 @@ internal sealed partial class RpcSession
     private NStudyChange? _nStudyCandidate;
     private NStudyClientRoute? _nStudyCandidateSource;
     private bool _nStudySourceFrozen;
-    private NStudyCoordinationMode _nStudyCoordinationMode;
+    private NStudyCoordinationMode _nStudyHandshakeCoordinationMode;
 
     internal bool SupportsNStudyCoordination => (NegotiatedCapabilities & NStudyWire.CoordinationCapability) != 0;
-    internal NStudyCoordinationMode NStudyLocalCoordinationMode => _nStudyCoordinationMode;
+    internal NStudyCoordinationMode NStudyHandshakeCoordinationMode => _nStudyHandshakeCoordinationMode;
 
-    // Both advertisement and decisions use this physical Session's one local
-    // configuration. Reconnect samples a new setting, not an old receipt.
+    // Handshake capability belongs to the physical Session. Application policy
+    // is captured separately by each subsequent coordination scope.
     internal void ConfigureNStudyCoordination(NStudyCoordinationMode mode)
     {
         if (ProtocolPhase != RpcSessionProtocolPhase.Handshaking)
             throw InvalidNStudy("Version coordination must be configured before this Session's handshake.");
         if (mode is < NStudyCoordinationMode.Disabled or > NStudyCoordinationMode.Automatic)
             throw new ArgumentOutOfRangeException(nameof(mode));
-        _nStudyCoordinationMode = mode;
+        _nStudyHandshakeCoordinationMode = mode;
     }
 
-    internal void ValidateNStudyLocalDecision(Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision)
-    {
-        if (_nStudyCoordinationMode == NStudyCoordinationMode.Manual)
-            ArgumentNullException.ThrowIfNull(manualDecision);
-        else if (manualDecision is not null)
-            throw new ArgumentException("An application approval callback is used only in Manual mode.", nameof(manualDecision));
-    }
-
-    // Callers invoke this only after verifying their own actually prepared
-    // material. Automatic approves that fact; it never replaces preparation.
-    internal ValueTask<bool> DecideNStudyLocallyAsync(NStudyChange change,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision, ILogger logger,
-        RpcDeadline controlDeadline, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        return _nStudyCoordinationMode == NStudyCoordinationMode.Manual
-            ? RuntimeContext.NStudyApprovals.DecideAsync(change, manualDecision!, logger,
-                RuntimeContext.TimeProvider, controlDeadline, ct)
-            : ValueTask.FromResult(_nStudyCoordinationMode == NStudyCoordinationMode.Automatic);
-    }
-
-    internal IDisposable EnterNStudyCoordination()
+    internal NStudyCoordinationScope EnterNStudyCoordination(NStudyCoordinationMode mode,
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision)
     {
         EnsureNStudyCoordinationAvailable();
         lock (_nStudyCoordinationGate)
@@ -60,9 +40,15 @@ internal sealed partial class RpcSession
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "This Session is already coordinating a version.");
             if (_nStudyKeepTargetBlock)
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "This Session must refresh before another version transition.");
+            if (mode is < NStudyCoordinationMode.Disabled or > NStudyCoordinationMode.Automatic)
+                throw new ArgumentOutOfRangeException(nameof(mode));
+            if (mode == NStudyCoordinationMode.Manual)
+                ArgumentNullException.ThrowIfNull(manualDecision);
+            else if (manualDecision is not null)
+                throw new ArgumentException("An application approval callback is used only in Manual mode.", nameof(manualDecision));
             _nStudyCoordinationOwned = true;
+            return new NStudyCoordinationScope(this, mode, manualDecision);
         }
-        return new NStudyCoordinationScope(this);
     }
 
     internal ulong NextNStudyTransitionId()
@@ -220,12 +206,27 @@ internal sealed partial class RpcSession
     private void EnsureNStudyCoordinationAvailable()
     {
         EnsureNStudyReady(Role);
-        if (!SupportsNStudyCoordination || _nStudyCoordinationMode == NStudyCoordinationMode.Disabled)
+        if (!SupportsNStudyCoordination)
             throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Version coordination was not negotiated by both peers.");
     }
 
-    private sealed class NStudyCoordinationScope(RpcSession session) : IDisposable
+    internal sealed class NStudyCoordinationScope(RpcSession session, NStudyCoordinationMode mode,
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision) : IDisposable
     {
+        internal NStudyCoordinationMode Mode => mode;
+
+        // A live policy update never recategorizes a decision admitted under the old policy,
+        // and never changes what this Session is able to send or read while settling it.
+        internal ValueTask<bool> DecideAsync(NStudyChange change, ILogger logger,
+            RpcDeadline controlDeadline, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            return mode == NStudyCoordinationMode.Manual
+                ? session.RuntimeContext.NStudyApprovals.DecideAsync(change, manualDecision!, logger,
+                    session.RuntimeContext.TimeProvider, controlDeadline, ct)
+                : ValueTask.FromResult(mode == NStudyCoordinationMode.Automatic);
+        }
+
         public void Dispose()
         {
             lock (session._nStudyGate)

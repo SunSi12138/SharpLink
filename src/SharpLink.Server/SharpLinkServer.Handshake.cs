@@ -16,7 +16,7 @@ internal sealed partial class SharpLinkServer
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
             enableSessionRefresh: session.SupportsSessionRefreshReplacement,
-            enableNStudyCoordination: session.NStudyLocalCoordinationMode != NStudyCoordinationMode.Disabled);
+            enableNStudyCoordination: session.NStudyHandshakeCoordinationMode != NStudyCoordinationMode.Disabled);
         var reader = session.Input;
         SharpLinkAuthenticationResult? handshakeResult = null;
 

@@ -368,7 +368,7 @@ internal sealed partial class SharpLinkClient
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
             enableSessionRefresh: session.SupportsSessionRefreshReplacement,
-            enableNStudyCoordination: session.NStudyLocalCoordinationMode != NStudyCoordinationMode.Disabled);
+            enableNStudyCoordination: session.NStudyHandshakeCoordinationMode != NStudyCoordinationMode.Disabled);
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
