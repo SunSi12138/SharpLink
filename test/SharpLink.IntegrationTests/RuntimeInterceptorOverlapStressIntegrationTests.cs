@@ -7,7 +7,7 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
     [Test]
     public async Task ClientReplacementStressShouldOverlapInFlightRpcsAndPreserveGeneration()
     {
-        await using var harness = await OverlapHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var traces = new ConcurrentDictionary<SharpLinkClientInvocationContext, ConcurrentQueue<string>>();
         var gate = new ClientOverlapGate();
         var a = new CorrelatedClientInterceptor("A", traces);
@@ -62,7 +62,7 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
     [Test]
     public async Task ServerReplacementStressShouldOverlapInFlightRpcsAndPreserveGeneration()
     {
-        await using var harness = await OverlapHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var traces = new ConcurrentDictionary<SharpLinkServerInvocationContext, ConcurrentQueue<string>>();
         var gate = new ServerOverlapGate();
         var a = new CorrelatedServerInterceptor("A", traces);
@@ -204,56 +204,6 @@ public class RuntimeInterceptorOverlapStressIntegrationTests
         {
             traces.GetOrAdd(context, static _ => new ConcurrentQueue<string>()).Enqueue(id);
             return next(context);
-        }
-    }
-
-    private sealed class OverlapHarness : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _serverCts;
-        private readonly Task _serverTask;
-
-        public ISharpLinkServer Server { get; }
-        public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
-
-        private OverlapHarness(
-            CancellationTokenSource serverCts,
-            Task serverTask,
-            ISharpLinkServer server,
-            ISharpLinkClient client)
-        {
-            _serverCts = serverCts;
-            _serverTask = serverTask;
-            Server = server;
-            Client = client;
-            Service = client.Get<IInterceptorTestService>();
-        }
-
-        public static async Task<OverlapHarness> CreateAsync()
-        {
-            var cts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
-
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
-                .Build();
-            await client.ConnectAsync(cts.Token);
-            return new OverlapHarness(cts, serverTask, server, client);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
         }
     }
 }

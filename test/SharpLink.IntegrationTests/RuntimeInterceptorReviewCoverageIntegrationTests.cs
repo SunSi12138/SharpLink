@@ -7,7 +7,7 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
     [Test]
     public async Task StreamReturningClientCallsShouldCaptureGenerationBeforeEnumeration()
     {
-        await using var harness = await ReviewCoverageHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new TraceClientInterceptor("A", log);
         var b = new TraceClientInterceptor("B", log);
@@ -39,7 +39,7 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
     [Test]
     public async Task ClientReplacementRacingStopShouldCompleteWithoutDeadlockAndRejectAfterStop()
     {
-        await using var harness = await ReviewCoverageHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var replacementEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseReplacement = new ManualResetEventSlim();
         SetPrivateField(
@@ -85,7 +85,7 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
     [Test]
     public async Task ServerReplacementRacingStopShouldCompleteWithoutDeadlockAndRejectAfterStop()
     {
-        await using var harness = await ReviewCoverageHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var replacementEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseReplacement = new ManualResetEventSlim();
         SetPrivateField(
@@ -131,7 +131,7 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
     [Test]
     public async Task ConcurrentClientReplacementsShouldNeverMixPublishedGenerations()
     {
-        await using var harness = await ReviewCoverageHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var traces = new ConcurrentDictionary<SharpLinkClientInvocationContext, ConcurrentQueue<string>>();
         var a = new CorrelatedClientInterceptor("A", traces);
         var b = new CorrelatedClientInterceptor("B", traces);
@@ -174,7 +174,7 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
     [Test]
     public async Task ConcurrentServerReplacementsShouldNeverMixPublishedGenerations()
     {
-        await using var harness = await ReviewCoverageHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var traces = new ConcurrentDictionary<SharpLinkServerInvocationContext, ConcurrentQueue<string>>();
         var a = new CorrelatedServerInterceptor("A", traces);
         var b = new CorrelatedServerInterceptor("B", traces);
@@ -358,55 +358,5 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
             SharpLinkServerInvocationContext context,
             SharpLinkServerInvocationDelegate next)
             => next(context);
-    }
-
-    private sealed class ReviewCoverageHarness : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _serverCts;
-        private readonly Task _serverTask;
-
-        public ISharpLinkServer Server { get; }
-        public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
-
-        private ReviewCoverageHarness(
-            CancellationTokenSource serverCts,
-            Task serverTask,
-            ISharpLinkServer server,
-            ISharpLinkClient client)
-        {
-            _serverCts = serverCts;
-            _serverTask = serverTask;
-            Server = server;
-            Client = client;
-            Service = client.Get<IInterceptorTestService>();
-        }
-
-        public static async Task<ReviewCoverageHarness> CreateAsync()
-        {
-            var cts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
-
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
-                .Build();
-            await client.ConnectAsync(cts.Token);
-            return new ReviewCoverageHarness(cts, serverTask, server, client);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
-        }
     }
 }
