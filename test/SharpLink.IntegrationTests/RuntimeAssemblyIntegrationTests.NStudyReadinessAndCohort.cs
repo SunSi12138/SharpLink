@@ -283,7 +283,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static async Task WithNStudyCoordinationPeersAsync(string transport,
         NStudyCoordinationMode mode, bool twoPeers, Func<NStudyCoordinationFixture, NStudyTrace, CancellationToken, Task> run,
         Func<IClientTransportFactory, IClientTransportFactory>? decorateTransport = null,
-        Action<SharpClientBuilder>? configureClient = null, Action<SharpLinkServerBuilder>? configureServer = null)
+        Action<SharpClientBuilder>? configureClient = null, Action<SharpLinkServerBuilder>? configureServer = null,
+        Func<IServerTransportListener, IServerTransportListener>? decorateServerTransport = null)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -300,7 +301,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var builder = NewNStudyServer(source, provider);
         configureServer?.Invoke(builder);
         string? memoryName = transport == "shared-memory" ? $"sharplink-n-peers-{Guid.NewGuid():N}" : null;
-        if (memoryName is null)
+        if (decorateServerTransport is not null)
+        {
+            IServerTransportListener listener = memoryName is null
+                ? new SocketServerTransportListener(new IPEndPoint(IPAddress.Loopback, 0))
+                : new SharedMemoryServerTransportListener(memoryName);
+            builder.UseTransport(decorateServerTransport(listener));
+        }
+        else if (memoryName is null)
             builder.UseTcp(0, IPAddress.Loopback);
         else
             builder.UseSharedMemory(memoryName);
