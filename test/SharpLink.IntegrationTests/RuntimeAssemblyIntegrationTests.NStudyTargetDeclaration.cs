@@ -123,7 +123,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "exact registry observation establishes neither activation nor a second Binding");
         trace.Record("RealDeploymentAllowsAdvisoryObservationWithoutOpeningAdmission", bBinding);
 
-        var binding = await receiver.Prepare(
+        var binding = await receiver.PrepareExact(
             new(observed.Authority, observed.Declaration.Contract, observed.Declaration.Hash, observed.Target),
             TimeSpan.FromSeconds(5), ct);
         Ensure(binding.Authority == missing.Authority && binding.Target == exact.Target &&
