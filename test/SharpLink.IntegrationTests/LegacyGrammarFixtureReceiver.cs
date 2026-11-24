@@ -1,7 +1,7 @@
 namespace SharpLink.IntegrationTests;
 
 // Test-only adapter for the existing raw grammar controls, never for prepared RPC coverage.
-internal sealed class LegacyGrammarFixtureReceiver(IRpcChannel inner) : IRpcContractChannel
+internal sealed class LegacyGrammarFixtureReceiver(SharpLinkClient inner) : IRpcContractChannel
 {
     internal static T Create<T>(ISharpLinkClient client) where T : IService
     {
@@ -12,7 +12,7 @@ internal sealed class LegacyGrammarFixtureReceiver(IRpcChannel inner) : IRpcCont
 
         var contract = manifest!.Contracts.Single(descriptor => descriptor.ContractType == typeof(T));
         var codecs = RpcGeneratedCodecResolver.GetProvider(client.RuntimeContext, assembly);
-        return (T)contract.ProxyFactory(new LegacyGrammarFixtureReceiver((IRpcChannel)client), codecs);
+        return (T)contract.ProxyFactory(new LegacyGrammarFixtureReceiver((SharpLinkClient)client), codecs);
     }
 
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;

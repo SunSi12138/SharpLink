@@ -26,7 +26,7 @@ public class SharpLinkClientTimeBudgetTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(TimeSpan.FromSeconds(120));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
 
         var invocation = channel.InvokeUnaryAsync(
@@ -70,7 +70,7 @@ public class SharpLinkClientTimeBudgetTests
             });
         await client.ConnectAsync();
 
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
@@ -114,7 +114,7 @@ public class SharpLinkClientTimeBudgetTests
         // at t=5 with one second left. Preserving the original parent RpcDeadline must retain its
         // t=6 boundary rather than anchoring the remaining second back at logical entry.
         timeProvider.AdvanceOnTimestampRead(2, TimeSpan.FromSeconds(3));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
@@ -158,7 +158,7 @@ public class SharpLinkClientTimeBudgetTests
         // models that gap: re-anchoring four seconds at t=5 would incorrectly extend the parent
         // to t=9. A shared clock must preserve the original t=6 parent boundary and emit one second.
         timeProvider.AdvanceOnTimestampRead(3, TimeSpan.FromSeconds(3));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
@@ -196,7 +196,7 @@ public class SharpLinkClientTimeBudgetTests
             ClientStreamCount: 1);
         var probe = new ProducerProbe();
         var streams = new ProbeClientStreams(probe);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
@@ -302,7 +302,7 @@ public class SharpLinkClientTimeBudgetTests
         // streaming methods while the client runs with a 30 s default. Only the unary entry point
         // resolves that default, so only it may put a budget on the wire.
         var method = MethodWithoutTimeout(kind, 320 + (long)kind);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var noStreams = default(RpcNoClientStreams);
         var probe = new ProducerProbe();
@@ -413,7 +413,7 @@ public class SharpLinkClientTimeBudgetTests
         await client.ConnectAsync();
 
         var method = MethodWithoutTimeout(RpcMethodKind.OneWay, 326);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 

@@ -2,7 +2,7 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
+    internal ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -41,7 +41,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
+    internal ValueTask InvokeOneWayAsync<TRequest, TStreams>(
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -81,7 +81,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(
+    internal ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -125,7 +125,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(
+    internal IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -211,7 +211,7 @@ internal sealed partial class SharpLinkClient
         catch { owner?.Dispose(); throw; }
     }
 
-    public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(
+    internal IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,

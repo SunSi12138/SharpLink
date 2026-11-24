@@ -107,7 +107,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.AddInterceptor(new BlockingStreamShortCircuitInterceptor());
             });
 
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -167,7 +167,7 @@ public class SharpLinkClientInterceptorDeadlineTests
 
     private static ValueTask<int> InvokeUnary(SharpLinkClient client)
     {
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SMethod,

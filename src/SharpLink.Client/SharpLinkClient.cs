@@ -1,7 +1,6 @@
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient :
-    IRpcChannel,
     ISharpLinkClient,
     IDynamicAssemblyRegistrationInspector,
     ISharpLinkClientDrainInspector,

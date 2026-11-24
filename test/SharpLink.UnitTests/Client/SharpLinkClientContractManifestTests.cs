@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
 
@@ -138,6 +139,15 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
                typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.CreateProxy)) is not null &&
                typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.CreateContractChannel)) is not null,
             "the client factory surface must not contain the legacy generated proxy path");
+    }
+
+    [Test]
+    public void ClientAbstractionsDoNotExposeAnUnboundRpcInterface()
+    {
+        Ensure(typeof(ISharpLinkClient).Assembly.GetType("SharpLink.Abstractions.IRpcChannel") is null &&
+               typeof(SharpLinkClient).GetInterfaces().All(static type => type.Name != "IRpcChannel") &&
+               typeof(SharpLinkClient).GetMethod("InvokeUnaryAsync") is null,
+            "applications cannot cast a client to an unbound RPC channel or invoke its internal wrappers");
     }
 
     private static TestClientTransportFactory CreateTransport(RpcHash128 remoteHash)

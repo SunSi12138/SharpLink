@@ -35,7 +35,7 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
             HasMethodTimeout: hasMethodTimeout,
             MethodTimeout: hasMethodTimeout ? TimeSpan.FromMinutes(1) : null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var codec = channel.RuntimeContext.Codecs.GetCodec<int>();
         var streams = default(EmptyClientStreams);
