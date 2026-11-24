@@ -2,6 +2,9 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    internal SharpLinkVersionInventory ReadLocalVersionInventory()
+        => _assemblyRegistry.CaptureNStudyInventory(default, int.MaxValue).ToVersionInventory(remote: false);
+
     private async ValueTask HandleNStudyInventoryAsync(RpcSession session, ulong operation,
         NStudyAuthority authority, CancellationToken ct)
     {

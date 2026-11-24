@@ -14,6 +14,25 @@ internal sealed class NStudyInventorySnapshot(
     internal NStudyInventoryStatus Status { get; } = status;
     internal IReadOnlyList<NStudyInventoryEntry> Entries { get; } = Array.AsReadOnly(entries);
 
+    internal SharpLinkVersionInventory ToVersionInventory(bool remote)
+    {
+        if (Status != NStudyInventoryStatus.Current)
+            throw new SharpLinkException(Status == NStudyInventoryStatus.CapacityExceeded
+                ? SharpLinkErrorCode.ResourceExhausted : SharpLinkErrorCode.Unavailable,
+                "A current version inventory could not be read.");
+
+        var registrations = new SharpLinkVersionRegistration[Entries.Count];
+        for (var i = 0; i < registrations.Length; i++)
+        {
+            var entry = Entries[i];
+            registrations[i] = new(entry.Contract, entry.Hash, entry.Target.Registration, entry.Target.Publication);
+        }
+        return new(remote ? ToVersionSession(Authority) : null, PublisherEpoch, Revision, registrations);
+    }
+
+    internal static SharpLinkVersionSession ToVersionSession(NStudyAuthority authority)
+        => new(authority.Server, authority.RegistryEpoch, authority.PhysicalSession);
+
     internal NStudyObservedTarget Select(long contract)
     {
         foreach (var entry in Entries)
