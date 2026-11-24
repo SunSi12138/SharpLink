@@ -159,6 +159,7 @@ internal sealed partial class SharpLinkClient :
 
     private async Task StopCoreAsync()
     {
+        _runtimeContext.SealNStudyVersionObservations();
         if (_cluster is not null)
         {
             await StopStaticClusterCoreAsync().ConfigureAwait(false);

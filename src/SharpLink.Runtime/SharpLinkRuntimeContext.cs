@@ -1,5 +1,7 @@
 using System.Linq;
 
+using Microsoft.Extensions.Logging;
+
 namespace SharpLink.Runtime;
 
 /// <summary>Immutable, instance-scoped runtime services for one SharpLink client or server.</summary>
@@ -14,6 +16,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private long _publicationRevision;
     private int _disposed;
     private NStudyApprovalScheduler? _nStudyApprovals;
+    private readonly Lock _nStudyObservationGate = new();
+    private NStudyVersionObservationQueue? _nStudyObservations;
+    private bool _nStudyObservationsSealed;
 
     internal SharpLinkRuntimeContext(
         SharpLinkRuntimeOptions options,
@@ -103,6 +108,35 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     // An endpoint owns application work even when a physical Session is replaced.
     internal NStudyApprovalScheduler NStudyApprovals
         => LazyInitializer.EnsureInitialized(ref _nStudyApprovals, static () => new());
+
+    internal NStudyVersionObservationQueue ConfigureNStudyVersionObserver(
+        Func<NStudyVersionNotice, CancellationToken, ValueTask> callback, ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        lock (_nStudyObservationGate)
+        {
+            ObjectDisposedException.ThrowIf(_nStudyObservationsSealed, this);
+            if (_nStudyObservations is not null)
+                throw new InvalidOperationException("The endpoint already owns a version observer.");
+            var queue = new NStudyVersionObservationQueue(callback, TimeProvider, logger);
+            Volatile.Write(ref _nStudyObservations, queue);
+            return queue;
+        }
+    }
+
+    internal void PublishNStudyVersionNotice(NStudyVersionNotice notice)
+        => Volatile.Read(ref _nStudyObservations)?.TryPublish(notice);
+
+    internal void SealNStudyVersionObservations()
+    {
+        lock (_nStudyObservationGate)
+        {
+            _nStudyObservationsSealed = true;
+            var queue = _nStudyObservations;
+            Volatile.Write(ref _nStudyObservations, null);
+            queue?.Seal();
+        }
+    }
 
     /// <summary>
     /// Gets the application-owned time source used for monotonic runtime scheduling.
@@ -333,6 +367,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+        SealNStudyVersionObservations();
         RpcGeneratedManifestRegistration[] registrations;
         lock (_registrationGate)
         {

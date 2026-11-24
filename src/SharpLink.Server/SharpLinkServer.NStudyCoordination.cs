@@ -20,6 +20,10 @@ internal sealed partial class SharpLinkServer
         set => _nStudyVersionCoordinationMode = value;
     }
 
+    internal NStudyVersionObservationQueue ConfigureNStudyVersionObserver(
+        Func<NStudyVersionNotice, CancellationToken, ValueTask> observer)
+        => _runtimeContext.ConfigureNStudyVersionObserver(observer, _logger);
+
     internal async Task<NStudyServerActivation> StageNStudyReplacementAsync(
         ServerConnectionState peer,
         Assembly oldAssembly, Assembly newAssembly, long contract, NStudyInitiator initiator,
@@ -47,6 +51,7 @@ internal sealed partial class SharpLinkServer
         var mode = NStudyVersionCoordinationMode;
         var participants = new List<NStudyParticipant>(offers.Count);
         NStudyServerPreparation? preparation = null;
+        var completed = false;
         try
         {
             var seen = new HashSet<ServerConnectionState>();
@@ -62,25 +67,33 @@ internal sealed partial class SharpLinkServer
             }
             // The application names the first peer as the commit authorizer.
             // The other selected data Sessions authorize only their own resume.
-            preparation = new(participants, seen, _connectionRegistry, contract);
+            preparation = new(participants, seen, _connectionRegistry, contract, _runtimeContext);
             var replacement = await ReplaceAssemblyCoreAsync(oldAssembly, newAssembly, gracefulTimeout,
                 cancellationToken, preparation).ConfigureAwait(false);
             if (!replacement.Succeeded)
                 await preparation.AbortBeforeCommitAsync().ConfigureAwait(false);
+            completed = replacement.Succeeded;
             return new(replacement, participants.Select(static participant => participant.Outcome).ToArray());
         }
         finally
         {
-            if (preparation is not null && !preparation.Published)
-                await preparation.AbortBeforeCommitAsync().ConfigureAwait(false);
-            foreach (var participant in participants)
-                participant.Dispose();
+            try
+            {
+                if (preparation is not null && !preparation.Published)
+                    await preparation.AbortBeforeCommitAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                foreach (var participant in participants)
+                    participant.Dispose();
+                preparation?.PublishOutcomeObservations(completed);
+            }
         }
     }
 
     private sealed class NStudyServerPreparation(
         IReadOnlyList<NStudyParticipant> peers, HashSet<ServerConnectionState> enrolled,
-        ServerConnectionRegistry registry, long contract)
+        ServerConnectionRegistry registry, long contract, SharpLinkRuntimeContext context)
     {
         private NStudyTarget _original;
         private bool _aborted;
@@ -122,6 +135,9 @@ internal sealed partial class SharpLinkServer
 
         internal async ValueTask<bool> NegotiateAsync()
         {
+            foreach (var peer in peers)
+                if (peer.Outcome.Change is { } change)
+                    context.PublishNStudyVersionNotice(new(NStudyVersionNoticeKind.Proposed, change, false));
             // Enroll without handing any peer a Candidate. A primary refusal cannot
             // leave another participant with an abandoned full transaction.
             await Task.WhenAll(peers.Select(static peer => peer.AdmitOfferAsync())).ConfigureAwait(false);
@@ -145,8 +161,30 @@ internal sealed partial class SharpLinkServer
             Published = true;
         }
 
-        internal Task PublishActivationAsync() =>
-            Task.WhenAll(peers.Select(static peer => peer.ActivateWhenReadyAsync()));
+        internal Task PublishActivationAsync()
+        {
+            // This runs after the registry publication and outside its lock.
+            foreach (var peer in peers)
+                if (peer.Outcome.Change is { } change)
+                    context.PublishNStudyVersionNotice(new(NStudyVersionNoticeKind.Published, change, true));
+            return Task.WhenAll(peers.Select(static peer => peer.ActivateWhenReadyAsync()));
+        }
+
+        internal void PublishOutcomeObservations(bool completed)
+        {
+            foreach (var peer in peers)
+            {
+                var outcome = peer.Outcome;
+                if (outcome.Change is not { } change)
+                    continue;
+                var kind = completed && outcome.ActivationSent
+                    ? NStudyVersionNoticeKind.Completed
+                    : outcome.DeclineReason != NStudyDeclineReason.None
+                        ? NStudyVersionNoticeKind.Declined
+                        : NStudyVersionNoticeKind.Failed;
+                context.PublishNStudyVersionNotice(new(kind, change, Published, outcome.DeclineReason));
+            }
+        }
 
         internal async Task AbortBeforeCommitAsync()
         {
