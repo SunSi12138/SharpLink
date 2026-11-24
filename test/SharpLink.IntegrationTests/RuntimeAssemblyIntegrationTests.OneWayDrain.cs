@@ -71,7 +71,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await RegisterAllAsync(harness, plugin);
         var contract = plugin.GetContractType($"SharpLink.DynamicPlugin.IOneWayDrain{lifetime}");
         await WaitForRemoteContractManifestAsync(harness.Client, contract);
-        object? proxy = GetProxy(harness.Client, contract);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, contract);
         var module = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
         Task call;
         DrainReplacementContext? replacementContext = null;
