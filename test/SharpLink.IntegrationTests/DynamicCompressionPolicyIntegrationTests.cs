@@ -60,9 +60,16 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             releaseHooks.TrySetResult();
             await connect.WaitAsync(TimeSpan.FromSeconds(5));
 
+            var proxy = client.CreateProxy<ICompressionService>(topology == "static"
+                ? new RpcProxyOptions { BalancePreparedEndpoints = true }
+                : null);
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
             var payload = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
-            var response = await client.Get<ICompressionService>().EchoBytesAsync(payload);
-            Ensure(response.SequenceEqual(payload), $"{topology}: response payload");
+            for (var index = 0; index < servers.Count; index++)
+                Ensure((await proxy.Service.EchoBytesAsync(payload)).SequenceEqual(payload),
+                    $"{topology}: response payload for cohort call {index + 1}");
+            Ensure(servers.All(static server => server.Provider.DecompressCount > 0),
+                $"{topology}: each Ready server must actually carry a prepared request");
             Ensure(servers.All(static server => server.Provider.CompressCount == 0),
                 $"{topology}: a preference published in the handshake/Ready gap must disable every newly Ready server response");
             Ensure(clientProvider.DecompressCount == 0,
@@ -88,7 +95,7 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             .UseRequestCompressionPolicy(EnabledPolicy)
             .Build();
         await client.ConnectAsync();
-        var service = client.Get<ICompressionService>();
+        var service = await client.PrepareTestServiceAsync<ICompressionService>();
 
         await AssertAllRpcShapesAsync(service, clientProvider, server.Provider,
             expectRequestCompression: true, expectResponseCompression: true, "initial enabled");
@@ -144,7 +151,9 @@ public sealed class DynamicCompressionPolicyIntegrationTests
 
             await client.SetResponseCompressionPreferenceAsync(false).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
             var payload = Enumerable.Repeat((byte)0x33, 8192).ToArray();
-            var service = client.Get<ICompressionService>();
+            var proxy = client.CreateProxy<ICompressionService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = proxy.Service;
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload), "first cohort response");
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload), "second cohort response");
 
@@ -179,7 +188,8 @@ public sealed class DynamicCompressionPolicyIntegrationTests
                         options.MinReadyEndpoints = 2;
                         options.MaxConnections = 2;
                         options.MaxConnectionsPerEndpoint = 1;
-                    });
+                    })
+                    .UseEndpointSelector(new AlternatingSelector());
                 return;
             case "dynamic":
                 builder.UseEndpointResolver(

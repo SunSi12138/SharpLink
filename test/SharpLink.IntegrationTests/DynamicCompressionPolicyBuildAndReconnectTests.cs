@@ -32,7 +32,8 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
             .Build();
         await client.ConnectAsync();
 
-        var service = client.Get<ICompressionService>();
+        var peer = ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)server.Server).Values.Single();
+        var service = await client.PrepareTestServiceAsync<ICompressionService>();
         var payload = Enumerable.Repeat((byte)0x4a, 8192).ToArray();
         Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload),
             "build-time disabled policies must preserve the raw RPC result");
@@ -50,7 +51,8 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
             "the same session must already have negotiated compression for Request runtime enablement");
         Ensure(server.Provider.CompressCount > 0 && clientProvider.DecompressCount > 0,
             "the same session must already have negotiated compression for Response runtime enablement");
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1 &&
+               ReferenceEquals(peer, ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)server.Server).Values.Single()),
             "runtime policy enablement must not reconnect the fixed client");
     }
 
@@ -74,7 +76,9 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
 
             await client.SetResponseCompressionPreferenceAsync(false).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
             var payload = Enumerable.Repeat((byte)0x35, 8192).ToArray();
-            var service = client.Get<ICompressionService>();
+            var proxy = client.CreateProxy<ICompressionService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = proxy.Service;
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload),
                 "the original session must remain usable after preference convergence");
             Ensure(first.Provider.DecompressCount > 0 && first.Provider.CompressCount == 0,
@@ -93,6 +97,12 @@ public sealed class DynamicCompressionPolicyBuildAndReconnectTests
                 TimeSpan.FromSeconds(5),
                 "the fixed client must reconnect to the replacement server");
 
+            var peer = ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)replacement.Server).Values.Single();
+            Ensure(peer.NStudyBindings.Snapshot() == (0, 0, 0),
+                "readiness after reconnect must not implicitly bind the contract");
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            Ensure(peer.NStudyBindings.Snapshot() == (1, 0, 0),
+                "the original proxy must explicitly bind on the replacement connection");
             var clientDecompressBefore = clientProvider.DecompressCount;
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload),
                 "the reconnected session must serve the RPC without another preference Set");
