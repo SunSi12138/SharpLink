@@ -55,25 +55,46 @@ internal static class ClientInvokerTestHelper
         SharpLinkClient client, TestTransportConnection transport)
         => PrepareConnectionsAsync(client, transport);
 
+    internal static async Task<SharpLinkClient.NStudyPreparedSite> PreparePublishedAsync(
+        SharpLinkClient client, TestTransportConnection transport, TimeSpan timeout)
+    {
+        // SessionRefresh's fixed-pool cut hook runs before the Ready snapshot is published.
+        using var wait = new CancellationTokenSource(timeout);
+        var connection = FindTransport(CaptureReady(client), transport);
+        while (connection is null)
+        {
+            await Task.Delay(10, wait.Token);
+            connection = FindTransport(CaptureReady(client), transport);
+        }
+        return new(await transport.BindInvocationRouteAsync(connection, FixtureContractId));
+    }
+
     private static async Task<SharpLinkClient.NStudyPreparedSite> PrepareConnectionsAsync(
         SharpLinkClient client, params TestTransportConnection[] transports)
     {
         if (transports.Length == 0)
             throw new ArgumentException("Specify the connected test transport(s) to prepare.", nameof(transports));
-        var capture = typeof(SharpLinkClient).GetMethod(
-            "CaptureNStudyReadyConnections", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("The client ready-connection snapshot is unavailable.");
-        var ready = (ClientConnection[])capture.Invoke(client, null)!;
+        var ready = CaptureReady(client);
         var routes = new SharpLinkClient.NStudyPreparedRoute[transports.Length];
         for (var i = 0; i < transports.Length; i++)
         {
             var transport = transports[i];
-            var connection = Array.Find(ready, peer => ReferenceEquals(peer.Session.Input, transport.Input))
+            var connection = FindTransport(ready, transport)
                 ?? throw new InvalidOperationException("The test transport does not own a Ready session.");
             routes[i] = await transport.BindInvocationRouteAsync(connection, FixtureContractId, bindingSlot: i);
         }
         return transports.Length == 1 ? new(routes[0]) : new(routes);
     }
+
+    private static readonly MethodInfo SCaptureReady = typeof(SharpLinkClient).GetMethod(
+        "CaptureNStudyReadyConnections", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("The client ready-connection snapshot is unavailable.");
+
+    private static ClientConnection[] CaptureReady(SharpLinkClient client)
+        => (ClientConnection[])SCaptureReady.Invoke(client, null)!;
+
+    private static ClientConnection? FindTransport(ClientConnection[] ready, TestTransportConnection transport)
+        => Array.Find(ready, peer => peer.CanAcceptCalls && ReferenceEquals(peer.Session.Input, transport.Input));
 
     public static ValueTask<int> InvokeUnaryAsync(
         SharpLinkClient client,

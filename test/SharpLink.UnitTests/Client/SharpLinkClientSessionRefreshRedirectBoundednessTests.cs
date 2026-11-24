@@ -65,12 +65,13 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             }))
         };
         await client.ConnectAsync();
+        var firstTransport = factory.GetConnection(0);
+        var firstSite = await ClientInvokerTestHelper.PrepareAsync(client, firstTransport);
         using var cancellation = new CancellationTokenSource();
         ClientConnection? firstSource = null;
         client._callAdmissionReservedTestHook = connection => firstSource = connection;
-        var firstCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
+        var firstCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token, prepared: firstSite).AsTask();
         Task<int>? secondCall = null;
-        var firstTransport = factory.GetConnection(0);
         var firstRequest = await firstTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(5));
         var firstCut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -86,7 +87,8 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             ProtocolV2FrameHeader secondRequest = default;
             if (latestSourceHasCall)
             {
-                secondCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
+                var secondSite = await ClientInvokerTestHelper.PreparePublishedAsync(client, secondTransport, TimeSpan.FromSeconds(5));
+                secondCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token, prepared: secondSite).AsTask();
                 secondRequest = await secondTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
                     .WaitAsync(TimeSpan.FromSeconds(5));
             }
@@ -215,6 +217,8 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
         RepeatedRefreshTransportFactory factory)
     {
         var serverInstanceId = Guid.NewGuid();
+        var pinnedTransport = factory.GetConnection(0);
+        var pinnedSite = await ClientInvokerTestHelper.PrepareAsync(client, pinnedTransport);
         var pinnedAdmission = new TaskCompletionSource<ClientConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         client._callAdmissionReservedTestHook = connection => pinnedAdmission.TrySetResult(connection);
@@ -223,13 +227,12 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
         // retirement of that generation can never complete while the refreshes roll forward.
         var streamingCts = new CancellationTokenSource();
         var enumerator = ClientInvokerTestHelper
-            .InvokeServerStreaming(client, streamingCts.Token)
+            .InvokeServerStreaming(client, streamingCts.Token, pinnedSite)
             .GetAsyncEnumerator(streamingCts.Token);
         var firstMove = enumerator.MoveNextAsync().AsTask();
         try
         {
             var pinnedSource = await pinnedAdmission.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            var pinnedTransport = factory.GetConnection(0);
             _ = await pinnedTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             Ensure(pinnedSource.ActiveCallCount == 1,
@@ -248,14 +251,13 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             Ensure(factory.ConnectCount == RefreshGenerations + 1,
                 $"repeated refresh must not add reconnect dials; connects={factory.ConnectCount}");
 
-            // Admit an ordinary call through the current snapshot and observe which physical
-            // connection is selected; that is the newest Ready generation, independently of the
-            // redirect structure under test.
+            // Bind the final published Session, independently of the redirect structure under test.
             var latestAdmission = new TaskCompletionSource<ClientConnection>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             client._callAdmissionReservedTestHook = connection => latestAdmission.TrySetResult(connection);
             var latestTransport = factory.GetConnection(RefreshGenerations);
-            var finalUnary = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+            var latestSite = await ClientInvokerTestHelper.PreparePublishedAsync(client, latestTransport, TimeSpan.FromSeconds(5));
+            var finalUnary = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: latestSite).AsTask();
             var latest = await latestAdmission.Task.WaitAsync(TimeSpan.FromSeconds(3));
             Ensure(!ReferenceEquals(latest, pinnedSource),
                 "each successful refresh must publish a fresh Ready connection");

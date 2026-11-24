@@ -29,10 +29,11 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1, BeforeReady);
         await client.ConnectAsync();
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, factory.Get(0));
         using var cancellation = new CancellationTokenSource();
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source ??= connection;
-        var oldCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
+        var oldCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token, prepared: sourceSite).AsTask();
         var oldRequest = await factory.Get(0).WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
         client._callAdmissionReservedTestHook = null;
         var firstCut = Signal();
@@ -115,10 +116,11 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 2);
         await client.ConnectAsync();
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, factory.Get(0));
         using var cancellation = new CancellationTokenSource();
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source ??= connection;
-        var oldCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token).AsTask();
+        var oldCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token, prepared: sourceSite).AsTask();
         var oldRequest = await factory.Get(0).WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
         client._callAdmissionReservedTestHook = null;
         var cut = Signal();
@@ -160,6 +162,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(factory);
         await client.ConnectAsync();
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, factory);
         ClientConnection? selected = null;
         client._callAdmissionReservedTestHook = connection =>
         {
@@ -169,7 +172,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         try
         {
             SharpLinkException? failure = null;
-            try { await ClientInvokerTestHelper.InvokeOneWayAsync(client).AsTask().WaitAsync(Timeout); }
+            try { await ClientInvokerTestHelper.InvokeOneWayAsync(client, sourceSite).AsTask().WaitAsync(Timeout); }
             catch (SharpLinkException exception) { failure = exception; }
             Ensure(failure?.Code == SharpLinkErrorCode.Unavailable,
                 "a reserved one-way call must reject a fatal observation before topology cleanup");
@@ -197,6 +200,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1);
         await client.ConnectAsync();
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, factory.Get(0));
         var gate = GetGate(GetOwner(client, pool), pool);
         var gateHeld = Signal();
         using var releaseGate = new ManualResetEventSlim();
@@ -211,7 +215,7 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         });
         await gateHeld.Task.WaitAsync(Timeout);
         var call = Task.Run(async () =>
-            await ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token));
+            await ClientInvokerTestHelper.InvokeUnaryAsync(client, cancellationToken: cancellation.Token, prepared: sourceSite));
         try
         {
             var request = await factory.Get(0).WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
@@ -238,9 +242,10 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
         var factory = new RefreshFactory();
         await using var client = Build(pool, factory, maxConnections: 1);
         await client.ConnectAsync();
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, factory.Get(0));
         ClientConnection? source = null;
         client._callAdmissionReservedTestHook = connection => source = connection;
-        var call = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var call = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: sourceSite).AsTask();
         await factory.Get(0).WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
         client._callAdmissionReservedTestHook = null;
         var gate = GetGate(GetOwner(client, pool), pool);
@@ -374,7 +379,8 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
 
     private static async Task CompleteUnary(SharpLinkClient client, TestTransportConnection transport)
     {
-        var call = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var site = await ClientInvokerTestHelper.PreparePublishedAsync(client, transport, Timeout);
+        var call = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: site).AsTask();
         var request = await transport.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(Timeout);
         await transport.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
         Ensure(await call.WaitAsync(Timeout) == 0, "the selected replacement completes a new unary call");

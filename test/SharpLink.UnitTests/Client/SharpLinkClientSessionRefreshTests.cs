@@ -54,7 +54,7 @@ public sealed class SharpLinkClientSessionRefreshTests
         {
         }
 
-        var replacementSite = await ClientInvokerTestHelper.PrepareAsync(client, replacement);
+        var replacementSite = await ClientInvokerTestHelper.PreparePublishedAsync(client, replacement, TimeSpan.FromSeconds(3));
         Ensure(replacementSite.Ack.Authority != sourceSite.Ack.Authority,
             "the replacement must acquire binding authority independent from its source");
         var next = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: replacementSite).AsTask();
