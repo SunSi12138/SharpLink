@@ -358,6 +358,23 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)
         => GetClientAssemblyRegistry(client).CaptureProxySnapshot().ContainsKey(contractType);
 
+    private static PreparedGeneratedProxy CreatePreparedGeneratedProxy(ISharpLinkClient client, Type contractType)
+        => (PreparedGeneratedProxy)typeof(RuntimeAssemblyIntegrationTests)
+            .GetMethod(nameof(CreatePreparedGeneratedProxyTyped), BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(contractType).Invoke(null, [client])!;
+
+    private static PreparedGeneratedProxy CreatePreparedGeneratedProxyTyped<T>(ISharpLinkClient client) where T : IService
+    {
+        var proxy = client.CreateProxy<T>();
+        return new(proxy.Service, client.GetLocalContract<T>().ContractId, proxy.PrepareAsync);
+    }
+
+    private sealed record PreparedGeneratedProxy(object Service, long ContractId,
+        Func<TimeSpan, CancellationToken, ValueTask> Prepare)
+    {
+        internal ValueTask PrepareAsync(CancellationToken ct = default) => Prepare(TimeSpan.FromSeconds(5), ct);
+    }
+
     private static object GetProxy(ISharpLinkClient client, Type contractType)
     {
         var get = typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.Get))!

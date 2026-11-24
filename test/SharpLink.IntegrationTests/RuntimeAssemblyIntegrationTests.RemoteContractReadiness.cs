@@ -33,7 +33,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var control = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), harness.Port).Build();
         await control.ConnectAsync();
-        var controlProxy = control.Get<IManifestReadinessControl>();
+        var controlHandle = control.CreateProxy<IManifestReadinessControl>();
+        await controlHandle.PrepareAsync(TimeSpan.FromSeconds(5));
+        var controlProxy = controlHandle.Service;
+        var dataSession = NStudyClientSession((SharpLinkClient)harness.Client);
+        Ensure(!ReferenceEquals(dataSession, NStudyClientSession((SharpLinkClient)control)),
+            "control and data are independent physical Sessions");
         var broadcastStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBroadcast = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ((SharpLinkServer)harness.Server).ContractManifestPublishBarrierForTesting = () =>
@@ -57,12 +62,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var wait = harness.Client.WaitForRemoteContractAsync(
                 contractId, module.Manifest.RpcAssemblyHash, previousHash, timeout.Token).AsTask();
             Ensure(!wait.IsCompleted, "only the explicitly declared previous hash may wait for replacement propagation");
+            var proxy = CreatePreparedGeneratedProxy(harness.Client, replacement.ContractType);
+            await EnsureManifestGatesPreparationAsync(proxy, dataSession, timeout.Token);
             releaseBroadcast.TrySetResult();
             await wait;
-            var proxy = GetProxy(harness.Client, replacement.ContractType);
-            Ensure(await InvokeValueTaskAsync<int>(proxy, replacement.ContractType,
+            await proxy.PrepareAsync(timeout.Token);
+            Ensure(await InvokeValueTaskAsync<int>(proxy.Service, replacement.ContractType,
                 "UnaryAsync", 6, timeout.Token) == 7,
                 "the new generated proxy calls the replaced service over the original data connection");
+            Ensure(ReferenceEquals(dataSession, NStudyClientSession((SharpLinkClient)harness.Client)) &&
+                   dataSession.NStudyBindOperationForDiagnostics == 1,
+                "release permits one actual Bind on the same data Session");
         }
         finally
         {
@@ -93,7 +103,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var control = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), harness.Port).Build();
         await control.ConnectAsync();
-        var controlProxy = control.Get<IManifestReadinessControl>();
+        var controlHandle = control.CreateProxy<IManifestReadinessControl>();
+        await controlHandle.PrepareAsync(TimeSpan.FromSeconds(5));
+        var controlProxy = controlHandle.Service;
+        var dataSession = NStudyClientSession((SharpLinkClient)harness.Client);
+        Ensure(!ReferenceEquals(dataSession, NStudyClientSession((SharpLinkClient)control)),
+            "control and data are independent physical Sessions");
         var broadcastStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBroadcast = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ((SharpLinkServer)harness.Server).ContractManifestPublishBarrierForTesting = () =>
@@ -114,27 +129,39 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var wait = harness.Client.WaitForRemoteContractAsync(
                 contractId, module.Manifest.RpcAssemblyHash, timeout.Token).AsTask();
             Ensure(!wait.IsCompleted, "ordinary Ready and registration success do not complete the contract barrier");
-            try
-            {
-                _ = GetProxy(harness.Client, plugin.ContractType);
-                throw new Exception("Get must fail while the remote manifest is still missing");
-            }
-            catch (System.Reflection.TargetInvocationException exception)
-                when (exception.InnerException is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition })
-            {
-            }
+            var proxy = CreatePreparedGeneratedProxy(harness.Client, plugin.ContractType);
+            await EnsureManifestGatesPreparationAsync(proxy, dataSession, timeout.Token);
             releaseBroadcast.TrySetResult();
             await wait;
-            var proxy = GetProxy(harness.Client, plugin.ContractType);
-            Ensure(await InvokeValueTaskAsync<int>(proxy, plugin.ContractType,
+            await proxy.PrepareAsync(timeout.Token);
+            Ensure(await InvokeValueTaskAsync<int>(proxy.Service, plugin.ContractType,
                     "UnaryAsync", 4, timeout.Token) == 5,
                 "the public barrier permits a real TCP call without polling or reconnect");
+            Ensure(ReferenceEquals(dataSession, NStudyClientSession((SharpLinkClient)harness.Client)) &&
+                   dataSession.NStudyBindOperationForDiagnostics == 1,
+                "control success did not prepare the data Session; its own readiness enabled its first Bind");
         }
         finally
         {
             releaseBroadcast.TrySetResult();
             ((SharpLinkServer)harness.Server).ContractManifestPublishBarrierForTesting = null;
         }
+    }
+
+    private static async Task EnsureManifestGatesPreparationAsync(
+        PreparedGeneratedProxy proxy, RpcSession session, CancellationToken ct)
+    {
+        try
+        {
+            await proxy.PrepareAsync(ct);
+            throw new InvalidOperationException("Local proxy creation must not authorize preparation without this Session's compatible manifest.");
+        }
+        catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.FailedPrecondition)
+        {
+        }
+
+        Ensure(session.NStudyBindOperationForDiagnostics == 0 && session.NStudyPreparedCount == 0,
+            "the compatible data manifest is checked before Bind");
     }
 }
 

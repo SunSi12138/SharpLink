@@ -21,7 +21,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("queued-replacement-original");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = CreatePreparedGeneratedProxy(harness.Client, plugin.ContractType);
+        await proxy.PrepareAsync();
         var server = (SharpLinkServer)harness.Server;
         harness.Server.EnableAdmissionControl(options =>
         {
@@ -46,7 +47,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             replacementType = replacementAssembly.GetType(
                 "SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
             replacementType.GetMethod("Reset")!.Invoke(null, null);
-            queued = InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "BlockAsync", CancellationToken.None)
+            queued = InvokeValueTaskAsync<int>(proxy.Service, plugin.ContractType, "BlockAsync", CancellationToken.None)
                 .AsTask();
             await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 1);
 

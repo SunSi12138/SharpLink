@@ -27,7 +27,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-selection-{shape}-{replace}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = CreatePreparedGeneratedProxy(harness.Client, plugin.ContractType);
+        await proxy.PrepareAsync();
+        var session = NStudyClientSession((SharpLinkClient)harness.Client);
+        var originalBinding = session.CaptureNStudyRoute(proxy.ContractId).Acknowledgement;
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
@@ -38,7 +41,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Task? call = null;
         try
         {
-            call = StartQueuedShape(proxy, plugin.ContractType, shape, CancellationToken.None);
+            call = StartQueuedShape(proxy.Service, plugin.ContractType, shape, CancellationToken.None);
             await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 1);
             var oldModule = GetDynamicModule(server, plugin.ServiceAssembly);
             Ensure(oldModule.RemainingCalls == 0, "a waiter does not extend module invocation lifetime");
@@ -67,8 +70,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "queued R1 never invokes R2, for any RPC shape");
             if (!replace)
                 Ensure(server.RegisterAssembly(replacementAssembly).Succeeded, "replacement probe registers");
+            await PrepareReplacementOnSameSessionAsync(harness.Client, proxy, session, originalBinding);
             Ensure(await InvokeValueTaskAsync<int>(
-                proxy, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
+                proxy.Service, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
                 "post-retirement traffic uses R2 on the same connection");
             await WaitUntilAsync(() => admission.Kernel.ActivePermits == 0);
             EnsureClientAndServerCountersAreZero(harness, $"queued {shape} retirement");
@@ -99,12 +103,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-cancel-{shape}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = CreatePreparedGeneratedProxy(harness.Client, plugin.ContractType);
+        await proxy.PrepareAsync();
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
         using var cancellation = new CancellationTokenSource();
-        var call = StartQueuedShape(proxy, plugin.ContractType, shape, cancellation.Token);
+        var call = StartQueuedShape(proxy.Service, plugin.ContractType, shape, cancellation.Token);
         try
         {
             await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 1);
@@ -160,8 +165,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "a suspended admission waiter must not root a ReferencesReleased service ALC");
             holder.Lease!.Dispose();
             await EnsureQueuedSelectionUnavailableAsync(queued);
+            await PrepareReplacementOnSameSessionAsync(harness.Client, retired.Proxy, retired.Session, retired.Binding);
             Ensure(await InvokeValueTaskAsync<int>(
-                retired.Proxy, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
+                retired.Proxy.Service, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
                 "collected R1 rejects without consuming R2 or closing the connection");
         }
         finally
@@ -177,22 +183,38 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<(WeakReference Context, Task Queued, object Proxy)> QueueAndRetireCollectibleServiceAsync(
+    private static async Task<(WeakReference Context, Task Queued, PreparedGeneratedProxy Proxy, RpcSession Session, NStudyAck Binding)>
+        QueueAndRetireCollectibleServiceAsync(
         SharpLinkServer server, ISharpLinkClient client, Type contractType, string servicePath, Assembly replacement)
     {
         var context = new SharedContractServiceLoadContext(contractType.Assembly);
         var assembly = context.LoadFromAssemblyPath(servicePath);
         Ensure(server.RegisterAssembly(assembly).Succeeded, "isolated original service registers");
         await WaitForRemoteContractManifestAsync(client, contractType);
-        var proxy = GetProxy(client, contractType);
-        var queued = InvokeValueTaskAsync<int>(proxy, contractType, "UnaryAsync", 1, CancellationToken.None).AsTask();
+        var proxy = CreatePreparedGeneratedProxy(client, contractType);
+        await proxy.PrepareAsync();
+        var session = NStudyClientSession((SharpLinkClient)client);
+        var binding = session.CaptureNStudyRoute(proxy.ContractId).Acknowledgement;
+        var queued = InvokeValueTaskAsync<int>(proxy.Service, contractType, "UnaryAsync", 1, CancellationToken.None).AsTask();
         await WaitUntilAsync(() => server.CurrentAdmissionProgramForTests!.Kernel.QueuedCalls == 1);
         var result = await server.ReplaceAssemblyAsync(assembly, replacement, TimeSpan.Zero);
         Ensure(result.Succeeded && result.ReferencesReleased,
             "old implementation references are released while its admission request remains queued");
         var weak = new WeakReference(context, trackResurrection: false);
         context.Unload();
-        return (weak, queued, proxy);
+        return (weak, queued, proxy, session, binding);
+    }
+
+    private static async Task PrepareReplacementOnSameSessionAsync(
+        ISharpLinkClient client, PreparedGeneratedProxy proxy, RpcSession session, NStudyAck prior)
+    {
+        await WaitUntilAsync(() => !session.HasNStudyBinding(proxy.ContractId, prior.BindingId));
+        Ensure(ReferenceEquals(session, NStudyClientSession((SharpLinkClient)client)),
+            "retirement must not replace the data Session");
+        await proxy.PrepareAsync();
+        var current = session.CaptureNStudyRoute(proxy.ContractId).Acknowledgement;
+        Ensure(current.Authority == prior.Authority && current.Target != prior.Target && current.BindingId != prior.BindingId,
+            "the same proxy explicitly prepares the distinct replacement registration on the original Session");
     }
 
     private static async Task<AdmissionDecision> HoldQueuedAdmissionAsync(SharpLinkServer server)

@@ -14,7 +14,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
         var server = (SharpLinkServer)harness.Server;
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        var proxy = CreatePreparedGeneratedProxy(harness.Client, plugin.ContractType);
+        await proxy.PrepareAsync();
+        var session = NStudyClientSession((SharpLinkClient)harness.Client);
+        var originalBinding = session.CaptureNStudyRoute(proxy.ContractId).Acknowledgement;
         var payloadType = plugin.ContractAssembly.GetType("SharpLink.DynamicPlugin.DynamicPayload", throwOnError: true)!;
         var payload = Activator.CreateInstance(payloadType)!;
         payloadType.GetProperty("Value")!.SetValue(payload, 42);
@@ -27,7 +30,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         try
         {
             queued = InvokeValueTaskAsync<int>(
-                proxy, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None).AsTask();
+                proxy.Service, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None).AsTask();
             await WaitUntilAsync(() => server.CurrentAdmissionProgramForTests!.Kernel.QueuedCalls == 1);
             Ensure(compression.CompressedRequests > 0, "the retained queued request is compressed on the wire");
             Ensure(compression.DecodedRequests == 0, "admission precedes compressed persistent decoding");
@@ -42,6 +45,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 await EnsureQueuedSelectionUnavailableAsync(queued);
                 Ensure(compression.DecodedRequests == 0, "retired selected generation is rejected before decoding");
                 Ensure(plugin.GetStaticInt("Created") == 0, "retired compressed request does not activate R1");
+                await PrepareReplacementOnSameSessionAsync(harness.Client, proxy, session, originalBinding);
             }
             else
             {
@@ -50,7 +54,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 Ensure(compression.DecodedRequests == 1, "selected live generation decodes exactly once");
             }
             Ensure(await InvokeValueTaskAsync<int>(
-                proxy, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
+                proxy.Service, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
                 "the connection remains usable after compressed queue completion");
             EnsureClientAndServerCountersAreZero(harness, "queued compressed generation");
         }
