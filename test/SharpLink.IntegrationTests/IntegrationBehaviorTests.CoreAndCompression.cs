@@ -311,7 +311,7 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()));
-        var service = harness.Client.Get<ICompressionService>();
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
 
         await EnsureThrowsSharpLinkFast(
             service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
@@ -330,7 +330,7 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
 
         await EnsureThrowsSharpLinkFast(
             service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
@@ -349,7 +349,7 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
-        var service = harness.Client.Get<ICompressionService>();
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
 
         await EnsureThrowsSharpLinkFast(
             service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
@@ -368,7 +368,7 @@ public partial class IntegrationBehaviorTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()));
-        var service = harness.Client.Get<ICompressionService>();
+        var service = await harness.PrepareServiceAsync<ICompressionService>();
 
         await EnsureThrowsSharpLinkFast(
             CollectAsync(service.DownloadBytesAsync(100, 4096), CancellationToken.None),
