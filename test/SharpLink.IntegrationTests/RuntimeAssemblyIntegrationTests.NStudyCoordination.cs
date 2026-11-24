@@ -25,7 +25,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     public Task NStudyApplicationApprovalFailureShouldLeaveOriginalSessionUsable(string transport, string faultingPolicy)
         => VerifyNStudyManualCoordinationAsync(transport, faultingPolicy, faultingPolicy);
 
-    private static async Task VerifyNStudyManualCoordinationAsync(string transport, string initiator, string? faultingPolicy)
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp", "client")]
+    [Arguments("tcp", "server")]
+    [Arguments("shared-memory", "client")]
+    [Arguments("shared-memory", "server")]
+    public Task NStudyApprovalDeadlineShouldNotCloseOriginalSession(string transport, string waitingPolicy)
+        => VerifyNStudyManualCoordinationAsync(transport, waitingPolicy, waitingPolicy, expirePolicy: true);
+
+    private static async Task VerifyNStudyManualCoordinationAsync(
+        string transport, string initiator, string? faultingPolicy, bool expirePolicy = false)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -91,6 +101,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "both selected authenticated peers negotiated Manual on their real Session");
             trace.Record("ManualCapabilityNegotiatedOnTheBoundPhysicalSession", a1, bBinding);
+
+            if (expirePolicy)
+            {
+                await VerifyNStudyApprovalDeadlineAsync(server, client, peer, session, choice, faultingPolicy!,
+                    oldAssembly, newAssembly, newType, b, a1, bBinding, trace, ct);
+                return;
+            }
 
             if (faultingPolicy is not null)
             {
@@ -199,6 +216,84 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             oldType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
             oldLoader.Unload();
             newLoader.Unload();
+        }
+    }
+
+    private static async Task VerifyNStudyApprovalDeadlineAsync(
+        SharpLinkServer server, SharpLinkClient client, ServerConnectionState peer, RpcSession session,
+        NStudyInitiator choice, string waitingPolicy, Assembly oldAssembly, Assembly newAssembly,
+        Type newType, IShutdownCleanupProbe b, NStudyAck a1, NStudyAck bBinding,
+        NStudyTrace trace, CancellationToken ct)
+    {
+        var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var approval = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var originalBindCount = session.NStudyBindOperationForDiagnostics;
+
+        async ValueTask<bool> WaitForApprovalAsync(NStudyChange _, CancellationToken decisionToken)
+        {
+            entered.SetResult(decisionToken);
+            try
+            {
+                // A normal asynchronous approval task may receive its answer after the caller has stopped waiting.
+                return await approval.Task;
+            }
+            finally
+            {
+                callbackExited.TrySetResult();
+            }
+        }
+
+        static ValueTask<bool> ApproveAsync(NStudyChange _, CancellationToken __) => ValueTask.FromResult(true);
+
+        var began = Stopwatch.GetTimestamp();
+        var negotiating = client.NegotiateNStudyReplacementAsync(choice,
+            waitingPolicy == "client" ? WaitForApprovalAsync : ApproveAsync, ct);
+        var replacing = server.StageNStudyReplacementAsync(peer, oldAssembly, newAssembly, a1.Contract, choice,
+            waitingPolicy == "server" ? WaitForApprovalAsync : ApproveAsync, TimeSpan.FromSeconds(15), ct);
+        try
+        {
+            var decisionToken = await entered.Task.WaitAsync(ct);
+            Ensure(!decisionToken.IsCancellationRequested && !negotiating.IsCompleted && !replacing.IsCompleted &&
+                   await b.TouchAsync(1, ct) == 101, "B is usable while the ordinary approval is pending");
+            trace.Record("UnrelatedBServesWhileApplicationApprovalIsPending", a1, bBinding);
+            NStudyClientActivation? activation = null;
+            Exception? error = null;
+            try
+            {
+                activation = await negotiating.WaitAsync(ct);
+            }
+            catch (Exception exception) when (!ct.IsCancellationRequested)
+            {
+                error = exception;
+            }
+            var outcome = await replacing.WaitAsync(ct);
+            var elapsed = Stopwatch.GetElapsedTime(began);
+            Ensure(elapsed < TimeSpan.FromSeconds(15) && decisionToken.IsCancellationRequested &&
+                   !callbackExited.Task.IsCompleted && activation is null && !outcome.Replacement.Succeeded,
+                "actual control deadline settles both peers before late application approval returns");
+            trace.Record("BothTransitionOperationsEndBeforeLateApproval", a1, bBinding);
+
+            approval.TrySetResult(true);
+            await callbackExited.Task.WaitAsync(ct);
+            Ensure(server.ReadNStudyTarget(oldAssembly, a1.Contract) == a1.Target &&
+                   session.NStudyBindOperationForDiagnostics == originalBindCount && NStudyCount(newType, "Created") == 0,
+                "late approval cannot commit or Bind a staged candidate");
+            var originalReady = client.ReadyConnectionCount == 1 &&
+                                ReferenceEquals(session, NStudyClientSession(client)) &&
+                                !session.LifetimeToken.IsCancellationRequested;
+            Console.WriteLine($"Policy deadline: side={waitingPolicy}; elapsed={elapsed.TotalSeconds:F3}s; " +
+                              $"clientError={error?.GetType().Name ?? "none"}; serverDecline={outcome.DeclineReason}; " +
+                              $"originalReady={originalReady}");
+            trace.Record("LateApprovalDoesNotActivateTheCandidate", a1, bBinding);
+            Ensure(error is null && originalReady && session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
+                   await b.TouchAsync(2, ct) == 102,
+                "a local approval timeout must not drop the unrelated prepared B service");
+            trace.Record("OriginalBServesAfterApprovalTimeout", a1, bBinding);
+        }
+        finally
+        {
+            approval.TrySetResult(false);
         }
     }
 
