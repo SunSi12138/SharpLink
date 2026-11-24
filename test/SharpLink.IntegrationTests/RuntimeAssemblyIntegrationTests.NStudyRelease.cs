@@ -55,16 +55,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    first.NegotiatedMaxFramePayloadBytes > frameLimit &&
                    (first.NegotiatedCapabilities & ProtocolV2Capabilities.SessionRefresh) != 0,
                 "genuine configured transport with the regular rolling refresh capability");
-            var b1 = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
+            var timeout = TimeSpan.FromSeconds(5);
+            var sibling = client.CreateProxy<IShutdownCleanupProbe>();
+            var b = sibling.Service;
+            await sibling.PrepareAsync(timeout, ct);
+            var b1 = first.CaptureNStudyRoute(bCid).Acknowledgement;
+            var receiver = CreateNStudyExactGenerated(client, contracts.ContractType);
+            var a = receiver.Service;
             var r1 = server.ReadNStudyTarget(old, aCid);
-            var firstA = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r1, ct);
+            var firstA = await receiver.PrepareExact(new(b1.Authority, aCid, manifest.RpcAssemblyHash, r1), timeout, ct);
             var registry = (ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
             var original = registry.SnapshotActive().Single();
-            Ensure(original.NStudyPhysicalIdentity == firstA.Authority.PhysicalSession &&
+            Ensure(b1.Authority == firstA.Authority && b1.Hash == staticManifest.RpcAssemblyHash &&
+                   original.NStudyPhysicalIdentity == firstA.Authority.PhysicalSession &&
                    original.AuthenticationContext?.Subject == "n-validation", "first actual Session authenticated");
-            var b = client.Get<IShutdownCleanupProbe>();
-            var a = GetProxy(client, contracts.ContractType);
             var originalCall = InvokeValueTaskAsync<int>(a, contracts.ContractType, "BlockAsync", ct).AsTask();
             try
             {
@@ -78,7 +83,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
                 var replacing = server.ReplaceAssemblyAsync(old, next, TimeSpan.FromSeconds(15), ct).AsTask();
                 var r2 = server.ReadNStudyTarget(next, aCid);
-                var selected = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r2, ct);
+                var targetOnFirst = new NStudyObservedTarget(firstA.Authority, aCid, manifest.RpcAssemblyHash, r2);
+                var selected = await receiver.PrepareExact(targetOnFirst, timeout, ct);
                 Ensure(!originalCall.IsCompleted && !replacing.IsCompleted && selected.Authority == firstA.Authority &&
                        selected.Target == r2 && SlotOf(selected.BindingId) != SlotOf(firstA.BindingId),
                     "new A must not reuse the retiring slot while its original reader is active");
@@ -94,7 +100,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 Ensure(NStudyCount(oldType, "Disposed") == 1, "exact R1 disposal once");
                 await WaitForNStudyAsync(() => original.NStudyBindings.Snapshot() == (2, 0, 0), ct);
                 Ensure(await client.ReleaseNStudyContractAsync(aCid, ct), "normal R2 binding release");
-                selected = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r2, ct);
+                selected = await receiver.PrepareExact(targetOnFirst, timeout, ct);
                 Ensure(SlotOf(selected.BindingId) == SlotOf(firstA.BindingId) &&
                        IncarnationOf(selected.BindingId) > IncarnationOf(firstA.BindingId),
                     "the original slot is reused only after physical completion, with a different generation");
@@ -104,7 +110,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 {
                     var prior = selected;
                     Ensure(await client.ReleaseNStudyContractAsync(aCid, ct), "release each normally prepared A");
-                    selected = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r2, ct);
+                    selected = await receiver.PrepareExact(targetOnFirst, timeout, ct);
                     Ensure(SlotOf(selected.BindingId) == SlotOf(prior.BindingId) &&
                            IncarnationOf(selected.BindingId) > IncarnationOf(prior.BindingId) &&
                            selected.Target == r2, "rebind reuses capacity and advances the complete token");
@@ -125,8 +131,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 var fresh = NStudyClientSession(client);
                 Ensure(fresh.NegotiatedMaxFramePayloadBytes == frameLimit && fresh.NStudyPreparedCount == 0,
                     "fresh Session negotiates the new limit without inheriting old grants");
-                var b2 = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
-                var a2 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r2, ct);
+                await sibling.PrepareAsync(timeout, ct);
+                var b2 = fresh.CaptureNStudyRoute(bCid).Acknowledgement;
+                var a2 = await receiver.PrepareExact(new(b2.Authority, aCid, manifest.RpcAssemblyHash, r2), timeout, ct);
                 var connected = registry.SnapshotActive().Single(p => p.NStudyPhysicalIdentity == a2.Authority.PhysicalSession);
                 Ensure(a2.Authority == b2.Authority && a2.Authority.PhysicalSession != firstA.Authority.PhysicalSession &&
                        a2.Authority.Server == firstA.Authority.Server && a2.Authority.RegistryEpoch == firstA.Authority.RegistryEpoch &&

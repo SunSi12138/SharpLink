@@ -17,8 +17,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             {
                 var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, _, _) = fixture;
                 var a1 = first.A;
-                var a = GetProxy(first.Client, contracts.ContractType);
-                var b = first.Client.Get<IShutdownCleanupProbe>();
+                var a = first.Receiver.Service;
+                var b = first.Sibling;
                 Ensure(await InvokeValueTaskAsync<int>(a, contracts.ContractType, "UnaryAsync", 2, ct) == 3,
                     "initial compatible application calls exact R1");
                 using var alternate = startingAsset == "different-hash"
@@ -42,6 +42,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 }
                 trace.Record("ClientLocalAssetsNoLongerMatchTheRemoteCandidate", a1);
 
+                var beforeDecline = first.Session.NStudyBindOperationForDiagnostics;
                 var declinedClient = first.Client.NegotiateNStudyReplacementAsync(NStudyInitiator.Server, approveLocally: null, ct);
                 var declinedServer = server.StageNStudyReplacementAsync(first.ServerConnection, oldAssembly,
                     newAssembly, a1.Contract, NStudyInitiator.Server, approveLocally: null, TimeSpan.FromSeconds(10), ct);
@@ -53,6 +54,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                        declined.DeclineReason == reason && declined.PreparedClientRegistration == Guid.Empty &&
                        server.ReadNStudyTarget(oldAssembly, a1.Contract) == a1.Target &&
                        first.Session.CaptureNStudyBinding(a1.Contract) == a1.BindingId &&
+                       first.Session.NStudyBindOperationForDiagnostics == beforeDecline &&
                        NStudyCount(newType, "Created") == 0 && await b.TouchAsync(1, ct) == 101,
                     "the real peer receives the specific readiness refusal and the original Session keeps serving B");
                 trace.Record("WireDeclineLeavesServerR1AndUnrelatedBAvailable", a1);
@@ -69,13 +71,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                         "the application explicitly registers compatible local code");
                 }
                 var preparedId = GetDynamicModule(first.Client, supplied.ContractAssembly).NStudyRegistration;
+                var current = CreateNStudyExactGenerated(first.Client, supplied.ContractType).Service;
                 var negotiating = first.Client.NegotiateNStudyReplacementAsync(NStudyInitiator.Server, approveLocally: null, ct);
                 var replacing = server.StageNStudyReplacementAsync(first.ServerConnection, oldAssembly,
                     newAssembly, a1.Contract, NStudyInitiator.Server, approveLocally: null, TimeSpan.FromSeconds(10), ct);
                 var resumed = await negotiating.WaitAsync(ct) ?? throw new InvalidOperationException("Expected the deployed asset to prepare.");
                 var replacement = await replacing.WaitAsync(ct);
                 EnsureReplacementReleased(replacement.Replacement, "normal retry uses the actually deployed compatible asset");
-                var current = GetProxy(first.Client, supplied.ContractType);
                 Ensure(resumed.LocalRegistration == preparedId && replacement.PreparedClientRegistration == preparedId &&
                        resumed.Change.Id > declined.Change!.Value.Id &&
                        resumed.Change.Target != declined.Change.Value.Target &&
@@ -83,6 +85,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                        resumed.Binding.Authority == a1.Authority &&
                        await InvokeValueTaskAsync<int>(current, supplied.ContractType, "UnaryAsync", 5, ct) == 6 &&
                        NStudyCount(oldType, "Disposed") == 1 && NStudyCount(newType, "Created") == 1 &&
+                       first.Session.NStudyBindOperationForDiagnostics == beforeDecline + 1 &&
+                       first.Session.CaptureNStudyBinding(first.B.Contract) == first.B.BindingId &&
                        ReferenceEquals(first.Session, NStudyClientSession(first.Client)) && await b.TouchAsync(2, ct) == 102,
                     "only actual application preparation allows exact R2 business on the original Session");
                 trace.Record("ExplicitCompatibleDeploymentAllowsNewExactActivation", a1, resumed.Binding);
@@ -98,10 +102,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             {
                 var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, secondOrNull, _) = fixture;
                 var second = secondOrNull ?? throw new InvalidOperationException("Expected two physical Sessions.");
-                var firstA = GetProxy(first.Client, contracts.ContractType);
-                var secondA = GetProxy(second.Client, contracts.ContractType);
-                var firstB = first.Client.Get<IShutdownCleanupProbe>();
-                var secondB = second.Client.Get<IShutdownCleanupProbe>();
+                var firstA = first.Receiver.Service;
+                var secondA = second.Receiver.Service;
+                var firstB = first.Sibling;
+                var secondB = second.Sibling;
                 var firstR1 = InvokeValueTaskAsync<int>(firstA, contracts.ContractType, "BlockAsync", ct).AsTask();
                 var secondR1 = InvokeValueTaskAsync<int>(secondA, contracts.ContractType, "BlockAsync", ct).AsTask();
                 var original = GetDynamicModule(server, oldAssembly);
@@ -135,6 +139,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                            await secondB.TouchAsync(1, ct) == 101, "one staged registration has distinct actual Session receipts");
                     trace.Record("BothPreparedPeersSeeTheirOwnExactTicket", first.A, second.A);
 
+                    var priorLead = first.Session.NStudyBindOperationForDiagnostics;
+                    var priorFollower = second.Session.NStudyBindOperationForDiagnostics;
                     leadingDecision.Approve();
                     var r2First = await leading.WaitAsync(ct) ?? throw new InvalidOperationException("Lead Session failed to resume.");
                     await WaitForNStudyAsync(() => second.Session.NStudyPreparedCount == 1, ct);
@@ -146,7 +152,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                            second.Session.CaptureNStudyBinding(second.B.Contract) == second.B.BindingId &&
                            await InvokeValueTaskAsync<int>(firstA, contracts.ContractType, "UnaryAsync", 8, ct) == 9 &&
                            await secondB.TouchAsync(2, ct) == 102 &&
-                           !firstR1.IsCompleted && !secondR1.IsCompleted,
+                           !firstR1.IsCompleted && !secondR1.IsCompleted &&
+                           first.Session.NStudyBindOperationForDiagnostics == priorLead + 1 &&
+                           second.Session.NStudyBindOperationForDiagnostics == priorFollower,
                         "lead R2 becomes callable; lagging Session has only B/new-data gate closed and its admitted R1");
                     trace.Record("LeadSessionUsesR2WhileFollowerStillWaitsWithB", r2First.Binding, second.A);
 
@@ -157,7 +165,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                            r2Second.Binding.Authority != r2First.Binding.Authority &&
                            r2First.Binding.BindingId == r2Second.Binding.BindingId &&
                            await InvokeValueTaskAsync<int>(secondA, contracts.ContractType, "UnaryAsync", 10, ct) == 11 &&
-                           await firstB.TouchAsync(3, ct) == 103 && !firstR1.IsCompleted && !secondR1.IsCompleted,
+                           await firstB.TouchAsync(3, ct) == 103 && !firstR1.IsCompleted && !secondR1.IsCompleted &&
+                           first.Session.NStudyBindOperationForDiagnostics == priorLead + 1 &&
+                           second.Session.NStudyBindOperationForDiagnostics == priorFollower + 1,
                         "follower requires its own real Ready/Activate/Bind; equal token values do not share ownership");
                     trace.Record("FollowerResumesR2OnlyWithItsOwnReadyAndBind", r2First.Binding, r2Second.Binding);
 
@@ -196,9 +206,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 var localChoice = new NStudyManualDecision();
                 try
                 {
-                    var firstA = GetProxy(first.Client, contracts.ContractType);
-                    var secondA = GetProxy(second.Client, contracts.ContractType);
-                    var secondB = second.Client.Get<IShutdownCleanupProbe>();
+                    var firstA = first.Receiver.Service;
+                    var secondA = second.Receiver.Service;
+                    var secondB = second.Sibling;
                     var original = InvokeValueTaskAsync<int>(secondA, contracts.ContractType, "BlockAsync", ct).AsTask();
                     await ReadNStudyTask(oldType, "BlockStarted").WaitAsync(ct);
                     var lead = first.Client.NegotiateNStudyReplacementAsync(
@@ -235,8 +245,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
                     try
                     {
-                        await second.Client.PrepareNStudyContractAsync(second.A.Contract, second.A.Hash,
-                            leadR2.Binding.Target, ct);
+                        await second.Receiver.PrepareExact(new(second.A.Authority, second.A.Contract, second.A.Hash,
+                            leadR2.Binding.Target), TimeSpan.FromSeconds(5), ct);
                         throw new InvalidOperationException("A normal Bind cannot approve the declined target.");
                     }
                     catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable) { }
@@ -253,15 +263,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     var freshSession = NStudyClientSession(fresh);
                     Ensure(!ReferenceEquals(freshSession, second.Session) && freshSession.NStudyPreparedCount == 0,
                         "the fresh physical peer does not inherit the old data Session's prepared routes");
-                    var b = await fresh.PrepareNStudyContractAsync(second.B.Contract, second.B.Hash, default, ct);
-                    var a = await fresh.PrepareNStudyContractAsync(second.A.Contract, second.A.Hash,
-                        server.ReadNStudyTarget(newAssembly, second.A.Contract), ct);
+                    var (freshB, b) = await PrepareNStudySiblingAsync(fresh, second.B.Contract, ct);
+                    var freshReceiver = CreateNStudyExactGenerated(fresh, contracts.ContractType);
+                    var a = await freshReceiver.PrepareExact(new(b.Authority, second.A.Contract, second.A.Hash,
+                        server.ReadNStudyTarget(newAssembly, second.A.Contract)), TimeSpan.FromSeconds(5), ct);
                     Ensure(a.Authority.PhysicalSession != second.A.Authority.PhysicalSession &&
                            a.Authority.RegistryEpoch == second.A.Authority.RegistryEpoch &&
                            a.Authority == b.Authority && a.Target == leadR2.Binding.Target &&
-                           await InvokeValueTaskAsync<int>(GetProxy(fresh, contracts.ContractType), contracts.ContractType,
+                           await InvokeValueTaskAsync<int>(freshReceiver.Service, contracts.ContractType,
                                "UnaryAsync", 15, ct) == 16 &&
-                           await fresh.Get<IShutdownCleanupProbe>().TouchAsync(5, ct) == 105 &&
+                           await freshB.TouchAsync(5, ct) == 105 &&
                            ReferenceEquals(first.Session, NStudyClientSession(first.Client)),
                         "ordinary explicit reconnect and fresh binds recover only that peer, without changing the lead Session");
                     trace.Record("FreshDataSessionBindsCurrentR2WithoutChangingLead", leadR2.Binding, a);
@@ -317,18 +328,20 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             {
                 Ensure(client.RegisterAssembly(contracts.ContractAssembly).Succeeded, "compatible local contract registered");
                 await client.ConnectAsync(ct);
-                var b = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
-                var a = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash,
-                    server.ReadNStudyTarget(oldAssembly, aCid), ct);
+                var (sibling, b) = await PrepareNStudySiblingAsync(client, bCid, ct);
+                var receiver = CreateNStudyExactGenerated(client, contracts.ContractType);
+                var a = await receiver.PrepareExact(new(b.Authority, aCid, manifest.RpcAssemblyHash,
+                    server.ReadNStudyTarget(oldAssembly, aCid)), TimeSpan.FromSeconds(5), ct);
                 var session = NStudyClientSession(client);
                 var registry = (ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry",
                     BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
                 var peer = registry.SnapshotActive().Single(item => item.NStudyPhysicalIdentity == a.Authority.PhysicalSession);
                 Ensure(session.SupportsNStudyCoordination && peer.Session.SupportsNStudyCoordination &&
+                       a.Authority == b.Authority && b.Hash == staticManifest.RpcAssemblyHash &&
                        peer.AuthenticationContext?.Subject == "n-validation" &&
                        (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                     "real authenticated transport on that particular physical Session");
-                return new(client, session, peer, a, b);
+                return new(client, session, peer, a, b, receiver, sibling);
             }
         }
         finally
@@ -347,7 +360,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     private sealed record NStudyTestPeer(SharpLinkClient Client, RpcSession Session,
-        ServerConnectionState ServerConnection, NStudyAck A, NStudyAck B);
+        ServerConnectionState ServerConnection, NStudyAck A, NStudyAck B,
+        NStudyExactGenerated Receiver, IShutdownCleanupProbe Sibling);
     private sealed record NStudyCoordinationFixture(SharpLinkServer Server, PluginBundle Contracts,
         Assembly OldAssembly, Assembly NewAssembly, Type OldType, Type NewType,
         NStudyTestPeer First, NStudyTestPeer? Second, Func<SharpLinkClient> CreateClient);
