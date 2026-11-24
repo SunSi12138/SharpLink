@@ -140,6 +140,8 @@ public sealed class ServiceLifetimeIntegrationTests
         await client.ConnectAsync();
         var service = await client.PrepareTestServiceAsync<ICallLifetimeProbe>();
         Ensure(CallLifetimeProbe.Created == 0, "preparing a contract must not activate a call service");
+        var program = ((SharpLinkServer)server).CurrentAdmissionProgramForTests
+            ?? throw new InvalidOperationException("the configured admission program must be active");
 
         await using var stream = service.StreamInstanceIdAsync().GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync(), "admitted call-lifetime stream");
@@ -161,7 +163,7 @@ public sealed class ServiceLifetimeIntegrationTests
         CallLifetimeProbe.ReleaseStream();
         Ensure(await stream.MoveNextAsync(), "active stream resumes");
         Ensure(!await stream.MoveNextAsync(), "active stream completes");
-        await WaitUntilAsync(() => CallLifetimeProbe.Disposed == 1);
+        await WaitUntilAsync(() => CallLifetimeProbe.Disposed == 1 && program.ActiveUses == 0);
         _ = await service.GetInstanceIdAsync();
         Ensure(CallLifetimeProbe.Created == 2 && CallLifetimeProbe.Disposed == 2,
             "new call admitted and disposed after recovery");
