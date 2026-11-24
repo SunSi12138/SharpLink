@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.IntegrationTests;
@@ -10,7 +11,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [Arguments("tcp", "server")]
     [Arguments("shared-memory", "client")]
     [Arguments("shared-memory", "server")]
-    public async Task NStudyManualCoordinationUsesActualPreparedGroupOnTheSameSession(string transport, string initiator)
+    public Task NStudyManualCoordinationUsesActualPreparedGroupOnTheSameSession(string transport, string initiator)
+        => VerifyNStudyManualCoordinationAsync(transport, initiator, faultingPolicy: null);
+
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp", "client")]
+    [Arguments("tcp", "server")]
+    [Arguments("shared-memory", "client")]
+    [Arguments("shared-memory", "server")]
+    public Task NStudyApplicationApprovalFailureShouldLeaveOriginalSessionUsable(string transport, string faultingPolicy)
+        => VerifyNStudyManualCoordinationAsync(transport, faultingPolicy, faultingPolicy);
+
+    private static async Task VerifyNStudyManualCoordinationAsync(string transport, string initiator, string? faultingPolicy)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -72,6 +85,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "both selected authenticated peers negotiated Manual on their real Session");
             trace.Record("ManualCapabilityNegotiatedOnTheBoundPhysicalSession", a1, bBinding);
+
+            if (faultingPolicy is not null)
+            {
+                await VerifyNStudyApplicationApprovalFailureAsync(server, client, peer, session, choice, faultingPolicy,
+                    oldAssembly, newAssembly, newType, contracts.ContractType, a, b, a1, bBinding, trace, ct);
+                return;
+            }
 
             // Normal application choice: decline a staged version, then allow a new
             // attempt. No business traffic is retargeted by the declaration alone.
@@ -173,6 +193,91 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             oldType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
             oldLoader.Unload();
             newLoader.Unload();
+        }
+    }
+
+    private static async Task VerifyNStudyApplicationApprovalFailureAsync(
+        SharpLinkServer server, SharpLinkClient client, ServerConnectionState peer, RpcSession session,
+        NStudyInitiator choice, string faultingPolicy, Assembly oldAssembly, Assembly newAssembly, Type newType,
+        Type contractType, object a, IShutdownCleanupProbe b, NStudyAck a1, NStudyAck bBinding,
+        NStudyTrace trace, CancellationToken ct)
+    {
+        var entered = new TaskCompletionSource<NStudyChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var originalBindCount = session.NStudyBindOperationForDiagnostics;
+        var policyFailure = new InvalidOperationException("The application approval check failed.");
+
+        async ValueTask<bool> FailingApprovalAsync(NStudyChange change, CancellationToken decisionToken)
+        {
+            entered.SetResult(change);
+            await release.Task.WaitAsync(decisionToken);
+            throw policyFailure;
+        }
+
+        static ValueTask<bool> ApproveAsync(NStudyChange _, CancellationToken __) => ValueTask.FromResult(true);
+
+        var negotiating = client.NegotiateNStudyReplacementAsync(choice,
+            faultingPolicy == "client" ? FailingApprovalAsync : ApproveAsync, ct);
+        var replacing = server.StageNStudyReplacementAsync(peer, oldAssembly, newAssembly, a1.Contract, choice,
+            faultingPolicy == "server" ? FailingApprovalAsync : ApproveAsync, TimeSpan.FromSeconds(15), ct);
+        try
+        {
+            var offered = await entered.Task.WaitAsync(ct);
+            Ensure(offered.Authority == a1.Authority && offered.Original == a1.Target &&
+                   !negotiating.IsCompleted && !replacing.IsCompleted &&
+                   await b.TouchAsync(1, ct) == 101 && server.ReadNStudyTarget(oldAssembly, a1.Contract) == a1.Target,
+                "unrelated B remains callable while the application approval awaits its own work");
+            trace.Record("ApplicationApprovalPendingWhileOriginalBServes", a1, bBinding);
+
+            release.TrySetResult();
+            NStudyClientActivation? activation = null;
+            Exception? clientError = null;
+            try
+            {
+                activation = await negotiating.WaitAsync(ct);
+            }
+            catch (Exception exception) when (!ct.IsCancellationRequested)
+            {
+                clientError = exception;
+            }
+            var declined = await replacing.WaitAsync(ct);
+            var originalReady = client.ReadyConnectionCount == 1 &&
+                                ReferenceEquals(session, NStudyClientSession(client)) &&
+                                !session.LifetimeToken.IsCancellationRequested &&
+                                ReferenceEquals(peer, NStudyServerConnection(server));
+            Console.WriteLine($"Policy failure: side={faultingPolicy}; clientError={clientError?.GetType().Name ?? "none"}; " +
+                              $"activation={activation.HasValue}; serverDecline={declined.DeclineReason}; originalReady={originalReady}");
+            Ensure(!declined.Replacement.Succeeded && declined.Change == offered && activation is null &&
+                   server.ReadNStudyTarget(oldAssembly, a1.Contract) == a1.Target && NStudyCount(newType, "Created") == 0,
+                "the faulted application approval must not commit or activate the staged registration");
+            Ensure(clientError is null && declined.DeclineReason == NStudyDeclineReason.Policy && originalReady,
+                "a local application approval fault must be a policy decline, not a physical Session failure");
+            Ensure(session.CaptureNStudyBinding(a1.Contract) == a1.BindingId &&
+                   session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
+                   session.NStudyBindOperationForDiagnostics == originalBindCount &&
+                   await b.TouchAsync(2, ct) == 102 &&
+                   await InvokeValueTaskAsync<int>(a, contractType, "UnaryAsync", 6, ct) == 7,
+                "after failure, both original prepared routes still work without reconnecting or binding again");
+            trace.Record("ApplicationApprovalFaultDeclinesWithoutLosingOriginalRoutes", a1, bBinding);
+
+            var recoveryClient = client.NegotiateNStudyReplacementAsync(choice, ApproveAsync, ct);
+            var recoveryServer = server.StageNStudyReplacementAsync(peer, oldAssembly, newAssembly, a1.Contract, choice,
+                ApproveAsync, TimeSpan.FromSeconds(15), ct);
+            var recovered = await recoveryClient.WaitAsync(ct) ?? throw new InvalidOperationException("Expected approved recovery.");
+            var final = await recoveryServer.WaitAsync(ct);
+            EnsureReplacementReleased(final.Replacement, "successful same-Session transition after the application fault");
+            Ensure(recovered.Change.Id > offered.Id && recovered.Binding.Authority == a1.Authority &&
+                   recovered.Binding.Target == server.ReadNStudyTarget(newAssembly, a1.Contract) &&
+                   final.Change == recovered.Change && session.NStudyBindOperationForDiagnostics == originalBindCount + 1 &&
+                   ReferenceEquals(session, NStudyClientSession(client)) &&
+                   await InvokeValueTaskAsync<int>(a, contractType, "UnaryAsync", 8, ct) == 9 &&
+                   await b.TouchAsync(3, ct) == 103 && NStudyCount(newType, "Created") == 1,
+                "the next ordinary approved attempt succeeds exactly once on the original Session");
+            trace.Record("ApprovedRecoveryAfterApplicationFaultUsesSameSession", recovered.Binding, bBinding);
+        }
+        finally
+        {
+            release.TrySetResult();
         }
     }
 
