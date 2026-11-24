@@ -16,6 +16,7 @@ public sealed class SharpLinkClientServerStreamingTerminalSignalTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -42,13 +43,16 @@ public sealed class SharpLinkClientServerStreamingTerminalSignalTests
 
         try
         {
-            await using var enumerator = channel.InvokeServerStreamingAsync(
+            await using var enumerator = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+                channel,
+                null,
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 channel.RuntimeContext.Codecs.GetCodec<int>(),
                 metadata: null,
-                cancellationToken: default).GetAsyncEnumerator();
+                cancellationToken: default,
+                prepared).GetAsyncEnumerator();
             var moveNext = enumerator.MoveNextAsync().AsTask();
 
             await writeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));

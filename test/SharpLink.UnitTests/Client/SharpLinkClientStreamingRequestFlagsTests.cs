@@ -21,6 +21,7 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.DisableRequestTimeout());
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
         using var cancellation = new CancellationTokenSource();
         var token = hasCallerToken ? cancellation.Token : CancellationToken.None;
         var hasClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
@@ -43,15 +44,22 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         if (kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
         {
             var response = kind == RpcMethodKind.ServerStreaming
-                ? channel.InvokeServerStreamingAsync(
-                    method, in request, RpcEmptyRequestCodec.Instance, codec, null, token)
-                : channel.InvokeDuplexStreamingAsync(
-                    method, in request, RpcEmptyRequestCodec.Instance, codec, in streams, null, token);
-            var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
-                .WaitAsync(TimeSpan.FromSeconds(5));
+                ? SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+                    channel, null, method, in request, RpcEmptyRequestCodec.Instance, codec, null, token, prepared)
+                : SharpLinkModuleRpcChannel.InvokeDuplexStreamingDeferred(
+                    channel, null, method, in request, RpcEmptyRequestCodec.Instance, codec, in streams, null, token, prepared);
+            TestSentFrame sent;
             await using (var enumerator = response.GetAsyncEnumerator())
             {
+                var first = enumerator.MoveNextAsync().AsTask();
+                sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
                 EnsureRequestFlags(sent.Header.Flags, expectedCancellable, hasMethodTimeout, hasReturn: false);
+                if (kind == RpcMethodKind.DuplexStreaming)
+                    await AcceptInputAsync(transport.Connection, sent.Header.RequestId);
+                await transport.Connection.InjectInt32ServerStreamItemAsync(sent.Header.RequestId, 42);
+                Ensure(await first.WaitAsync(TimeSpan.FromSeconds(5)) && enumerator.Current == 42,
+                    "the original stream must start before testing normal consumer abandonment");
             }
 
             // Even with neither caller cancellation nor a deadline, disposing the response is
@@ -66,18 +74,23 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         else
         {
             var response = kind == RpcMethodKind.ClientStreaming
-                ? channel.InvokeClientStreamingAsync(
-                    method, in request, RpcEmptyRequestCodec.Instance, codec, in streams, null, token)
-                : channel.InvokeUnaryAsync(
-                    method, in request, RpcEmptyRequestCodec.Instance, codec, null, token);
+                ? channel.InvokeClientStreaming(
+                    method, in request, RpcEmptyRequestCodec.Instance, codec, in streams, null, token, prepared, null)
+                : channel.InvokeUnary(
+                    method, in request, RpcEmptyRequestCodec.Instance, codec, null, token, prepared);
             var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(5));
+            if (kind == RpcMethodKind.ClientStreaming)
+                await AcceptInputAsync(transport.Connection, sent.Header.RequestId);
             await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId), 42);
             Ensure(await response.AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42,
                 "the request must still complete with its response");
             EnsureRequestFlags(sent.Header.Flags, expectedCancellable, hasMethodTimeout, hasReturn: true);
         }
     }
+
+    private static Task AcceptInputAsync(TestTransportConnection transport, ulong id)
+        => transport.InjectFrameAsync(NStudyWire.RequestAccepted, ProtocolV2FrameFlags.None, id, ReadOnlyMemory<byte>.Empty);
 
     private static void EnsureRequestFlags(
         ProtocolV2FrameFlags flags, bool expectedCancellable, bool hasMethodTimeout, bool hasReturn)
