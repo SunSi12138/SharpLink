@@ -161,7 +161,7 @@ public sealed class SharpLinkClientSessionRefreshTests
     {
         var request = await transport.WaitForSentFrame(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(BinaryPrimitives.ReadUInt64LittleEndian(request.Payload) == site.Ack.BindingId,
+        Ensure(BinaryPrimitives.ReadInt64LittleEndian(request.Payload) == site.Ack.BindingId,
             "the outbound Request must carry the binding confirmed on its physical connection");
         return request.Header.RequestId;
     }
