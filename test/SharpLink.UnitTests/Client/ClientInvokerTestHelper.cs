@@ -47,8 +47,16 @@ internal static class ClientInvokerTestHelper
         HasMethodTimeout: false,
         MethodTimeout: null);
 
-    internal static async Task<SharpLinkClient.NStudyPreparedSite> PrepareAsync(
+    internal static Task<SharpLinkClient.NStudyPreparedSite> PrepareAsync(
         SharpLinkClient client, params TestClientTransportFactory[] transports)
+        => PrepareConnectionsAsync(client, Array.ConvertAll(transports, factory => factory.Connection));
+
+    internal static Task<SharpLinkClient.NStudyPreparedSite> PrepareAsync(
+        SharpLinkClient client, TestTransportConnection transport)
+        => PrepareConnectionsAsync(client, transport);
+
+    private static async Task<SharpLinkClient.NStudyPreparedSite> PrepareConnectionsAsync(
+        SharpLinkClient client, params TestTransportConnection[] transports)
     {
         if (transports.Length == 0)
             throw new ArgumentException("Specify the connected test transport(s) to prepare.", nameof(transports));
@@ -59,7 +67,7 @@ internal static class ClientInvokerTestHelper
         var routes = new SharpLinkClient.NStudyPreparedRoute[transports.Length];
         for (var i = 0; i < transports.Length; i++)
         {
-            var transport = transports[i].Connection;
+            var transport = transports[i];
             var connection = Array.Find(ready, peer => ReferenceEquals(peer.Session.Input, transport.Input))
                 ?? throw new InvalidOperationException("The test transport does not own a Ready session.");
             routes[i] = await transport.BindInvocationRouteAsync(connection, FixtureContractId, bindingSlot: i);
