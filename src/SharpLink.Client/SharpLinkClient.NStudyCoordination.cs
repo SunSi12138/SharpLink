@@ -55,7 +55,7 @@ internal sealed partial class SharpLinkClient
                 // install them, and the local registry is rechecked after policy awaits.
                 if (module.Manifest.RpcAssemblyHash != change.Hash)
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetIncompatible, ct).ConfigureAwait(false);
-                if (!await session.DecideNStudyLocallyAsync(change, approveLocally, ct).ConfigureAwait(false))
+                if (!await session.DecideNStudyLocallyAsync(change, approveLocally, _logger, ct).ConfigureAwait(false))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.Policy, ct).ConfigureAwait(false);
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetMissing, ct).ConfigureAwait(false);

@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace SharpLink.IntegrationTests;
 
@@ -39,6 +41,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var aCid = manifest!.Contracts.Single(c => c.ContractType == contracts.ContractType).ContractId;
         await using var provider = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
         var builder = NewNStudyServer(source, provider);
+        using var approvalLog = new NStudyApprovalLogger();
+        if (faultingPolicy == "server")
+            builder.UseLoggerFactory(approvalLog);
         string? memoryName = transport == "shared-memory" ? $"sharplink-n-manual-{Guid.NewGuid():N}" : null;
         if (memoryName is null)
             builder.UseTcp(0, IPAddress.Loopback);
@@ -46,7 +51,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             builder.UseSharedMemory(memoryName);
         var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
-        await using var client = NewNStudyClient(source, port, memoryName);
+        await using var client = NewNStudyClient(source, port, memoryName,
+            faultingPolicy == "client" ? builder => builder.UseLoggerFactory(approvalLog) : null);
         server.NStudyVersionCoordinationMode = client.NStudyVersionCoordinationMode = NStudyCoordinationMode.Manual;
         var path = Path.Combine(Path.GetDirectoryName(contracts.ContractAssembly.Location)!,
             "SharpLink.DynamicPlugin.Services.dll");
@@ -89,7 +95,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             if (faultingPolicy is not null)
             {
                 await VerifyNStudyApplicationApprovalFailureAsync(server, client, peer, session, choice, faultingPolicy,
-                    oldAssembly, newAssembly, newType, contracts.ContractType, a, b, a1, bBinding, trace, ct);
+                    oldAssembly, newAssembly, newType, contracts.ContractType, a, b, a1, bBinding, trace, approvalLog, ct);
                 return;
             }
 
@@ -200,7 +206,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         SharpLinkServer server, SharpLinkClient client, ServerConnectionState peer, RpcSession session,
         NStudyInitiator choice, string faultingPolicy, Assembly oldAssembly, Assembly newAssembly, Type newType,
         Type contractType, object a, IShutdownCleanupProbe b, NStudyAck a1, NStudyAck bBinding,
-        NStudyTrace trace, CancellationToken ct)
+        NStudyTrace trace, NStudyApprovalLogger approvalLog, CancellationToken ct)
     {
         var entered = new TaskCompletionSource<NStudyChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -252,6 +258,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "the faulted application approval must not commit or activate the staged registration");
             Ensure(clientError is null && declined.DeclineReason == NStudyDeclineReason.Policy && originalReady,
                 "a local application approval fault must be a policy decline, not a physical Session failure");
+            Ensure(approvalLog.Failures.Count(error => ReferenceEquals(error, policyFailure)) == 1,
+                "the originating endpoint reports the actual application fault once");
             Ensure(session.CaptureNStudyBinding(a1.Contract) == a1.BindingId &&
                    session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
                    session.NStudyBindOperationForDiagnostics == originalBindCount &&
@@ -278,6 +286,24 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         finally
         {
             release.TrySetResult();
+        }
+    }
+
+    private sealed class NStudyApprovalLogger : ILoggerFactory, ILogger
+    {
+        internal readonly ConcurrentQueue<Exception> Failures = new();
+
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Warning;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning && exception is not null)
+                Failures.Enqueue(exception);
         }
     }
 

@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 
 namespace SharpLink.Runtime;
 
@@ -40,16 +41,34 @@ internal sealed partial class RpcSession
     // Callers invoke this only after verifying their own actually prepared
     // material. Automatic approves that fact; it never replaces preparation.
     internal async ValueTask<bool> DecideNStudyLocallyAsync(NStudyChange change,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision, CancellationToken ct)
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision, ILogger logger, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        return _nStudyCoordinationMode switch
+        if (_nStudyCoordinationMode != NStudyCoordinationMode.Manual)
+            return _nStudyCoordinationMode == NStudyCoordinationMode.Automatic;
+
+        // This is an application decision before publication or source freeze. A
+        // callback error can decline that transaction without poisoning its Session.
+        try
         {
-            NStudyCoordinationMode.Automatic => true,
-            NStudyCoordinationMode.Manual => await manualDecision!(change, ct).AsTask().WaitAsync(ct).ConfigureAwait(false),
-            _ => false
-        };
+            return await manualDecision!(change, ct).AsTask().WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                LogNStudyApprovalFailed(logger, error);
+            }
+            catch (Exception)
+            {
+                // Diagnostic providers must not turn a local decline into a Session fault.
+            }
+            return false;
+        }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Local version approval failed. The prepared change was declined.")]
+    private static partial void LogNStudyApprovalFailed(ILogger logger, Exception error);
 
     internal IDisposable EnterNStudyCoordination()
     {
