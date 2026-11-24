@@ -228,6 +228,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var approval = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var callbackExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var approvals = (waitingPolicy == "client" ? session : peer.Session).RuntimeContext.NStudyApprovals;
         var originalBindCount = session.NStudyBindOperationForDiagnostics;
 
         async ValueTask<bool> WaitForApprovalAsync(NStudyChange _, CancellationToken decisionToken)
@@ -270,12 +271,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var outcome = await replacing.WaitAsync(ct);
             var elapsed = Stopwatch.GetElapsedTime(began);
             Ensure(elapsed < TimeSpan.FromSeconds(15) && decisionToken.IsCancellationRequested &&
-                   !callbackExited.Task.IsCompleted && activation is null && !outcome.Replacement.Succeeded,
+                   !callbackExited.Task.IsCompleted && approvals.ActiveCount == 1 &&
+                   activation is null && !outcome.Replacement.Succeeded,
                 "actual control deadline settles both peers before late application approval returns");
             trace.Record("BothTransitionOperationsEndBeforeLateApproval", a1, bBinding);
+            Ensure(!session.LifetimeToken.IsCancellationRequested && await b.TouchAsync(2, ct) == 102,
+                "B serves on the original Session while the canceled callback still physically owns its slot");
+            trace.Record("UnrelatedBServesWhileExpiredApprovalStillOwnsCapacity", a1, bBinding);
 
             approval.TrySetResult(true);
             await callbackExited.Task.WaitAsync(ct);
+            await WaitForNStudyAsync(() => approvals.ActiveCount == 0, ct);
             Ensure(server.ReadNStudyTarget(oldAssembly, a1.Contract) == a1.Target &&
                    session.NStudyBindOperationForDiagnostics == originalBindCount && NStudyCount(newType, "Created") == 0,
                 "late approval cannot commit or Bind a staged candidate");
@@ -286,8 +292,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                               $"clientError={error?.GetType().Name ?? "none"}; serverDecline={outcome.DeclineReason}; " +
                               $"originalReady={originalReady}");
             trace.Record("LateApprovalDoesNotActivateTheCandidate", a1, bBinding);
-            Ensure(error is null && originalReady && session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
-                   await b.TouchAsync(2, ct) == 102,
+            Ensure(error is null && outcome.DeclineReason == NStudyDeclineReason.Policy && originalReady &&
+                   session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
+                   await b.TouchAsync(3, ct) == 103,
                 "a local approval timeout must not drop the unrelated prepared B service");
             trace.Record("OriginalBServesAfterApprovalTimeout", a1, bBinding);
         }

@@ -33,9 +33,11 @@ internal sealed partial class SharpLinkServer
     {
         ValidateReplacementInputs(oldAssembly, newAssembly, gracefulTimeout);
         ArgumentOutOfRangeException.ThrowIfLessThan(offers.Count, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(offers.Count, 8);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(offers.Count, NStudyApprovalScheduler.Capacity);
         cancellationToken.ThrowIfCancellationRequested();
-        using var controlTimer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
+        var clock = _runtimeContext.TimeProvider;
+        var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
+        using var controlTimer = new CancellationTokenSource(controlDeadline.GetRemaining(clock), clock);
         using var controlBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, controlTimer.Token);
         var participants = new List<NStudyParticipant>(offers.Count);
         NStudyServerPreparation? preparation = null;
@@ -50,7 +52,7 @@ internal sealed partial class SharpLinkServer
                 if (!_connectionRegistry.TryGetValue(peer.Session.Id, out var current) || !ReferenceEquals(current, peer))
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected data Session is no longer a server peer.");
                 var authority = ReadNStudySessionAuthority(peer);
-                participants.Add(NStudyParticipant.Acquire(offer, authority, _logger, controlBudget.Token));
+                participants.Add(NStudyParticipant.Acquire(offer, authority, _logger, controlDeadline, controlBudget.Token));
             }
             // The application names the first peer as the commit authorizer.
             // The other selected data Sessions authorize only their own resume.
@@ -144,7 +146,8 @@ internal sealed partial class SharpLinkServer
     }
 
     private sealed class NStudyParticipant(
-        NStudyPeerOffer offer, NStudyAuthority authority, ILogger logger, IDisposable scope, CancellationTokenSource budget) : IDisposable
+        NStudyPeerOffer offer, NStudyAuthority authority, ILogger logger, RpcDeadline controlDeadline,
+        IDisposable scope, CancellationTokenSource budget) : IDisposable
     {
         private RpcSession Session => offer.Peer.Session;
         private CancellationToken ControlToken => budget.Token;
@@ -162,7 +165,7 @@ internal sealed partial class SharpLinkServer
             _activationSent, Terminated);
 
         internal static NStudyParticipant Acquire(NStudyPeerOffer offer, NStudyAuthority authority,
-            ILogger logger, CancellationToken ct)
+            ILogger logger, RpcDeadline controlDeadline, CancellationToken ct)
         {
             var scope = offer.Peer.Session.EnterNStudyCoordination();
             try
@@ -170,7 +173,7 @@ internal sealed partial class SharpLinkServer
                 offer.Peer.Session.ValidateNStudyLocalDecision(offer.ApproveLocally);
                 var budget = CancellationTokenSource.CreateLinkedTokenSource(ct,
                     offer.Peer.ConnectionToken, offer.Peer.Session.LifetimeToken);
-                return new(offer, authority, logger, scope, budget);
+                return new(offer, authority, logger, controlDeadline, scope, budget);
             }
             catch
             {
@@ -214,7 +217,7 @@ internal sealed partial class SharpLinkServer
                 else
                     await SendAsync(NStudyPhase.Propose).ConfigureAwait(false);
 
-                if (!await Session.DecideNStudyLocallyAsync(change, offer.ApproveLocally, logger, ControlToken).ConfigureAwait(false))
+                if (!await Session.DecideNStudyLocallyAsync(change, offer.ApproveLocally, logger, controlDeadline, ControlToken).ConfigureAwait(false))
                 {
                     await DeclineAsync(NStudyDeclineReason.Policy).ConfigureAwait(false);
                     return false;

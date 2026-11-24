@@ -13,6 +13,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     // Completed unrelated manifest cleanup alone does not.
     private long _publicationRevision;
     private int _disposed;
+    private NStudyApprovalScheduler? _nStudyApprovals;
 
     internal SharpLinkRuntimeContext(
         SharpLinkRuntimeOptions options,
@@ -98,6 +99,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
 
     IRpcBufferWriterPool IRpcRuntimeContext.Buffers => Buffers;
     internal RuntimeConcurrencyOptions Concurrency { get; }
+
+    // An endpoint owns application work even when a physical Session is replaced.
+    internal NStudyApprovalScheduler NStudyApprovals
+        => LazyInitializer.EnsureInitialized(ref _nStudyApprovals, static () => new());
 
     /// <summary>
     /// Gets the application-owned time source used for monotonic runtime scheduling.

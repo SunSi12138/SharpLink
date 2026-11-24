@@ -20,7 +20,9 @@ internal sealed partial class SharpLinkClient
         var session = connection.Session;
         using var ownership = session.EnterNStudyCoordination();
         session.ValidateNStudyLocalDecision(approveLocally);
-        using var timer = new CancellationTokenSource(TimeSpan.FromSeconds(10), _runtimeContext.TimeProvider);
+        var clock = _runtimeContext.TimeProvider;
+        var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
+        using var timer = new CancellationTokenSource(controlDeadline.GetRemaining(clock), clock);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timer.Token, session.LifetimeToken);
         var ct = budget.Token;
         NStudyContractPreparation? reserved = null;
@@ -55,7 +57,7 @@ internal sealed partial class SharpLinkClient
                 // install them, and the local registry is rechecked after policy awaits.
                 if (module.Manifest.RpcAssemblyHash != change.Hash)
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetIncompatible, ct).ConfigureAwait(false);
-                if (!await session.DecideNStudyLocallyAsync(change, approveLocally, _logger, ct).ConfigureAwait(false))
+                if (!await session.DecideNStudyLocallyAsync(change, approveLocally, _logger, controlDeadline, ct).ConfigureAwait(false))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.Policy, ct).ConfigureAwait(false);
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     return await DeclineNStudyAsync(session, change, NStudyDeclineReason.LocalAssetMissing, ct).ConfigureAwait(false);
