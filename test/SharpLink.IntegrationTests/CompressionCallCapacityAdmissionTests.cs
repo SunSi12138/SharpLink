@@ -15,8 +15,9 @@ public class CompressionCallCapacityAdmissionTests
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission);
-        var blocker = harness.Client.Get<ITestService>()
-            .BlockingAddAsync(1, 2, CancellationToken.None)
+        var unary = await harness.Client.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
+        var blocker = unary.BlockingAddAsync(1, 2, CancellationToken.None)
             .AsTask();
 
         try
@@ -25,7 +26,7 @@ public class CompressionCallCapacityAdmissionTests
             var payload = Enumerable.Repeat((byte)0x41, 32 * 1024).ToArray();
 
             await EnsureResourceExhaustedAsync(
-                harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+                compression.EchoBytesAsync(payload).AsTask(),
                 "compressed unary capacity rejection");
 
             Ensure(serverProvider.DecompressCount == 0,
@@ -34,8 +35,9 @@ public class CompressionCallCapacityAdmissionTests
             TestService.ReleaseBlockingAdd();
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 3,
                 "capacity owner should complete after release");
+            await WaitUntilAsync(() => harness.ActiveCalls == 0, "server capacity returns after physical completion");
 
-            var response = await harness.Client.Get<ICompressionService>()
+            var response = await compression
                 .EchoBytesAsync(payload)
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
@@ -63,8 +65,9 @@ public class CompressionCallCapacityAdmissionTests
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
             useAdvancedAdmission);
-        var blocker = harness.Client.Get<ITestService>()
-            .BlockingAddAsync(3, 4, CancellationToken.None)
+        var unary = await harness.Client.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
+        var blocker = unary.BlockingAddAsync(3, 4, CancellationToken.None)
             .AsTask();
 
         try
@@ -72,7 +75,7 @@ public class CompressionCallCapacityAdmissionTests
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
             var payload = Enumerable.Repeat((byte)0x42, 32 * 1024).ToArray();
 
-            await harness.Client.Get<ICompressionService>()
+            await compression
                 .NotifyBytesAsync(payload)
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
@@ -88,9 +91,10 @@ public class CompressionCallCapacityAdmissionTests
             TestService.ReleaseBlockingAdd();
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 7,
                 "capacity owner should complete after release");
+            await WaitUntilAsync(() => harness.ActiveCalls == 0, "server capacity returns after physical completion");
 
             CompressionService.ResetOneWay();
-            await harness.Client.Get<ICompressionService>()
+            await compression
                 .NotifyBytesAsync(payload)
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
@@ -119,10 +123,11 @@ public class CompressionCallCapacityAdmissionTests
             serverProvider,
             useAdvancedAdmission,
             maxDecodedBytesInFlightPerServer: 1024);
+        var compression = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
         var payload = Enumerable.Repeat((byte)0x45, 32 * 1024).ToArray();
 
         await EnsureResourceExhaustedAsync(
-            harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+            compression.EchoBytesAsync(payload).AsTask(),
             "decoded-byte budget rejection");
 
         Ensure(serverProvider.DecompressCount == 0,
@@ -146,8 +151,9 @@ public class CompressionCallCapacityAdmissionTests
             useAdvancedAdmission: true,
             admissionConcurrency: 1,
             maxRetainedCompressedBytesPerServer: 1);
-        var blocker = harness.Client.Get<ITestService>()
-            .BlockingAddAsync(5, 6, CancellationToken.None)
+        var unary = await harness.Client.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
+        var blocker = unary.BlockingAddAsync(5, 6, CancellationToken.None)
             .AsTask();
 
         try
@@ -157,7 +163,7 @@ public class CompressionCallCapacityAdmissionTests
             var payload = Enumerable.Repeat((byte)0x46, 32 * 1024).ToArray();
 
             await EnsureResourceExhaustedAsync(
-                harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+                compression.EchoBytesAsync(payload).AsTask(),
                 "retained compressed-byte budget rejection");
 
             Ensure(serverProvider.DecompressCount == decompressionsBeforeQueuedRequest,
@@ -191,8 +197,8 @@ public class CompressionCallCapacityAdmissionTests
             useAdvancedAdmission: false,
             requestTimeout);
         var payload = Enumerable.Repeat((byte)0x43, 32 * 1024).ToArray();
-        var call = harness.Client.Get<IDeadlineCompressionProbeService>()
-            .EchoAsync(payload)
+        var probe = await harness.Client.PrepareTestServiceAsync<IDeadlineCompressionProbeService>();
+        var call = probe.EchoAsync(payload)
             .AsTask();
 
         try
@@ -232,11 +238,11 @@ public class CompressionCallCapacityAdmissionTests
             useAdvancedAdmission: false,
             requestTimeout);
         var payload = Enumerable.Repeat((byte)0x44, 32 * 1024).ToArray();
+        var probe = await harness.Client.PrepareTestServiceAsync<IDeadlineCompressionProbeService>();
 
         try
         {
-            await harness.Client.Get<IDeadlineCompressionProbeService>()
-                .NotifyAsync(payload)
+            await probe.NotifyAsync(payload)
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
             await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
