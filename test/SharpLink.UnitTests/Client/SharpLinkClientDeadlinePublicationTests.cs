@@ -16,6 +16,8 @@ namespace SharpLink.UnitTests.Client;
 /// </summary>
 public sealed class SharpLinkClientDeadlinePublicationTests
 {
+    private const long FixtureContractId = 1;
+
     [Test]
     public async Task TimedOneWayClientStreamShouldNotPublishARequestTheSendQueueRefused()
     {
@@ -27,9 +29,10 @@ public sealed class SharpLinkClientDeadlinePublicationTests
                 .UseTimeProvider(timeProvider)
                 .UseRuntime(static options => options.FlowControl.MaxSendQueueBytes = 32 * 1024));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
-            ContractId: 1,
+            ContractId: FixtureContractId,
             MethodId: 303,
             Kind: RpcMethodKind.OneWay,
             HasResponsePayload: false,
@@ -37,10 +40,8 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(SilentClientStreams);
-        await DrainSentFramesAsync(transport);
 
         // The frame is larger than the share of the send queue a normal frame may occupy even when
         // that queue is empty, so admission refuses it and the pump never owns it. The codec's clock
@@ -51,13 +52,13 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             TimeSpan.FromSeconds(5),
             payloadBytes: 30 * 1024,
             runTimers: false);
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             codec,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
 
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
@@ -66,7 +67,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         // Neither half of the pair may reach the peer: the Request was refused, so the cancel that
         // the terminal transition wanted to publish belongs to no Request at all.
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => !NStudyWire.IsRequestFrame(frame.Header.Type)),
             "a Request the send queue refused must not reach the peer");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "a Request that never entered the send queue must never produce a cancel");
@@ -81,14 +82,10 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = MethodWithTimeout(RpcMethodKind.Unary, methodId: 312, TimeSpan.FromSeconds(5));
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
-        await DrainSentFramesAsync(transport);
 
         // The codec moves the clock past the deadline without running its timer, and the frame is
         // small enough for the send queue to accept. The publication gate itself therefore has to be
@@ -98,13 +95,13 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             timeProvider,
             TimeSpan.FromSeconds(5),
             runTimers: false);
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = client.InvokeUnary(
             method,
             in request,
             codec,
-            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            client.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
 
         for (var attempt = 0; attempt < 50 && !invocation.IsCompleted; attempt++)
             await Task.Delay(TimeSpan.FromMilliseconds(20));
@@ -118,7 +115,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             "an elapsed deadline that the scheduler has not reported yet must still fail the call");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => !NStudyWire.IsRequestFrame(frame.Header.Type)),
             "a Request whose budget already elapsed must not be published by the gate that admits it");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may be emitted for a request the gate refused to publish");
@@ -147,30 +144,26 @@ public sealed class SharpLinkClientDeadlinePublicationTests
                     MinimumSavingsRatio = 0
                 }));
         await client.ConnectAsync();
-
-        var channel = (SharpLinkClient)client;
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
-        await DrainSentFramesAsync(transport);
+        var prepared = await PrepareCallAsync(client, transport);
 
         // The provider is user code that runs while the frame is being prepared. Its clock advance
         // is a slow compressor, and the deadline it lets elapse has to be able to win before the
         // frame is queued instead of being blocked behind a completion gate.
         var codec = new DeadlineAdvancingCodec(timeProvider, TimeSpan.Zero);
         var requestValue = codec.Value;
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = client.InvokeUnary(
             MethodWithTimeout(RpcMethodKind.Unary, methodId: 305, TimeSpan.FromSeconds(5)),
             in requestValue,
             codec,
-            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            client.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "a deadline that elapses inside the compression provider must fail the call");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => !NStudyWire.IsRequestFrame(frame.Header.Type)),
             "a deadline that won during frame preparation must leave the Request unpublished");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may be emitted for a request that was never published");
@@ -185,9 +178,10 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
-            ContractId: 1,
+            ContractId: FixtureContractId,
             MethodId: 308,
             Kind: RpcMethodKind.OneWay,
             HasResponsePayload: false,
@@ -195,23 +189,21 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var probe = new ProducerProbe();
         var streams = new BlockingClientStreams(probe);
         using var stall = new ManualResetEventSlim(initialState: false);
         try
         {
-            await FlushStartupFramesAsync(client, transport);
             var emissionEntered = StallNextEmission(transport, stall);
 
-            var invocation = channel.InvokeOneWayAsync(
+            var invocation = client.InvokeOneWay(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 in streams,
                 metadata: null,
-                cancellationToken: default).AsTask();
+                cancellationToken: default, prepared).AsTask();
 
             await emissionEntered.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(!invocation.IsCompleted,
@@ -230,7 +222,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             stall.Set();
             var published = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
             var cancelled = await transport.Connection.TryReadNextSentFrameAsync(TimeSpan.FromSeconds(5));
-            Ensure(published?.Header.Type == ProtocolV2FrameType.Request,
+            Ensure(published?.Header.Type == NStudyWire.OneWayInputRequest,
                 "the accepted Request still reaches the peer after the deadline stopped the caller");
             Ensure(cancelled?.Header.Type == ProtocolV2FrameType.Cancel &&
                    cancelled!.Value.Header.RequestId == published!.Value.Header.RequestId,
@@ -253,9 +245,10 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
-            ContractId: 1,
+            ContractId: FixtureContractId,
             MethodId: 309,
             Kind: RpcMethodKind.ClientStreaming,
             HasResponsePayload: true,
@@ -263,24 +256,22 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var probe = new ProducerProbe();
         var streams = new BlockingClientStreams(probe);
         using var stall = new ManualResetEventSlim(initialState: false);
         try
         {
-            await FlushStartupFramesAsync(client, transport);
             var emissionEntered = StallNextEmission(transport, stall);
 
-            var invocation = channel.InvokeClientStreamingAsync(
+            var invocation = client.InvokeClientStreaming(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
-                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                client.RuntimeContext.Codecs.GetCodec<int>(),
                 in streams,
                 metadata: null,
-                cancellationToken: default).AsTask();
+                cancellationToken: default, prepared, producerLifetime: null).AsTask();
 
             await emissionEntered.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(!invocation.IsCompleted,
@@ -319,9 +310,10 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
-            ContractId: 1,
+            ContractId: FixtureContractId,
             MethodId: 310,
             Kind: RpcMethodKind.DuplexStreaming,
             HasResponsePayload: true,
@@ -329,24 +321,24 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var probe = new ProducerProbe();
         var streams = new BlockingClientStreams(probe);
         using var stall = new ManualResetEventSlim(initialState: false);
         try
         {
-            await FlushStartupFramesAsync(client, transport);
             var emissionEntered = StallNextEmission(transport, stall);
 
-            await using var enumerator = channel.InvokeDuplexStreamingAsync(
+            await using var enumerator = SharpLinkModuleRpcChannel.InvokeDuplexStreamingDeferred(
+                client,
+                null,
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
-                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                client.RuntimeContext.Codecs.GetCodec<int>(),
                 in streams,
                 metadata: null,
-                cancellationToken: default).GetAsyncEnumerator();
+                cancellationToken: default, prepared).GetAsyncEnumerator();
             var moveNext = enumerator.MoveNextAsync().AsTask();
 
             await emissionEntered.WaitAsync(TimeSpan.FromSeconds(5));
@@ -400,15 +392,11 @@ public sealed class SharpLinkClientDeadlinePublicationTests
                     MinimumSavingsRatio = 0
                 }));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 311, TimeSpan.FromSeconds(5));
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
-
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
-        await DrainSentFramesAsync(transport);
 
         // The codec is fast, so the pre-compression check still sees a live budget. The provider -
         // user code that runs while the frame is being prepared - is what consumes the budget, which
@@ -416,19 +404,19 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         // still writes a payload: an empty one is skipped by the compression policy before the
         // provider is ever asked.
         var codec = new DeadlineAdvancingPayloadCodec(timeProvider, TimeSpan.Zero, payloadBytes: 8);
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             codec,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "a plain OneWay whose budget elapsed during preparation must fail at its deadline");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => !NStudyWire.IsRequestFrame(frame.Header.Type)),
             "a Request that expired before admission must never be published");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may be emitted for a request that was never published");
@@ -443,25 +431,23 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 306, TimeSpan.FromSeconds(5));
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
-
-        await FlushStartupFramesAsync(client, transport);
         using var stall = new ManualResetEventSlim(initialState: false);
         var emissionEntered = StallNextEmission(transport, stall);
 
         try
         {
-            var invocation = channel.InvokeOneWayAsync(
+            var invocation = client.InvokeOneWay(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 in streams,
                 metadata: null,
-                cancellationToken: default).AsTask();
+                cancellationToken: default, prepared).AsTask();
 
             await emissionEntered.WaitAsync(TimeSpan.FromSeconds(5));
             timeProvider.Advance(TimeSpan.FromSeconds(5));
@@ -502,29 +488,26 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 307, TimeSpan.FromSeconds(5));
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
         var codec = new DeadlineAdvancingPayloadCodec(timeProvider, TimeSpan.FromSeconds(5));
 
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
-
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             codec,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "a deadline that elapses while a plain OneWay is serialized must fail the call");
 
         var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request),
+        Ensure(frames.TrueForAll(static frame => !NStudyWire.IsRequestFrame(frame.Header.Type)),
             "an already expired plain OneWay must not be published at all");
         Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
             "no cancel may follow a Request that was never published");
@@ -539,27 +522,25 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 301, TimeSpan.FromSeconds(5));
-        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
-        // Drain everything ConnectAsync published, then stall the pump inside the transport write
-        // so the Request can be queued but never flushed while the deadline elapses.
-        await FlushStartupFramesAsync(client, transport);
+        // Bind setup is finished; stall only the Request while its deadline elapses.
         using var stall = new ManualResetEventSlim(initialState: false);
         var emissionEntered = StallNextEmission(transport, stall);
 
         try
         {
-            var invocation = channel.InvokeOneWayAsync(
+            var invocation = client.InvokeOneWay(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 in streams,
                 metadata: null,
-                cancellationToken: default).AsTask();
+                cancellationToken: default, prepared).AsTask();
 
             await emissionEntered.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(!invocation.IsCompleted,
@@ -573,7 +554,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             // The Request was published before the deadline won, so the transport still owns it: the
             // local deadline stops the caller from blocking, it does not retract the frame.
             stall.Set();
-            var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+            var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
                 "the stalled Request must still carry the budget sampled when the frame was created");
         }
@@ -593,22 +574,19 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await PrepareCallAsync(client, transport);
 
         var method = MethodWithTimeout(RpcMethodKind.Unary, methodId: 302, TimeSpan.FromSeconds(5));
-        var channel = (SharpLinkClient)client;
         var codec = new DeadlineAdvancingCodec(timeProvider, TimeSpan.FromSeconds(5));
 
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
-
         var requestValue = codec.Value;
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = client.InvokeUnary(
             method,
             in requestValue,
             codec,
-            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            client.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
 
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
@@ -632,7 +610,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         long methodId,
         TimeSpan timeout)
         => new(
-            ContractId: 1,
+            ContractId: FixtureContractId,
             MethodId: methodId,
             Kind: kind,
             HasResponsePayload: kind is not RpcMethodKind.OneWay,
@@ -644,18 +622,6 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
             sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
 
-    private static Task<int> InvokeTimedUnaryAsync(SharpLinkClient channel, RpcMethodDescriptor method)
-    {
-        var request = default(RpcEmptyRequest);
-        return channel.InvokeUnaryAsync(
-            method,
-            in request,
-            RpcEmptyRequestCodec.Instance,
-            channel.RuntimeContext.Codecs.GetCodec<int>(),
-            metadata: null,
-            cancellationToken: default).AsTask();
-    }
-
     /// <summary>Reads every frame the client writes until the transport stays quiet for one period.</summary>
     private static async Task<List<TestSentFrame>> ReadSentFramesAsync(
         TestClientTransportFactory transport,
@@ -665,20 +631,6 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         while (await transport.Connection.TryReadNextSentFrameAsync(quietPeriod) is { } frame)
             frames.Add(frame);
         return frames;
-    }
-
-    private static async Task DrainSentFramesAsync(TestClientTransportFactory transport)
-        => _ = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(20));
-
-    private static async Task FlushStartupFramesAsync(
-        SharpLinkClient client,
-        TestClientTransportFactory transport)
-    {
-        await GetOnlyReadyConnection(client).Session.FlushSendQueueAsync();
-        // Flush completes before the transport observer necessarily parses the startup frames.
-        // Its FIFO Ping proves that the observer consumed all preceding handshake output.
-        _ = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Ping)
-            .WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static Task StallNextEmission(
@@ -693,6 +645,10 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         });
         return entered.Task;
     }
+
+    private static Task<SharpLinkClient.NStudyPreparedSite> PrepareCallAsync(
+        SharpLinkClient client, TestClientTransportFactory transport)
+        => transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), FixtureContractId);
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {
