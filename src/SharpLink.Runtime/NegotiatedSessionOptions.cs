@@ -51,7 +51,7 @@ internal static class RpcSessionProtocolRules
         ProtocolV2Capabilities.CancellationReason |
         ProtocolV2Capabilities.ContractManifest |
         ProtocolV2Capabilities.SessionRefresh |
-        NStudyWire.CoordinationCapability;
+        NStudyWire.CoordinationCapability | NStudyWire.TargetDeclarationCapability;
 
     internal static bool IsFrameAllowed(
         RpcSessionProtocolPhase phase,
@@ -78,7 +78,8 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
                     ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Bind or NStudyWire.BindAck or
                     NStudyWire.Release or NStudyWire.Invalidated or NStudyWire.RequestAccepted or
-                    NStudyWire.OneWayInputRequest or NStudyWire.Coordination or NStudyWire.InventoryQuery or NStudyWire.InventoryReply,
+                    NStudyWire.OneWayInputRequest or NStudyWire.Coordination or NStudyWire.InventoryQuery or NStudyWire.InventoryReply or
+                    NStudyWire.TargetDeclaration or NStudyWire.TargetDeclarationReply,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

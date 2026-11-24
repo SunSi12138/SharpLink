@@ -124,7 +124,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await ExpectNStudyCoordinationUnavailableAsync(server.StageNStudyReplacementAsync(
             peer, oldAssembly, newAssembly, a1.Contract, NStudyInitiator.Server, approveLocally: null,
             TimeSpan.FromSeconds(15), ct));
+        await ExpectNStudyCoordinationUnavailableAsync(client.DeclareNStudyTargetAsync(contract, ct));
         Ensure(!connection.Session.SupportsNStudyCoordination && !peer.Session.SupportsNStudyCoordination &&
+               !connection.Session.SupportsNStudyTargetDeclaration && !peer.Session.SupportsNStudyTargetDeclaration &&
                connection.Session.CaptureNStudyBinding(a1.Contract) == a1.BindingId &&
                await b.TouchAsync(4, ct) == 104,
             "live policy enablement cannot grant a missing physical Session capability");

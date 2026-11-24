@@ -274,6 +274,10 @@ internal sealed partial class SharpLinkServer
                                     await HandleNStudyBindAsync(connection, header.RequestId,
                                         NStudyWire.ReadBind(payload), ct).ConfigureAwait(false);
                                     break;
+                                case NStudyWire.TargetDeclaration:
+                                    await HandleNStudyTargetDeclarationAsync(connection, header.RequestId,
+                                        NStudyWire.ReadTargetDeclaration(payload), ct).ConfigureAwait(false);
+                                    break;
                                 case NStudyWire.InventoryQuery:
                                     if (!payload.IsEmpty)
                                         throw RpcSession.InvalidNStudy("A server inventory query does not carry a Session scope.");
