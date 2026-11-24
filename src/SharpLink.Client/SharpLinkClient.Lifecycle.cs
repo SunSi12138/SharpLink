@@ -577,7 +577,8 @@ internal sealed partial class SharpLinkClient
                                 connection.PendingCalls.AcceptNStudyRequest(unchecked((long)header.RequestId));
                                 break;
                             case NStudyWire.Coordination:
-                                session.OnNStudyCoordination(header.RequestId, payload);
+                                if (session.OnNStudyCoordination(header.RequestId, payload, () => NStudyVersionCoordinationMode) is { } offer)
+                                    TrackFrameworkTask(offer, "NStudyOfferAdmission");
                                 break;
                             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 session.ApplyResponseCompressionPreferenceAck(

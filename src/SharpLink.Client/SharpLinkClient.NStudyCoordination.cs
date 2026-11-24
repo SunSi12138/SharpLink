@@ -22,7 +22,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A private coordination attempt needs one Ready Session.");
         var connection = ready[0];
         var session = connection.Session;
-        using var ownership = session.EnterNStudyCoordination(NStudyVersionCoordinationMode, approveLocally);
+        using var ownership = session.EnterNStudyCoordination(NStudyVersionCoordinationMode, localChoice, approveLocally);
         var clock = _runtimeContext.TimeProvider;
         var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
         using var timer = new CancellationTokenSource(controlDeadline.GetRemaining(clock), clock);
@@ -33,6 +33,9 @@ internal sealed partial class SharpLinkClient
         try
         {
             var availability = await session.ReadNStudyCoordinationAsync(ct).ConfigureAwait(false);
+            if (availability.Phase == NStudyPhase.Declined && session.SupportsNStudyOfferAdmission &&
+                ownership.MatchesAdmittedOffer(availability.Change))
+                return null;
             if (availability.Phase != NStudyPhase.Candidate)
                 throw RpcSession.InvalidNStudy("A version transition must first declare an actual prepared candidate.");
             var change = availability.Change;
@@ -110,8 +113,11 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception error)
         {
-            // Ambiguous control completion cannot reopen a frozen route.
-            session.NotifyDisconnected(error);
+            // Before accepting an offer there is no ambiguous remote transition to unwind.
+            // Atomically close that enrollment so a racing offer cannot claim an exiting scope.
+            if (!session.SupportsNStudyOfferAdmission || ownership.CloseEnrollmentForAbort() ||
+                error is not OperationCanceledException)
+                session.NotifyDisconnected(error);
             throw;
         }
         finally

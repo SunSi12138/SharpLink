@@ -2,8 +2,12 @@ namespace SharpLink.Runtime;
 
 internal enum NStudyCoordinationMode : byte { Disabled, Manual, Automatic }
 internal enum NStudyInitiator : byte { Client = 1, Server }
-internal enum NStudyPhase : byte { Candidate = 1, Propose, Prepare, Ready, Activated, Declined }
-internal enum NStudyDeclineReason : byte { None, Policy, LocalAssetMissing, LocalAssetIncompatible, SourceUnavailable, CandidateChanged }
+internal enum NStudyPhase : byte { Candidate = 1, Propose, Prepare, Ready, Activated, Declined, Offer, Enrolled }
+internal enum NStudyDeclineReason : byte
+{
+    None, Policy, LocalAssetMissing, LocalAssetIncompatible, SourceUnavailable, CandidateChanged,
+    PeerDisabled, ApprovalRequired, PeerNotEnrolled
+}
 internal readonly record struct NStudyChange(
     ulong Id, NStudyInitiator Initiator, NStudyAuthority Authority, long Contract, RpcHash128 Hash,
     NStudyTarget Original, NStudyTarget Target);
@@ -13,6 +17,8 @@ internal readonly record struct NStudyCoordinationMessage(NStudyPhase Phase, NSt
 internal static partial class NStudyWire
 {
     internal const ProtocolV2Capabilities CoordinationCapability = (ProtocolV2Capabilities)(1UL << 7);
+    // Private optional extension to the existing fixed-width coordination exchange.
+    internal const ProtocolV2Capabilities OfferAdmissionCapability = (ProtocolV2Capabilities)(1UL << 9);
     internal const ProtocolV2FrameType Coordination = (ProtocolV2FrameType)250;
     private const int CoordinationBytes = 139;
 
@@ -55,13 +61,13 @@ internal static partial class NStudyWire
         ValidateTarget(change.Original);
         ValidateTarget(change.Target);
         if (change.Id == 0 || change.Initiator is not (NStudyInitiator.Client or NStudyInitiator.Server) ||
-            message.Phase is < NStudyPhase.Candidate or > NStudyPhase.Declined ||
+            message.Phase is < NStudyPhase.Candidate or > NStudyPhase.Enrolled ||
             change.Authority.Server == Guid.Empty || change.Authority.RegistryEpoch == Guid.Empty ||
             change.Authority.PhysicalSession == Guid.Empty ||
             change.Original == default || change.Target == default ||
             change.Original.Registration == change.Target.Registration ||
             change.Target.Publication <= change.Original.Publication ||
-            message.DeclineReason > NStudyDeclineReason.CandidateChanged ||
+            message.DeclineReason > NStudyDeclineReason.PeerNotEnrolled ||
             (message.Phase == NStudyPhase.Declined) != (message.DeclineReason != NStudyDeclineReason.None) ||
             (message.Phase == NStudyPhase.Ready) != (message.ClientRegistration != Guid.Empty))
             throw Invalid("Invalid private version transition.");

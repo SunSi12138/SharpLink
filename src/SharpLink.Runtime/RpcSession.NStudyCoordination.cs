@@ -7,7 +7,7 @@ internal sealed partial class RpcSession
 {
     private readonly Lock _nStudyCoordinationGate = new();
     private Channel<NStudyCoordinationMessage>? _nStudyCoordinationInbox;
-    private bool _nStudyCoordinationOwned;
+    private NStudyCoordinationScope? _nStudyCoordinationScope;
     private ulong _nStudyTransitionId;
     private NStudyChange? _nStudyActivationNotSent;
     private bool _nStudyKeepTargetBlock;
@@ -30,13 +30,13 @@ internal sealed partial class RpcSession
         _nStudyHandshakeCoordinationMode = mode;
     }
 
-    internal NStudyCoordinationScope EnterNStudyCoordination(NStudyCoordinationMode mode,
+    internal NStudyCoordinationScope EnterNStudyCoordination(NStudyCoordinationMode mode, NStudyInitiator initiator,
         Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision)
     {
         EnsureNStudyCoordinationAvailable();
         lock (_nStudyCoordinationGate)
         {
-            if (_nStudyCoordinationOwned)
+            if (_nStudyCoordinationScope is not null)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "This Session is already coordinating a version.");
             if (_nStudyKeepTargetBlock)
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "This Session must refresh before another version transition.");
@@ -46,8 +46,10 @@ internal sealed partial class RpcSession
                 ArgumentNullException.ThrowIfNull(manualDecision);
             else if (manualDecision is not null)
                 throw new ArgumentException("An application approval callback is used only in Manual mode.", nameof(manualDecision));
-            _nStudyCoordinationOwned = true;
-            return new NStudyCoordinationScope(this, mode, manualDecision);
+            var scope = new NStudyCoordinationScope(this, mode, initiator, manualDecision);
+            _nStudyCoordinationScope = scope;
+            _nStudyIncomingOffer?.EnrollmentChanged.TrySetResult();
+            return scope;
         }
     }
 
@@ -57,44 +59,62 @@ internal sealed partial class RpcSession
             return checked(++_nStudyTransitionId);
     }
 
+    // Caller owns the coordination gate.
     private void ObserveNStudyTransitionId(ulong id)
     {
-        lock (_nStudyCoordinationGate)
-        {
-            if (id <= _nStudyTransitionId)
-                throw InvalidNStudy("The version transition did not advance on this physical Session.");
-            _nStudyTransitionId = id;
-        }
+        if (id <= _nStudyTransitionId)
+            throw InvalidNStudy("The version transition did not advance on this physical Session.");
+        _nStudyTransitionId = id;
     }
 
-    internal void OnNStudyCoordination(ulong id, ReadOnlySequence<byte> payload)
+    internal Task? OnNStudyCoordination(ulong id, ReadOnlySequence<byte> payload,
+        Func<NStudyCoordinationMode>? readLivePolicy = null)
     {
         EnsureNStudyCoordinationAvailable();
         var message = NStudyWire.ReadCoordination(id, payload);
-        var fromClient = message.Phase is NStudyPhase.Ready or NStudyPhase.Declined ||
+        if (UsesNStudyOfferAdmission(message) && !SupportsNStudyOfferAdmission)
+            throw InvalidNStudy("Offer admission was not negotiated on this physical Session.");
+
+        var fromClient = message.Phase is NStudyPhase.Ready or NStudyPhase.Declined or NStudyPhase.Enrolled ||
             (message.Phase == NStudyPhase.Propose && message.Change.Initiator == NStudyInitiator.Client);
-        var fromServer = message.Phase is NStudyPhase.Candidate or NStudyPhase.Prepare or NStudyPhase.Activated or NStudyPhase.Declined ||
+        var fromServer = message.Phase is NStudyPhase.Candidate or NStudyPhase.Prepare or NStudyPhase.Activated or
+            NStudyPhase.Declined or NStudyPhase.Offer ||
             (message.Phase == NStudyPhase.Propose && message.Change.Initiator == NStudyInitiator.Server);
         if (!(Role == RpcSessionRole.Server ? fromClient : fromServer))
             throw InvalidNStudy("Version coordination exceeded the Session's role or inbox.");
+        if (message.Phase == NStudyPhase.Offer)
+            return ObserveNStudyOffer(message.Change, readLivePolicy!);
+
         if (message.Phase == NStudyPhase.Candidate)
         {
             var change = message.Change;
-            ObserveNStudyTransitionId(change.Id);
-            lock (_nStudyGate)
+            lock (_nStudyCoordinationGate)
             {
-                if (_nStudyCandidate.HasValue || _nStudyAuthority != change.Authority)
-                    throw InvalidNStudy("A candidate did not belong to this Session's negotiated authority.");
-                _nStudyCandidate = change;
-                // Capture on the actual ordered reader, before a later
-                // Invalidate can remove a lagging peer's old local route.
-                if (_nStudyBindings.TryGetValue(change.Contract, out var route) &&
-                    route.Target == change.Original && route.Hash == change.Hash)
-                    _nStudyCandidateSource = route;
+                if (SupportsNStudyOfferAdmission)
+                {
+                    if (_nStudyCoordinationScope?.AdmittedOffer != change)
+                        throw InvalidNStudy("A candidate did not match the enrolled offer.");
+                }
+                else
+                {
+                    ObserveNStudyTransitionId(change.Id);
+                }
+
+                lock (_nStudyGate)
+                {
+                    if (_nStudyCandidate.HasValue || _nStudyAuthority != change.Authority)
+                        throw InvalidNStudy("A candidate did not belong to this Session's negotiated authority.");
+                    _nStudyCandidate = change;
+                    // Capture on the ordered reader, before Invalidate can remove a lagging peer's old route.
+                    if (_nStudyBindings.TryGetValue(change.Contract, out var route) &&
+                        route.Target == change.Original && route.Hash == change.Hash)
+                        _nStudyCandidateSource = route;
+                }
             }
         }
         if (!GetNStudyCoordinationInbox().Writer.TryWrite(message))
             throw InvalidNStudy("The bounded version coordination inbox was full.");
+        return null;
     }
 
     internal ValueTask<NStudyCoordinationMessage> ReadNStudyCoordinationAsync(CancellationToken cancellationToken)
@@ -144,6 +164,8 @@ internal sealed partial class RpcSession
     internal async ValueTask SendNStudyCoordinationAsync(NStudyCoordinationMessage message, CancellationToken ct)
     {
         EnsureNStudyCoordinationAvailable();
+        if (UsesNStudyOfferAdmission(message) && !SupportsNStudyOfferAdmission)
+            throw InvalidNStudy("Offer admission was not negotiated on this physical Session.");
         ct.ThrowIfCancellationRequested();
         var writer = RentFrameWriter();
         var transferred = false;
@@ -211,9 +233,27 @@ internal sealed partial class RpcSession
     }
 
     internal sealed class NStudyCoordinationScope(RpcSession session, NStudyCoordinationMode mode,
-        Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision) : IDisposable
+        NStudyInitiator initiator, Func<NStudyChange, CancellationToken, ValueTask<bool>>? manualDecision) : IDisposable
     {
         internal NStudyCoordinationMode Mode => mode;
+        internal NStudyInitiator Initiator => initiator;
+        internal NStudyChange? AdmittedOffer { get; set; }
+        internal bool EnrollmentClosed { get; private set; }
+
+        internal bool MatchesAdmittedOffer(NStudyChange change)
+        {
+            lock (session._nStudyCoordinationGate)
+                return AdmittedOffer == change;
+        }
+
+        internal bool CloseEnrollmentForAbort()
+        {
+            lock (session._nStudyCoordinationGate)
+            {
+                EnrollmentClosed = true;
+                return AdmittedOffer.HasValue;
+            }
+        }
 
         // A live policy update never recategorizes a decision admitted under the old policy,
         // and never changes what this Session is able to send or read while settling it.
@@ -229,17 +269,17 @@ internal sealed partial class RpcSession
 
         public void Dispose()
         {
-            lock (session._nStudyGate)
-            {
-                session._nStudyCandidate = null;
-                session._nStudyCandidateSource = null;
-                session._nStudySourceFrozen = false;
-            }
             lock (session._nStudyCoordinationGate)
             {
+                lock (session._nStudyGate)
+                {
+                    session._nStudyCandidate = null;
+                    session._nStudyCandidateSource = null;
+                    session._nStudySourceFrozen = false;
+                }
                 if (!session._nStudyKeepTargetBlock)
                     session._nStudyActivationNotSent = null;
-                session._nStudyCoordinationOwned = false;
+                session._nStudyCoordinationScope = null;
             }
         }
     }

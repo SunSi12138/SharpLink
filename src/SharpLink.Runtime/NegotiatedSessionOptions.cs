@@ -51,7 +51,7 @@ internal static class RpcSessionProtocolRules
         ProtocolV2Capabilities.CancellationReason |
         ProtocolV2Capabilities.ContractManifest |
         ProtocolV2Capabilities.SessionRefresh |
-        NStudyWire.CoordinationCapability | NStudyWire.TargetDeclarationCapability;
+        NStudyWire.CoordinationCapability | NStudyWire.TargetDeclarationCapability | NStudyWire.OfferAdmissionCapability;
 
     internal static bool IsFrameAllowed(
         RpcSessionProtocolPhase phase,

@@ -122,9 +122,15 @@ internal sealed partial class SharpLinkServer
 
         internal async ValueTask<bool> NegotiateAsync()
         {
-            // Candidate is queued ahead of any committed invalidation on each
-            // physical FIFO. Readiness is per Session after this declaration.
-            await Task.WhenAll(peers.Select(static peer => peer.DeclareAsync())).ConfigureAwait(false);
+            // Enroll without handing any peer a Candidate. A primary refusal cannot
+            // leave another participant with an abandoned full transaction.
+            await Task.WhenAll(peers.Select(static peer => peer.AdmitOfferAsync())).ConfigureAwait(false);
+            if (!peers[0].OfferAdmitted)
+                return false;
+
+            // Candidate still goes ahead of committed invalidation on each enrolled Session.
+            await Task.WhenAll(peers.Where(static peer => peer.OfferAdmitted)
+                .Select(static peer => peer.DeclareAsync())).ConfigureAwait(false);
             if (peers[0].Terminated)
                 return false;
             foreach (var peer in peers)
@@ -159,6 +165,8 @@ internal sealed partial class SharpLinkServer
         private CancellationToken ControlToken => budget.Token;
         private NStudyChange? _change;
         private bool _declared;
+        private bool _remoteEnrollment;
+        internal bool OfferAdmitted { get; private set; }
         private Task<bool>? _decision;
         private Guid _clientRegistration;
         private NStudyDeclineReason _declineReason;
@@ -173,7 +181,7 @@ internal sealed partial class SharpLinkServer
         internal static NStudyParticipant Acquire(NStudyPeerOffer offer, NStudyAuthority authority,
             NStudyCoordinationMode mode, ILogger logger, RpcDeadline controlDeadline, CancellationToken ct)
         {
-            var scope = offer.Peer.Session.EnterNStudyCoordination(mode, offer.ApproveLocally);
+            var scope = offer.Peer.Session.EnterNStudyCoordination(mode, offer.Initiator, offer.ApproveLocally);
             try
             {
                 var budget = CancellationTokenSource.CreateLinkedTokenSource(ct,
@@ -192,6 +200,27 @@ internal sealed partial class SharpLinkServer
             var change = new NStudyChange(Session.NextNStudyTransitionId(), offer.Initiator, authority, contract, hash, original, target);
             Session.BlockNStudyTargetBind(change);
             _change = change;
+        }
+
+        internal async Task AdmitOfferAsync()
+        {
+            if (!Session.SupportsNStudyOfferAdmission)
+            {
+                OfferAdmitted = true;
+                return;
+            }
+            try
+            {
+                await SendAsync(NStudyPhase.Offer).ConfigureAwait(false);
+                var reply = await Session.ReadNStudyCoordinationAsync(_change!.Value, NStudyPhase.Enrolled,
+                    ControlToken, allowDecline: true).ConfigureAwait(false);
+                _declineReason = reply.DeclineReason;
+                OfferAdmitted = _remoteEnrollment = reply.Phase == NStudyPhase.Enrolled;
+            }
+            catch (Exception error)
+            {
+                Terminate(error);
+            }
         }
 
         internal async Task DeclareAsync()
@@ -282,7 +311,14 @@ internal sealed partial class SharpLinkServer
         internal async Task AbortBeforeCommitAsync()
         {
             if (!_declared)
+            {
+                if (_remoteEnrollment && !Terminated)
+                {
+                    try { await DeclineAsync(NStudyDeclineReason.CandidateChanged).ConfigureAwait(false); }
+                    catch (Exception error) { Terminate(error); }
+                }
                 return;
+            }
             if (Terminated)
             {
                 await IsReadyAsync().ConfigureAwait(false);
