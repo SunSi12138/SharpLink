@@ -158,10 +158,10 @@ public static class SharpLinkGeneratedManifestVersions
     /// generated assembly with the matching SDK and exact ABI identity; the API number alone
     /// does not identify compatible development branches.
     /// </summary>
-    public const int Api = 6;
+    public const int Api = 5;
 
     /// <summary>Exact discriminator for the #999 study generated receiver ABI.</summary>
-    public const string AbiIdentity = "sharplink-n999-api6-single-prepared-stub-v4";
+    public const string AbiIdentity = "sharplink-3.0-api5-prepared-contract-v1";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

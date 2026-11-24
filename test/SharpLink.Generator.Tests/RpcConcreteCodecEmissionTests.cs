@@ -304,10 +304,10 @@ using SharpLink.Abstractions;
 [assembly: SharpLinkGeneratedCodecIdentityAttribute(typeof(Vendor.ReferencedPayload), 0x7265UL, 0x7266UL)]
 [assembly: SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(Vendor.Manifest),
-    6,
+    5,
     2,
     "2.0.0",
-    "sharplink-n999-api6-single-prepared-stub-v4")]
+    "sharplink-3.0-api5-prepared-contract-v1")]
 
 namespace Vendor
 {

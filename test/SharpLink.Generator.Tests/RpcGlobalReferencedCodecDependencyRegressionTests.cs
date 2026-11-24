@@ -22,10 +22,10 @@ using System;
     0x6262626262626262UL)]
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(Referenced.Manifest),
-    6,
+    5,
     2,
     "2.0.0-test",
-    "sharplink-n999-api6-single-prepared-stub-v4")]
+    "sharplink-3.0-api5-prepared-contract-v1")]
 
 namespace SharpLink.Abstractions
 {

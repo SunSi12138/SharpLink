@@ -1,22 +1,36 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 
 namespace DemoBase;
 
 public static class DemoStream
 {
-    public static async IAsyncEnumerable<T> ToAsyncEnumerable<T>(
+    public static IAsyncEnumerable<T> ToAsyncEnumerable<T>(
         IEnumerable<T> values,
         int delayMs = 5,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default)
+        => new OwnedSequence<T>(values, delayMs, cancellationToken);
+
+    private sealed class OwnedSequence<T>(IEnumerable<T> values, int delayMs, CancellationToken caller)
+        : IAsyncEnumerable<T>
     {
-        foreach (var value in values)
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken producer = default)
+            => EnumerateAsync(producer);
+
+        private async IAsyncEnumerator<T> EnumerateAsync(CancellationToken producer)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return value;
-            if (delayMs > 0)
-                await Task.Delay(delayMs, cancellationToken);
+            // The enumerator owns its link, even when a different thread starts production.
+            using var lifetime = caller.CanBeCanceled && producer.CanBeCanceled && caller != producer
+                ? CancellationTokenSource.CreateLinkedTokenSource(caller, producer)
+                : null;
+            var token = lifetime?.Token ?? (producer.CanBeCanceled ? producer : caller);
+            foreach (var value in values)
+            {
+                token.ThrowIfCancellationRequested();
+                yield return value;
+                if (delayMs > 0)
+                    await Task.Delay(delayMs, token);
+            }
         }
     }
 

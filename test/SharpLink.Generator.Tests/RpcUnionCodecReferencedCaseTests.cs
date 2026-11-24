@@ -47,12 +47,12 @@ namespace SharpLink.Abstractions
             support,
             101UL,
             202UL,
-            "sharplink-n999-api6-single-prepared-stub-v4");
+            "sharplink-3.0-api5-prepared-contract-v1");
         var secondOwner = CreateReferencedUnionCaseOwner(
             support,
             303UL,
             404UL,
-            "sharplink-n999-api6-single-prepared-stub-v4");
+            "sharplink-3.0-api5-prepared-contract-v1");
         var incompatibleOwner = CreateReferencedUnionCaseOwner(
             support,
             101UL,
@@ -97,7 +97,7 @@ using SharpLink.Abstractions;
 using SharpLink.Sdk;
 
 [assembly: SharpLinkGeneratedCodecIdentityAttribute(typeof(ReferencedCaseUnion.ValueCase), {{high}}UL, {{low}}UL)]
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(ReferencedCaseUnion.Manifest), 6, 2, "2.0.0", "{{abiIdentity}}")] // fixture ABI
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(ReferencedCaseUnion.Manifest), 5, 2, "2.0.0", "{{abiIdentity}}")] // fixture ABI
 
 namespace ReferencedCaseUnion
 {

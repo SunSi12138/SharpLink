@@ -636,14 +636,24 @@ public static class Program
         }
     }
 
-    private static async IAsyncEnumerable<int> CreateValues(
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static IAsyncEnumerable<int> CreateValues(CancellationToken caller)
+        => new OwnedInput(caller);
+
+    private sealed class OwnedInput(CancellationToken caller) : IAsyncEnumerable<int>
     {
-        for (var value = 0; value < 16; value++)
+        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken producer = default)
+            => ReadAsync(caller, producer);
+
+        private static async IAsyncEnumerator<int> ReadAsync(CancellationToken caller, CancellationToken producer)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return value;
-            await Task.CompletedTask;
+            using var link = CancellationTokenSource.CreateLinkedTokenSource(caller, producer);
+            var lifetime = link.Token;
+            for (var value = 0; value < 16; value++)
+            {
+                lifetime.ThrowIfCancellationRequested();
+                yield return value;
+                await Task.CompletedTask;
+            }
         }
     }
 

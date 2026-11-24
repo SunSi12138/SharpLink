@@ -306,43 +306,55 @@ public static class Program
         }
     }
 
-    private static async IAsyncEnumerable<SharpLinkGenerationInventory> CreateClientGenerationInventories(
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static IAsyncEnumerable<SharpLinkGenerationInventory> CreateClientGenerationInventories(
+        CancellationToken cancellationToken)
+        => new ClientGenerationInventories(cancellationToken);
+
+    private sealed class ClientGenerationInventories(CancellationToken caller)
+        : IAsyncEnumerable<SharpLinkGenerationInventory>
     {
-        await Task.Yield();
-        cancellationToken.ThrowIfCancellationRequested();
-        var initial = new SharpLinkGenerationInventory
+        public IAsyncEnumerator<SharpLinkGenerationInventory> GetAsyncEnumerator(CancellationToken producer = default)
+            => ReadAsync(producer);
+
+        private async IAsyncEnumerator<SharpLinkGenerationInventory> ReadAsync(CancellationToken producer)
         {
-            EndpointEpoch = "package-smoke-client-epoch",
-            Revision = 7,
-            Generations =
-            [
-                new SharpLinkGenerationSnapshot
-                {
-                    Descriptor = new SharpLinkGenerationDescriptor
+            using var link = CancellationTokenSource.CreateLinkedTokenSource(caller, producer);
+            var cancellationToken = link.Token;
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            var initial = new SharpLinkGenerationInventory
+            {
+                EndpointEpoch = "package-smoke-client-epoch",
+                Revision = 7,
+                Generations =
+                [
+                    new SharpLinkGenerationSnapshot
                     {
-                        Identity = new SharpLinkGenerationIdentity
+                        Descriptor = new SharpLinkGenerationDescriptor
                         {
-                            CapabilityId = "package-smoke-client",
-                            GenerationId = "g7"
+                            Identity = new SharpLinkGenerationIdentity
+                            {
+                                CapabilityId = "package-smoke-client",
+                                GenerationId = "g7"
+                            },
+                            WireIdentity = "wire-v1",
+                            GeneratedAbiIdentity = "abi-v1",
+                            ArtifactHash = "sha256:package-smoke-client",
+                            ArtifactReference = "package-smoke://client/g7",
+                            CompatibilityMetadata = "compatible"
                         },
-                        WireIdentity = "wire-v1",
-                        GeneratedAbiIdentity = "abi-v1",
-                        ArtifactHash = "sha256:package-smoke-client",
-                        ArtifactReference = "package-smoke://client/g7",
-                        CompatibilityMetadata = "compatible"
-                    },
-                    State = SharpLinkGenerationState.Active
-                }
-            ]
-        };
-        yield return initial;
-        yield return new SharpLinkGenerationInventory
-        {
-            EndpointEpoch = "package-smoke-client-restarted",
-            Revision = 0,
-            Generations = initial.Generations
-        };
+                        State = SharpLinkGenerationState.Active
+                    }
+                ]
+            };
+            yield return initial;
+            yield return new SharpLinkGenerationInventory
+            {
+                EndpointEpoch = "package-smoke-client-restarted",
+                Revision = 0,
+                Generations = initial.Generations
+            };
+        }
     }
 
     private static async Task RunRuntimeMultiClusterSmokeAsync(

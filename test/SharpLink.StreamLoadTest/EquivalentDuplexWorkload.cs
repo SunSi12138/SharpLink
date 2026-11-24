@@ -1,7 +1,6 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Runtime;
@@ -76,17 +75,8 @@ internal static class EquivalentDuplexWorkload
         return responseIndex;
     }
 
-    internal static async IAsyncEnumerable<byte[]> ToStream(
-        byte[][] messages,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        foreach (var message in messages)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return message;
-            await Task.CompletedTask;
-        }
-    }
+    internal static IAsyncEnumerable<byte[]> ToStream(byte[][] messages, CancellationToken cancellationToken)
+        => new StreamLoadInput<byte[]>(messages, cancellationToken);
 }
 
 internal sealed class EquivalentDuplexValidationException(string message) : Exception(message);

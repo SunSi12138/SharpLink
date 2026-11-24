@@ -55,12 +55,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var allGenerated = string.Join("\n", generated);
 
-        Ensure(manifest.Contains("public int ApiVersion => 6;", StringComparison.Ordinal) &&
+        Ensure(manifest.Contains("public int ApiVersion => 5;", StringComparison.Ordinal) &&
                manifest.Contains("public int ProtocolVersion => 2;", StringComparison.Ordinal),
-            "the Generator must own literal study API 6 / Protocol 2 stamps");
+            "the Generator must own literal API 5 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
-               manifest.Contains(", 6, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-n999-api6-single-prepared-stub-v4", StringComparison.Ordinal),
+               manifest.Contains(", 5, 2,", StringComparison.Ordinal) &&
+               manifest.Contains("sharplink-3.0-api5-prepared-contract-v1", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");

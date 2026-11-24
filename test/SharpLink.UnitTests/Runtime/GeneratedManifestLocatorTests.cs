@@ -52,7 +52,7 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments("sharplink-3.0-api5-generated-unsafe-blit-v1")]
-    [Arguments("other-api6-development-identity")]
+    [Arguments("sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
     [Arguments("sharplink-n999-api6-single-prepared-stub-v3")]
     public void DifferentGeneratedAbiIdentityShouldRejectBeforeConstruction(string identity)
     {
@@ -69,8 +69,8 @@ public sealed class GeneratedManifestLocatorTests
     [Test]
     [Arguments(3, 2)]
     [Arguments(4, 2)]
-    [Arguments(5, 2)]
-    [Arguments(6, 3)]
+    [Arguments(6, 2)]
+    [Arguments(5, 3)]
     public void UnsupportedLocatorVersionShouldRejectBeforeManifestConstruction(
         int locatorApiVersion,
         int locatorProtocolVersion)
@@ -96,8 +96,8 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments(3, 2, CurrentGeneratorVersion)]
-    [Arguments(6, 3, CurrentGeneratorVersion)]
-    [Arguments(6, 2, "phase17-other-generator")]
+    [Arguments(5, 3, CurrentGeneratorVersion)]
+    [Arguments(5, 2, "phase17-other-generator")]
     public void MaterializedMetadataMismatchShouldBeInvalidBeforeShapeValidation(
         int manifestApiVersion,
         int manifestProtocolVersion,

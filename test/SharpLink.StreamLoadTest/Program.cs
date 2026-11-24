@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
@@ -598,15 +597,8 @@ public static class Program
         }
     }
 
-    private static async IAsyncEnumerable<int> ToStream(int[] values, [EnumeratorCancellation] CancellationToken ct)
-    {
-        foreach (var t in values)
-        {
-            ct.ThrowIfCancellationRequested();
-            yield return t;
-            await Task.CompletedTask;
-        }
-    }
+    private static IAsyncEnumerable<int> ToStream(int[] values, CancellationToken ct)
+        => new StreamLoadInput<int>(values, ct);
 
     private static IReadOnlyList<string> ResolveOperations(string op)
         => op == "all" ? ["unary", "c2s", "s2c", "duplex"] : [op];

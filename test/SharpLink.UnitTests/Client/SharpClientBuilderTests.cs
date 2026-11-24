@@ -11,8 +11,8 @@ public class SharpClientBuilderTests
     [Test]
     public async Task StaticClientSnapshotShouldRejectIncompatibleManifestVersions()
     {
-        Ensure(SharpLinkGeneratedManifestVersions.Api == 6,
-            "this study runtime must require generated manifest API 6");
+        Ensure(SharpLinkGeneratedManifestVersions.Api == 5,
+            "this runtime must require the selected 3.0 manifest API 5");
         await EnsureThrows<InvalidOperationException>(() =>
         {
             SharpLinkClient.ValidateStaticManifestCompatibility(new IncompatibleManifest());

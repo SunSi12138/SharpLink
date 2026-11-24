@@ -7,10 +7,10 @@ public class ProtocolV2ErrorCompatibilityTests
     [Arguments((ushort)4)]
     public async Task PreparedProfileShouldRejectPreviouslyPublishedWireMinors(ushort legacyMinor)
     {
-        // The historical 2.0 release established minor 4; N is a private, incompatible profile.
-        const ushort preparedProfileMinor = 0x79A7;
+        // The published wire generation ends at minor 4; this rehearsal sets a new floor.
+        const ushort preparedProfileMinor = 5;
         Ensure(ProtocolV2Constants.MinorVersion == preparedProfileMinor,
-            "this test must run on the exact private prepared wire generation");
+            "this test must run on the exact prepared wire generation under rehearsal");
         Ensure(
             ProtocolV2Constants.MinimumCompatibleMinorVersion == preparedProfileMinor,
             "the profile must reject older wire grammars before structured error decoding");

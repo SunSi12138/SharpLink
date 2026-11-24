@@ -10,7 +10,7 @@ public class GeneratedManifestCompatibilityTests
     [Arguments(2)]
     [Arguments(3)]
     [Arguments(4)]
-    [Arguments(5)] // Last baseline ABI; API 6 belongs to the current prepared profile.
+    [Arguments(6)] // Superseded private prepared ABI; API 5 is the selected 3.0 boundary.
     [Arguments(0)]
     [Arguments(-1)]
     [Arguments(int.MinValue)]

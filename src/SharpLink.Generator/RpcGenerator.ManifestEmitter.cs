@@ -2,9 +2,9 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const int GeneratedManifestApi = 6;
+    private const int GeneratedManifestApi = 5;
     private const int GeneratedProtocolVersion = 2;
-    private const string GeneratedAbiIdentity = "sharplink-n999-api6-single-prepared-stub-v4";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-prepared-contract-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
