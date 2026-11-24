@@ -1,9 +1,20 @@
-namespace SharpLink.Client;
+namespace SharpLink.IntegrationTests;
 
-// Temporary adapter for old Get callers in the private study.
-// Prepared generated and handwritten callers never use this adapter.
-internal sealed class LegacyRpcContractReceiver(IRpcChannel inner) : IRpcContractChannel
+// Test-only adapter for the existing raw grammar controls, never for prepared RPC coverage.
+internal sealed class LegacyGrammarFixtureReceiver(IRpcChannel inner) : IRpcContractChannel
 {
+    internal static T Create<T>(ISharpLinkClient client) where T : IService
+    {
+        var assembly = typeof(T).Assembly;
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
+        if (!result.Succeeded)
+            throw new InvalidOperationException($"Unable to load the fixture contract manifest: {result.Error}");
+
+        var contract = manifest!.Contracts.Single(descriptor => descriptor.ContractType == typeof(T));
+        var codecs = RpcGeneratedCodecResolver.GetProvider(client.RuntimeContext, assembly);
+        return (T)contract.ProxyFactory(new LegacyGrammarFixtureReceiver((IRpcChannel)client), codecs);
+    }
+
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
 
     public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -44,5 +55,4 @@ internal sealed class LegacyRpcContractReceiver(IRpcChannel inner) : IRpcContrac
         where TStreams : struct, IRpcClientStreamWriter
         => inner.InvokeDuplexStreamingAsync(method, request, requestCodec, responseCodec, streams,
             callMetadata, cancellationToken);
-
 }

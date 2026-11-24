@@ -58,7 +58,5 @@ internal sealed partial class SharpLinkClient
         internal RpcHash128 NStudyAssemblyHash { get; }
 
         internal NStudyPreparationCell NStudyPreparation { get; }
-
-        internal object? Proxy;
     }
 }

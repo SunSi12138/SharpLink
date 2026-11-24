@@ -13,8 +13,7 @@ internal sealed partial class SharpLinkClient :
     private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext;
     private readonly ClientAssemblyRegistry _assemblyRegistry;
-    // Stable lookup facade retained on the outer Client so Get<T>() keeps its direct acquisition path.
-    // The registry owns and atomically publishes the immutable snapshots behind this object.
+    // The registry owns and atomically publishes the snapshots behind this shared lookup.
     private ClientProxyLookup _proxies;
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();

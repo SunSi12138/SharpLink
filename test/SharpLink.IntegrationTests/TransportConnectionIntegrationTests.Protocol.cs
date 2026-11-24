@@ -654,7 +654,7 @@ public partial class TransportConnectionIntegrationTests
         {
             await client.ConnectAsync();
             Ensure(client.State == SharpLinkConnectionState.Ready, "fake server handshake");
-            var svc = client.Get<ITestService>();
+            var svc = LegacyGrammarFixtureReceiver.Create<ITestService>(client);
 
             var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
             var streamTask = CollectAsync(

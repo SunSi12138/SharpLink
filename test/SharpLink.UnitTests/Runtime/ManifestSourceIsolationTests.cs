@@ -89,7 +89,7 @@ public sealed class ManifestSourceIsolationTests
 
             Ensure(clientSource.CreateSnapshotCount == 1 && serverSource.CreateSnapshotCount == 1,
                 "Client and Server Compile must each query only their own source once");
-            Ensure(client.Get<IContractA>() is ContractAProxy &&
+            Ensure(client.CreateProxy<IContractA>().Service is ContractAProxy &&
                    client.RuntimeContext.Codecs.GetCodec<CodecValueA>() is TestCodec<CodecValueA>,
                 "the Client facade and Runtime must both materialize the same combined frozen snapshot");
             Ensure(serverStubFactoryCount == 1,
@@ -211,7 +211,8 @@ public sealed class ManifestSourceIsolationTests
             .DisableRequestTimeout()
             .UseTransport(new TrackingClientTransport())
             .Build();
-        Ensure(clientA.Get<IContractA>() is ContractAProxy && clientB.Get<IContractB>() is ContractBProxy,
+        Ensure(clientA.CreateProxy<IContractA>().Service is ContractAProxy &&
+               clientB.CreateProxy<IContractB>().Service is ContractBProxy,
             "equal IDs in independent snapshots must not create process-global conflicts");
 
         var conflictingTransport = new TrackingClientTransport();

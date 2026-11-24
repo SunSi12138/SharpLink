@@ -22,8 +22,8 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         Ensure(client.State == SharpLinkConnectionState.Ready && transport.ConnectCount == 1,
             "remote contract readiness must join initial connectivity without requiring a separate Connect");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "the observed exact handshake identity must permit synchronous contract acquisition");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
+            "observing the exact handshake hash must preserve local contract ownership");
     }
 
     [Test]
@@ -42,19 +42,21 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     }
 
     [Test]
-    public async Task MissingReadyContractShouldWaitForLaterManifestBeforeGet()
+    public async Task MissingReadyContractShouldWaitForLaterManifestWithoutBlockingLocalFactory()
     {
         var transport = new TestClientTransportFactory(contractManifest: []);
         await using var client = CreateBuilder().UseTransport(transport).Build();
         await client.ConnectAsync();
 
+        var proxy = client.CreateProxy<IOrdersContract>();
+        var service = proxy.Service;
         var waiter = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash).AsTask();
         Ensure(!waiter.IsCompleted, "Ready transport alone must not satisfy missing remote identity");
         await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "later registration visibility must permit Get on the original data connection");
+        Ensure(service is OrdersProxy && ReferenceEquals(service, proxy.Service),
+            "local proxy creation and lifetime must be independent of the later remote registration");
         Ensure(transport.ConnectCount == 1, "manifest propagation must preserve the existing connection");
     }
 
@@ -157,8 +159,8 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         Ensure(!waiter.IsCompleted, "one matching endpoint must not hide another Ready endpoint's missing identity");
         await PublishAndFenceAsync(missing.Connection, 1, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "all Ready endpoint identities must agree before synchronous acquisition is accepted");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
+            "the completed cohort observation must preserve the original local registration");
     }
 
     [Test]
@@ -180,19 +182,20 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     }
 
     [Test]
-    public async Task ACompletedObservationShouldNotPromiseLaterGetSurvivesUnregister()
+    public async Task ACompletedObservationShouldNotPromiseLaterPrepareSurvivesUnregister()
     {
         var transport = new TestClientTransportFactory();
         await using var client = CreateBuilder().UseTransport(transport).Build();
         await client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash);
         await PublishAndFenceAsync(transport.Connection, 1, []);
 
-        Exception? failure = null;
-        try { _ = client.Get<IOrdersContract>(); }
-        catch (SharpLinkException exception) { failure = exception; }
+        var proxy = client.CreateProxy<IOrdersContract>();
+        Ensure(proxy.Service is OrdersProxy,
+            "remote unregister must not erase the issuer's local generated registration");
+        var failure = await CaptureExceptionAsync(proxy.PrepareAsync(TimeSpan.FromSeconds(2)).AsTask());
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "readiness is an observation rather than an identity lease; later Get must still reject unregister");
+            "readiness is an observation, not an identity lease; later Prepare must still reject unregister");
     }
 
     [Test]
@@ -212,7 +215,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         Ensure(transport.ConnectCount == 2 && client.State == SharpLinkConnectionState.Ready,
             "the same observation must survive reconnect and accept the new session's generation zero manifest");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash).IsCompletedSuccessfully,
             "retired session generation nine must not suppress the new session's matching initial manifest");
     }
 
@@ -250,7 +253,8 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy && transport.ConnectCount == 1,
+        Ensure(client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash).IsCompletedSuccessfully &&
+               transport.ConnectCount == 1,
             "the target hash must unblock replacement observation on the original connection");
     }
 

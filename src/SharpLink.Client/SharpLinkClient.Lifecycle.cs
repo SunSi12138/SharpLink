@@ -329,26 +329,6 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public T Get<T>() where T : IService
-    {
-        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
-        {
-            ValidateRemoteContractAssembly(registration);
-            var existing = Volatile.Read(ref registration.Proxy);
-            if (existing is not null)
-                return (T)existing;
-
-            var channel = registration.Module is null
-                ? (IRpcChannel)this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            var created = registration.Descriptor.ProxyFactory(new LegacyRpcContractReceiver(channel), registration.Codecs);
-            var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
-            return (T)(published ?? created);
-        }
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
-    }
-
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null

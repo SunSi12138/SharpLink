@@ -17,7 +17,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var service = LegacyGrammarFixtureReceiver.Create<IOneWayInboundDrainService>(harness.Client);
 
         using (harness.RejectOneWayInboundDrainServiceCalls())
         {
@@ -43,7 +43,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var service = LegacyGrammarFixtureReceiver.Create<IOneWayInboundDrainService>(harness.Client);
 
         using (harness.HideOneWayInboundDrainMethodShape())
         {
@@ -71,7 +71,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
             options.Compression.Providers.Add(compression);
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var service = LegacyGrammarFixtureReceiver.Create<IOneWayInboundDrainService>(harness.Client);
 
         using (harness.HideOneWayInboundDrainMethodShape())
         {

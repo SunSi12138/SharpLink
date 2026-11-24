@@ -460,8 +460,4 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <summary>Creates a local channel for the selected registration, without connecting or preparing a route.</summary>
     IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
         => throw new NotSupportedException("This client does not support prepared RPC contract channels.");
-
-    /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
-    /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
-    TContract Get<TContract>() where TContract : IService;
 }

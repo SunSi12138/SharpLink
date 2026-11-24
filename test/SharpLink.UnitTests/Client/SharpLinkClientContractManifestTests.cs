@@ -9,20 +9,20 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     private const long OrdersContractId = 8_101;
 
     [Test]
-    public async Task EqualRpcAssemblyHashShouldAllowContractAcquisition()
+    public async Task EqualRpcAssemblyHashAllowsReadinessObservationWithoutBinding()
     {
         var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);
         await using var client = CreateClient(transport);
 
         await client.ConnectAsync();
-        var proxy = client.Get<IOrdersContract>();
-
-        Ensure(proxy is OrdersProxy,
-            "an exactly matching remote RpcAssemblyHash must allow contract acquisition");
-        Ensure(!await transport.Connection.TryWaitForSentPacket(
-                ProtocolV2FrameType.Request,
-                TimeSpan.FromMilliseconds(50)),
-            "contract acquisition itself must not emit an RPC Request frame");
+        var observation = client.WaitForRemoteContractAsync(OrdersContractId, Manifest.Instance.RpcAssemblyHash);
+        Ensure(observation.IsCompletedSuccessfully,
+            "an exact hash on the Ready transport must be visible without a new connection");
+        await observation;
+        var proxy = client.CreateProxy<IOrdersContract>();
+        Ensure(proxy.Service is OrdersProxy && transport.ConnectCount == 1,
+            "local proxy creation must preserve the original connection");
+        await EnsureNoBindOrRequestAsync(transport.Connection);
     }
 
     [Test]
@@ -93,13 +93,18 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     }
 
     [Test]
-    public async Task ManifestRefreshShouldRevalidateFutureGetWithoutRebindingHeldProxy()
+    public async Task ManifestRefreshChangesPreparationWithoutReplacingTheLocalHandle()
     {
         var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);
         await using var client = CreateClient(transport);
         await client.ConnectAsync();
-        var heldProxy = client.Get<IOrdersContract>();
+        var heldProxy = client.CreateProxy<IOrdersContract>();
+        var service = heldProxy.Service;
         var replacementHash = new RpcHash128(0x4142434445464748UL, 0x5152535455565758UL);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var refreshed = client.WaitForRemoteContractAsync(OrdersContractId, replacementHash,
+            Manifest.Instance.RpcAssemblyHash, timeout.Token).AsTask();
+        Ensure(!refreshed.IsCompleted, "the observed previous hash must not satisfy the new observation");
 
         using var payload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
@@ -112,29 +117,27 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
             ProtocolV2FrameType.ContractManifest,
             ProtocolV2FrameFlags.None,
             0,
-            payload.WrittenMemory);
+            payload.WrittenMemory, timeout.Token);
+        await refreshed;
 
-        SharpLinkException? mismatch = null;
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        while (!timeout.IsCancellationRequested)
-        {
-            try
-            {
-                _ = client.Get<IOrdersContract>();
-            }
-            catch (SharpLinkException exception)
-            {
-                mismatch = exception;
-                break;
-            }
-            await Task.Delay(10, timeout.Token).ConfigureAwait(false);
-        }
-
-        Ensure(heldProxy is OrdersProxy,
-            "a manifest refresh must not replace a proxy reference already returned to user code");
-        Ensure(mismatch is { Code: SharpLinkErrorCode.FailedPrecondition } &&
+        Ensure(ReferenceEquals(service, heldProxy.Service) &&
+               client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
+            "manifest refresh does not replace the held service or forbid a new local handle");
+        var mismatch = await CaptureExceptionAsync(heldProxy.PrepareAsync(TimeSpan.FromSeconds(2)).AsTask());
+        Ensure(mismatch is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition } &&
                mismatch.Message.Contains(replacementHash.ToString(), StringComparison.Ordinal),
-            "future Get<T>() must validate against the latest remote manifest generation");
+            "preparation must reject the latest incompatible remote manifest, even for an older local handle");
+        await EnsureNoBindOrRequestAsync(transport.Connection);
+    }
+
+    [Test]
+    public void SingleClientExposesOnlyPreparedProxyAndContractFactories()
+    {
+        Ensure(typeof(ISharpLinkClient).GetMethod("Get") is null &&
+               typeof(SharpLinkClient).GetMethod("Get") is null &&
+               typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.CreateProxy)) is not null &&
+               typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.CreateContractChannel)) is not null,
+            "the client factory surface must not contain the legacy generated proxy path");
     }
 
     private static TestClientTransportFactory CreateTransport(RpcHash128 remoteHash)
@@ -156,7 +159,7 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
         while (await connection.TryReadNextSentFrameAsync(TimeSpan.FromMilliseconds(50)) is { } frame)
         {
             Ensure(frame.Header.Type != NStudyWire.Bind && !NStudyWire.IsRequestFrame(frame.Header.Type),
-                "a known contract mismatch must not write Bind or any RPC Request");
+                "observing readiness or rejecting a known mismatch must not write Bind or any RPC Request");
         }
     }
 
