@@ -46,9 +46,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
             var session = NStudyClientSession(client);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
             var (retired, a2) = await ExerciseNStudyPreparedOutputAsync(server, client, service, directory, path, newAssembly,
-                clock, observer, trace, aCid, bBinding, memory, ct).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                clock, observer, trace, aCid, b, bBinding, memory, ct).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             for (var i = 0; retired.IsAlive && i < 24; i++)
             {
                 GC.Collect();
@@ -60,7 +60,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(!retired.IsAlive && ReferenceEquals(NStudyClientSession(client), session) &&
                    session.CaptureNStudyBinding(aCid) == a2.BindingId &&
                    session.CaptureNStudyBinding(bCid) == bBinding.BindingId &&
-                   await client.Get<IShutdownCleanupProbe>().TouchAsync(4, ct) == 104,
+                   await b.TouchAsync(4, ct) == 104,
                 "the old local output context collects without invalidating the current two routes");
             trace.Record("OldOutputContextCollectsWhileCurrentSessionContinues", a2, bBinding);
         }
@@ -75,7 +75,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static async Task<(WeakReference Old, NStudyAck Ready)> ExerciseNStudyPreparedOutputAsync(
         SharpLinkServer server, SharpLinkClient client, Type service, string directory, string path, Assembly newAssembly,
         SharpLink.UnitTests.Runtime.ManualTimeProvider clock, NStudyPreparedOutputServerObserver observer,
-        NStudyTrace trace, long aCid, NStudyAck bBinding, string? memory, CancellationToken ct)
+        NStudyTrace trace, long aCid, IShutdownCleanupProbe b, NStudyAck bBinding, string? memory, CancellationToken ct)
     {
         var loader = new PluginLoadContext("prepared-output-client-r1", directory);
         var retired = new WeakReference(loader);
@@ -105,8 +105,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var connection = NStudyClientConnection(client);
             var session = connection.Session;
             var peer = NStudyServerConnection(server);
-            var b = client.Get<IShutdownCleanupProbe>();
-            Ensure(a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+            Ensure(a1.Authority == bBinding.Authority && a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "the prepared stream runs on the expected authenticated transport");

@@ -58,10 +58,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(server.RegisterAssembly(serverAssembly).Succeeded, "server publishes its real delivery service");
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
             var session = NStudyClientSession(client);
             var retired = await ExerciseNStudyPreparedDeliveryAsync(server, client, service, directory, path, newAssembly,
-                observer, trace, aCid, bCid, bBinding, memory, streamWindow, connectionWindow, ct)
+                observer, trace, aCid, bCid, b, bBinding, memory, streamWindow, connectionWindow, ct)
                 .ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             for (var i = 0; retired.OldContext.IsAlive && i < 24; i++)
             {
@@ -72,7 +72,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     await Task.Delay(25, ct);
             }
             Ensure(!retired.OldContext.IsAlive && ReferenceEquals(NStudyClientSession(client), session) &&
-                   await client.Get<IShutdownCleanupProbe>().TouchAsync(4, ct) == 104 &&
+                   await b.TouchAsync(4, ct) == 104 &&
                    session.CaptureNStudyBinding(aCid) == retired.Ready.BindingId &&
                    session.CaptureNStudyBinding(bCid) == bBinding.BindingId,
                 "the replaced local context collects without dropping either current site on this Session");
@@ -88,7 +88,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<(WeakReference OldContext, NStudyAck Ready)> ExerciseNStudyPreparedDeliveryAsync(
         SharpLinkServer server, SharpLinkClient client, Type service, string directory, string path, Assembly newAssembly,
-        NStudyUnarySiteObserver observer, NStudyTrace trace, long aCid, long bCid, NStudyAck bBinding,
+        NStudyUnarySiteObserver observer, NStudyTrace trace, long aCid, long bCid, IShutdownCleanupProbe b, NStudyAck bBinding,
         string? memory, int streamWindow, int connectionWindow, CancellationToken ct)
     {
         var oldLoader = new PluginLoadContext("delivery-client-r1", directory);
@@ -108,12 +108,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var connection = NStudyClientConnection(client);
             var session = connection.Session;
             var peer = NStudyServerConnection(server);
-            var b = client.Get<IShutdownCleanupProbe>();
             var bindSequence = session.NStudyBindOperationForDiagnostics;
             var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
             var flow = ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(session)!).FlowController!;
-            Ensure(a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+            Ensure(a1.Authority == bBinding.Authority && a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader) &&
                    session.NegotiatedOptions?.StreamReceiveWindowBytes == streamWindow &&

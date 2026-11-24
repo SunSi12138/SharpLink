@@ -47,7 +47,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         {
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, manifest.RpcAssemblyHash, default, ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
             var session = NStudyClientSession(client);
             var peer = NStudyServerConnection(server);
             var before = session.NStudyBindOperationForDiagnostics;
@@ -57,7 +57,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    session.NStudyBindOperationForDiagnostics == before + 1 &&
                    session.CaptureNStudyBinding(contract.ContractId) == ack.BindingId &&
                    peer.NStudyBindings.Snapshot() == (2, 0, 0) &&
-                   peer.NStudyPhysicalIdentity == ack.Authority.PhysicalSession &&
+                   ack.Authority == bBinding.Authority && peer.NStudyPhysicalIdentity == ack.Authority.PhysicalSession &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "the genuine Binder received one server Ack and only local ready publication is paused");
@@ -84,7 +84,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.DeadlineExceeded) { }
             Ensure(!survivor.IsCompleted && client.NStudyPrepareWaitersForDiagnostics == 1 &&
                    session.NStudyBindOperationForDiagnostics == before + 1 && observer.Calls.IsEmpty &&
-                   await client.Get<IShutdownCleanupProbe>().TouchAsync(2, ct) == 102,
+                   await b.TouchAsync(2, ct) == 102,
                 "ordinary cancellation and timeout release only those waiters; original Session and B remain available");
             trace.Record("CallerCancellationAndTimeoutLeaveSharedOperationAlive", ack, bBinding);
 

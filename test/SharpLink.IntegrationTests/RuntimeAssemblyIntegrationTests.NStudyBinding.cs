@@ -35,7 +35,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         else
             builder.UseSharedMemory(memoryName);
         var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
-        var retiredAlc = await GiveNStudyServiceAReplacementAsync(
+        var (retiredAlc, firstSibling, secondSibling) = await GiveNStudyServiceAReplacementAsync(
             builder, src, contracts, identity, port, memoryName, trace, ct);
         // Keep both active peers running until old implementation ALC collection is observed.
         await using (retiredAlc)
@@ -49,8 +49,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     await Task.Delay(25, ct);
             }
             Ensure(!retiredAlc.OldContext.IsAlive, "retirement does not pin the old implementation");
-            Ensure(await retiredAlc.First.Get<IShutdownCleanupProbe>().TouchAsync(8, ct) == 108 &&
-                   await retiredAlc.Second.Get<IShutdownCleanupProbe>().TouchAsync(8, ct) == 108,
+            Ensure(await firstSibling.TouchAsync(8, ct) == 108 &&
+                   await secondSibling.TouchAsync(8, ct) == 108,
                 "original Sessions keep serving B after old implementation collects");
             trace.Record("OldAlcCollectedWhileBothConnectionsServeB");
         }
@@ -66,7 +66,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .ReplaceService<IShutdownCleanupProbe>(new ShutdownCleanupProbe());
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<NStudyLivePeers> GiveNStudyServiceAReplacementAsync(
+    private static async Task<(NStudyLivePeers Peers, IShutdownCleanupProbe FirstSibling, IShutdownCleanupProbe SecondSibling)>
+        GiveNStudyServiceAReplacementAsync(
         SharpLinkServerBuilder builder, IGeneratedManifestSource src,
         PluginBundle contracts, NStudyContractInputs identity, int port, string? memoryName,
         NStudyTrace trace, CancellationToken ct)
@@ -103,10 +104,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 : s1.Input is SharedMemoryPipeReader && s2.Input is SharedMemoryPipeReader),
                 "two independently connected physical peers use the selected real transport");
             var original = server.ReadNStudyTarget(oldAssembly, identity.A);
-            var b1 = await first.PrepareNStudyContractAsync(identity.B, identity.BHash, default, ct);
-            var b2 = await second.PrepareNStudyContractAsync(identity.B, identity.BHash, default, ct);
-            var a1 = await first.PrepareNStudyContractAsync(identity.A, identity.AHash, original, ct);
-            var a2 = await second.PrepareNStudyContractAsync(identity.A, identity.AHash, original, ct);
+            var (firstSibling, b1) = await PrepareNStudySiblingAsync(first, identity.B, ct);
+            var (secondSibling, b2) = await PrepareNStudySiblingAsync(second, identity.B, ct);
+            var firstSite = CreateNStudyExactGenerated(first, contracts.ContractType);
+            var secondSite = CreateNStudyExactGenerated(second, contracts.ContractType);
+            var proxy1 = firstSite.Service;
+            var proxy2 = secondSite.Service;
+            var timeout = TimeSpan.FromSeconds(5);
+            var a1 = await firstSite.PrepareExact(new(b1.Authority, identity.A, identity.AHash, original), timeout, ct);
+            var a2 = await secondSite.PrepareExact(new(b2.Authority, identity.A, identity.AHash, original), timeout, ct);
             var peers = ((ServerConnectionRegistry)typeof(SharpLinkServer).GetField("_connectionRegistry",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!).SnapshotActive();
             Ensure(peers.Length == 2 && peers.All(p => p.AuthenticationContext?.Subject == "n-validation") &&
@@ -115,13 +121,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    a1.Authority.PhysicalSession != a2.Authority.PhysicalSession &&
                    a1.Authority.Server == a2.Authority.Server && a1.Authority.RegistryEpoch == a2.Authority.RegistryEpoch &&
                    a1.Authority == b1.Authority && a2.Authority == b2.Authority &&
+                   b1.Hash == identity.BHash && b2.Hash == identity.BHash &&
                    a1.Target == original && a2.Target == original &&
                    a1.BindingId == a2.BindingId && b1.BindingId == b2.BindingId &&
                    a1.BindingId != b1.BindingId && s1.CaptureNStudyBinding(identity.A) == a1.BindingId &&
                    s2.CaptureNStudyBinding(identity.A) == a2.BindingId,
                 "matching slot numbers are installed independently and in their actual Session authority");
-            var proxy1 = GetProxy(first, contracts.ContractType);
-            var proxy2 = GetProxy(second, contracts.ContractType);
             Ensure(await InvokeValueTaskAsync<int>(proxy1, contracts.ContractType, "UnaryAsync", 6, ct) == 7 &&
                    await InvokeValueTaskAsync<int>(proxy2, contracts.ContractType, "UnaryAsync", 8, ct) == 9,
                 "actual generated Unary uses both initial binds");
@@ -152,7 +157,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "Replace proactively removes A on both peers, preserving B and the active R1 owner");
             trace.Record("ServerReplaceInvalidatesOnlyAOnBothSessions", a1, a2);
 
-            var next1 = await first.PrepareNStudyContractAsync(identity.A, identity.AHash, next, ct);
+            var firstCut = s1.NStudyBindOperationForDiagnostics;
+            var secondCut = s2.NStudyBindOperationForDiagnostics;
+            Ensure(await firstSibling.TouchAsync(1, ct) == 101 && await secondSibling.TouchAsync(1, ct) == 101 &&
+                   s1.NStudyBindOperationForDiagnostics == firstCut && s2.NStudyBindOperationForDiagnostics == secondCut &&
+                   s1.NStudyPreparedCount == 1 && s2.NStudyPreparedCount == 1 && !originalCall.IsCompleted,
+                "both prepared B receivers work during A's cut without a new Bind or reconnect");
+            trace.Record("BothPreparedSiblingsContinueBeforeEitherR2Bind", b1, b2);
+
+            var next1 = await firstSite.PrepareExact(new(a1.Authority, identity.A, identity.AHash, next), timeout, ct);
             Ensure(next1.Authority == a1.Authority && next1.Target == next && next1.BindingId != a1.BindingId &&
                    NStudyWire.SlotIndex(next1.BindingId) != NStudyWire.SlotIndex(a1.BindingId) &&
                    s2.NStudyPreparedCount == 1 &&
@@ -160,13 +173,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    s2.CaptureNStudyBinding(identity.B) == b2.BindingId,
                 "the busy peer binds R2 separately without reusing the slot still owned by R1");
             Ensure(await InvokeValueTaskAsync<int>(proxy1, contracts.ContractType, "UnaryAsync", 10, ct) == 11 &&
-                   await first.Get<IShutdownCleanupProbe>().TouchAsync(2, ct) == 102 &&
-                   await second.Get<IShutdownCleanupProbe>().TouchAsync(2, ct) == 102 &&
+                   await firstSibling.TouchAsync(2, ct) == 102 &&
+                   await secondSibling.TouchAsync(2, ct) == 102 &&
                    NStudyCount(newType, "Created") == 1 && !originalCall.IsCompleted,
                 "first session and unrelated B proceed while the original service is still live");
             trace.Record("FirstSessionUsesR2BeforeTheSecondBinds", next1);
 
-            var next2 = await second.PrepareNStudyContractAsync(identity.A, identity.AHash, next, ct);
+            var next2 = await secondSite.PrepareExact(new(a2.Authority, identity.A, identity.AHash, next), timeout, ct);
             Ensure(next2.Authority == a2.Authority && next2.Target == next &&
                    NStudyWire.SlotIndex(next2.BindingId) == NStudyWire.SlotIndex(a2.BindingId) &&
                    NStudyWire.Incarnation(next2.BindingId) == NStudyWire.Incarnation(a2.BindingId) + 1,
@@ -196,12 +209,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    s1.CaptureNStudyBinding(identity.B) == b1.BindingId &&
                    s2.CaptureNStudyBinding(identity.B) == b2.BindingId &&
                    ReferenceEquals(s1, NStudyClientSession(first)) && ReferenceEquals(s2, NStudyClientSession(second)) &&
-                   await first.Get<IShutdownCleanupProbe>().TouchAsync(3, ct) == 103 &&
-                   await second.Get<IShutdownCleanupProbe>().TouchAsync(3, ct) == 103,
+                   await firstSibling.TouchAsync(3, ct) == 103 &&
+                   await secondSibling.TouchAsync(3, ct) == 103,
                 "normal Unregister invalidates only R2 before both original Sessions continue serving B");
             trace.Record("ServerUnregisterInvalidatesOnlyR2OnBothSessions", next1, next2);
             transfer = true;
-            return new NStudyLivePeers(server, first, second, newLoader, weak);
+            return (new NStudyLivePeers(server, first, second, newLoader, weak), firstSibling, secondSibling);
         }
         finally
         {
@@ -213,6 +226,31 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 await new NStudyLivePeers(server, first, second, newLoader, weak).DisposeAsync();
         }
     }
+
+    private static async Task<(IShutdownCleanupProbe Service, NStudyAck Ack)> PrepareNStudySiblingAsync(
+        SharpLinkClient client, long contract, CancellationToken ct)
+    {
+        var proxy = client.CreateProxy<IShutdownCleanupProbe>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        return (proxy.Service, NStudyClientSession(client).CaptureNStudyRoute(contract).Acknowledgement);
+    }
+
+    private static NStudyExactGenerated CreateNStudyExactGenerated(SharpLinkClient client, Type contract)
+        => (NStudyExactGenerated)typeof(RuntimeAssemblyIntegrationTests)
+            .GetMethod(nameof(CreateNStudyExactGeneratedTyped), BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(contract).Invoke(null, [client])!;
+
+    private static NStudyExactGenerated CreateNStudyExactGeneratedTyped<T>(SharpLinkClient client) where T : IService
+    {
+        var proxy = client.CreateProxy<T>();
+        // Exact observation is private until there is a public receipt API. It prepares
+        // the same registration cell that the public generated receiver reads.
+        var channel = (SharpLinkClient.NStudyContractSite)client.CreateContractChannel(client.GetLocalContract<T>());
+        return new(proxy.Service, channel.PrepareExactAsync);
+    }
+
+    private sealed record NStudyExactGenerated(object Service,
+        Func<NStudyObservedTarget, TimeSpan, CancellationToken, ValueTask<NStudyAck>> PrepareExact);
 
     private static SharpLinkClient NewNStudyClient(IGeneratedManifestSource source, int port, string? memoryName,
         Action<SharpClientBuilder>? configure = null)
@@ -255,16 +293,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private sealed class NStudyLivePeers(SharpLinkServer server, SharpLinkClient first, SharpLinkClient second,
         SharedContractServiceLoadContext loader, WeakReference oldContext) : IAsyncDisposable
     {
-        internal SharpLinkClient First { get; } = first;
-        internal SharpLinkClient Second { get; } = second;
         internal WeakReference OldContext { get; } = oldContext;
 
         public async ValueTask DisposeAsync()
         {
             try
             {
-                try { await First.DisposeAsync(); }
-                finally { await Second.DisposeAsync(); }
+                try { await first.DisposeAsync(); }
+                finally { await second.DisposeAsync(); }
             }
             finally
             {

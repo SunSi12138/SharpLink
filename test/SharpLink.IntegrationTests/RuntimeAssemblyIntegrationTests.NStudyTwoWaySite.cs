@@ -52,9 +52,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
             var session = NStudyClientSession(client);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
             var (retired, a2) = await ExerciseNStudyPreparedTwoWayAsync(server, client, service, directory, path, newAssembly,
-                observer, trace, aCid, bCid, bBinding, memory, shape, ct).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                observer, trace, aCid, bCid, b, bBinding, memory, shape, ct).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             for (var i = 0; retired.IsAlive && i < 24; i++)
             {
                 GC.Collect();
@@ -65,7 +65,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             }
             Ensure(!retired.IsAlive && ReferenceEquals(NStudyClientSession(client), session) &&
                    session.CaptureNStudyBinding(aCid) == a2.BindingId && session.CaptureNStudyBinding(bCid) == bBinding.BindingId &&
-                   await client.Get<IShutdownCleanupProbe>().TouchAsync(4, ct) == 104,
+                   await b.TouchAsync(4, ct) == 104,
                 "the old client input context collects without closing the current Session or unrelated route");
             trace.Record("ReplacedInputContextCollectsOnSameSession", a2, bBinding);
         }
@@ -79,7 +79,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<(WeakReference Old, NStudyAck Ready)> ExerciseNStudyPreparedTwoWayAsync(
         SharpLinkServer server, SharpLinkClient client, Type service, string directory, string path, Assembly newAssembly,
-        NStudyUnarySiteObserver observer, NStudyTrace trace, long aCid, long bCid, NStudyAck bBinding,
+        NStudyUnarySiteObserver observer, NStudyTrace trace, long aCid, long bCid, IShutdownCleanupProbe b, NStudyAck bBinding,
         string? memory, string shape, CancellationToken ct)
     {
         var loader = new PluginLoadContext("prepared-input-client-r1", directory);
@@ -102,10 +102,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var connection = NStudyClientConnection(client);
             var session = connection.Session;
             var peer = NStudyServerConnection(server);
-            var b = client.Get<IShutdownCleanupProbe>();
             var bindSequence = session.NStudyBindOperationForDiagnostics;
             var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
-            Ensure(a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+            Ensure(a1.Authority == bBinding.Authority && a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memory is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "prepared input uses the actual authenticated data Session");
