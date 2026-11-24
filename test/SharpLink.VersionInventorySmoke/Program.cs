@@ -4,8 +4,13 @@ using SharpLink.Client;
 using SharpLink.Sdk;
 using SharpLink.Server;
 
+if (args is ["coordinate", ("tcp" or "shared-memory"), ("manual" or "automatic" or "cohort"), var plugins])
+{
+    await CoordinationSmoke.RunAsync(args[1], args[2], Path.GetFullPath(plugins));
+    return;
+}
 if (args is not [("tcp" or "shared-memory")])
-    throw new ArgumentException("Use tcp or shared-memory.");
+    throw new ArgumentException("Use <transport> or coordinate <transport> <mode> <plugin-directory>.");
 
 var transport = args[0];
 using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));

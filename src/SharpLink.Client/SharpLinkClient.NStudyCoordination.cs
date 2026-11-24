@@ -4,6 +4,9 @@ internal readonly record struct NStudyClientActivation(NStudyChange Change, NStu
 
 internal sealed partial class SharpLinkClient
 {
+    private readonly record struct NStudyClientOutcome(
+        NStudyChange Change, NStudyClientActivation? Activation, NStudyDeclineReason DeclineReason);
+
     private volatile NStudyCoordinationMode _nStudyVersionCoordinationMode;
     internal NStudyCoordinationMode NStudyVersionCoordinationMode
     {
@@ -19,14 +22,46 @@ internal sealed partial class SharpLinkClient
         NStudyInitiator localChoice,
         Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
         CancellationToken cancellationToken)
+        => (await NegotiateNStudyReplacementCoreAsync(localChoice, approveLocally, null, null, cancellationToken)
+            .ConfigureAwait(false)).Activation;
+
+    internal async ValueTask<SharpLinkClientVersionChangeResult> JoinVersionChangeAsync(
+        RpcLocalContract local, SharpLinkVersionParticipant participant,
+        Func<SharpLinkVersionChange, CancellationToken, ValueTask<bool>>? approveLocally,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(local);
+        cancellationToken.ThrowIfCancellationRequested();
+        var registration = _assemblyRegistry.ResolveNStudyLocalContract(local);
+        if (registration.Module is null)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                "Version coordination requires an installed dynamic contract.");
+        var outcome = await NegotiateNStudyReplacementCoreAsync(
+            NStudyVersionProjection.ToInitiator(participant.Initiator),
+            NStudyVersionProjection.ToApproval(approveLocally), registration, participant.Session, cancellationToken)
+            .ConfigureAwait(false);
+        return new(NStudyVersionProjection.ToChange(outcome.Change),
+            NStudyVersionProjection.ToDeclineReason(outcome.DeclineReason), outcome.Activation?.LocalRegistration);
+    }
+
+    private async Task<NStudyClientOutcome> NegotiateNStudyReplacementCoreAsync(
+        NStudyInitiator localChoice,
+        Func<NStudyChange, CancellationToken, ValueTask<bool>>? approveLocally,
+        ClientProxyRegistration? expectedRegistration, SharpLinkVersionSession? expectedSession,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var ready = Volatile.Read(ref _readyConnections);
-        if (ready.Length != 1)
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A private coordination attempt needs one Ready Session.");
-        var connection = ready[0];
+        var connection = RequireSingleNStudyConnection();
         var session = connection.Session;
-        using var ownership = session.EnterNStudyCoordination(NStudyVersionCoordinationMode, localChoice, approveLocally);
+        var mode = NStudyVersionCoordinationMode;
+        if (expectedSession is { } peer)
+        {
+            if (mode == NStudyCoordinationMode.Disabled)
+                throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Local policy disabled version coordination.");
+            if (!session.HasNStudyAuthority(new(peer.ServerInstanceId, peer.ServerRegistryEpoch, peer.PhysicalSessionId)))
+                throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "Version coordination does not target the current Ready session.");
+        }
+        using var ownership = session.EnterNStudyCoordination(mode, localChoice, approveLocally);
         var clock = _runtimeContext.TimeProvider;
         var controlDeadline = RpcDeadline.Create(NStudyApprovalScheduler.ControlTimeout, clock);
         using var timer = new CancellationTokenSource(controlDeadline.GetRemaining(clock), clock);
@@ -44,7 +79,7 @@ internal sealed partial class SharpLinkClient
                 ownership.MatchesAdmittedOffer(availability.Change))
             {
                 observedChange = availability.Change;
-                return Declined(availability.DeclineReason);
+                return Declined(availability.Change, availability.DeclineReason);
             }
             if (availability.Phase != NStudyPhase.Candidate)
                 throw RpcSession.InvalidNStudy("A version transition must first declare an actual prepared candidate.");
@@ -61,7 +96,7 @@ internal sealed partial class SharpLinkClient
             var prepared = await session.ReadNStudyCoordinationAsync(change, NStudyPhase.Prepare,
                 ct, allowDecline: true).ConfigureAwait(false);
             if (prepared.Phase == NStudyPhase.Declined)
-                return Declined(prepared.DeclineReason);
+                return Declined(change, prepared.DeclineReason);
             // A negotiated Session may finish a paired exchange after the local
             // application switched off approvals. Decline before acquiring assets or freezing R1.
             if (ownership.Mode == NStudyCoordinationMode.Disabled)
@@ -70,6 +105,8 @@ internal sealed partial class SharpLinkClient
                 return await RefuseAsync(change, NStudyDeclineReason.SourceUnavailable).ConfigureAwait(false);
 
             var registration = FindNStudyCompatibleLocalRegistration(change.Contract);
+            if (expectedRegistration is not null && !ReferenceEquals(expectedRegistration, registration))
+                return await RefuseAsync(change, NStudyDeclineReason.LocalAssetMissing).ConfigureAwait(false);
             if (registration?.Module is not { } module ||
                 !module.TryAcquire(stream: false, out var localLease))
                 return await RefuseAsync(change, NStudyDeclineReason.LocalAssetMissing).ConfigureAwait(false);
@@ -100,7 +137,7 @@ internal sealed partial class SharpLinkClient
                 var activated = await session.ReadNStudyCoordinationAsync(change, NStudyPhase.Activated,
                     ct, allowDecline: true).ConfigureAwait(false);
                 if (activated.Phase == NStudyPhase.Declined)
-                    return Declined(activated.DeclineReason);
+                    return Declined(change, activated.DeclineReason);
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The prepared local contract changed before activation.");
                 var binding = await session.PrepareNStudyBindAsync(new(change.Contract, change.Hash, change.Target),
@@ -121,7 +158,7 @@ internal sealed partial class SharpLinkClient
                     Volatile.Write(ref preparation.Ready, new NStudyPreparedSite(new NStudyPreparedRoute(connection, route, binding)));
                 }
                 observation = NStudyVersionNoticeKind.Completed;
-                return new(change, binding, module.NStudyRegistration);
+                return new(change, new(change, binding, module.NStudyRegistration), NStudyDeclineReason.None);
             }
         }
         catch (Exception error)
@@ -147,18 +184,18 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        NStudyClientActivation? Declined(NStudyDeclineReason reason)
+        NStudyClientOutcome Declined(NStudyChange change, NStudyDeclineReason reason)
         {
             observation = NStudyVersionNoticeKind.Declined;
             declineReason = reason;
-            return null;
+            return new(change, null, reason);
         }
 
-        async ValueTask<NStudyClientActivation?> RefuseAsync(NStudyChange change, NStudyDeclineReason reason)
+        async ValueTask<NStudyClientOutcome> RefuseAsync(NStudyChange change, NStudyDeclineReason reason)
         {
             await session.SendNStudyCoordinationAsync(new(NStudyPhase.Declined, change, DeclineReason: reason),
                 ct).ConfigureAwait(false);
-            return Declined(reason);
+            return Declined(change, reason);
         }
     }
 

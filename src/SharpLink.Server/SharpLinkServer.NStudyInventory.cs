@@ -22,19 +22,24 @@ internal sealed partial class SharpLinkServer
         SharpLinkVersionSession peer, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        foreach (var (_, connection) in _connectionRegistry.EnumerateActiveEntries())
-        {
-            if (peer != NStudyInventorySnapshot.ToVersionSession(ReadNStudySessionAuthority(connection)) ||
-                !IsVersionPeerReady(connection))
-                continue;
-
-            var snapshot = await QueryNStudyClientInventoryAsync(connection, cancellationToken).ConfigureAwait(false);
-            if (IsVersionPeerReady(connection))
-                return snapshot.ToVersionInventory(remote: true);
-            break;
-        }
-        throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected version peer is no longer Ready.");
+        var connection = RequireReadyVersionPeer(peer);
+        var snapshot = await QueryNStudyClientInventoryAsync(connection, cancellationToken).ConfigureAwait(false);
+        if (!IsVersionPeerReady(connection))
+            throw VersionPeerUnavailable();
+        return snapshot.ToVersionInventory(remote: true);
     }
+
+    private ServerConnectionState RequireReadyVersionPeer(SharpLinkVersionSession peer)
+    {
+        foreach (var (_, connection) in _connectionRegistry.EnumerateActiveEntries())
+            if (peer == NStudyInventorySnapshot.ToVersionSession(ReadNStudySessionAuthority(connection)) &&
+                IsVersionPeerReady(connection))
+                return connection;
+        throw VersionPeerUnavailable();
+    }
+
+    private static SharpLinkException VersionPeerUnavailable()
+        => new(SharpLinkErrorCode.Unavailable, "The selected version peer is no longer Ready.");
 
     private bool IsVersionPeerReady(ServerConnectionState connection)
         => CurrentState == ServerState.Running && connection.Session.CanAcceptCalls &&
