@@ -67,6 +67,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         try
         {
+            Ensure(await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 1, ct) == 2 &&
+                   NStudyCount(oldType, "Created") == 1 && NStudyCount(oldType, "Disposed") == 0,
+                "an actual R1 instance must exist before measuring whether it is disposed once");
             await RefuseAsync();
             var callbackToken = await entered.Task.WaitAsync(ct);
             Ensure(delivered.TryPeek(out var firstNotice) && firstNotice.Kind == NStudyVersionNoticeKind.Proposed &&
@@ -111,15 +114,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(observed.Length == NStudyVersionObservationQueue.Capacity + 1 &&
                    observed.All(notice => notice.Change != activation.Change) &&
                    observed.Select(notice => notice.Change.Id).SequenceEqual(
-                       observed.Select(notice => notice.Change.Id).Order()) &&
-                   independent.Any(notice => notice.Kind == NStudyVersionNoticeKind.Declined &&
-                       notice.DeclineReason == NStudyDeclineReason.Policy && !notice.LocalPublicationOccurred) &&
-                   recovered.Select(a1.Contract).Target == activation.Binding.Target &&
+                       observed.Select(notice => notice.Change.Id).Order()),
+                "after the observer exception, retained events run in original order; none of the dropped R2 events were delivered");
+            Ensure(independent.Any(notice => notice.Kind == NStudyVersionNoticeKind.Declined &&
+                       notice.DeclineReason == NStudyDeclineReason.Policy && !notice.LocalPublicationOccurred),
+                "the independent observer distinguishes refused changes from committed R2");
+            Ensure(recovered.Select(a1.Contract).Target == activation.Binding.Target &&
                    ReferenceEquals(session, NStudyClientSession(client)) &&
                    await b.TouchAsync(3, ct) == 103 &&
-                   await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 4, ct) == 5 &&
-                   NStudyCount(oldType, "Disposed") == 1 && NStudyCount(newType, "Created") == 1,
-                "actual observer exception is isolated; queued notices run in order and inventory repairs missed events without rollback");
+                   await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 4, ct) == 5,
+                "current inventory repairs the missed event and both routes stay alive after the late exception");
+            Ensure(NStudyCount(oldType, "Disposed") == 1 && NStudyCount(newType, "Created") == 1,
+                "the original instance is disposed once and the committed generation is not recreated");
             trace.Record("LateObserverFaultLeavesCommittedRegistryAndRoutesUnchanged", a1, activation.Binding);
         }
         finally
