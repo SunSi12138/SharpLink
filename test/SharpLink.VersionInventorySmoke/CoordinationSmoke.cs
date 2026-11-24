@@ -93,6 +93,44 @@ internal static partial class CoordinationSmoke
               Count(replacementType, "Created") == 0 && await plugin.Unary(3, ct) == 4,
             "declaring an installed target does not publish the replacement or change routing");
 
+        if (name == "redeploy")
+        {
+            var removed = await client.UnregisterAssemblyAsync(contract, timeout, ct);
+            Check(removed.ReferencesReleased &&
+                  client.GetLocalVersionInventory().Registrations.All(r => r.ContractId != contractId) &&
+                  await sibling.Service.IncrementAsync(5, ct) == 6,
+                "application intentionally removed the client contract without removing the sole Ready session");
+
+            using var installedLoader = new PluginContext("coordination-redeployed", pluginDirectory);
+            var installed = installedLoader.LoadFromAssemblyPath(Path.Combine(pluginDirectory, "SharpLink.DynamicPlugin.Contracts.dll"));
+            RequireRegistration(client.RegisterAssembly(installed), "explicitly redeployed client contract");
+            var installedType = installed.GetType(contractType.FullName!, throwOnError: true)!;
+            var installedFactory = typeof(CoordinationSmoke)
+                .GetMethod(nameof(PreparePlugin), BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(installedType);
+            var pending = (PluginProbe)installedFactory.Invoke(null, [client, null])!;
+            var installedRegistration = client.GetLocalVersionInventory().Registrations.Single(r => r.ContractId == contractId);
+            Check(installedType != contractType && installedRegistration.RegistrationId != local.RegistrationId &&
+                  installedRegistration.AssemblyHash == local.AssemblyHash,
+                "the application supplied a real compatible new registration");
+            await ExpectUnavailable(() => pending.Unary(8, ct));
+
+            var join = client.JoinVersionChangeAsync(pending.Local, participant, cancellationToken: ct).AsTask();
+            var redeployment = await server.ReplaceAssemblyCoordinatedAsync(original, replacement, contractId,
+                [participant], timeout, cancellationToken: ct);
+            var resumed = await join.WaitAsync(ct);
+            var snapshot = await client.QueryPeerVersionInventoryAsync(ct);
+            Check(resumed.Resumed && resumed.LocalRegistrationId == installedRegistration.RegistrationId &&
+                  resumed.Change.Session == participant.Session && resumed.Change.Current == r1 &&
+                  redeployment.Replacement.Succeeded && redeployment.Replacement.ReferencesReleased &&
+                  redeployment.Peers.Single().PreparedClientRegistrationId == installedRegistration.RegistrationId &&
+                  redeployment.Peers.Single().ActivationSent &&
+                  snapshot.Session == participant.Session && snapshot.Registrations.Contains(resumed.Change.Candidate) &&
+                  await pending.Unary(9, ct) == 10 && await sibling.Service.IncrementAsync(10, ct) == 11,
+                "authorized join establishes the new pin, on the same exact session, for the actually redeployed contract");
+            Console.WriteLine($"VERSION_REDEPLOY_PASS transport={transport} compatible=true same-session=true");
+            return;
+        }
+
         SharpLinkVersionParticipant[] participants = [participant];
         PluginProbe? followerPlugin = null;
         SharpLinkVersionDeclarationResult followerDeclaration = default;

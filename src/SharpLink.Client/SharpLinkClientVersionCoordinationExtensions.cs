@@ -32,6 +32,7 @@ public static class SharpLinkClientVersionCoordinationExtensions
     /// <remarks>
     /// Requires the selected current physical session, its prepared source route, and counterpart server participation.
     /// Resuming that route neither moves a pinned proxy to another connection nor adds a new cohort member.
+    /// On a sole Ready connection, a newly installed compatible contract can establish its first pin.
     /// In Manual mode supply a decision callback; both peers must support deferral.
     /// Defer settles this attempt without approval; retry explicitly for a fresh decision.
     /// Automatic mode still requires this call.

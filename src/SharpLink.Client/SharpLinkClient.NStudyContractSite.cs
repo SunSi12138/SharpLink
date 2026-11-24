@@ -205,19 +205,32 @@ internal sealed partial class SharpLinkClient
         // physical sessions may each resume a member of the published cohort.
         internal bool Coordinating => _coordinating is { Count: > 0 };
 
-        internal bool TryReserveResume(ClientConnection connection, NStudyAck source)
+        internal bool TryReserveResume(ClientConnection connection, NStudyAck source,
+            bool soleReadyConnection, out bool establishPin)
         {
-            if (InFlight is not null || (Ready?.ContainsReceipt(connection, source) != true &&
-                    BalancedReady?.ContainsReceipt(connection, source) != true &&
-                    _priorPinned?.ContainsReceipt(connection, source) != true &&
-                    FindPriorCohortReceipt(connection, source) < 0))
+            establishPin = false;
+            if (InFlight is not null)
                 return false;
+            if (Ready?.ContainsReceipt(connection, source) != true &&
+                BalancedReady?.ContainsReceipt(connection, source) != true &&
+                _priorPinned?.ContainsReceipt(connection, source) != true &&
+                FindPriorCohortReceipt(connection, source) < 0)
+            {
+                // The application can remove an unavailable local contract and
+                // explicitly deploy compatible code before trying again. The sole
+                // negotiated source can establish the new cell's first pin, but
+                // it cannot take over a published pin or seed a balanced cohort.
+                if (!soleReadyConnection || Coordinating || Ready is not null || BalancedReady is not null ||
+                    _priorPinned is not null || _priorCohort is { Count: > 0 })
+                    return false;
+                establishPin = true;
+            }
             return (_coordinating ??= []).Add(connection);
         }
 
-        internal void PublishResume(ClientConnection connection, NStudyAck source, NStudyPreparedRoute resumed)
+        internal void PublishResume(ClientConnection connection, NStudyAck source, NStudyPreparedRoute resumed, bool establishPin)
         {
-            var pinned = Ready?.ResumeReceipt(connection, source, resumed);
+            var pinned = establishPin ? new NStudyPreparedSite(resumed) : Ready?.ResumeReceipt(connection, source, resumed);
             var balanced = BalancedReady?.ResumeReceipt(connection, source, resumed);
             if (Ready is null && _priorPinned?.ContainsReceipt(connection, source) == true)
                 pinned = new(resumed);

@@ -14,7 +14,7 @@ if (args is ["multi-ready", ("tcp" or "shared-memory"), ("approve" or "defer" or
     await CoordinationSmoke.RunMultiReadyAsync(args[1], args[2], Path.GetFullPath(multiPlugins));
     return;
 }
-if (args is ["coordinate", ("tcp" or "shared-memory"), ("manual" or "automatic" or "cohort" or "follower-defer"), var plugins])
+if (args is ["coordinate", ("tcp" or "shared-memory"), ("manual" or "automatic" or "cohort" or "follower-defer" or "redeploy"), var plugins])
 {
     await CoordinationSmoke.RunAsync(args[1], args[2], Path.GetFullPath(plugins));
     return;

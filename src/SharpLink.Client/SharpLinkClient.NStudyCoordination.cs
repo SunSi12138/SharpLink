@@ -120,9 +120,12 @@ internal sealed partial class SharpLinkClient
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     return await RefuseAsync(change, NStudyDeclineReason.LocalAssetMissing).ConfigureAwait(false);
                 var preparation = registration.NStudyPreparation.Get();
+                var currentConnections = CaptureNStudyReadyConnections();
+                var soleReadyConnection = currentConnections.Length == 1 && ReferenceEquals(currentConnections[0], connection);
+                bool establishPin;
                 lock (preparation.Gate)
                 {
-                    if (preparation.TryReserveResume(connection, sourceReceipt))
+                    if (preparation.TryReserveResume(connection, sourceReceipt, soleReadyConnection, out establishPin))
                         reserved = preparation;
                 }
                 if (reserved is null)
@@ -149,7 +152,7 @@ internal sealed partial class SharpLinkClient
                         !IsNStudyPreparationConnectionCurrent(connection) ||
                         route.Acknowledgement != binding || !route.IsOpenOn(session))
                         throw NStudyPreparedSite.Unavailable();
-                    preparation.PublishResume(connection, sourceReceipt, new(connection, route, binding));
+                    preparation.PublishResume(connection, sourceReceipt, new(connection, route, binding), establishPin);
                 }
                 observation = NStudyVersionNoticeKind.Completed;
                 return new(change, new(change, binding, module.NStudyRegistration), NStudyDeclineReason.None);
