@@ -282,7 +282,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private static async Task WithNStudyCoordinationPeersAsync(string transport,
         NStudyCoordinationMode mode, bool twoPeers, Func<NStudyCoordinationFixture, NStudyTrace, CancellationToken, Task> run,
-        Func<IClientTransportFactory, IClientTransportFactory>? decorateTransport = null)
+        Func<IClientTransportFactory, IClientTransportFactory>? decorateTransport = null,
+        Action<SharpClientBuilder>? configureClient = null, Action<SharpLinkServerBuilder>? configureServer = null)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -297,6 +298,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var aCid = manifest!.Contracts.Single(c => c.ContractType == contracts.ContractType).ContractId;
         await using var provider = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
         var builder = NewNStudyServer(source, provider);
+        configureServer?.Invoke(builder);
         string? memoryName = transport == "shared-memory" ? $"sharplink-n-peers-{Guid.NewGuid():N}" : null;
         if (memoryName is null)
             builder.UseTcp(0, IPAddress.Loopback);
@@ -354,10 +356,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         SharpLinkClient CreateClient()
         {
-            var client = NewNStudyClient(source, port, memoryName,
-                decorateTransport is null ? null :
-                    builder => builder.UseHeartbeat(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2)),
-                decorateTransport);
+            var client = NewNStudyClient(source, port, memoryName, builder =>
+            {
+                if (decorateTransport is not null)
+                    builder.UseHeartbeat(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2));
+                configureClient?.Invoke(builder);
+            }, decorateTransport);
             client.NStudyVersionCoordinationMode = mode;
             return client;
         }

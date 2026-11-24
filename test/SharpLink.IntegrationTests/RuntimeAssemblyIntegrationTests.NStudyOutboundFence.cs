@@ -131,11 +131,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private sealed class NStudyOutboundProbe
     {
         private long _blockingBinding;
+        private int _recording;
+        internal bool IsRecording => Volatile.Read(ref _recording) != 0;
         internal long BlockingBinding => Volatile.Read(ref _blockingBinding);
         internal TaskCompletionSource FlushEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ContinueFlush { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal ConcurrentQueue<NStudyWriterFrame> Flushed { get; } = new();
-        internal void Arm(long token) => Volatile.Write(ref _blockingBinding, token);
+        internal void Arm(long token)
+        {
+            Volatile.Write(ref _blockingBinding, token);
+            StartRecording();
+        }
+
+        internal void StartRecording() => Volatile.Write(ref _recording, 1);
         internal void Release() => ContinueFlush.TrySetResult();
     }
 
@@ -175,7 +183,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         public override void Advance(int bytes)
         {
-            if (probe.BlockingBinding != 0)
+            if (probe.IsRecording)
             {
                 var buffer = new ReadOnlySequence<byte>(_writeBuffer[..bytes]);
                 while (!buffer.IsEmpty)
@@ -184,7 +192,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                         "the real send pump supplies complete frames for this fixture");
                     var binding = 0L;
                     NStudyCoordinationMessage? control = null;
-                    if (header.Type == ProtocolV2FrameType.Request)
+                    if (header.Type == ProtocolV2FrameType.Request &&
+                        !header.Flags.HasFlag(ProtocolV2FrameFlags.Compressed))
                         binding = BinaryPrimitives.ReadInt64LittleEndian(payload.FirstSpan);
                     else if (header.Type == NStudyWire.Coordination)
                         control = NStudyWire.ReadCoordination(header.RequestId, payload);
