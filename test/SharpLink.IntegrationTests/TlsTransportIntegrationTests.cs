@@ -149,13 +149,8 @@ public class TlsTransportIntegrationTests
         missingCertificateOptions.LocalCertificateSelectionCallback = static (_, _, _, _, _) => null;
         await using (var missingCertificateClient = CreateClient(server.Port, missingCertificateOptions))
         {
-            await EnsureTlsFailure(
-                async () =>
-                {
-                    await missingCertificateClient.ConnectAsync();
-                    _ = await missingCertificateClient.Get<ITlsIntegrationService>().AddAsync(1, 1);
-                },
-                "missing mutual TLS certificate");
+            await EnsureTlsFailure(() => missingCertificateClient.ConnectAsync().AsTask(),
+                "missing mutual TLS certificate must fail before RPC preparation");
         }
 
         var clientOptions = CreateClientOptions("localhost");
@@ -163,7 +158,8 @@ public class TlsTransportIntegrationTests
         clientOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(2, 3) == 5, "mutual TLS RPC");
+        var service = await client.PrepareTestServiceAsync<ITlsIntegrationService>();
+        Ensure(await service.AddAsync(2, 3) == 5, "mutual TLS RPC");
     }
 
     [Test]
@@ -268,10 +264,13 @@ public class TlsTransportIntegrationTests
 
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(5, 6) == 11, "static TLS RPC");
+        var proxy = client.CreateProxy<ITlsIntegrationService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(first.HasPreparedPeer && second.HasPreparedPeer, "both TLS endpoint authorities must prepare on their own Sessions");
+        Ensure(await proxy.Service.AddAsync(5, 6) == 11, "static TLS RPC");
         await first.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(7, 8) == 15, "remaining static TLS endpoint");
+        Ensure(await proxy.Service.AddAsync(7, 8) == 15, "remaining static TLS endpoint");
     }
 
     private static ISharpLinkClient CreateClient(int port, SslClientAuthenticationOptions options)
@@ -482,6 +481,8 @@ public class TlsTransportIntegrationTests
     {
         private int _stopped;
         public int Port { get; } = port;
+        public bool HasPreparedPeer => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)server)
+            .Values.Single().NStudyBindings.Snapshot() == (1, 0, 0);
 
         public async Task StopAsync()
         {

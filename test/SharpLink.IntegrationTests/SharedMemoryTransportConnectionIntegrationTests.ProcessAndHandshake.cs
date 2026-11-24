@@ -398,8 +398,12 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
             await Task.WhenAll(
                 firstClient.ConnectAsync(serverCts.Token).AsTask(),
                 secondClient.ConnectAsync(serverCts.Token).AsTask());
-            var firstService = firstClient.Get<IConnectionBehaviorService>();
-            var secondService = secondClient.Get<IConnectionBehaviorService>();
+            var firstService = await firstClient.PrepareTestServiceAsync<IConnectionBehaviorService>();
+            var secondService = await secondClient.PrepareTestServiceAsync<IConnectionBehaviorService>();
+            var peers = ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)server).Values.ToArray();
+            Ensure(peers.Length == 2 && peers.Select(static peer => peer.NStudyPhysicalIdentity).Distinct().Count() == 2 &&
+                   peers.All(static peer => peer.NStudyBindings.Snapshot() == (1, 0, 0)),
+                "each authenticated shared-memory connection must own its own binding");
             var calls = new Task<string>[200];
             for (var index = 0; index < calls.Length; index += 2)
             {

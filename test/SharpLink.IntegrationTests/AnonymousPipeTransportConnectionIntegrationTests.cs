@@ -6,7 +6,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
     public async Task AnonymousPipeConnectAndBasicRpcShouldWork()
     {
         await using var harness = await AnonymousPipeHarness.CreateAsync();
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = await harness.Client.PrepareTestServiceAsync<IConnectionBehaviorService>();
 
         var value = await svc.PingAsync(13);
         Ensure(value == 14, "anonymous pipe ping");
@@ -16,11 +16,12 @@ public class AnonymousPipeTransportConnectionIntegrationTests
     public async Task AnonymousPipeServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await AnonymousPipeHarness.CreateAsync();
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = await harness.Client.PrepareTestServiceAsync<IConnectionBehaviorService>();
         Ensure(await svc.PingAsync(1) == 2, "anonymous pipe warmup ping");
 
+        await harness.WaitForActiveCallsAsync(0);
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.WaitForActiveCallsAsync(1);
         await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "anonymous pipe pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -30,11 +31,12 @@ public class AnonymousPipeTransportConnectionIntegrationTests
     public async Task AnonymousPipeClientDisposeShouldFailFastPendingCall()
     {
         await using var harness = await AnonymousPipeHarness.CreateAsync();
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = await harness.Client.PrepareTestServiceAsync<IConnectionBehaviorService>();
         Ensure(await svc.PingAsync(2) == 3, "anonymous pipe warmup ping");
 
+        await harness.WaitForActiveCallsAsync(0);
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.WaitForActiveCallsAsync(1);
         await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "anonymous pipe pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -118,6 +120,13 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             await client.ConnectAsync(cts.Token);
 
             return new AnonymousPipeHarness(server, serverTask, cts, client);
+        }
+
+        internal async Task WaitForActiveCallsAsync(int count)
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (ServerCallAdmissionDiagnostics.ActiveCallCount(_server) != count)
+                await Task.Delay(10, deadline.Token);
         }
 
         public async ValueTask DisposeServerOnlyAsync()
