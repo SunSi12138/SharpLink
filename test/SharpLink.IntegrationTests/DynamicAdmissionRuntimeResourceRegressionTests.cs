@@ -14,6 +14,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
     {
         TestService.ResetNotify();
         await using var harness = await RunningHarness.CreateAsync();
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var publicServer = (ISharpLinkServer)harness.Server;
         publicServer.EnableAdmissionControl(options =>
         {
@@ -31,7 +32,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
 
         try
         {
-            await harness.ClientA.Get<ITestService>().NotifyAsync("runtime-enabled-oneway");
+            await service.NotifyAsync("runtime-enabled-oneway");
             await WaitUntilAsync(() => program.Controller.QueuedCalls == 1,
                 "runtime-enabled one-way request must queue under the configured policy");
             Ensure(!TestService.WaitForNotifyAsync().IsCompleted,
@@ -74,8 +75,9 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             clientRuntimeConfigure: options => options.Compression.Providers.Add(
                 new TestCompressionProvider()));
         var publicServer = (ISharpLinkServer)harness.Server;
-        var blocker = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(1, 2, CancellationToken.None).AsTask();
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.ClientB.PrepareTestServiceAsync<ICompressionService>();
+        var blocker = unary.BlockingAddAsync(1, 2, CancellationToken.None).AsTask();
 
         try
         {
@@ -85,7 +87,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             var payload = Enumerable.Repeat((byte)0x51, 32 * 1024).ToArray();
 
             var failure = await CaptureFailureAsync(
-                harness.ClientB.Get<ICompressionService>().EchoBytesAsync(payload).AsTask());
+                compression.EchoBytesAsync(payload).AsTask());
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "runtime-disabled admission must not bypass ServerResourceGovernor call capacity");
             Ensure(serverProvider.DecompressCount == decompressionsBeforeRejectedRequest,
@@ -99,8 +101,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(5)) == 3,
                 "capacity owner must complete normally");
 
-            var response = await harness.ClientB.Get<ICompressionService>()
-                .EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            var response = await compression.EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(response.SequenceEqual(payload),
                 "controlled capacity rejection must leave the connection reusable");
             Ensure(serverProvider.DecompressCount == decompressionsBeforeRejectedRequest + 1,
@@ -122,6 +123,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
     public async Task PreAdmissionStreamAccountingShouldRemainCorrectAcrossRuntimeDisable()
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
         await using var harness = await RunningHarness.CreateAsync(
             serverRuntimeConfigure: options =>
             {
@@ -135,21 +137,24 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
                 options.MaxQueuedCalls = 2;
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
+                options.QueueOneWayCalls = true;
             });
         var publicServer = (ISharpLinkServer)harness.Server;
         var original = harness.Server.CurrentAdmissionProgramForTests
             ?? throw new Exception("stream regression requires an initially enabled generation");
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
-        Task<int>? queued = null;
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var recovery = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
+        var oneWay = await harness.ClientB.PrepareTestServiceAsync<ICompressionService>();
+        var active = unary.BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
+        Task? queued = null;
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = harness.ClientB.Get<ICompressionService>()
-                .UploadBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            // OneWay still sends input before admission. Two-way uploads wait for RequestAccepted.
+            queued = oneWay.NotifyStreamBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2 &&
                       original.Kernel.QueuedBytes > 0,
@@ -170,8 +175,9 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
             Ensure(await active.WaitAsync(TimeSpan.FromSeconds(5)) == 7,
                 "old active request must complete after runtime disable");
             producerRelease.TrySetResult();
-            Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(5)) == StreamItemBytes * 2,
-                "queued old-generation stream must replay and complete after runtime disable");
+            await queued.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(5)) == StreamItemBytes * 2,
+                "the actual queued OneWay handler replays both items after runtime disable");
 
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics == 0 &&
@@ -179,7 +185,7 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
                 "stream and admission ownership plus retired generation must drain to zero");
             Ensure(original.ReclaimCount == 1 && original.DuplicateReleaseAttempts == 0,
                 "queued stream generation must reclaim exactly once without release underflow");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await recovery.AddAsync(20, 22) == 42,
                 "queued-stream transition must leave the connection reusable");
         }
         finally

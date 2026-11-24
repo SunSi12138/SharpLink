@@ -13,20 +13,21 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         PreAdmissionStreamActivationRaceService.Reset();
         TestService.ResetBlockingAdd();
         await using var harness = await RaceHarness.CreateAsync();
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var recovery = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
+        var stream = await harness.ClientB.PrepareTestServiceAsync<IPreAdmissionStreamActivationRaceService>();
         var overflowRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var activationEntered = new TaskCompletionSource<ServerCallCancellationState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var activationRelease = new ManualResetEventSlim();
         Task? target = null;
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
+        var active = unary.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
-                .NotifyAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
+            target = stream.NotifyAsync(TwoItemsAsync(overflowRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > 0,
                 "one-way stream is physically buffered while admission waits");
@@ -58,7 +59,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
             await Task.Delay(50);
             Ensure(PreAdmissionStreamActivationRaceService.OneWayInvocations == 0,
                 "one-way user code must not run after stream-budget terminal wins");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await recovery.AddAsync(20, 22) == 42,
                 "one-way race leaves the connection usable");
         }
         finally
@@ -75,28 +76,28 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task TwoWayStreamBudgetCancellationAfterAdmissionShouldKeepStableResourceReason()
+    public async Task TwoWayProducerShouldWaitForActivationAndRequestAccepted()
     {
         PreAdmissionStreamActivationRaceService.Reset();
         TestService.ResetBlockingAdd();
         await using var harness = await RaceHarness.CreateAsync();
-        var overflowRelease = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var recovery = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
+        var stream = await harness.ClientB.PrepareTestServiceAsync<IPreAdmissionStreamActivationRaceService>();
+        var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var activationEntered = new TaskCompletionSource<ServerCallCancellationState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var activationRelease = new ManualResetEventSlim();
         Task<int>? target = null;
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
+        var active = unary.BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
-                .UploadAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
-            await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes > 0,
-                "two-way stream is physically buffered while admission waits");
+            target = stream.UploadAsync(TwoItemsAsync(Task.CompletedTask, () => producerStarted.TrySetResult())).AsTask();
+            await WaitUntilAsync(() => harness.QueuedCalls == 1, "the two-way head is actually queued");
+            Ensure(!producerStarted.Task.IsCompleted && harness.PreAdmissionStreamBytes == 0,
+                "waiting for admission does not start the producer or buffer data");
 
             ServerCallCancellationState.BeforeRequestActivationForTests = state =>
             {
@@ -108,35 +109,22 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
             Ensure(await active.WaitAsync(TimeSpan.FromSeconds(5)) == 7,
                 "active admission owner completes before target activation");
             var callState = await activationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Ensure(callState.Reason == ServerCallCancellationReason.None,
-                "two-way admission must be acquired before the forced stream-budget race");
-
-            overflowRelease.TrySetResult();
-            await WaitUntilAsync(
-                () => callState.Reason ==
-                    ServerCallCancellationReason.PreAdmissionStreamResourceExhausted,
-                "stream-budget cancellation wins before two-way activation");
+            Ensure(callState.Reason == ServerCallCancellationReason.None && !target.IsCompleted &&
+                   !producerStarted.Task.IsCompleted && harness.PreAdmissionStreamBytes == 0 &&
+                   PreAdmissionStreamActivationRaceService.TwoWayInvocations == 0,
+                "a permit alone cannot start a producer while activation has not installed the routes");
 
             activationRelease.Set();
-            var failure = await CaptureFailureAsync(target);
-            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
-                   exhausted.Message.Contains(
-                       "server_pre_admission_stream_bytes",
-                       StringComparison.Ordinal),
-                "two-way race must surface the stable stream-budget ResourceExhausted reason");
-            await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes == 0,
-                "two-way race releases stream-buffer ownership");
-            Ensure(PreAdmissionStreamActivationRaceService.TwoWayInvocations == 0,
-                "two-way user code must not run after stream-budget terminal wins");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
-                "two-way race leaves the connection usable");
+            Ensure(await target.WaitAsync(TimeSpan.FromSeconds(5)) == FirstItemBytes + OverflowItemBytes &&
+                   producerStarted.Task.IsCompleted && PreAdmissionStreamActivationRaceService.TwoWayInvocations == 1,
+                "the accepted two-way upload receives both items, including one larger than the pre-admission cap");
+            Ensure(harness.PreAdmissionStreamBytes == 0 && await recovery.AddAsync(20, 22) == 42,
+                "accepted traffic leaves no pre-admission bytes and does not interrupt the connection");
         }
         finally
         {
             ServerCallCancellationState.BeforeRequestActivationForTests = null;
             activationRelease.Set();
-            overflowRelease.TrySetResult();
             TestService.ReleaseBlockingAdd();
             await ObserveTerminalAsync(active);
             if (target is not null)
@@ -144,30 +132,18 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         }
     }
 
-    private static async IAsyncEnumerable<byte[]> OneThenOverflowAsync(
-        Task releaseOverflow,
+    private static async IAsyncEnumerable<byte[]> TwoItemsAsync(
+        Task releaseSecond, Action? onStarted = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        onStarted?.Invoke();
         yield return CreateItem(0x51, FirstItemBytes);
-        await releaseOverflow.WaitAsync(cancellationToken);
+        await releaseSecond.WaitAsync(cancellationToken);
         yield return CreateItem(0x52, OverflowItemBytes);
     }
 
     private static byte[] CreateItem(byte value, int length)
         => Enumerable.Repeat(value, length).ToArray();
-
-    private static async Task<Exception?> CaptureFailureAsync(Task task)
-    {
-        try
-        {
-            await task.WaitAsync(TimeSpan.FromSeconds(5));
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
-    }
 
     private static async Task ObserveTerminalAsync(Task task)
     {
@@ -224,8 +200,8 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         internal ISharpLinkClient ClientA { get; }
         internal ISharpLinkClient ClientB { get; }
 
-        internal long PreAdmissionStreamBytes
-            => ReadServerDiagnostic<long>("PreAdmissionStreamBytesForDiagnostics");
+        internal long PreAdmissionStreamBytes => ((SharpLinkServer)_server).PreAdmissionStreamBytesForDiagnostics;
+        internal int QueuedCalls => ((SharpLinkServer)_server).AdmissionStateKernelForTests!.QueuedCalls;
 
         internal static async Task<RaceHarness> CreateAsync()
         {
@@ -287,16 +263,6 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
                 await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
                 _serverCancellation.Dispose();
             }
-        }
-
-        private T ReadServerDiagnostic<T>(string name)
-        {
-            var property = _server.GetType().GetProperty(
-                name,
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic)
-                ?? throw new Exception($"cannot find server diagnostic {name}");
-            return (T)property.GetValue(_server)!;
         }
 
         private static ISharpLinkClient CreateClient(int port)

@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+
 namespace SharpLink.IntegrationTests;
 
 public class PreAdmissionStreamBudgetIntegrationTests
@@ -10,25 +12,44 @@ public class PreAdmissionStreamBudgetIntegrationTests
     public async Task StreamBudgetShouldBeGlobalAndIndependentFromAdmissionQueuedBytes()
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
         await using var harness = await BudgetHarness.CreateAsync();
-        var serviceA = harness.ClientA.Get<ITestService>();
-        var serviceB = harness.ClientB.Get<ITestService>();
-        var uploadAService = harness.ClientA.Get<ICompressionService>();
-        var uploadBService = harness.ClientB.Get<ICompressionService>();
+        var serviceA = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var serviceB = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
+        var oneWayA = await harness.ClientA.PrepareTestServiceAsync<ICompressionService>();
+        var oneWayB = await harness.ClientB.PrepareTestServiceAsync<ICompressionService>();
+        Ensure(harness.ActiveConnections == 2, "the test has two actual data connections, not two proxies on one connection");
+
+        var dropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var dropListener = new MeterListener();
+        dropListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == SharpLinkTelemetry.Meter.Name &&
+                instrument.Name == "sharplink.admission.oneway.dropped")
+                listener.EnableMeasurementEvents(instrument);
+        };
+        dropListener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (value == 1 && tag.Key == "sharplink.admission.reason" &&
+                    tag.Value is "pre_admission_stream_bytes")
+                    dropped.TrySetResult();
+        });
+        dropListener.Start();
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var active = serviceA.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
-        Task<int>? uploadA = null;
+        Task? sendA = null;
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-            uploadA = uploadAService.UploadBytesAsync(
-                TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            sendA = oneWayA.NotifyStreamBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes > ItemBytes * 2,
-                "two A stream items retained while admission waits");
+                () => harness.PreAdmissionStreamBytes > ItemBytes * 2 &&
+                      harness.Kernel.QueuedCalls == 1 && harness.AdmissionQueuedBytes > 0,
+                "A owns both a queued head and two separately charged stream items");
 
             var retainedByA = harness.PreAdmissionStreamBytes;
             var admissionBytesBeforeB = harness.AdmissionQueuedBytes;
@@ -37,27 +58,24 @@ public class PreAdmissionStreamBudgetIntegrationTests
             Ensure(admissionBytesBeforeB < retainedByA,
                 "Dynamic Admission queued bytes must not include retained stream-frame bytes");
 
-            var rejectedB = uploadBService.UploadBytesAsync(
-                SingleItemAsync(CreateItem(0x42))).AsTask();
-            var failure = await CaptureFailureAsync(rejectedB);
-            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
-                   exhausted.Message.Contains(
-                       "server_pre_admission_stream_bytes",
-                       StringComparison.Ordinal),
-                "second connection must receive the stable stream-budget ResourceExhausted reason");
-
+            // Both sends use the stock typed OneWay path, which has no per-request response.
+            await oneWayB.NotifyStreamBytesAsync(SingleItemAsync(CreateItem(0x42))).AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            await dropped.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes == retainedByA,
-                "rejected B reservation leaves A physical ownership unchanged");
-            Ensure(harness.AdmissionQueuedBytes == admissionBytesBeforeB,
-                "rejected B stream must not leave bytes in Dynamic Admission accounting");
+                () => harness.PreAdmissionStreamBytes == retainedByA &&
+                      harness.Kernel.QueuedCalls == 1 && harness.AdmissionQueuedBytes == admissionBytesBeforeB,
+                "B's exact stream-budget drop leaves A's buffer and queued-head ownership unchanged");
+            Ensure(!active.IsCompleted && !CompressionService.WaitForOneWayAsync().IsCompleted,
+                "B cannot enter the handler or release the independent permit owner");
 
             TestService.ReleaseBlockingAdd();
             Ensure(await active.WaitAsync(TimeSpan.FromSeconds(5)) == 2,
                 "admission permit owner completes");
             producerRelease.TrySetResult();
-            Ensure(await uploadA.WaitAsync(TimeSpan.FromSeconds(5)) == ItemBytes * 2,
-                "A buffered stream replays after admission");
+            await sendA.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(5)) == ItemBytes * 2,
+                "only A's buffered OneWay stream really replays after admission");
 
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes == 0 &&
@@ -71,8 +89,8 @@ public class PreAdmissionStreamBudgetIntegrationTests
             producerRelease.TrySetResult();
             TestService.ReleaseBlockingAdd();
             await ObserveTerminalAsync(active);
-            if (uploadA is not null)
-                await ObserveTerminalAsync(uploadA);
+            if (sendA is not null)
+                await ObserveTerminalAsync(sendA);
         }
     }
 
@@ -81,32 +99,31 @@ public class PreAdmissionStreamBudgetIntegrationTests
     public async Task ForceStopShouldReleaseBufferedStreamBudgetBeforeExit()
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
         await using var harness = await BudgetHarness.CreateAsync();
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var oneWay = await harness.ClientB.PrepareTestServiceAsync<ICompressionService>();
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
-        Task<int>? queued = null;
+        var active = unary.BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
+        Task? queued = null;
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = harness.ClientB.Get<ICompressionService>()
-                .UploadBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            queued = oneWay.NotifyStreamBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > ItemBytes * 2 &&
                       harness.AdmissionQueuedBytes > 0,
                 "buffered stream ownership exists before force stop");
 
             await harness.StopServerAsync(TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(harness.PreAdmissionStreamBytes == 0 && harness.AdmissionQueuedBytes == 0 &&
+                   harness.Kernel.QueuedCalls == 0 && !CompressionService.WaitForOneWayAsync().IsCompleted,
+                "force Stop returns the server budgets without starting the queued handler or waiting for the producer gate");
             producerRelease.TrySetResult();
             await ObserveTerminalAsync(active);
             await ObserveTerminalAsync(queued);
-
-            await WaitUntilAsync(
-                () => harness.PreAdmissionStreamBytes == 0 &&
-                      harness.AdmissionQueuedBytes == 0,
-                "force stop releases stable stream budget and admission waiter bytes");
         }
         finally
         {
@@ -138,19 +155,6 @@ public class PreAdmissionStreamBudgetIntegrationTests
         cancellationToken.ThrowIfCancellationRequested();
         yield return value;
         await Task.Yield();
-    }
-
-    private static async Task<Exception?> CaptureFailureAsync(Task task)
-    {
-        try
-        {
-            await task.WaitAsync(TimeSpan.FromSeconds(5));
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
     }
 
     private static async Task ObserveTerminalAsync(Task task)
@@ -188,19 +192,20 @@ public class PreAdmissionStreamBudgetIntegrationTests
     {
         private readonly CancellationTokenSource _serverCancellation;
         private readonly Task _serverTask;
-        private readonly ISharpLinkServer _server;
+        private readonly SharpLinkServer _server;
         private bool _disposed;
 
         private BudgetHarness(
             CancellationTokenSource serverCancellation,
             Task serverTask,
-            ISharpLinkServer server,
+            SharpLinkServer server,
             ISharpLinkClient clientA,
             ISharpLinkClient clientB)
         {
             _serverCancellation = serverCancellation;
             _serverTask = serverTask;
             _server = server;
+            Kernel = server.AdmissionStateKernelForTests ?? throw new InvalidOperationException("Expected admission state.");
             ClientA = clientA;
             ClientB = clientB;
         }
@@ -208,28 +213,10 @@ public class PreAdmissionStreamBudgetIntegrationTests
         internal ISharpLinkClient ClientA { get; }
         internal ISharpLinkClient ClientB { get; }
 
-        internal long PreAdmissionStreamBytes
-            => ReadServerDiagnostic<long>("PreAdmissionStreamBytesForDiagnostics");
-
-        internal long AdmissionQueuedBytes
-        {
-            get
-            {
-                var controllerField = _server.GetType().GetField(
-                    "_admissionController",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                    ?? throw new Exception("cannot find server admission controller field");
-                var controller = controllerField.GetValue(_server)
-                    ?? throw new Exception("server admission controller is unavailable");
-                var property = controller.GetType().GetProperty(
-                    "QueuedBytes",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                    ?? throw new Exception("cannot find admission queued-byte diagnostic");
-                return (long)property.GetValue(controller)!;
-            }
-        }
+        internal AdmissionStateKernel Kernel { get; }
+        internal int ActiveConnections => ServerRegistryTestAccessor.ActiveConnectionCount(_server);
+        internal long PreAdmissionStreamBytes => _server.PreAdmissionStreamBytesForDiagnostics;
+        internal long AdmissionQueuedBytes => Kernel.QueuedBytes;
 
         internal static async Task<BudgetHarness> CreateAsync()
         {
@@ -248,10 +235,11 @@ public class PreAdmissionStreamBudgetIntegrationTests
                     options.MaxQueuedCalls = 2;
                     options.MaxQueuedBytes = 64 * 1024;
                     options.MaxQueueDelay = TimeSpan.FromSeconds(10);
+                    options.QueueOneWayCalls = true;
                 })
                 .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
+            var server = (SharpLinkServer)serverBuilder.Build();
             var serverTask = RunServerAsync(server, serverCancellation.Token);
 
             var clientA = CreateClient(port);
@@ -293,16 +281,6 @@ public class PreAdmissionStreamBudgetIntegrationTests
                 await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
                 _serverCancellation.Dispose();
             }
-        }
-
-        private T ReadServerDiagnostic<T>(string name)
-        {
-            var property = _server.GetType().GetProperty(
-                name,
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic)
-                ?? throw new Exception($"cannot find server diagnostic {name}");
-            return (T)property.GetValue(_server)!;
         }
 
         private static ISharpLinkClient CreateClient(int port)
