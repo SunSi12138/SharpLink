@@ -9,7 +9,7 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkClientOneWayTimeBudgetTests
 {
     [Test]
-    public async Task TimedOneWayClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
+    public async Task TimedOneWayClientStreamShouldKeepItsHeadBudgetAndRefuseTheExpiredProducer()
     {
         var timeProvider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
@@ -29,37 +29,32 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             ClientStreamCount: 1);
         var probe = new ProducerProbe();
         var streams = new ProbeClientStreams(probe);
-        var channel = (SharpLinkClient)client;
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), method.ContractId);
         var request = default(RpcEmptyRequest);
 
-        // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
-        // The next output-buffer request is then owned by this RPC, so the manual-clock advance
-        // occurs at the target Request's actual emission boundary instead of racing prior output.
-        var connection = GetOnlyReadyConnection(client);
-        await connection.Session.FlushSendQueueAsync();
+        // Setup already flushed the Bind. The next output buffer belongs to the RPC, so the
+        // manual-clock advance happens at its actual emission boundary.
         transport.Connection.RunOnNextOutputBufferRequest(
             () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
 
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var sent = await transport.Connection.WaitForSentFrame(NStudyWire.OneWayInputRequest).WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(NStudyWire.ReadOneWayInputCount(new ReadOnlySequence<byte>(sent.Payload)) == 1,
+            "the bound OneWay request must declare its owned input stream");
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
             "the wire TimeBudget must be the remaining sampled once when the frame is created");
-        await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(probe.RequestId == sent.Header.RequestId,
-            "the OneWay producer must be bound to the owning Request that reached the transport");
-
-        // The pending deadline owns the terminal decision now that the send pump publishes
-        // frames verbatim; the failed call must not keep producing payload for a dropped owner.
-        timeProvider.Advance(TimeSpan.Zero);
+        // The frame was accepted while live and retains its budget. The post-emission
+        // producer gate still checks the pending deadline, even before the timer callback.
         var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "an emitted OneWay Request whose budget elapsed must fail through its pending deadline");
+            "the expired producer must fail through its pending deadline without a timer callback");
+        Ensure(!probe.Started.Task.IsCompleted, "an expired OneWay producer must not start");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.StreamData,
                 TimeSpan.FromMilliseconds(50)),
@@ -86,16 +81,16 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             ClientStreamCount: 1);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var streams = new CancellationObservingClientStreams(producerStarted);
-        var channel = (SharpLinkClient)client;
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), method.ContractId);
         var request = default(RpcEmptyRequest);
 
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
         await producerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // The producer is still running when the logical deadline claims the pending call. The
@@ -122,17 +117,17 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var method = CreateClientStreamingOneWayMethod(MethodId: 292);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var streams = new CancellationObservingClientStreams(producerStarted);
-        var channel = (SharpLinkClient)client;
         var connection = GetOnlyReadyConnection(client);
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(connection, method.ContractId);
         var request = default(RpcEmptyRequest);
 
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
         await producerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // The connection dies while the producer is running. That terminal claim cancels the
@@ -159,17 +154,17 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var method = CreateClientStreamingOneWayMethod(MethodId: 293);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var streams = new CancellationObservingClientStreams(producerStarted);
-        var channel = (SharpLinkClient)client;
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), method.ContractId);
         var request = default(RpcEmptyRequest);
         using var cancellation = new CancellationTokenSource();
 
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             in streams,
             metadata: null,
-            cancellationToken: cancellation.Token).AsTask();
+            cancellationToken: cancellation.Token, prepared).AsTask();
         await producerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // The caller cancels while the producer is running: the pending call owns UserCancellation
@@ -194,16 +189,16 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var producerFailure = new InvalidOperationException("the oneway producer failed");
         var streams = new FaultingClientStreams(producerStarted, producerFailure);
-        var channel = (SharpLinkClient)client;
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), method.ContractId);
         var request = default(RpcEmptyRequest);
 
-        var invocation = channel.InvokeOneWayAsync(
+        var invocation = client.InvokeOneWay(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default, prepared).AsTask();
 
         // Nothing else claimed the call, so the producer failure is the terminal result and the
         // pooled lease operation must be observed (and returned to the pool) exactly once.
@@ -240,7 +235,7 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
 
     private static TimeSpan ReadTimeBudget(TestSentFrame sent)
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
+            sent.Payload.AsSpan(1 + ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {
@@ -271,7 +266,6 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
         internal TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        internal ulong RequestId;
     }
 
     private readonly struct ProbeClientStreams(ProducerProbe probe) : IRpcClientStreamWriter
@@ -281,7 +275,6 @@ public sealed class SharpLinkClientOneWayTimeBudgetTests
             long requestId,
             CancellationToken cancellationToken)
         {
-            probe.RequestId = unchecked((ulong)requestId);
             probe.Started.TrySetResult();
             return ValueTask.CompletedTask;
         }

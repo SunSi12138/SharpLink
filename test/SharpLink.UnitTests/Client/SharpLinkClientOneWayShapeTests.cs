@@ -29,15 +29,16 @@ public sealed class SharpLinkClientOneWayShapeTests
             HasMethodTimeout: false,
             MethodTimeout: null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (SharpLinkClient)client;
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(connection, method.ContractId);
         var request = default(RpcEmptyRequest);
 
         // Use the same concrete writer in both cases: the descriptor's method shape,
         // not a guess about the writer type, determines pending/producer ownership.
-        await channel.InvokeOneWayAsync(
+        await client.InvokeOneWay(
             method, in request, RpcEmptyRequestCodec.Instance, in streams,
-            metadata: null, cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+            metadata: null, cancellation.Token, prepared).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var sent = await transport.Connection.WaitForSentFrame(
+            hasClientStreams ? NStudyWire.OneWayInputRequest : ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
 
         Ensure(probe.Calls == (hasClientStreams ? 1 : 0),
             "only the client-stream shape may invoke the producer");
