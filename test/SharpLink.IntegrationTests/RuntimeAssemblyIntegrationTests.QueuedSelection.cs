@@ -69,7 +69,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure((int)replacementType.GetProperty("Created")!.GetValue(null)! == 0,
                 "queued R1 never invokes R2, for any RPC shape");
             if (!replace)
+            {
                 Ensure(server.RegisterAssembly(replacementAssembly).Succeeded, "replacement probe registers");
+                // Unregister removes the advertised contract until this new service is published.
+                await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
+            }
             await PrepareReplacementOnSameSessionAsync(harness.Client, proxy, session, originalBinding);
             Ensure(await InvokeValueTaskAsync<int>(
                 proxy.Service, plugin.ContractType, "UnaryAsync", 41, CancellationToken.None) == 42,
