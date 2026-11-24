@@ -11,6 +11,7 @@ public class DynamicAdmissionGenerationTests
         TestService.ResetNotify();
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(1));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram
             ?? throw new Exception("enabled server must expose its initial admission program");
         var held = await program.Controller.AcquireAsync(
@@ -33,7 +34,6 @@ public class DynamicAdmissionGenerationTests
                 captureCompleted.TrySetResult();
             };
 
-            var service = harness.ClientA.Get<ITestService>();
             if (oneWay)
             {
                 await service.NotifyAsync("captured-enabled");
@@ -71,6 +71,7 @@ public class DynamicAdmissionGenerationTests
     {
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(1));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var original = harness.OwnedProgram
             ?? throw new Exception("enabled server must expose its initial admission program");
         var held = await original.Controller.AcquireAsync(
@@ -92,7 +93,6 @@ public class DynamicAdmissionGenerationTests
                 server.PublishAdmissionProgramForTests(replacement);
             };
 
-            var service = harness.ClientA.Get<ITestService>();
             var failure = await CaptureFailureAsync(service.AddAsync(1, 2).AsTask());
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "request captured from N must not switch to the available N+1 generation");
@@ -124,6 +124,7 @@ public class DynamicAdmissionGenerationTests
     {
         TestService.ResetNotify();
         await using var harness = await Harness.CreateAsync();
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var replacement = harness.Server.CreateAdmissionProgramForTests(
             options => options.Global.UseConcurrency(1));
         var held = await replacement.Controller.AcquireAsync(
@@ -143,7 +144,6 @@ public class DynamicAdmissionGenerationTests
                 server.PublishAdmissionProgramForTests(replacement);
             };
 
-            var service = harness.ClientA.Get<ITestService>();
             if (oneWay)
             {
                 await service.NotifyAsync("captured-disabled");
@@ -192,9 +192,9 @@ public class DynamicAdmissionGenerationTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             });
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram
             ?? throw new Exception("enabled server must expose its initial admission program");
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? queuedTwoWay = null;
         var hookCount = 0;
@@ -260,8 +260,8 @@ public class DynamicAdmissionGenerationTests
         TestService.ResetBlockingAdd();
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(1));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram!;
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1).AsTask();
         try
         {
@@ -290,8 +290,8 @@ public class DynamicAdmissionGenerationTests
         await using var harness = await Harness.CreateAsync(
             serverRuntimeConfigure: options => options.FlowControl.MaxConcurrentCallsPerServer = 1,
             admissionConfigure: options => options.Global.UseConcurrency(2));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram!;
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1).AsTask();
         try
         {
@@ -332,15 +332,16 @@ public class DynamicAdmissionGenerationTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             });
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.ClientA.PrepareTestServiceAsync<ICompressionService>();
         var program = harness.OwnedProgram!;
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
+        var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<byte[]>? target = null;
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
             var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
-            target = harness.ClientA.Get<ICompressionService>().EchoBytesAsync(payload).AsTask();
+            target = compression.EchoBytesAsync(payload).AsTask();
             var failure = await CaptureFailureAsync(target);
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted } exhausted &&
                    exhausted.Message.Contains(
@@ -376,8 +377,8 @@ public class DynamicAdmissionGenerationTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             });
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram!;
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         using var cancellation = new CancellationTokenSource();
         Task<int>? target = null;
@@ -418,14 +419,15 @@ public class DynamicAdmissionGenerationTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             });
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var secondService = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram!;
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
+        var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? target = null;
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = harness.ClientB.Get<ITestService>().AddAsync(2, 2).AsTask();
+            target = secondService.AddAsync(2, 2).AsTask();
             await WaitUntilAsync(() => program.Controller.QueuedCalls == 1,
                 "second-connection request enters admission queue");
             await harness.StopClientBAsync();
@@ -458,15 +460,17 @@ public class DynamicAdmissionGenerationTests
             clientRuntimeConfigure: options =>
                 options.Compression.Providers.Add(new TestCompressionProvider()),
             admissionConfigure: options => options.Global.UseConcurrency(2));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.ClientA.PrepareTestServiceAsync<ICompressionService>();
         var program = harness.OwnedProgram!;
         var payload = Enumerable.Repeat((byte)0x35, 16 * 1024).ToArray();
 
         var failure = await CaptureFailureAsync(
-            harness.ClientA.Get<ICompressionService>().EchoBytesAsync(payload).AsTask());
+            compression.EchoBytesAsync(payload).AsTask());
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
             "provider decode failure must remain call-scoped");
         await AssertProgramReleasedAsync(program, "decode failure cleanup");
-        Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await service.AddAsync(20, 22) == 42,
             "connection must remain reusable after controlled decode failure");
         await AssertProgramReleasedAsync(program, "post-decode-failure connection reuse");
     }
@@ -477,13 +481,14 @@ public class DynamicAdmissionGenerationTests
     {
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(2));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram!;
         try
         {
             ServerCallCancellationState.BeforeRequestActivationForTests = state =>
                 state.TryCancel(ServerCallCancellationReason.RemoteCancel);
             var failure = await CaptureFailureAsync(
-                harness.ClientA.Get<ITestService>().AddAsync(1, 2).AsTask());
+                service.AddAsync(1, 2).AsTask());
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.Cancelled },
                 "activation terminal winner must prevent invocation and surface cancellation");
         }
@@ -493,7 +498,7 @@ public class DynamicAdmissionGenerationTests
         }
 
         await AssertProgramReleasedAsync(program, "activation failure cleanup");
-        Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await service.AddAsync(20, 22) == 42,
             "connection must remain reusable after controlled activation failure");
         await AssertProgramReleasedAsync(program, "post-activation-failure connection reuse");
     }
@@ -504,8 +509,9 @@ public class DynamicAdmissionGenerationTests
     {
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(2));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var program = harness.OwnedProgram!;
-        Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await service.AddAsync(20, 22) == 42,
             "successful admitted request result");
         await AssertProgramReleasedAsync(program, "successful request terminal cleanup");
     }
