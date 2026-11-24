@@ -64,21 +64,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    client.RegisterAssembly(contracts.ContractAssembly).Succeeded, "R1 and compatible contract register");
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
-            var a1 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash,
-                server.ReadNStudyTarget(oldAssembly, aCid), ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
+            var a = CreateNStudyExactGenerated(client, contracts.ContractType);
+            var a1 = await a.PrepareExact(new(bBinding.Authority, aCid, manifest.RpcAssemblyHash,
+                server.ReadNStudyTarget(oldAssembly, aCid)), TimeSpan.FromSeconds(5), ct);
             var connection = NStudyClientConnection(client);
             var peer = NStudyServerConnection(server);
             Ensure(connection.Session.NStudyLocalCoordinationMode == clientMode &&
                    peer.Session.NStudyLocalCoordinationMode == serverMode &&
                    connection.Session.SupportsNStudyCoordination == automatic &&
                    peer.Session.SupportsNStudyCoordination == automatic &&
-                   a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+                   a1.Authority == bBinding.Authority && a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? connection.Session.RemoteEndPoint is IPEndPoint :
                        connection.Session.Input is SharedMemoryPipeReader), "actual handshake captures and intersects local modes");
             trace.Record("PhysicalHandshakeCapturesLocalCoordinationModes", a1, bBinding);
-            var fixture = new NStudyModePeer(server, client, connection, peer, a1, bBinding,
+            var fixture = new NStudyModePeer(server, client, connection, peer, a1, bBinding, a, b,
                 oldAssembly, newAssembly, oldType, newType);
             if (automatic)
                 await VerifyNStudyAutomaticLocalDeploymentAsync(
@@ -98,9 +99,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static async Task VerifyNStudyDisabledPeerRetirementAsync(
         NStudyModePeer fixture, Type contract, NStudyTrace trace, CancellationToken ct)
     {
-        var (server, client, connection, peer, a1, bBinding, oldAssembly, newAssembly, oldType, newType) = fixture;
-        var a = GetProxy(client, contract);
-        var b = client.Get<IShutdownCleanupProbe>();
+        var (server, client, connection, peer, a1, bBinding, preparedA, b,
+            oldAssembly, newAssembly, oldType, newType) = fixture;
+        var a = preparedA.Service;
         var oldCall = InvokeValueTaskAsync<int>(a, contract, "BlockAsync", ct).AsTask();
         await ReadNStudyTask(oldType, "BlockStarted").WaitAsync(ct);
 
@@ -123,8 +124,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                peer.NStudyBindings.Snapshot() == (1, 1, 1) && await b.TouchAsync(2, ct) == 102,
             "A's ordinary retirement and B availability are independent of the optional feature");
         trace.Record("OrdinaryRegistryCutStillRetiresOnlyAOnDisabledSession", a1, bBinding);
-        var a2 = await client.PrepareNStudyContractAsync(a1.Contract, a1.Hash,
-            server.ReadNStudyTarget(newAssembly, a1.Contract), ct);
+        var a2 = await preparedA.PrepareExact(new(a1.Authority, a1.Contract, a1.Hash,
+            server.ReadNStudyTarget(newAssembly, a1.Contract)), TimeSpan.FromSeconds(5), ct);
         Ensure(a2.Authority == a1.Authority &&
                await InvokeValueTaskAsync<int>(a, contract, "UnaryAsync", 10, ct) == 11 &&
                NStudyCount(newType, "Created") == 1, "ordinary exact Bind remains available without coordination");
@@ -141,14 +142,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static async Task VerifyNStudyAutomaticLocalDeploymentAsync(
         NStudyModePeer fixture, PluginBundle original, string scenario, NStudyTrace trace, CancellationToken ct)
     {
-        var (server, client, connection, peer, a1, bBinding, oldAssembly, newAssembly, oldType, newType) = fixture;
+        var (server, client, connection, peer, a1, bBinding, preparedA, b,
+            oldAssembly, newAssembly, oldType, newType) = fixture;
         var initiator = scenario == "automatic-client" ? NStudyInitiator.Client : NStudyInitiator.Server;
         using var local = PluginBundle.Load($"n-auto-local-{scenario}", loadService: false);
         var input = new NStudyInput();
         try
         {
-            var oldProxy = GetProxy(client, original.ContractType);
-            var b = client.Get<IShutdownCleanupProbe>();
+            var oldProxy = preparedA.Service;
             var oldClientModule = GetDynamicModule(client, original.ContractAssembly);
             var oldServerModule = GetDynamicModule(server, oldAssembly);
             var oldFlow = CallNStudyInput(oldProxy, original.ContractType, "duplex", input, ct);
@@ -170,6 +171,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "actual local registry publishes an independent generation while the old owners drain");
             trace.Record("ApplicationPublishesNewLocalContractWhileOldDuplexIsActive", a1);
 
+            var newProxy = CreateNStudyExactGenerated(client, local.ContractType).Service;
+            var beforeActivation = connection.Session.NStudyBindOperationForDiagnostics;
             var negotiate = client.NegotiateNStudyReplacementAsync(initiator, approveLocally: null, ct);
             var replacing = server.StageNStudyReplacementAsync(peer, oldAssembly, newAssembly, a1.Contract,
                 initiator, approveLocally: null, TimeSpan.FromSeconds(15), ct);
@@ -179,9 +182,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    activated.LocalRegistration == newClientModule.NStudyRegistration &&
                    a2.Authority == a1.Authority && a2.Target == server.ReadNStudyTarget(newAssembly, a1.Contract) &&
                    connection.Session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
-                   peer.NStudyBindings.Snapshot() == (2, 1, 1), "Automatic binds only the exact locally prepared generation");
+                   peer.NStudyBindings.Snapshot() == (2, 1, 1) &&
+                   connection.Session.NStudyBindOperationForDiagnostics == beforeActivation + 1,
+                "Automatic binds only the exact locally selected generation");
 
-            var newProxy = GetProxy(client, local.ContractType);
             var payloadType = local.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
             var payload = Activator.CreateInstance(payloadType)!;
             payloadType.GetProperty("Value")!.SetValue(payload, 7);
@@ -191,7 +195,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(newProxy.GetType() != oldProxy.GetType() &&
                    await InvokeValueTaskAsync<int>(newProxy, local.ContractType, "UsePayloadAsync", payload, ct) == 14 &&
                    NStudyCount(newType, "Created") == 1 && await b.TouchAsync(2, ct) == 102 &&
-                   !oldFlow.IsCompleted && !localDrain.IsCompleted && !replacing.IsCompleted,
+                   !oldFlow.IsCompleted && !localDrain.IsCompleted && !replacing.IsCompleted &&
+                   connection.Session.NStudyBindOperationForDiagnostics == beforeActivation + 1,
                 "the actual new nominal type and generated payload Codec call R2 while original R1 and B remain live");
             trace.Record("AutomaticActivatesExactR2UsingNewLocalTypedProxy", a1, a2);
 
@@ -234,5 +239,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private sealed record NStudyModePeer(SharpLinkServer Server, SharpLinkClient Client,
         ClientConnection Connection, ServerConnectionState Peer, NStudyAck A, NStudyAck B,
+        NStudyExactGenerated PreparedA, IShutdownCleanupProbe Sibling,
         Assembly OldAssembly, Assembly NewAssembly, Type OldType, Type NewType);
 }
