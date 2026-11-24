@@ -28,7 +28,8 @@ RESTORE_ERROR = re.compile(
 # Compiler rejects are only accepted from generated code mentioning current or
 # legacy generated ABI surface. Unrelated CS0246 in fixture source must fail.
 ABI_MEMBER = re.compile(
-    r"\b(?:IRpcStub|IRpcGeneratedServerBridge|IRpcChannel|IRpcCodecProvider|"
+    r"\b(?:IRpcStub|IRpcGeneratedServerBridge|IRpcChannel|IRpcContractChannel|IRpcCodecProvider|"
+    r"RpcGeneratedPreparedMethod|RpcGeneratedMethodExecutor|"
     r"SharpLinkGeneratedContractDescriptor|SharpLinkGeneratedManifestVersions|"
     r"IRpcGeneratedCodecFactory|ISharpLinkGeneratedAssemblyManifest|"
     r"InvokeUnaryAsync|InvokeOneWayAsync|InvokeClientStreamingAsync|"
@@ -73,12 +74,15 @@ def is_expected_rejection(phase: str, log: str) -> bool:
     if phase == "restore":
         return bool(RESTORE_ERROR.search(log))
     if phase == "build":
-        return any(
-            BUILD_ERROR.search(line)
-            and ABI_MEMBER.search(line)
-            and GENERATED_CONTEXT.search(line)
-            for line in log.splitlines()
-        )
+        for line in log.splitlines():
+            error = BUILD_ERROR.search(line)
+            if (
+                error
+                and GENERATED_CONTEXT.search(line[:error.start()])
+                and ABI_MEMBER.search(line[error.end():])
+            ):
+                return True
+        return False
     raise ValueError(f"unknown phase {phase}")
 
 
