@@ -291,7 +291,8 @@ internal sealed partial class SharpLinkServer
                                     connection.NStudyBindings.Release(NStudyWire.ReadRelease(payload));
                                     break;
                                 case NStudyWire.Coordination:
-                                    session.OnNStudyCoordination(header.RequestId, payload);
+                                    // Client-to-server coordination messages are queued synchronously.
+                                    _ = session.OnNStudyCoordination(header.RequestId, payload);
                                     break;
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
                                     var responseCompressionPreference =
