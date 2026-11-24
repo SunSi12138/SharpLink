@@ -650,6 +650,7 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
     public string EndpointId { get; set; } = "default";
     public TaskCompletionSource<string>? SlowCallStarted { get; set; }
     public TaskCompletionSource<string>? SlowUnaryStarted { get; set; }
+    internal Task? ContinueSlowRange { get; init; }
 
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
 
@@ -677,6 +678,8 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
         for (var value = 0; value < count; value++)
         {
             yield return value;
+            if (value == 0 && ContinueSlowRange is { } continuation)
+                await continuation.WaitAsync(cancellationToken);
             await Task.Delay(delayMs, cancellationToken);
         }
     }

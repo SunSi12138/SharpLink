@@ -45,7 +45,10 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var proxy = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+            var service = proxy.Service;
+            selector.PauseNext();
             var staleCall = Task.Run(async () => await service.GetEndpointIdAsync());
             await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -56,8 +59,10 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
                       ((SharpLinkClient)client).ReadyConnectionCount == 1,
                 TimeSpan.FromSeconds(4));
 
+            Ensure(replacement.OpenBindings == 0, "the Ready replacement must not inherit permission from an old site");
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
             Ensure(await service.GetEndpointIdAsync() == "replacement",
-                "a call selecting after replacement publication must use the new generation");
+                "a call selecting after explicit preparation must use the replacement generation");
 
             selector.Release();
             var staleFailure = await CaptureSharpLinkException(staleCall.WaitAsync(TimeSpan.FromSeconds(3)));
@@ -79,7 +84,8 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
     [NotInParallel]
     public async Task RetiringGenerationShouldDrainAcceptedStreamBeforeReleasingItsFactory()
     {
-        await using var first = await TcpServerScope.StartAsync("first");
+        var continueStream = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var first = await TcpServerScope.StartAsync("first", continueStream.Task);
         await using var replacement = await TcpServerScope.StartAsync("replacement");
         var resolver = new ControllableResolver(
             new SharpLinkEndpointSnapshot(1, [Endpoint("node", first.Port, "blue")]));
@@ -105,25 +111,42 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
-            await using var stream = service.SlowRangeAsync(3, 80, CancellationToken.None).GetAsyncEnumerator();
-            Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first item must be accepted on the original generation");
+            var proxy = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+            var service = proxy.Service;
+            await using (var stream = service.SlowRangeAsync(3, 0, CancellationToken.None).GetAsyncEnumerator())
+            {
+                try
+                {
+                    Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first item must be accepted on the original generation");
 
-            resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("node", replacement.Port, "green")]));
-            await WaitUntilAsync(
-                () => replacementFactory is { ConnectCount: > 0 } &&
-                      ((SharpLinkClient)client).ReadyConnectionCount == 1,
-                TimeSpan.FromSeconds(4));
+                    resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("node", replacement.Port, "green")]));
+                    await WaitUntilAsync(
+                        () => replacementFactory is { ConnectCount: > 0 } &&
+                              ((SharpLinkClient)client).ReadyConnectionCount == 1,
+                        TimeSpan.FromSeconds(4));
 
-            Ensure(firstFactory is { DisposeCount: 0 },
-                "the retiring generation factory must stay owned while its accepted stream is active");
-            Ensure(await service.GetEndpointIdAsync() == "replacement",
-                "new calls must leave the retiring generation immediately");
-            Ensure(await stream.MoveNextAsync() && stream.Current == 1,
-                "retiring must not abort an already accepted stream");
-            Ensure(await stream.MoveNextAsync() && stream.Current == 2,
-                "the accepted stream must remain bound through its final item");
-            Ensure(!await stream.MoveNextAsync(), "the accepted stream must complete normally");
+                    Ensure(firstFactory is { DisposeCount: 0 },
+                        "the retiring generation factory must stay owned while its accepted stream is active");
+                    Ensure(replacement.OpenBindings == 0, "the replacement is Ready but still needs preparation");
+                    await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+                    Ensure(await service.GetEndpointIdAsync() == "replacement",
+                        "new calls must leave the retiring generation once the replacement is prepared");
+                    Ensure(firstFactory is { DisposeCount: 0 },
+                        "preparing the new route must not release the factory of the held old stream");
+
+                    continueStream.TrySetResult();
+                    Ensure(await stream.MoveNextAsync() && stream.Current == 1,
+                        "retiring must not abort an already accepted stream");
+                    Ensure(await stream.MoveNextAsync() && stream.Current == 2,
+                        "the accepted stream must remain bound through its final item");
+                    Ensure(!await stream.MoveNextAsync(), "the accepted stream must complete normally");
+                }
+                finally
+                {
+                    continueStream.TrySetResult();
+                }
+            }
 
             await WaitUntilAsync(() => firstFactory is { DisposeCount: 1 }, TimeSpan.FromSeconds(3));
             Ensure(replacementFactory is { DisposeCount: 0 },
@@ -290,9 +313,10 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
     {
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly ManualResetEventSlim _release = new(initialState: false);
-        private int _pauseNext = 1;
+        private int _pauseNext;
 
         public Task Entered => _entered.Task;
+        public void PauseNext() => Volatile.Write(ref _pauseNext, 1);
 
         public int Select(in SharpLinkEndpointSelectionContext context)
         {
@@ -325,6 +349,8 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         }
 
         public int Port { get; }
+        public int OpenBindings => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)_server)
+            .Values.Single().NStudyBindings.Snapshot().Open;
 
         public async ValueTask StopAsync()
         {
@@ -335,12 +361,13 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
             await Task.WhenAny(_runTask, Task.Delay(1000));
         }
 
-        public static Task<TcpServerScope> StartAsync(string endpointId)
+        public static Task<TcpServerScope> StartAsync(string endpointId, Task? continueStream = null)
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
-            builder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
+            builder.ReplaceService<IConnectionBehaviorService>(
+                new ConnectionBehaviorService { EndpointId = endpointId, ContinueSlowRange = continueStream });
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             return Task.FromResult(new TcpServerScope(builder.Build(), port));
         }
