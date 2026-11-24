@@ -24,9 +24,9 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
-        await PrepareAsync(client);
-
         var method = UnaryMethod(TimeSpan.FromSeconds(5));
+        await client.ConnectAsync();
+        await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client).Session, method.ContractId);
         var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var before = timeProvider.TimestampReadCount;
@@ -37,7 +37,13 @@ public sealed class SharpLinkClientDeadlineClockReadTests
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null).AsTask();
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var sending = transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        if (await Task.WhenAny(invocation, sending).WaitAsync(TimeSpan.FromSeconds(3)) == invocation)
+        {
+            await invocation;
+            throw new InvalidOperationException("The invocation completed before its request was observed.");
+        }
+        var sent = await sending;
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
         Ensure(await invocation == 0, "the timed Unary must receive its response");
 
@@ -48,12 +54,6 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         // infrastructure shared with untimed traffic.
         Ensure(reads == 8,
             $"a plain timed Unary must take exactly its eight boundary/infrastructure samples, but took {reads}");
-    }
-
-    private static async Task PrepareAsync(SharpLinkClient client)
-    {
-        await client.ConnectAsync();
-        await GetOnlyReadyConnection(client).Session.FlushSendQueueAsync();
     }
 
     private static RpcMethodDescriptor UnaryMethod(TimeSpan? methodTimeout)

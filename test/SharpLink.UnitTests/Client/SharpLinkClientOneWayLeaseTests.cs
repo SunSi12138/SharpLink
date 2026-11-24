@@ -61,7 +61,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
         var connection = GetConnection(client);
-        await connection.Session.FlushSendQueueAsync();
+        await transport.Connection.PrepareInvocationRouteAsync(connection.Session, contractId: 1);
         using var cancellation = new CancellationTokenSource();
         using var releaseEmission = new ManualResetEventSlim();
         var emissionEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

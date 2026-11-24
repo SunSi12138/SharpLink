@@ -131,6 +131,27 @@ internal sealed class TestTransportConnection : ITransportConnection
             cancellationToken);
     }
 
+    internal async Task PrepareInvocationRouteAsync(RpcSession session, long contractId)
+    {
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var request = new NStudyBind(contractId, new RpcHash128(1, 1), default);
+        var preparing = session.PrepareNStudyBindAsync(request, guard.Token);
+        var sent = await WaitForSentFrame(NStudyWire.Bind).WaitAsync(guard.Token);
+        if (NStudyWire.ReadBind(new ReadOnlySequence<byte>(sent.Payload)) != request)
+            throw new InvalidOperationException("The fixture observed a different setup Bind.");
+
+        var ack = new NStudyAck(NStudyBindStatus.Bound, contractId, request.Hash,
+            new NStudyAuthority(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()),
+            NStudyWire.BindingId(0, 1), new NStudyTarget(Guid.NewGuid(), 1));
+        using var payload = new PooledByteBufferWriter();
+        NStudyWire.WriteAck(payload, ack);
+        await InjectFrameAsync(NStudyWire.BindAck, ProtocolV2FrameFlags.None, sent.Header.RequestId,
+            payload.WrittenMemory, guard.Token);
+        if (await preparing != ack || session.CaptureNStudyBinding(contractId) != ack.BindingId)
+            throw new InvalidOperationException("The fixture did not establish its ordinary bound route.");
+        await session.FlushSendQueueAsync(guard.Token);
+    }
+
     public async Task InjectFrameAsync(
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
