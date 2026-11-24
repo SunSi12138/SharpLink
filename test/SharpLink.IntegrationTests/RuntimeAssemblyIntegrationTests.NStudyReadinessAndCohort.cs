@@ -281,7 +281,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             });
 
     private static async Task WithNStudyCoordinationPeersAsync(string transport,
-        NStudyCoordinationMode mode, bool twoPeers, Func<NStudyCoordinationFixture, NStudyTrace, CancellationToken, Task> run)
+        NStudyCoordinationMode mode, bool twoPeers, Func<NStudyCoordinationFixture, NStudyTrace, CancellationToken, Task> run,
+        Func<IClientTransportFactory, IClientTransportFactory>? decorateTransport = null)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -353,7 +354,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         SharpLinkClient CreateClient()
         {
-            var client = NewNStudyClient(source, port, memoryName);
+            var client = NewNStudyClient(source, port, memoryName,
+                decorateTransport is null ? null :
+                    builder => builder.UseHeartbeat(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2)),
+                decorateTransport);
             client.NStudyVersionCoordinationMode = mode;
             return client;
         }

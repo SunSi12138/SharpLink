@@ -253,12 +253,20 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Func<NStudyObservedTarget, TimeSpan, CancellationToken, ValueTask<NStudyAck>> PrepareExact);
 
     private static SharpLinkClient NewNStudyClient(IGeneratedManifestSource source, int port, string? memoryName,
-        Action<SharpClientBuilder>? configure = null)
+        Action<SharpClientBuilder>? configure = null,
+        Func<IClientTransportFactory, IClientTransportFactory>? decorateTransport = null)
     {
         var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(source).DisableRequestTimeout()
             .UseAuthenticator(SharpLinkAuthenticator.CreateClient(static _ =>
                 ValueTask.FromResult<ReadOnlyMemory<byte>>(NStudyAuthenticationPayload)));
-        if (memoryName is null)
+        if (decorateTransport is not null)
+        {
+            IClientTransportFactory inner = memoryName is null
+                ? new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, port))
+                : new SharedMemoryClientTransportFactory(memoryName);
+            builder.UseTransport(decorateTransport(inner));
+        }
+        else if (memoryName is null)
             builder.UseTcp(IPAddress.Loopback.ToString(), port);
         else
             builder.UseSharedMemory(memoryName);
