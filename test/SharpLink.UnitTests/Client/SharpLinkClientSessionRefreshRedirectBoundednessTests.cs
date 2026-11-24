@@ -225,7 +225,7 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
 
         // Pin the oldest generation with a genuinely long-lived streaming call so planned
         // retirement of that generation can never complete while the refreshes roll forward.
-        var streamingCts = new CancellationTokenSource();
+        using var streamingCts = new CancellationTokenSource();
         var enumerator = ClientInvokerTestHelper
             .InvokeServerStreaming(client, pinnedSite, streamingCts.Token)
             .GetAsyncEnumerator(streamingCts.Token);
@@ -299,15 +299,19 @@ public sealed class SharpLinkClientSessionRefreshRedirectBoundednessTests
             client._afterSessionRefreshEligibilitySwapTestHook = null;
             client._callAdmissionReservedTestHook = null;
             streamingCts.Cancel();
-            await enumerator.DisposeAsync().ConfigureAwait(false);
             try
             {
                 await firstMove.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (OperationCanceledException) when (streamingCts.IsCancellationRequested)
             {
             }
-            streamingCts.Dispose();
+            finally
+            {
+                // The prepared iterator cannot dispose concurrently with its outstanding move.
+                if (firstMove.IsCompleted)
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
