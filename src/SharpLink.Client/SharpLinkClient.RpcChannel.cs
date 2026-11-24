@@ -106,8 +106,7 @@ internal sealed partial class SharpLinkClient
         }
         if (HasReachedReconnectStableWindow(readyTimestamp, hasReadyTimestamp, reconnectPolicy))
             Volatile.Write(ref _reconnectDelayTicks, reconnectPolicy.InitialDelay.Ticks);
-        TransitionTo(SharpLinkConnectionState.Reconnecting);
-        EnsureReconnectLoop();
+        EnsureReconnectLoop(publishRecoveryState: true);
     }
 
     internal void HandleConnectionFatalFailure(ClientConnection connection, Exception exception)
@@ -123,12 +122,14 @@ internal sealed partial class SharpLinkClient
         HandleDisconnected(connection, exception);
     }
 
-    private void EnsureReconnectLoop()
+    private void EnsureReconnectLoop(bool publishRecoveryState = false)
     {
         lock (_stateGate)
         {
-            if (_shutdownCts.IsCancellationRequested)
+            if (_shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
                 return;
+            if (publishRecoveryState && ReadyConnectionCount == 0)
+                TransitionTo(SharpLinkConnectionState.Reconnecting);
             if (_reconnectTask is not { IsCompleted: false })
             {
                 _reconnectTask = ReconnectLoopAsync();
@@ -402,13 +403,8 @@ internal sealed partial class SharpLinkClient
 
         RetireDrainingConnectionIfIdle(connection);
 
-        if (ReadyConnectionCount != 0)
-        {
-            EnsureReconnectLoop();
-            return;
-        }
-        TransitionTo(SharpLinkConnectionState.Draining);
-        EnsureReconnectLoop();
+        // The peer is draining this connection, not stopping the client.
+        EnsureReconnectLoop(publishRecoveryState: true);
     }
 
     private void ReportGoAwayToCircuitBreaker(ClientConnection connection)

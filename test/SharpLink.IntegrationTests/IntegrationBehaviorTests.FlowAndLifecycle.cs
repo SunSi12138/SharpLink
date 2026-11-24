@@ -450,20 +450,32 @@ public partial class IntegrationBehaviorTests
     [NotInParallel]
     public async Task GracefulStopShouldDrainAcceptedCallAndRejectNewCallsAfterGoAway()
     {
+        TestService.ResetBlockingAdd(1);
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var proxy = harness.Client.CreateProxy<ITestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        var svc = proxy.Service;
 
-        var acceptedCall = svc.SlowAddWithoutTimeoutAsync(20, 22).AsTask();
-        await Task.Delay(50);
-        var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
-        await WaitUntilAsync(() => harness.Client.State == SharpLinkConnectionState.Draining);
+        var acceptedCall = svc.BlockingAddAsync(20, 22, CancellationToken.None).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
+            await WaitUntilAsync(() => harness.Client.GetReadinessSnapshot() is
+                { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 });
 
-        await EnsureThrowsSharpLinkFast(
-            svc.AddAsync(1, 1).AsTask(),
-            "new call after GoAway",
-            SharpLinkErrorCode.Unavailable);
-        Ensure(await acceptedCall == 42, "accepted call should complete during grace period");
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await EnsureThrowsSharpLinkFast(
+                svc.AddAsync(1, 1).AsTask(),
+                "new call after GoAway",
+                SharpLinkErrorCode.Unavailable);
+            TestService.ReleaseBlockingAdd();
+            Ensure(await acceptedCall == 42, "accepted call should complete during grace period");
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     [Test]

@@ -599,13 +599,16 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         Ensure(await proxy.Service.PingAsync(2) == 3, "first prepared session serves");
 
         await original.DisposeServerOnlyAsync();
-        while (original.Client.GetReadinessSnapshot().ReadyConnections != 0)
+        while (original.Client.GetReadinessSnapshot() is not
+               { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 })
             await Task.Delay(10, ct);
+        var readiness = original.Client.WaitForReadinessAsync(1, ct).AsTask();
+        Ensure(!readiness.IsCompleted, "readiness remains pending while the server is down");
 
         var replacementService = new ConnectionBehaviorService { EndpointId = "replacement" };
         await using var replacement = SharedMemoryHarness.BuildServer(name, replacementService);
         await replacement.StartAsync(ct);
-        await original.Client.WaitForReadinessAsync(1, ct);
+        Ensure((await readiness).ReadyConnections == 1, "one replacement connection restores readiness");
         await EnsureThrowsSharpLinkFast(proxy.Service.PingAsync(3).AsTask(),
             "replacement ready without preparation", SharpLinkErrorCode.Unavailable);
         Ensure(OpenBindings() == 0, "the replacement session has not been bound");

@@ -20,6 +20,10 @@ internal sealed partial class SharpLinkClient
 
             if (_connectTask is not { IsCompleted: false })
             {
+                // Recovery belongs to the existing dial loop, not to any waiting caller.
+                if (_reconnectTask is { IsCompleted: false })
+                    return new ValueTask(WaitForPublishedReadinessAsync(1, cancellationToken).AsTask());
+
                 TransitionTo(SharpLinkConnectionState.Connecting);
                 // The initialization attempt belongs to the client. A caller may cancel only its
                 // WaitAsync below; shutdown remains the operation's lifetime boundary.

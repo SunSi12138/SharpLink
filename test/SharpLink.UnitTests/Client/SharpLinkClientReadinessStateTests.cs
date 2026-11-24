@@ -160,13 +160,28 @@ public sealed class SharpLinkClientReadinessStateTests
                 TargetReadyEndpoints: 1),
             "a disconnected fixed client must publish Reconnecting with zero readiness");
 
+        using var cancelledWait = new CancellationTokenSource();
+        var cancelledReadiness = client.WaitForReadinessAsync(1, cancelledWait.Token).AsTask();
         var readiness = client.WaitForReadinessAsync(1).AsTask();
+        var reconnect = client.ConnectAsync().AsTask();
+        Ensure(!readiness.IsCompleted && !reconnect.IsCompleted && transport.ConnectCount == 1,
+            "both waiters must join recovery without bypassing the reconnect delay");
+        await cancelledWait.CancelAsync();
+        Ensure(await CaptureExceptionAsync(cancelledReadiness) is OperationCanceledException,
+            "cancelling an observer must not stop the reconnect owner");
+
+        var delay = TimeSpan.FromMilliseconds(100);
+        using var waitForTimer = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (timeProvider.EarliestTimerTimestamp != delay.Ticks)
+            await Task.Delay(5, waitForTimer.Token);
+        timeProvider.Advance(delay);
         await transport.LaterAttemptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(!readiness.IsCompleted,
-            "a readiness wait must remain pending rather than fail while the same client reconnects");
+        Ensure(!readiness.IsCompleted && !reconnect.IsCompleted && transport.ConnectCount == 2,
+            "one owned transport attempt serves all waiting callers");
 
         transport.ReleaseLaterAttempts();
         var reconnected = await readiness.WaitAsync(TimeSpan.FromSeconds(2));
+        await reconnect.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(reconnected == new SharpLinkClientReadinessSnapshot(
                 SharpLinkConnectionState.Ready,
                 ActiveEndpoints: 1,
