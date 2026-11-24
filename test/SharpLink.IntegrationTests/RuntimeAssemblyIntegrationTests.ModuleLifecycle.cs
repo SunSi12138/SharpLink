@@ -515,34 +515,49 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
 
-        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
+        var handle = CreatePreparedGeneratedProxy(harness.Client, plugin.ContractType);
+        await handle.PrepareAsync();
+        var session = NStudyClientSession((SharpLinkClient)harness.Client);
+        var originalBinding = session.CaptureNStudyRoute(handle.ContractId).Acknowledgement;
+        var bindSequence = session.NStudyBindOperationForDiagnostics;
+        var peer = NStudyServerConnection((SharpLinkServer)harness.Server);
         using var callerCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var blocked = InvokeValueTaskAsync<int>(
-            proxy,
+            handle.Service,
             plugin.ContractType,
             "BlockIgnoringCancellationAsync",
             callerCancellation.Token).AsTask();
-        await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
-
-        var timedOut = await harness.Server.UnregisterAssemblyAsync(
-            plugin.ServiceAssembly,
-            TimeSpan.FromMilliseconds(20));
-        Ensure(!timedOut.ReferencesReleased, "ignored cancellation keeps framework references");
-        Ensure(timedOut.RemainingCalls == 1, "one call remains after drain timeout");
-
         try
         {
-            _ = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None);
-            throw new Exception("assert failed: draining route must reject new work");
-        }
-        catch (SharpLinkException exception)
-        {
-            Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "draining server route error code");
-            Ensure(exception.Message.Contains("module is draining", StringComparison.Ordinal),
-                "draining server route diagnostic");
-        }
+            await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
 
-        plugin.ReleaseBlock();
+            var timedOut = await harness.Server.UnregisterAssemblyAsync(
+                plugin.ServiceAssembly,
+                TimeSpan.FromMilliseconds(20));
+            Ensure(!timedOut.ReferencesReleased, "ignored cancellation keeps framework references");
+            Ensure(timedOut.RemainingCalls == 1, "one call remains after drain timeout");
+
+            // With a retired prepared binding this is a local failure, not a
+            // fresh request waiting for a remote module-draining response.
+            await WaitUntilAsync(() => !session.HasNStudyBinding(handle.ContractId, originalBinding.BindingId));
+            var accepted = peer.LastAcceptedRequestId;
+            try
+            {
+                _ = await InvokeValueTaskAsync<int>(handle.Service, plugin.ContractType, "UnaryAsync", 1, CancellationToken.None);
+                throw new InvalidOperationException("The retired prepared route must reject new work.");
+            }
+            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable)
+            {
+            }
+            Ensure(peer.LastAcceptedRequestId == accepted && session.NStudyBindOperationForDiagnostics == bindSequence &&
+                   ReferenceEquals(NStudyClientSession((SharpLinkClient)harness.Client), session) &&
+                   plugin.GetStaticInt("Disposed") == 0,
+                "retirement does not admit another call, issue another Bind, or dispose the physically active R1 owner");
+        }
+        finally
+        {
+            plugin.ReleaseBlock();
+        }
         try
         {
             _ = await blocked.WaitAsync(TimeSpan.FromSeconds(3));
@@ -558,7 +573,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure((await harness.Client.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2))).ReferencesReleased, "client contract releases");
-        proxy = null;
     }
 
     [Test]
