@@ -34,7 +34,8 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.AddInterceptor(new AdvancingShortCircuitInterceptor(clock));
             });
 
-        var failure = await CaptureSharpLinkException(InvokeUnary(client).AsTask());
+        var failure = await CaptureSharpLinkException(
+            InvokeUnary(client, SharpLinkClient.NStudyPreparedSite.Unprepared).AsTask());
 
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "a short-circuit result returned after the frozen deadline must be rejected");
@@ -58,6 +59,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var advanced = 0;
         var probeInvocation = new AsyncLocal<bool>();
@@ -80,7 +82,7 @@ public class SharpLinkClientInterceptorDeadlineTests
         ActivitySource.AddActivityListener(listener);
 
         probeInvocation.Value = true;
-        var invocation = InvokeUnary(client).AsTask();
+        var invocation = InvokeUnary(client, prepared).AsTask();
         probeInvocation.Value = false;
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
@@ -117,13 +119,15 @@ public class SharpLinkClientInterceptorDeadlineTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var stream = channel.InvokeServerStreamingAsync(
+        var stream = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+            channel, null,
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default);
+            cancellationToken: default,
+            SharpLinkClient.NStudyPreparedSite.Unprepared);
         await using var enumerator = stream.GetAsyncEnumerator();
         var moveNext = enumerator.MoveNextAsync().AsTask();
         await Task.Yield();
@@ -154,7 +158,8 @@ public class SharpLinkClientInterceptorDeadlineTests
             });
         await client.ConnectAsync();
 
-        var invocation = InvokeUnary(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = InvokeUnary(client, prepared).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
             sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
@@ -165,17 +170,18 @@ public class SharpLinkClientInterceptorDeadlineTests
         Ensure(await invocation == 42, "intercepted response");
     }
 
-    private static ValueTask<int> InvokeUnary(SharpLinkClient client)
+    private static ValueTask<int> InvokeUnary(SharpLinkClient client, SharpLinkClient.NStudyPreparedSite prepared)
     {
         var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        return channel.InvokeUnaryAsync(
+        return channel.InvokeUnary(
             SMethod,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default);
+            cancellationToken: default,
+            prepared);
     }
 
     private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)

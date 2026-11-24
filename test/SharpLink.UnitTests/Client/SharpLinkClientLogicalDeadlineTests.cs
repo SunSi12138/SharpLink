@@ -31,13 +31,14 @@ public sealed class SharpLinkClientLogicalDeadlineTests
             MethodTimeout: TimeSpan.FromSeconds(5));
         var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = channel.InvokeUnary(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             RpcEmptyRequestCodec.Instance,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            SharpLinkClient.NStudyPreparedSite.Unprepared).AsTask();
 
         await delayed.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
         for (var spin = 0; spin < 100 && timeProvider.ActiveTimerCount == 0; spin++)
@@ -80,13 +81,15 @@ public sealed class SharpLinkClientLogicalDeadlineTests
             MethodTimeout: TimeSpan.FromSeconds(5));
         var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var enumerator = channel.InvokeServerStreamingAsync(
+        var enumerator = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+            channel, null,
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             RpcEmptyRequestCodec.Instance,
             metadata: null,
-            cancellationToken: default).GetAsyncEnumerator();
+            cancellationToken: default,
+            SharpLinkClient.NStudyPreparedSite.Unprepared).GetAsyncEnumerator();
         try
         {
             Ensure(await enumerator.MoveNextAsync(), "short-circuit stream first item");

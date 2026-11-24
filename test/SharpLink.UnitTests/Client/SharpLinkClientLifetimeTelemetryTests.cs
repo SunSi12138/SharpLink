@@ -109,13 +109,14 @@ public class SharpLinkClientLifetimeTelemetryTests
         SharpLinkException? failure = null;
         try
         {
-            _ = await channel.InvokeUnaryAsync(
+            _ = await channel.InvokeUnary(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 channel.RuntimeContext.Codecs.GetCodec<int>(),
                 metadata: null,
-                cancellationToken: default);
+                cancellationToken: default,
+                SharpLinkClient.NStudyPreparedSite.Unprepared);
         }
         catch (SharpLinkException exception)
         {
@@ -220,13 +221,15 @@ public class SharpLinkClientLifetimeTelemetryTests
     {
         var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var invocation = channel.InvokeUnaryAsync(
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = channel.InvokeUnary(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
         Ensure(await invocation == 0, "telemetry test response");

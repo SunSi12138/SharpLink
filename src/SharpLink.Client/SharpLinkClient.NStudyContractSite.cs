@@ -61,7 +61,7 @@ internal sealed partial class SharpLinkClient
 
     internal sealed class NStudyPreparedSite
     {
-        // Null still denotes the temporary legacy path. An unprepared typed call must never use it.
+        // An interceptor may complete a local call without a prepared route. Remote dispatch may not.
         internal static NStudyPreparedSite Unprepared { get; } = new();
 
         private readonly NStudyPreparedRoute? _single;

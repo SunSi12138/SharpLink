@@ -4,7 +4,7 @@ internal sealed partial class SharpLinkClient
 {
     private ValueTask SendRpcCall<TRequest>(
         RpcSession session,
-        long contractId,
+        NStudyClientRoute binding,
         long methodId,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -16,8 +16,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken = default,
         IRequestEmissionFailureObserver? failureObserver = null,
         PendingRequestTable? publicationTable = null,
-        int oneWayInputCount = 0,
-        NStudyClientRoute? exactRoute = null)
+        int oneWayInputCount = 0)
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
@@ -41,8 +40,7 @@ internal sealed partial class SharpLinkClient
             flags |= ProtocolV2FrameFlags.HasMetadata;
         }
 
-        var binding = exactRoute ?? session.CaptureNStudyRoute(contractId);
-        if (exactRoute is not null && !exactRoute.IsOpenOn(session))
+        if (!binding.IsOpenOn(session))
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The prepared private site no longer owns this Session route.");
         var writer = session.RentFrameWriter();
         var ownsWriter = true;

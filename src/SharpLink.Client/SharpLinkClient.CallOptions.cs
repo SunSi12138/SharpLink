@@ -213,5 +213,8 @@ internal sealed partial class SharpLinkClient
         ClientRetryGeneration? RetryGeneration = null,
         NStudyPreparedSite? PreparedSite = null,
         NStudyServerOutputLifetime? OutputLifetime = null,
-        SharpLinkClientStreamModuleLeaseOwner? InputLifetime = null);
+        SharpLinkClientStreamModuleLeaseOwner? InputLifetime = null)
+    {
+        internal NStudyPreparedSite SiteForDispatch => PreparedSite ?? NStudyPreparedSite.Unprepared;
+    }
 }

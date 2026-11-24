@@ -194,61 +194,23 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private ClientConnection GetReadyConnection()
-    {
-        if (_cluster is not null)
-            return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
-
-        for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
-        {
-            var connections = Volatile.Read(ref _readyConnections);
-            if (_shutdownCts.IsCancellationRequested || connections.Length == 0)
-                break;
-
-            ClientConnection selected;
-            if (connections.Length == 1)
-            {
-                selected = connections[0];
-            }
-            else
-            {
-                var first = Random.Shared.Next(connections.Length);
-                var second = Random.Shared.Next(connections.Length - 1);
-                if (second >= first)
-                    second++;
-                selected = EndpointSelectionKernel.SelectLeastLoaded(connections, first, second);
-            }
-
-            if (selected.TryReserveCallAdmission(out var admitted))
-            {
-                if (admitted.ActiveCallCount != 0)
-                    EnsureExpansion();
-                return admitted;
-            }
-        }
-
-        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
-            throw CreateConnectionClosedException("Client is not accepting new calls.");
-        throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
-    }
-
     private ClientConnection GetReadyConnection(
         RpcMethodDescriptor method,
         EndpointRetrySelectionState? retrySelection,
         AttemptOutcomeState? attemptOutcome,
-        NStudyPreparedSite? prepared = null)
+        NStudyPreparedSite prepared)
     {
         // Reached only by a remote continuation, not by a local interceptor result.
         if (ReferenceEquals(prepared, NStudyPreparedSite.Unprepared))
             throw NStudyPreparedSite.Unavailable();
 
         if (_cluster is not null)
-            return prepared is { IsBalanced: false }
+            return !prepared.IsBalanced
                 ? ReserveClusterPreparedSite(prepared, attemptOutcome)
                 : _cluster.GetReadyConnection(method, retrySelection, attemptOutcome, prepared: prepared);
 
         if (attemptOutcome is null || _fixedEndpoint is null || ReadyConnectionCount == 0)
-            return prepared is null ? GetReadyConnection() : ReservePreparedSite(prepared);
+            return ReservePreparedSite(prepared);
 
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
@@ -259,7 +221,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            return prepared is null ? GetReadyConnection() : ReservePreparedSite(prepared);
+            return ReservePreparedSite(prepared);
         }
         catch (Exception exception)
         {
