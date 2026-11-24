@@ -340,8 +340,9 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         Ensure(!waiter.IsCompleted, "the selected child's known previous identity must remain pending");
         await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "the scoped replacement barrier must preserve existing route and acquisition semantics");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy orders &&
+               ReferenceEquals(orders.Channel.RuntimeContext, GetChildClient(client, "orders").RuntimeContext),
+            "observing the new hash must preserve the selected child's published local route");
     }
 
     [Test]
@@ -361,8 +362,9 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         Ensure(client.GetClusterState("unrelated") != SharpLinkConnectionState.Ready,
             "a selected cluster's exact identity must not depend on unrelated cluster connectivity");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "the unchanged route must acquire the matching selected child's proxy");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy orders &&
+               ReferenceEquals(orders.Channel.RuntimeContext, GetChildClient(client, "orders").RuntimeContext),
+            "the unchanged route must capture the matching selected child");
     }
 
     [Test]
