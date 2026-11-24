@@ -14,7 +14,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [Arguments("shared-memory", "client")]
     [Arguments("shared-memory", "server")]
     public Task NStudyManualCoordinationUsesActualPreparedGroupOnTheSameSession(string transport, string initiator)
-        => VerifyNStudyManualCoordinationAsync(transport, initiator, faultingPolicy: null);
+        => VerifyNStudyManualCoordinationAsync(transport, initiator, NStudyApprovalScenario.Normal);
 
     [Test]
     [NotInParallel]
@@ -23,7 +23,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [Arguments("shared-memory", "client")]
     [Arguments("shared-memory", "server")]
     public Task NStudyApplicationApprovalFailureShouldLeaveOriginalSessionUsable(string transport, string faultingPolicy)
-        => VerifyNStudyManualCoordinationAsync(transport, faultingPolicy, faultingPolicy);
+        => VerifyNStudyManualCoordinationAsync(transport, faultingPolicy, NStudyApprovalScenario.Fault);
 
     [Test]
     [NotInParallel]
@@ -32,10 +32,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [Arguments("shared-memory", "client")]
     [Arguments("shared-memory", "server")]
     public Task NStudyApprovalDeadlineShouldNotCloseOriginalSession(string transport, string waitingPolicy)
-        => VerifyNStudyManualCoordinationAsync(transport, waitingPolicy, waitingPolicy, expirePolicy: true);
+        => VerifyNStudyManualCoordinationAsync(transport, waitingPolicy, NStudyApprovalScenario.Expiry);
+
+    [Test]
+    [NotInParallel]
+    [Arguments("client")]
+    [Arguments("server")]
+    public Task NStudyExpiredApprovalOwnsEndpointCapacityAcrossRollingRefresh(string waitingPolicy)
+        => VerifyNStudyManualCoordinationAsync("tcp", waitingPolicy, NStudyApprovalScenario.ExpiryThenRefresh);
+
+    private enum NStudyApprovalScenario { Normal, Fault, Expiry, ExpiryThenRefresh }
 
     private static async Task VerifyNStudyManualCoordinationAsync(
-        string transport, string initiator, string? faultingPolicy, bool expirePolicy = false)
+        string transport, string initiator, NStudyApprovalScenario scenario)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -52,7 +61,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var provider = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
         var builder = NewNStudyServer(source, provider);
         using var approvalLog = new NStudyApprovalLogger();
-        if (faultingPolicy == "server")
+        if (scenario == NStudyApprovalScenario.Fault && initiator == "server")
             builder.UseLoggerFactory(approvalLog);
         string? memoryName = transport == "shared-memory" ? $"sharplink-n-manual-{Guid.NewGuid():N}" : null;
         if (memoryName is null)
@@ -62,7 +71,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var port = memoryName is null ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port : 0;
         await using var server = (SharpLinkServer)builder.Build();
         await using var client = NewNStudyClient(source, port, memoryName,
-            faultingPolicy == "client" ? builder => builder.UseLoggerFactory(approvalLog) : null);
+            scenario == NStudyApprovalScenario.Fault && initiator == "client" ? builder => builder.UseLoggerFactory(approvalLog) : null);
         server.NStudyVersionCoordinationMode = client.NStudyVersionCoordinationMode = NStudyCoordinationMode.Manual;
         var path = Path.Combine(Path.GetDirectoryName(contracts.ContractAssembly.Location)!,
             "SharpLink.DynamicPlugin.Services.dll");
@@ -102,16 +111,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "both selected authenticated peers negotiated Manual on their real Session");
             trace.Record("ManualCapabilityNegotiatedOnTheBoundPhysicalSession", a1, bBinding);
 
-            if (expirePolicy)
+            if (scenario is NStudyApprovalScenario.Expiry or NStudyApprovalScenario.ExpiryThenRefresh)
             {
-                await VerifyNStudyApprovalDeadlineAsync(server, client, peer, session, choice, faultingPolicy!,
-                    oldAssembly, newAssembly, newType, b, a1, bBinding, trace, ct);
+                await VerifyNStudyApprovalDeadlineAsync(server, client, peer, session, choice, initiator,
+                    oldAssembly, newAssembly, newType, b, a1, bBinding, trace,
+                    refreshAfterExpiry: scenario == NStudyApprovalScenario.ExpiryThenRefresh, ct);
                 return;
             }
 
-            if (faultingPolicy is not null)
+            if (scenario == NStudyApprovalScenario.Fault)
             {
-                await VerifyNStudyApplicationApprovalFailureAsync(server, client, peer, session, choice, faultingPolicy,
+                await VerifyNStudyApplicationApprovalFailureAsync(server, client, peer, session, choice, initiator,
                     oldAssembly, newAssembly, newType, contracts.ContractType, a, b, a1, bBinding, trace, approvalLog, ct);
                 return;
             }
@@ -223,7 +233,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         SharpLinkServer server, SharpLinkClient client, ServerConnectionState peer, RpcSession session,
         NStudyInitiator choice, string waitingPolicy, Assembly oldAssembly, Assembly newAssembly,
         Type newType, IShutdownCleanupProbe b, NStudyAck a1, NStudyAck bBinding,
-        NStudyTrace trace, CancellationToken ct)
+        NStudyTrace trace, bool refreshAfterExpiry, CancellationToken ct)
     {
         var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var approval = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -278,6 +288,33 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(!session.LifetimeToken.IsCancellationRequested && await b.TouchAsync(2, ct) == 102,
                 "B serves on the original Session while the canceled callback still physically owns its slot");
             trace.Record("UnrelatedBServesWhileExpiredApprovalStillOwnsCapacity", a1, bBinding);
+            (RpcSession Session, IShutdownCleanupProbe Service, NStudyAck Binding)? refreshed = null;
+            if (refreshAfterExpiry)
+            {
+                Ensure(error is null && outcome.DeclineReason == NStudyDeclineReason.Policy &&
+                       ReferenceEquals(session, NStudyClientSession(client)) &&
+                       session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId,
+                    "the independent rolling refresh must begin after a same-Session Policy decline");
+                await server.PublishDesiredSessionAsync(new SharpLinkServerDesiredSessionConfiguration
+                {
+                    MaxFramePayloadBytes = 128 * 1024
+                }, SharpLinkSessionRolloutMode.RollingRefresh, ct);
+                await WaitForNStudyAsync(() => client.ReadyConnectionCount == 1 &&
+                    !ReferenceEquals(session, NStudyClientSession(client)), ct);
+                var fresh = NStudyClientSession(client);
+                Ensure(fresh.NStudyPreparedCount == 0 && fresh.NStudyBindOperationForDiagnostics == 0,
+                    "the new physical Session does not inherit the old grants");
+                var (nextB, nextBinding) = await PrepareNStudySiblingAsync(client, bBinding.Contract, ct);
+                var freshPeer = NStudyServerRegistry(server).SnapshotActive()
+                    .Single(item => item.NStudyPhysicalIdentity == nextBinding.Authority.PhysicalSession);
+                var freshApprovals = (waitingPolicy == "client" ? fresh : freshPeer.Session).RuntimeContext.NStudyApprovals;
+                Ensure(nextBinding.Authority.PhysicalSession != bBinding.Authority.PhysicalSession &&
+                       ReferenceEquals(approvals, freshApprovals) && freshApprovals.ActiveCount == 1 &&
+                       !callbackExited.Task.IsCompleted && await nextB.TouchAsync(31, ct) == 131,
+                    "an ordinary rolling refresh retains the physical approval quota on its endpoint");
+                trace.Record("FreshSessionUsesSameEndpointQuotaWhileOriginalCallbackIsLive", bBinding, nextBinding);
+                refreshed = (fresh, nextB, nextBinding);
+            }
 
             approval.TrySetResult(true);
             await callbackExited.Task.WaitAsync(ct);
@@ -292,6 +329,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                               $"clientError={error?.GetType().Name ?? "none"}; serverDecline={outcome.DeclineReason}; " +
                               $"originalReady={originalReady}");
             trace.Record("LateApprovalDoesNotActivateTheCandidate", a1, bBinding);
+            if (refreshed is { } next)
+            {
+                Ensure(ReferenceEquals(next.Session, NStudyClientSession(client)) &&
+                       next.Session.NStudyBindOperationForDiagnostics == 1 &&
+                       next.Session.CaptureNStudyBinding(next.Binding.Contract) == next.Binding.BindingId &&
+                       await next.Service.TouchAsync(32, ct) == 132,
+                    "the completed old policy does not affect the fresh Session or start an extra Bind");
+                trace.Record("OldCallbackExitReturnsCapacityAndLeavesFreshBindingUnchanged", bBinding, next.Binding);
+                return;
+            }
             Ensure(error is null && outcome.DeclineReason == NStudyDeclineReason.Policy && originalReady &&
                    session.CaptureNStudyBinding(bBinding.Contract) == bBinding.BindingId &&
                    await b.TouchAsync(3, ct) == 103,
