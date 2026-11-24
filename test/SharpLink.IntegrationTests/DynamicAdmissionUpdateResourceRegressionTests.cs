@@ -66,6 +66,9 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(5)) == 3,
                 "capacity owner must complete normally after Admission update");
 
+            // Receiving the response does not prove the server's physical permit was returned.
+            await WaitUntilAsync(() => harness.Server.ActiveCallCountForDiagnostics == 0,
+                "old physical call releases the sole global capacity permit");
             var response = await compression.EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(response.SequenceEqual(payload),
                 "controlled capacity rejection after update must leave the connection reusable");
