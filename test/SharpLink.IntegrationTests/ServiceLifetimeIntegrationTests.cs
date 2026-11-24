@@ -16,7 +16,8 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        _ = await client.Get<IBlockingConnectionCleanupProbe>().ActivateAsync();
+        var service = await client.PrepareTestServiceAsync<IBlockingConnectionCleanupProbe>();
+        _ = await service.ActivateAsync();
 
         var stop = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
         await BlockingConnectionCleanupProbe.DisposeStarted.WaitAsync(TimeSpan.FromSeconds(2));
@@ -54,8 +55,9 @@ public sealed class ServiceLifetimeIntegrationTests
         await firstClient.ConnectAsync();
         await secondClient.ConnectAsync();
 
-        var first = firstClient.Get<IConnectionLifetimeProbe>();
-        var second = secondClient.Get<IConnectionLifetimeProbe>();
+        var first = await firstClient.PrepareTestServiceAsync<IConnectionLifetimeProbe>();
+        var second = await secondClient.PrepareTestServiceAsync<IConnectionLifetimeProbe>();
+        Ensure(ConnectionLifetimeProbe.Created == 0, "preparing a contract must not activate a connection service");
         var firstId = await first.GetInstanceIdAsync();
         Ensure(await first.GetInstanceIdAsync() == firstId, "one instance is reused on a connection");
         var secondId = await second.GetInstanceIdAsync();
@@ -86,7 +88,8 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        var service = client.Get<ICallLifetimeProbe>();
+        var service = await client.PrepareTestServiceAsync<ICallLifetimeProbe>();
+        Ensure(CallLifetimeProbe.Created == 0, "preparing a contract must not activate a call service");
 
         var first = await service.GetInstanceIdAsync();
         var second = await service.GetInstanceIdAsync();
@@ -135,7 +138,8 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        var service = client.Get<ICallLifetimeProbe>();
+        var service = await client.PrepareTestServiceAsync<ICallLifetimeProbe>();
+        Ensure(CallLifetimeProbe.Created == 0, "preparing a contract must not activate a call service");
 
         await using var stream = service.StreamInstanceIdAsync().GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync(), "admitted call-lifetime stream");
@@ -182,10 +186,12 @@ public sealed class ServiceLifetimeIntegrationTests
         var firstServerTask = firstServer.RunUntilStoppedAsync(firstCancellation.Token).AsTask();
         await using var firstClient = CreateClient(firstPort);
         await firstClient.ConnectAsync();
-        _ = await firstClient.Get<ICallLifetimeProbe>().GetInstanceIdAsync();
+        var enabled = await firstClient.PrepareTestServiceAsync<ICallLifetimeProbe>();
+        _ = await enabled.GetInstanceIdAsync();
+        var filtered = firstClient.CreateProxy<IConnectionLifetimeProbe>();
         try
         {
-            _ = await firstClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+            await filtered.PrepareAsync(TimeSpan.FromSeconds(5));
             throw new Exception("assert failed: disabled automatic registration must hide non-enabled services");
         }
         catch (SharpLinkException exception)
@@ -206,7 +212,8 @@ public sealed class ServiceLifetimeIntegrationTests
         var secondServerTask = secondServer.RunUntilStoppedAsync(secondCancellation.Token).AsTask();
         await using var secondClient = CreateClient(secondPort);
         await secondClient.ConnectAsync();
-        _ = await secondClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+        var service = await secondClient.PrepareTestServiceAsync<IConnectionLifetimeProbe>();
+        _ = await service.GetInstanceIdAsync();
         await secondClient.StopAsync();
         await secondServer.StopAsync(TimeSpan.FromSeconds(2));
         await secondCancellation.CancelAsync();
