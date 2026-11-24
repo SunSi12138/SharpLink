@@ -62,19 +62,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    client.RegisterAssembly(contracts.ContractAssembly).Succeeded, "actual R1 and contract are registered");
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
+            var (unrelated, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
+            var receiver = CreateNStudyExactGenerated(client, contracts.ContractType);
+            var timeout = TimeSpan.FromSeconds(5);
             var r1 = server.ReadNStudyTarget(oldAssembly, aCid);
-            var a1 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r1, ct);
+            var a1 = await receiver.PrepareExact(new(bBinding.Authority, aCid, manifest.RpcAssemblyHash, r1), timeout, ct);
             var connection = NStudyClientConnection(client);
             var serverConnection = NStudyServerConnection(server);
-            Ensure(a1.Authority.PhysicalSession == serverConnection.NStudyPhysicalIdentity &&
+            Ensure(a1.Authority == bBinding.Authority && bBinding.Hash == staticManifest.RpcAssemblyHash &&
+                   a1.Authority.PhysicalSession == serverConnection.NStudyPhysicalIdentity &&
                    serverConnection.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? connection.Session.RemoteEndPoint is IPEndPoint :
                        connection.Session.Input is SharedMemoryPipeReader), "normal authenticated physical transport");
             var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
             var table = connection.PendingCalls;
-            var proxy = GetProxy(client, contracts.ContractType);
-            var unrelated = client.Get<IShutdownCleanupProbe>();
+            var proxy = receiver.Service;
             var oldModule = GetDynamicModule(server, oldAssembly);
             var busy = InvokeValueTaskAsync<int>(proxy, contracts.ContractType, "BlockAsync", ct).AsTask();
             await ((Task)oldType.GetProperty("BlockStarted")!.GetValue(null)!).WaitAsync(ct);
@@ -110,7 +112,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var replacing = server.ReplaceAssemblyAsync(oldAssembly, newAssembly, TimeSpan.FromSeconds(15), ct).AsTask();
             await WaitForNStudyAsync(() => connection.Session.NStudyPreparedCount == 1, ct);
             var r2 = server.ReadNStudyTarget(newAssembly, aCid);
-            var a2 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash, r2, ct);
+            var a2 = await receiver.PrepareExact(new(a1.Authority, aCid, manifest.RpcAssemblyHash, r2), timeout, ct);
             Ensure(r2.Registration != r1.Registration && a2.Authority == a1.Authority &&
                    NStudyWire.SlotIndex(a2.BindingId) != NStudyWire.SlotIndex(a1.BindingId) &&
                    serverConnection.NStudyBindings.Snapshot() == (2, 1, 1) &&

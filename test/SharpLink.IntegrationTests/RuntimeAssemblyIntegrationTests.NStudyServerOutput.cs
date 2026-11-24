@@ -49,22 +49,24 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    client.RegisterAssembly(contracts.ContractAssembly).Succeeded, "R1 and real generated contract register");
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
-            var a1 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash,
-                server.ReadNStudyTarget(oldAssembly, aCid), ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
+            var receiver = CreateNStudyExactGenerated(client, contracts.ContractType);
+            var timeout = TimeSpan.FromSeconds(5);
+            var a1 = await receiver.PrepareExact(new(bBinding.Authority, aCid, manifest.RpcAssemblyHash,
+                server.ReadNStudyTarget(oldAssembly, aCid)), timeout, ct);
             var connection = NStudyClientConnection(client);
             var peer = NStudyServerConnection(server);
-            Ensure(a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+            Ensure(a1.Authority == bBinding.Authority && bBinding.Hash == staticManifest.RpcAssemblyHash &&
+                   a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? connection.Session.RemoteEndPoint is IPEndPoint :
                        connection.Session.Input is SharedMemoryPipeReader), "auth and actual transport are active");
-            var a = GetProxy(client, contracts.ContractType);
-            var b = client.Get<IShutdownCleanupProbe>();
+            var a = receiver.Service;
             var oldModule = GetDynamicModule(server, oldAssembly);
             var oldOutput = InvokeStream(a, contracts.ContractType, "ServerStreamAsync", 3, cancel.Token);
             await using var reader = oldOutput.GetAsyncEnumerator();
             Ensure(await reader.MoveNextAsync().AsTask().WaitAsync(ct) && reader.Current == 0,
-                "the unmodified generated ServerStreaming path delivers its first item");
+                "the prepared generated ServerStreaming path delivers its first item");
             await ReadNStudyTask(oldType, "ServerOutputAwaitingItem").WaitAsync(ct);
             var requestId = peer.LastAcceptedRequestId;
             Ensure(peer.CallCancellations.TryGetValue(requestId, out var originalCall) &&
@@ -76,8 +78,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
             var replacing = server.ReplaceAssemblyAsync(oldAssembly, newAssembly, TimeSpan.FromSeconds(15), ct).AsTask();
             await WaitForNStudyAsync(() => connection.Session.NStudyPreparedCount == 1, ct);
-            var a2 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash,
-                server.ReadNStudyTarget(newAssembly, aCid), ct);
+            var a2 = await receiver.PrepareExact(new(a1.Authority, aCid, manifest.RpcAssemblyHash,
+                server.ReadNStudyTarget(newAssembly, aCid)), timeout, ct);
             var r2 = await CollectAsync(InvokeStream(a, contracts.ContractType, "ServerStreamAsync", 3, ct)).WaitAsync(ct);
             Ensure(r2.SequenceEqual(new[] { 0, 1, 2 }) && NStudyCount(newType, "Created") == 1 &&
                    a2.Authority == a1.Authority && a2.Target != a1.Target &&

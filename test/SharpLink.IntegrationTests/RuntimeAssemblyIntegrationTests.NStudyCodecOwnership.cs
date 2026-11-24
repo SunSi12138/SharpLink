@@ -41,10 +41,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(client.RegisterAssembly(clientAssembly).Succeeded, "client has the compatible generated assembly");
             var clientModule = GetDynamicModule(client, clientAssembly);
             var contract = clientModule.Manifest.Contracts.Single(item => item.ContractType == FeedType(clientAssembly, "IReadingFeed"));
-            var feed = new NStudyFeedClient(contract.ContractType, FeedType(clientAssembly, "FeedReading"));
+            var feed = new NStudyFeedClient(CreateNStudyExactGenerated(client, contract.ContractType),
+                contract.ContractType, FeedType(clientAssembly, "FeedReading"));
             var identity = new NStudyContractInputs(contract.ContractId, clientModule.Manifest.RpcAssemblyHash,
                 bCid, manifest.RpcAssemblyHash);
-            var (retired, a2, bBinding) = await ExerciseNStudyFeedReplacementAsync(server, client, directory, path,
+            var (retired, a2, bBinding, b) = await ExerciseNStudyFeedReplacementAsync(server, client, directory, path,
                 newAssembly, feed, identity, trace, memoryName, ct).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
 
             for (var i = 0; retired.IsAlive && i < 24; i++)
@@ -56,11 +57,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     await Task.Delay(25, ct);
             }
             Ensure(!retired.IsAlive, "the real R1 service, Stub and Codec context is collectable while the peers remain active");
-            Ensure((await CollectAsync(feed.Read(client, follow: false, ct)).WaitAsync(ct)).SequenceEqual(new[] { 20 }) &&
+            Ensure((await CollectAsync(feed.Read(follow: false, ct)).WaitAsync(ct)).SequenceEqual(new[] { 20 }) &&
                    FeedCount(FeedType(newAssembly, "FeedReadingCodec"), "Serialized") == 2 &&
                    FeedCount(FeedType(clientAssembly, "FeedReadingCodec"), "Deserialized") == 4 &&
                    NStudyClientSession(client).CaptureNStudyBinding(identity.A) == a2.BindingId &&
-                   await client.Get<IShutdownCleanupProbe>().TouchAsync(3, ct) == 103,
+                   await b.TouchAsync(3, ct) == 103,
                 "current R2 and B still respond on the original connection after the old context collects");
             trace.Record("OldCodecContextCollectsWhileR2AndBContinue", a2, bBinding);
         }
@@ -72,7 +73,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<(WeakReference Retired, NStudyAck Current, NStudyAck Unrelated)> ExerciseNStudyFeedReplacementAsync(
+    private static async Task<(WeakReference Retired, NStudyAck Current, NStudyAck Unrelated, IShutdownCleanupProbe Sibling)>
+        ExerciseNStudyFeedReplacementAsync(
         SharpLinkServer server, SharpLinkClient client, string directory, string path, Assembly newAssembly,
         NStudyFeedClient feed, NStudyContractInputs identity, NStudyTrace trace, string? memoryName, CancellationToken ct)
     {
@@ -93,18 +95,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "R1 server has the same contract hash as the client and its own generated Stub");
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var a1 = await client.PrepareNStudyContractAsync(identity.A, identity.AHash,
-                server.ReadNStudyTarget(oldAssembly, identity.A), ct);
-            var bBinding = await client.PrepareNStudyContractAsync(identity.B, identity.BHash, default, ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, identity.B, ct);
+            var timeout = TimeSpan.FromSeconds(5);
+            var a1 = await feed.Receiver.PrepareExact(new(bBinding.Authority, identity.A, identity.AHash,
+                server.ReadNStudyTarget(oldAssembly, identity.A)), timeout, ct);
             var session = NStudyClientSession(client);
             var peer = NStudyServerConnection(server);
-            var b = client.Get<IShutdownCleanupProbe>();
-            Ensure(peer.NStudyPhysicalIdentity == a1.Authority.PhysicalSession &&
+            Ensure(a1.Authority == bBinding.Authority && bBinding.Hash == identity.BHash &&
+                   peer.NStudyPhysicalIdentity == a1.Authority.PhysicalSession &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "normal generated calls are on the authenticated physical connection");
 
-            reader = feed.Read(client, follow: true, ct).GetAsyncEnumerator(ct);
+            reader = feed.Read(follow: true, ct).GetAsyncEnumerator(ct);
             Ensure(await reader.MoveNextAsync().AsTask().WaitAsync(ct) && reader.Current == 10,
                 "R1 delivers its first reading through its own generated path");
             await ReadNStudyTask(service, "WaitingForUpdate").WaitAsync(ct);
@@ -115,13 +118,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
             var replacing = server.ReplaceAssemblyAsync(oldAssembly, newAssembly, TimeSpan.FromSeconds(15), ct).AsTask();
             await WaitForNStudyAsync(() => session.NStudyPreparedCount == 1, ct);
-            var a2 = await client.PrepareNStudyContractAsync(identity.A, identity.AHash,
-                server.ReadNStudyTarget(newAssembly, identity.A), ct);
+            var a2 = await feed.Receiver.PrepareExact(new(a1.Authority, identity.A, identity.AHash,
+                server.ReadNStudyTarget(newAssembly, identity.A)), timeout, ct);
             var current = ServerRegistryTestAccessor.Services(server)[identity.A];
             Ensure(a2.Authority == a1.Authority && a2.Target != a1.Target && a2.BindingId != a1.BindingId &&
                    ReferenceEquals(current.Stub.GetType().Assembly, newAssembly) &&
                    !ReferenceEquals(current.Stub, originalRegistration.Stub), "a distinct R2 Stub is current on the same Session");
-            Ensure((await CollectAsync(feed.Read(client, follow: false, ct)).WaitAsync(ct)).SequenceEqual(new[] { 20 }) &&
+            Ensure((await CollectAsync(feed.Read(follow: false, ct)).WaitAsync(ct)).SequenceEqual(new[] { 20 }) &&
                    FeedCount(newCodec, "Serialized") == 1 && FeedCount(oldCodec, "Serialized") == 1 &&
                    await b.TouchAsync(1, ct) == 101, "R2 uses a different Codec instance without blocking B or rerouting R1");
             await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (2, 1, 1), ct);
@@ -149,7 +152,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(disposed == (1, 1, 1, 0) && ReferenceEquals(NStudyClientSession(client), session),
                 $"R1 feed, service and codec close once; R2 stays live. Actual close counts: {disposed}");
             trace.Record("NormalEofReleasesOnlyR1Owners", a1, a2);
-            return (weak, a2, bBinding);
+            return (weak, a2, bBinding, b);
         }
         finally
         {
@@ -169,14 +172,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private static int FeedCount(Type type, string name) => (int)type.GetField(name)!.GetValue(null)!;
 
-    private sealed class NStudyFeedClient(Type contract, Type reading)
+    private sealed class NStudyFeedClient(NStudyExactGenerated receiver, Type contract, Type reading)
     {
         private readonly MethodInfo _read = contract.GetMethod("ReadAsync")!;
         private readonly MethodInfo _project = typeof(RuntimeAssemblyIntegrationTests).GetMethod(nameof(ProjectFeed),
             BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(reading);
 
-        internal IAsyncEnumerable<int> Read(SharpLinkClient client, bool follow, CancellationToken ct)
-            => (IAsyncEnumerable<int>)_project.Invoke(null, [_read.Invoke(GetProxy(client, contract), [follow, ct]), ct])!;
+        internal NStudyExactGenerated Receiver { get; } = receiver;
+
+        internal IAsyncEnumerable<int> Read(bool follow, CancellationToken ct)
+            => (IAsyncEnumerable<int>)_project.Invoke(null, [_read.Invoke(Receiver.Service, [follow, ct]), ct])!;
     }
 
     private static async IAsyncEnumerable<int> ProjectFeed<T>(object source, [EnumeratorCancellation] CancellationToken ct)
