@@ -53,9 +53,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    client.RegisterAssembly(contracts.ContractAssembly).Succeeded, "only R1 and compatible local contract are registered");
             await server.StartAsync(ct);
             await client.ConnectAsync(ct);
-            var bBinding = await client.PrepareNStudyContractAsync(bCid, staticManifest.RpcAssemblyHash, default, ct);
-            var a1 = await client.PrepareNStudyContractAsync(aCid, manifest.RpcAssemblyHash,
-                server.ReadNStudyTarget(oldAssembly, aCid), ct);
+            var (b, bBinding) = await PrepareNStudySiblingAsync(client, bCid, ct);
+            var site = CreateNStudyExactGenerated(client, contracts.ContractType);
+            var a = site.Service;
+            var a1 = await site.PrepareExact(new(bBinding.Authority, aCid, manifest.RpcAssemblyHash,
+                server.ReadNStudyTarget(oldAssembly, aCid)), TimeSpan.FromSeconds(5), ct);
             var connection = NStudyClientConnection(client);
             var session = connection.Session;
             var peer = NStudyServerConnection(server);
@@ -63,15 +65,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var observed = await server.QueryNStudyClientInventoryAsync(peer, ct);
             var observedClientRegistration = observed.Select(aCid);
             Ensure(session.SupportsNStudyCoordination && peer.Session.SupportsNStudyCoordination &&
-                   a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
+                   a1.Authority == bBinding.Authority && a1.Authority.PhysicalSession == peer.NStudyPhysicalIdentity &&
                    observed.Authority == a1.Authority && observedClientRegistration.Hash == manifest.RpcAssemblyHash &&
                    observedClientRegistration.Target.Registration == clientContractModule.NStudyRegistration &&
                    peer.AuthenticationContext?.Subject == "n-validation" &&
                    (memoryName is null ? session.RemoteEndPoint is IPEndPoint : session.Input is SharedMemoryPipeReader),
                 "both selected authenticated peers negotiated Manual on their real Session");
             trace.Record("ManualCapabilityNegotiatedOnTheBoundPhysicalSession", a1, bBinding);
-            var a = GetProxy(client, contracts.ContractType);
-            var b = client.Get<IShutdownCleanupProbe>();
 
             // Normal application choice: decline a staged version, then allow a new
             // attempt. No business traffic is retargeted by the declaration alone.
@@ -117,20 +117,23 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    !oldCall.IsCompleted, "server approval alone neither cuts R1 nor opens R2 before client approval");
             trace.Record("ServerApprovalStillWaitsForPreparedClientDecision", a1);
 
+            var priorBind = session.NStudyBindOperationForDiagnostics;
             clientDecision.Approve();
             var activated = await negotiating.WaitAsync(ct) ?? throw new InvalidOperationException("Expected activation.");
             Ensure(activated.Change == offered &&
                    activated.LocalRegistration == clientContractModule.NStudyRegistration &&
                    activated.Binding.Authority == a1.Authority &&
                    activated.Binding.Target == server.ReadNStudyTarget(newAssembly, aCid) &&
-                   activated.Binding.Target == offered.Target,
+                   activated.Binding.Target == offered.Target &&
+                   session.NStudyBindOperationForDiagnostics == priorBind + 1,
                 "the new real R2 Bind follows activation of the one approved candidate");
             var a2 = activated.Binding;
             Ensure(!replacing.IsCompleted && !oldCall.IsCompleted &&
                    peer.NStudyBindings.Snapshot() == (2, 1, 1) &&
                    session.CaptureNStudyBinding(bCid) == bBinding.BindingId &&
                    await InvokeValueTaskAsync<int>(a, contracts.ContractType, "UnaryAsync", 10, ct) == 11 &&
-                   NStudyCount(newType, "Created") == 1 && await b.TouchAsync(4, ct) == 104,
+                   NStudyCount(newType, "Created") == 1 && await b.TouchAsync(4, ct) == 104 &&
+                   session.NStudyBindOperationForDiagnostics == priorBind + 1,
                 "new calls reach exact R2 and B without moving the physically active R1 call");
             trace.Record("ApprovedExactR2ResumesWhileOldR1AndBRemainLive", a1, a2);
 
@@ -143,7 +146,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    final.PreparedClientRegistration == observedClientRegistration.Target.Registration &&
                    NStudyCount(oldType, "Disposed") == 1 && ReferenceEquals(session, NStudyClientSession(client)) &&
                    GetDynamicModule(client, contracts.ContractAssembly) == clientContractModule &&
-                   ReferenceEquals(a, GetProxy(client, contracts.ContractType)),
+                   await InvokeValueTaskAsync<int>(a, contracts.ContractType, "UnaryAsync", 12, ct) == 13 &&
+                   session.NStudyBindOperationForDiagnostics == priorBind + 1,
                 "both participants report the same exact ticket; local client registration/proxy did not get replaced");
             trace.Record("OriginalR1ExitsOnceAndBothReportTheSameActivation", a1, a2);
         }
