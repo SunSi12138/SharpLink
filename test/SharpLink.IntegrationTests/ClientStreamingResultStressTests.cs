@@ -13,11 +13,6 @@ public class ClientStreamingResultStressTests
         const int iterations = 10;
         for (var iteration = 1; iteration <= iterations; iteration++)
         {
-            var buffered = CreateBufferedObservation();
-            PreAdmissionStreamDispatcher.BufferedItemObserverForTests =
-                (requestId, streamId, compressed) =>
-                    buffered.TrySetResult(new BufferedObservation(requestId, streamId, compressed));
-
             var harness = await AwaitPhaseAsync(Harness.CreateAsync(), iteration, "create harness");
             var log = new ConcurrentQueue<string>();
             var a = new AwaitingServerInterceptor("A", log);
@@ -25,40 +20,35 @@ public class ClientStreamingResultStressTests
             var c = new AwaitingServerInterceptor("C", log);
             try
             {
+                var service = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
                 var x = new AwaitingServerInterceptor("X", log);
                 var y = new AwaitingServerInterceptor("Y", log);
                 var z = new AwaitingServerInterceptor("Z", log);
                 harness.Server.ReplaceInterceptors([a, b, c]);
 
-                var call = InvokeClientStreamingAsync(harness.Service);
+                var input = new ObservedInput<int>(SingleValue());
+                var call = service.SumStreamAsync(input, CancellationToken.None).AsTask();
                 await AwaitPhaseAsync(b.Entered, iteration, "server interceptor entry");
-                if (call.IsCompleted)
-                    throw new Exception($"iteration {iteration}: invocation completed before gated next");
+                if (call.IsCompleted || input.Enumerators != 0)
+                    throw new InvalidOperationException("A gated interceptor must withhold both the result and the input producer.");
 
-                var observation = await AwaitPhaseAsync(
-                    buffered.Task, iteration, "deferred stream buffer entry");
-                if (observation.Compressed)
-                    throw new Exception($"iteration {iteration}: uncompressed repro buffered a compressed frame");
-                if (observation.StreamId == 0)
-                    throw new Exception($"iteration {iteration}: client stream used reserved stream ID 0");
-
-                // This proves StreamData reached the deferred route before the generated typed
-                // dispatcher can exist. Releasing the interceptor now exercises replay directly.
                 harness.Server.ReplaceInterceptors([x, y, z]);
                 b.Release();
+                if (await AwaitPhaseAsync(call, iteration, "captured client-streaming result") != 10 || input.Enumerators != 1)
+                    throw new InvalidOperationException("The accepted original source must be read once and return 10.");
+                await AwaitPhaseAsync(Task.WhenAll(a.Completed, b.Completed, c.Completed), iteration, "original interceptor unwind");
 
-                var result = await AwaitPhaseAsync(call, iteration, "client-streaming result");
-                if (result != 10)
-                    throw new Exception($"iteration {iteration}: client-streaming result expected 10, actual {result}");
+                if (await AwaitPhaseAsync(service.SumStreamAsync(SingleValue(), CancellationToken.None).AsTask(),
+                        iteration, "replacement client-streaming result") != 10)
+                    throw new InvalidOperationException("The next call must succeed through the new interceptor generation.");
+                await AwaitPhaseAsync(Task.WhenAll(x.Completed, y.Completed, z.Completed), iteration, "replacement interceptor unwind");
 
-                await AwaitPhaseAsync(
-                    Task.WhenAll(a.Completed, b.Completed, c.Completed),
-                    iteration,
-                    "server interceptor unwind");
+                if (!log.SequenceEqual(["A:before", "B:before", "C:before", "C:after", "B:after", "A:after",
+                        "X:before", "Y:before", "Z:before", "Z:after", "Y:after", "X:after"]))
+                    throw new InvalidOperationException($"The two calls must unwind only their own snapshots: {string.Join(", ", log)}");
             }
             finally
             {
-                PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
                 b.Release();
                 await AwaitPhaseAsync(harness.DisposeAsync().AsTask(), iteration, "harness disposal");
             }
@@ -67,41 +57,31 @@ public class ClientStreamingResultStressTests
 
     [Test]
     [NotInParallel]
-    public async Task CompressedClientStreamingFrameShouldReplayAfterInterceptorGate()
+    public async Task CompressedClientStreamingInputShouldWaitForInterceptorAcceptance()
     {
-        var buffered = CreateBufferedObservation();
-        PreAdmissionStreamDispatcher.BufferedItemObserverForTests =
-            (requestId, streamId, compressed) =>
-                buffered.TrySetResult(new BufferedObservation(requestId, streamId, compressed));
-
-        var harness = await Harness.CreateAsync(enableCompression: true);
+        var decoder = new CountingServerCompressionProvider();
+        var harness = await Harness.CreateAsync(serverCompressionProvider: decoder);
         var gate = new GatedNextServerInterceptor("compressed", new ConcurrentQueue<string>());
-        harness.Server.ReplaceInterceptors([gate]);
         try
         {
+            var compression = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
+            harness.Server.ReplaceInterceptors([gate]);
             var payload = Enumerable.Repeat((byte)0x41, 4096).ToArray();
-            var call = harness.Client.Get<ICompressionService>()
-                .UploadBytesAsync(SinglePayload(payload)).AsTask();
+            var input = new ObservedInput<byte[]>(SinglePayload(payload));
+            var call = compression.UploadBytesAsync(input).AsTask();
 
             await gate.Entered.WaitAsync(PhaseTimeout);
-            var observation = await buffered.Task.WaitAsync(PhaseTimeout);
-            if (observation.StreamId == 0)
-                throw new Exception("compressed client stream used reserved stream ID 0");
-            if (call.IsCompleted)
-                throw new Exception("compressed client-stream invocation completed before gated next");
+            var decodedBeforeInput = decoder.Decodes;
+            if (call.IsCompleted || input.Enumerators != 0 || ((SharpLinkServer)harness.Server).PreAdmissionStreamBytesForDiagnostics != 0)
+                throw new InvalidOperationException("The interceptor has not consented to activate the compressed input.");
 
-            // Active compressed StreamData may be decoded by the read loop before it reaches the
-            // deferred route so the call owner can re-arbitrate immediately after decompression.
-            // The observable contract here is that the interceptor gate still defers delivery and
-            // the buffered item replays successfully after the generated typed dispatcher exists.
             gate.Release();
-            var result = await call.WaitAsync(PhaseTimeout);
-            if (result != payload.Length)
-                throw new Exception($"compressed client-stream result expected {payload.Length}, actual {result}");
+            if (await call.WaitAsync(PhaseTimeout) != payload.Length ||
+                input.Enumerators != 1 || decoder.Decodes != decodedBeforeInput + 1)
+                throw new InvalidOperationException("After acceptance the real typed stream must decode exactly one compressed item.");
         }
         finally
         {
-            PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
             gate.Release();
             await harness.DisposeAsync().AsTask().WaitAsync(PhaseTimeout);
         }
@@ -109,24 +89,10 @@ public class ClientStreamingResultStressTests
 
     [Test]
     [NotInParallel]
-    public async Task QueuedClientStreamShouldPromoteRetentionAfterAdmission()
+    public async Task QueuedClientStreamShouldUseActiveBudgetOnlyAfterAcceptance()
     {
         InterceptorTestService.ResetDelayedCall();
-        var firstBuffered = CreateBufferedObservation();
-        var activeBuffered = new TaskCompletionSource<int>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var bufferedCount = 0;
-        PreAdmissionStreamDispatcher.BufferedItemObserverForTests =
-            (requestId, streamId, compressed) =>
-            {
-                firstBuffered.TrySetResult(new BufferedObservation(requestId, streamId, compressed));
-                var count = Interlocked.Increment(ref bufferedCount);
-                if (count >= 8)
-                    activeBuffered.TrySetResult(count);
-            };
-
-        var releaseMore = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var metrics = new LifecycleMetricProbe(LifecycleMetricProbe.AdmissionQueuedCalls);
         var gate = new ClientStreamingGateServerInterceptor();
         var harness = await Harness.CreateAsync(serverConfigure: builder =>
             builder.UseAdmissionControl(options =>
@@ -136,57 +102,50 @@ public class ClientStreamingResultStressTests
                 options.MaxQueuedBytes = 2048;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(5);
             }));
-        harness.Server.ReplaceInterceptors([gate]);
         try
         {
-            var permitOwner = harness.Service.DelayedAsync().AsTask();
+            var unary = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
+            var compression = await harness.Client.PrepareTestServiceAsync<ICompressionService>();
+            harness.Server.ReplaceInterceptors([gate]);
+            var server = (SharpLinkServer)harness.Server;
+            var kernel = server.CurrentAdmissionProgramForTests!.Kernel;
+            var permitOwner = unary.DelayedAsync().AsTask();
             await InterceptorTestService.DelayedCallStarted.WaitAsync(PhaseTimeout);
 
-            const int activeItemCount = 16;
-            const int activeItemSize = 512;
-            const int queuedItemSize = 64;
-            var call = harness.Client.Get<ICompressionService>()
-                .UploadBytesAsync(GatedPayloads(
-                    queuedItemSize,
-                    activeItemCount,
-                    activeItemSize,
-                    releaseMore.Task)).AsTask();
+            const int firstItemSize = 64;
+            const int remainingItemCount = 16;
+            const int remainingItemSize = 512;
+            var input = new ObservedInput<byte[]>(Payloads(firstItemSize, remainingItemCount, remainingItemSize));
+            var call = compression.UploadBytesAsync(input).AsTask();
 
-            var queuedObservation = await firstBuffered.Task.WaitAsync(PhaseTimeout);
-            if (queuedObservation.StreamId == 0)
-                throw new Exception("queued client stream used reserved stream ID 0");
+            await metrics.WaitForValueAsync(LifecycleMetricProbe.AdmissionQueuedCalls, 1, "upload head is queued");
+            if (call.IsCompleted || input.Enumerators != 0 || kernel.QueuedBytes <= 0 ||
+                server.PreAdmissionStreamBytesForDiagnostics != 0)
+                throw new InvalidOperationException("Only the queued head is charged before admission; no stream data can be retained.");
 
             InterceptorTestService.ReleaseDelayedCall();
             if (await permitOwner.WaitAsync(PhaseTimeout) != 42)
-                throw new Exception("admission permit owner returned an unexpected result");
+                throw new InvalidOperationException("The permit owner returned an unexpected result.");
 
             await gate.Entered.WaitAsync(PhaseTimeout);
-            releaseMore.TrySetResult();
-
-            // These active-call items exceed the old admission MaxQueuedBytes budget. Promotion
-            // must settle the queue accounting before the interceptor releases to the typed stub.
-            await activeBuffered.Task.WaitAsync(PhaseTimeout);
-            if (call.IsCompleted)
-                throw new Exception("promoted client-streaming call completed before gated next");
+            if (call.IsCompleted || input.Enumerators != 0 || kernel.QueuedBytes != 0 || kernel.QueuedCalls != 0 ||
+                server.PreAdmissionStreamBytesForDiagnostics != 0)
+                throw new InvalidOperationException("After admission but before activation, neither the old head charge nor input may start.");
 
             gate.Release();
-            var expected = queuedItemSize + activeItemCount * activeItemSize;
-            var result = await call.WaitAsync(PhaseTimeout);
-            if (result != expected)
-                throw new Exception($"promoted client-stream result expected {expected}, actual {result}");
+            var expected = firstItemSize + remainingItemCount * remainingItemSize;
+            if (await call.WaitAsync(PhaseTimeout) != expected || input.Enumerators != 1 ||
+                server.PreAdmissionStreamBytesForDiagnostics != 0)
+                throw new InvalidOperationException("The accepted stream must complete once, beyond the old queued-byte budget.");
         }
         finally
         {
-            PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
-            releaseMore.TrySetResult();
             gate.Release();
             InterceptorTestService.ReleaseDelayedCall();
             await harness.DisposeAsync().AsTask().WaitAsync(PhaseTimeout);
         }
     }
 
-    private static TaskCompletionSource<BufferedObservation> CreateBufferedObservation()
-        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static async Task<T> AwaitPhaseAsync<T>(Task<T> task, int iteration, string phase)
     {
@@ -212,9 +171,6 @@ public class ClientStreamingResultStressTests
         }
     }
 
-    private static async Task<int> InvokeClientStreamingAsync(IInterceptorTestService service)
-        => await service.SumStreamAsync(SingleValue(), CancellationToken.None);
-
     private static async IAsyncEnumerable<int> SingleValue()
     {
         await Task.CompletedTask.ConfigureAwait(false);
@@ -227,14 +183,9 @@ public class ClientStreamingResultStressTests
         yield return payload;
     }
 
-    private static async IAsyncEnumerable<byte[]> GatedPayloads(
-        int firstSize,
-        int remainingCount,
-        int remainingSize,
-        Task releaseRemaining)
+    private static async IAsyncEnumerable<byte[]> Payloads(int firstSize, int remainingCount, int remainingSize)
     {
         yield return Enumerable.Repeat((byte)0x31, firstSize).ToArray();
-        await releaseRemaining.ConfigureAwait(false);
         var payload = Enumerable.Repeat((byte)0x32, remainingSize).ToArray();
         for (var index = 0; index < remainingCount; index++)
         {
@@ -243,10 +194,38 @@ public class ClientStreamingResultStressTests
         }
     }
 
-    private readonly record struct BufferedObservation(
-        long RequestId,
-        ushort StreamId,
-        bool Compressed);
+    private sealed class ObservedInput<T>(IAsyncEnumerable<T> source) : IAsyncEnumerable<T>
+    {
+        private int _enumerators;
+
+        internal int Enumerators => Volatile.Read(ref _enumerators);
+
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _enumerators);
+            return source.GetAsyncEnumerator(cancellationToken);
+        }
+    }
+
+    private sealed class CountingServerCompressionProvider : ISharpLinkCompressionProvider
+    {
+        private readonly TestCompressionProvider _inner = new();
+        private int _decodes;
+
+        public string WireProfile => _inner.WireProfile;
+        internal int Decodes => Volatile.Read(ref _decodes);
+
+        public bool TryCompress(ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => _inner.TryCompress(input, output, maxOutputBytes, cancellationToken);
+
+        public void Decompress(ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _decodes);
+            _inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        }
+    }
 
     private sealed class AwaitingServerInterceptor(string id, ConcurrentQueue<string> log)
         : ISharpLinkServerInterceptor
@@ -336,7 +315,6 @@ public class ClientStreamingResultStressTests
 
         public ISharpLinkServer Server { get; }
         public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
 
         private Harness(
             CancellationTokenSource serverCts,
@@ -348,19 +326,19 @@ public class ClientStreamingResultStressTests
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IInterceptorTestService>();
         }
 
         public static async Task<Harness> CreateAsync(
-            bool enableCompression = false,
+            ISharpLinkCompressionProvider? serverCompressionProvider = null,
             Action<SharpLinkServerBuilder>? serverConfigure = null)
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            if (enableCompression)
-                serverBuilder.UseRuntime(ConfigureCompression).UseResponseCompressionPolicy(CreateCompressionPolicy());
+            if (serverCompressionProvider is not null)
+                serverBuilder.UseRuntime(options => options.Compression.Providers.Add(serverCompressionProvider))
+                    .UseResponseCompressionPolicy(CreateCompressionPolicy());
             serverConfigure?.Invoke(serverBuilder);
 
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -372,7 +350,7 @@ public class ClientStreamingResultStressTests
             var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            if (enableCompression)
+            if (serverCompressionProvider is not null)
                 clientBuilder.UseRuntime(ConfigureCompression).UseRequestCompressionPolicy(CreateCompressionPolicy());
 
             var client = clientBuilder.Build();
