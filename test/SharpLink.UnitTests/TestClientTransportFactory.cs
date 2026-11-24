@@ -132,7 +132,18 @@ internal sealed class TestTransportConnection : ITransportConnection
             cancellationToken);
     }
 
+    internal Task InjectInt32ServerStreamItemAsync(ulong requestId, int value)
+    {
+        var payload = new byte[sizeof(ushort) + sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(sizeof(ushort)), value);
+        return InjectFrameAsync(ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.None, requestId, payload);
+    }
+
     internal async Task<SharpLinkClient.NStudyPreparedSite> PrepareInvocationRouteAsync(
+        ClientConnection connection, long contractId)
+        => new(await BindInvocationRouteAsync(connection, contractId));
+
+    internal async Task<SharpLinkClient.NStudyPreparedRoute> BindInvocationRouteAsync(
         ClientConnection connection, long contractId)
     {
         var session = connection.Session;
@@ -155,7 +166,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         if (confirmed != ack || route.Token != ack.BindingId)
             throw new InvalidOperationException("The fixture did not establish its ordinary bound route.");
         await session.FlushSendQueueAsync(guard.Token);
-        return new SharpLinkClient.NStudyPreparedSite(new SharpLinkClient.NStudyPreparedRoute(connection, route, confirmed));
+        return new SharpLinkClient.NStudyPreparedRoute(connection, route, confirmed);
     }
 
     public async Task InjectFrameAsync(

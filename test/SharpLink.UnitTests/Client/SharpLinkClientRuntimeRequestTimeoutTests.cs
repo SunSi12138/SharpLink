@@ -19,13 +19,14 @@ public sealed class SharpLinkClientRuntimeRequestTimeoutTests
                 .UseTimeProvider(timeProvider)
                 .UseRequestTimeout(TimeSpan.FromSeconds(10)));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var oldGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var oldGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
 
         client.UpdateRequestTimeout(TimeSpan.FromSeconds(1));
-        var newGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var newGenerationCall = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
 
         timeProvider.Advance(TimeSpan.FromSeconds(1));
         var newFailure = await CaptureSharpLinkException(newGenerationCall);

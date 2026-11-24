@@ -10,19 +10,22 @@ public class SharpLinkClientTimeoutTests
     [Test]
     public async Task InvokeWithTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
+        var clock = new ManualTimeProvider();
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
+            builder => builder.UseTimeProvider(clock).UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(80));
         var exception = await EnsureThrows<SharpLinkException>(invokeTask);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout should map to DeadlineExceeded");
 
-        var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(cancelFrame.Header.RequestId == callPacket.RequestId, "cancel should target same request");
         Ensure(cancelFrame.Payload is [(byte)ProtocolV2CancelReason.DeadlineExceeded],
             "deadline timeout should send DeadlineExceeded reason");
@@ -40,19 +43,20 @@ public class SharpLinkClientTimeoutTests
                 .UseRequestTimeout(TimeSpan.FromSeconds(1)));
 
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(80), timeProvider);
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
             client,
-            cancellationToken: cts.Token).AsTask();
-        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            cancellationToken: cts.Token, prepared: prepared).AsTask();
+        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
 
         // Drive the caller cancellation from the same deterministic clock as the request deadline.
         // Advancing only to the caller timer fixes the winner without depending on runner scheduling.
         timeProvider.Advance(TimeSpan.FromMilliseconds(80));
-        await EnsureThrows<Exception>(invokeTask);
+        await EnsureThrows<OperationCanceledException>(invokeTask);
 
-        var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(cancelFrame.Header.RequestId == callPacket.RequestId, "first cancel should target same request");
         Ensure(cancelFrame.Payload is [(byte)ProtocolV2CancelReason.UserCancellation],
             "user token should win the cancellation race in this test");
