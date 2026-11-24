@@ -197,8 +197,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .Build();
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "runtime-remove setup registration");
-        object? proxy = GetMultiClusterProxy(client, plugin.ContractType);
-        Ensure(proxy is not null, "runtime-remove setup proxy");
+        PreparedMultiClusterProxy? proxy = CreatePreparedMultiClusterProxy(client, plugin.ContractType);
+        Ensure(plugin.ContractType.IsInstanceOfType(proxy.Service), "runtime-remove setup generated local proxy");
 
         var removal = await client.RemoveClusterAsync("plugins", TimeSpan.FromSeconds(2));
         Ensure(removal is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
@@ -385,13 +385,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         return proxy.Service;
     }
 
-    private static object GetProxy(ISharpLinkClient client, Type contractType)
-    {
-        var get = typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.Get))!
-            .MakeGenericMethod(contractType);
-        return get.Invoke(client, null) ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
-    }
-
     private static ValueTask<T> InvokeValueTaskAsync<T>(
         object proxy,
         Type contractType,
@@ -492,16 +485,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "multi-cluster client contract registration");
 
-        var snapshotField = typeof(SharpLinkMultiClusterClient).GetField(
-            "_snapshot",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Multi-cluster snapshot field was not found.");
-        var snapshot = (MultiClusterSnapshot)(snapshotField.GetValue(client)
-            ?? throw new InvalidOperationException("Multi-cluster snapshot was unavailable."));
         await WaitForRemoteContractManifestAsync(
-            snapshot.Clusters[new SharpLinkClusterKey("plugins")].Client,
-            plugin.ContractType);
+            ReadDynamicMultiClusterChild(client), plugin.ContractType);
     }
+
+    private static SharpLinkClient ReadDynamicMultiClusterChild(ISharpLinkMultiClusterClient client)
+        => (SharpLinkClient)ReadMultiClusterSnapshot(client).Clusters[new SharpLinkClusterKey("plugins")].Client;
+
+    private static MultiClusterSnapshot ReadMultiClusterSnapshot(ISharpLinkMultiClusterClient client)
+        => (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
+            .GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)!;
 
     private static async Task UnregisterMultiClusterPluginAsync(DynamicHarness harness, PluginBundle plugin)
     {

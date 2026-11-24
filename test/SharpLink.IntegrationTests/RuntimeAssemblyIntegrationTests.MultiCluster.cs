@@ -22,8 +22,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var first = client.RegisterAssembly("plugins", plugin.ContractAssembly);
         Ensure(first.Succeeded, $"multi-cluster plugin registration: {first.Error}");
 
-        var proxy = GetMultiClusterProxy(client, plugin.ContractType);
-        Ensure(proxy is not null, "multi-cluster Get should create the dynamically routed proxy");
+        var proxy = CreatePreparedMultiClusterProxy(client, plugin.ContractType);
+        Ensure(plugin.ContractType.IsInstanceOfType(proxy.Service),
+            "multi-cluster CreateProxy should create the local generated receiver without connecting");
 
         var second = client.RegisterAssembly("other", plugin.ContractAssembly);
         Ensure(!second.Succeeded, "contract-owning assembly must not register in a second cluster");
@@ -122,10 +123,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterMultiClusterPluginAsync(harness, client, plugin);
 
-        var proxy = GetMultiClusterProxy(client, plugin.ContractType)
-            ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
+        var proxy = CreatePreparedMultiClusterProxy(client, plugin.ContractType);
+        await proxy.PrepareAsync();
         var activeCall = InvokeValueTaskAsync<int>(
-            proxy, plugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
+            proxy.Service, plugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
         await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
 
         using var cancellation = new CancellationTokenSource();
@@ -213,7 +214,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "child unregister rejection is preserved");
         }
 
-        _ = GetMultiClusterProxy(client, plugin.ContractType);
+        Ensure(ReadMultiClusterSnapshot(client).Routes.TryGetValue(plugin.ContractType, out var restored) &&
+               ReferenceEquals(restored.Slot.Client, child), "rejected unregister restores the exact child route");
         Ensure(child.IsDynamicAssemblyRegistered(plugin.ContractAssembly),
             "child retains the rejected dynamic assembly");
     }
@@ -264,7 +266,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(exception.Message.Contains("rejected", StringComparison.Ordinal),
                 "the controlled child rejection is preserved");
         }
-        _ = GetMultiClusterProxy(client, originalPlugin.ContractType);
+        Ensure(ReadMultiClusterSnapshot(client).Routes.TryGetValue(originalPlugin.ContractType, out var restored) &&
+               ReferenceEquals(restored.Slot.Client, originalChild), "only the original child's route is restored");
     }
 
     [Test]
@@ -310,7 +313,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(child.IsDynamicAssemblyRegistered(newPlugin.ContractAssembly) &&
                !child.IsDynamicAssemblyRegistered(oldPlugin.ContractAssembly),
             "the child has already committed the replacement generation");
-        _ = GetMultiClusterProxy(client, newPlugin.ContractType);
+        var routes = ReadMultiClusterSnapshot(client).Routes;
+        Ensure(routes.TryGetValue(newPlugin.ContractType, out var published) && ReferenceEquals(published.Slot.Client, child) &&
+               !routes.ContainsKey(oldPlugin.ContractType), "coordinator reconciles exactly the child generation it already published");
     }
 
     [Test]
@@ -324,10 +329,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         oldPlugin.ResetServiceState();
         await RegisterMultiClusterPluginAsync(harness, client, oldPlugin);
 
-        var proxy = GetMultiClusterProxy(client, oldPlugin.ContractType)
-            ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
+        var proxy = CreatePreparedMultiClusterProxy(client, oldPlugin.ContractType);
+        await proxy.PrepareAsync();
+        var child = ReadDynamicMultiClusterChild(client);
+        var session = NStudyClientSession(child);
+        var priorBind = session.NStudyBindOperationForDiagnostics;
         var activeCall = InvokeValueTaskAsync<int>(
-            proxy, oldPlugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
+            proxy.Service, oldPlugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
         await oldPlugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
 
         using var cancellation = new CancellationTokenSource();
@@ -338,11 +346,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             TimeSpan.FromSeconds(2),
             cancellation.Token).AsTask();
 
-        var newProxy = GetMultiClusterProxy(client, newPlugin.ContractType)
-            ?? throw new InvalidOperationException("Multi-cluster replacement proxy factory returned null.");
+        var newProxy = CreatePreparedMultiClusterProxy(client, newPlugin.ContractType);
+        await newProxy.PrepareAsync();
         Ensure(await InvokeValueTaskAsync<int>(
-                newProxy, newPlugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2,
-            "replacement routes should publish while the old call is draining");
+                newProxy.Service, newPlugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2 &&
+               !activeCall.IsCompleted && !replacement.IsCompleted &&
+               ReferenceEquals(child, ReadDynamicMultiClusterChild(client)) &&
+               ReferenceEquals(session, NStudyClientSession(child)) &&
+               session.NStudyBindOperationForDiagnostics == priorBind + 1,
+            "the new local generation prepares once on the same child Session while the original call drains");
 
         cancellation.Cancel();
         await EnsureCancelledAsync(replacement, "multi-cluster replacement wait");
