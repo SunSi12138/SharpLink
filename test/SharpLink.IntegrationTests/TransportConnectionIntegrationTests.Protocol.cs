@@ -654,7 +654,11 @@ public partial class TransportConnectionIntegrationTests
         {
             await client.ConnectAsync();
             Ensure(client.State == SharpLinkConnectionState.Ready, "fake server handshake");
-            var svc = LegacyGrammarFixtureReceiver.Create<ITestService>(client);
+            // This historical fake peer predates Bind. Do not treat a failure during
+            // preparation as evidence about the protocol failure of two pending calls.
+            var proxy = client.CreateProxy<ITestService>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(2));
+            var svc = proxy.Service;
 
             var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
             var streamTask = CollectAsync(
