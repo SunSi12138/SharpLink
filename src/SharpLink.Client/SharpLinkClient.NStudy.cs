@@ -36,15 +36,6 @@ internal sealed partial class SharpLinkClient
         return snapshot;
     }
 
-    // Cold entry used only in the private N profile; one explicitly selected
-    // Ready connection. A normal invocation never waits for or creates a Bind.
-    internal async Task<NStudyAck> PrepareNStudyContractAsync(long contract, RpcHash128 hash,
-        NStudyTarget expected, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        return await BindNStudyContractOnAsync(RequireSingleNStudyConnection(), contract, hash, expected, ct).ConfigureAwait(false);
-    }
-
     private static async Task<NStudyAck> BindNStudyContractOnAsync(ClientConnection connection, long contract,
         RpcHash128 hash, NStudyTarget expected, CancellationToken ct)
     {
