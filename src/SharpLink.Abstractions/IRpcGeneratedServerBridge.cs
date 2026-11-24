@@ -11,6 +11,12 @@ public interface IRpcGeneratedServerBridge
     /// </summary>
     void EnsureUserCodeEntry(long requestId);
 
+    /// <summary>
+    /// Claims entry after the typed input routes of a two-way call have all been installed.
+    /// A full server bridge can now acknowledge input to the peer.
+    /// </summary>
+    void EnsureInputRoutesReady(long requestId) => EnsureUserCodeEntry(requestId);
+
     /// <summary>Creates and atomically registers one typed inbound request stream.</summary>
     IAsyncEnumerable<T> CreateInboundStream<T>(
         long requestId,

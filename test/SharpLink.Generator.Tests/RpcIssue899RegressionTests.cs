@@ -52,7 +52,7 @@ public sealed class Consumer
 using SharpLink.Abstractions;
 [assembly: SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(SharpLink.Generated.InstanceManifest), 6, 2,
-    "3.0.0-test", "sharplink-n999-api6-single-prepared-stub-v3")]
+    "3.0.0-test", "sharplink-n999-api6-single-prepared-stub-v4")]
 namespace SharpLink.Generated
 {
     public sealed class InstanceManifest : ISharpLinkGeneratedAssemblyManifest

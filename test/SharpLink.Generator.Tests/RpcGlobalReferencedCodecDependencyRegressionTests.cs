@@ -25,7 +25,7 @@ using System;
     6,
     2,
     "2.0.0-test",
-    "sharplink-n999-api6-single-prepared-stub-v3")]
+    "sharplink-n999-api6-single-prepared-stub-v4")]
 
 namespace SharpLink.Abstractions
 {

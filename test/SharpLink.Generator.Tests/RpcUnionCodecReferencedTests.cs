@@ -55,7 +55,7 @@ using SharpLink.Sdk;
     6,
     2,
     "2.0.0",
-    "sharplink-n999-api6-single-prepared-stub-v3")]
+    "sharplink-n999-api6-single-prepared-stub-v4")]
 
 namespace ReferencedUnion
 {

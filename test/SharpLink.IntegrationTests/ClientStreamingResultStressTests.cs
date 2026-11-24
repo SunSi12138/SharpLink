@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 
 namespace SharpLink.IntegrationTests;
 
@@ -29,7 +30,7 @@ public class ClientStreamingResultStressTests
                 var input = new ObservedInput<int>(SingleValue());
                 var call = service.SumStreamAsync(input, CancellationToken.None).AsTask();
                 await AwaitPhaseAsync(b.Entered, iteration, "server interceptor entry");
-                if (call.IsCompleted || input.Enumerators != 0)
+                if (call.IsCompleted || input.Enumerators != 0 || !InputAcceptanceIsPending(harness.Server))
                     throw new InvalidOperationException("A gated interceptor must withhold both the result and the input producer.");
 
                 harness.Server.ReplaceInterceptors([x, y, z]);
@@ -72,7 +73,8 @@ public class ClientStreamingResultStressTests
 
             await gate.Entered.WaitAsync(PhaseTimeout);
             var decodedBeforeInput = decoder.Decodes;
-            if (call.IsCompleted || input.Enumerators != 0 || ((SharpLinkServer)harness.Server).PreAdmissionStreamBytesForDiagnostics != 0)
+            if (call.IsCompleted || input.Enumerators != 0 || !InputAcceptanceIsPending(harness.Server) ||
+                ((SharpLinkServer)harness.Server).PreAdmissionStreamBytesForDiagnostics != 0)
                 throw new InvalidOperationException("The interceptor has not consented to activate the compressed input.");
 
             gate.Release();
@@ -129,7 +131,7 @@ public class ClientStreamingResultStressTests
 
             await gate.Entered.WaitAsync(PhaseTimeout);
             if (call.IsCompleted || input.Enumerators != 0 || kernel.QueuedBytes != 0 || kernel.QueuedCalls != 0 ||
-                server.PreAdmissionStreamBytesForDiagnostics != 0)
+                !InputAcceptanceIsPending(harness.Server) || server.PreAdmissionStreamBytesForDiagnostics != 0)
                 throw new InvalidOperationException("After admission but before activation, neither the old head charge nor input may start.");
 
             gate.Release();
@@ -146,6 +148,14 @@ public class ClientStreamingResultStressTests
         }
     }
 
+
+    private static bool InputAcceptanceIsPending(ISharpLinkServer server)
+    {
+        var registry = (ServerConnectionRegistry)typeof(SharpLinkServer)
+            .GetField("_connectionRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
+        var peer = registry.SnapshotActive().Single();
+        return peer.CallCancellations.TryGetValue(peer.LastAcceptedRequestId, out var state) && state.NStudyAcceptancePending;
+    }
 
     private static async Task<T> AwaitPhaseAsync<T>(Task<T> task, int iteration, string phase)
     {

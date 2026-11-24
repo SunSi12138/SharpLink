@@ -29,9 +29,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
     ValueTask<Payload> Unary(Payload value);
 
     [SharpLink.Sdk.Oneway]
-    ValueTask Notify(int value);
+    ValueTask Notify(IAsyncEnumerable<Payload> values);
 
-    ValueTask<int> Upload(IAsyncEnumerable<Payload> values, CancellationToken cancellationToken);
+    ValueTask<int> Upload(
+        IAsyncEnumerable<Payload> values,
+        IAsyncEnumerable<Payload> extra,
+        CancellationToken cancellationToken);
 
     IAsyncEnumerable<Payload> Download(int count, CancellationToken cancellationToken);
 
@@ -57,7 +60,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal study API 6 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 6, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-n999-api6-single-prepared-stub-v3", StringComparison.Ordinal),
+               manifest.Contains("sharplink-n999-api6-single-prepared-stub-v4", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -71,6 +74,15 @@ public interface IAbi4Service : SharpLink.Sdk.IService
         Ensure(stub.Contains("bridge.CreateInboundStream", StringComparison.Ordinal) &&
                stub.Contains("bridge.PumpOutboundStreamAsync", StringComparison.Ordinal),
             "inbound and outbound stream lifecycles must be delegated to Runtime");
+        Ensure(CountOccurrences(stub, "bridge.EnsureInputRoutesReady(requestId);") == 2 &&
+               CountOccurrences(stub, "bridge.EnsureUserCodeEntry(requestId);") == 3,
+            "only the two-way Upload and Duplex may publish input acceptance; OneWay remains a normal entry");
+        var lastUploadRoute = stub.IndexOf("bridge.CreateInboundStream(requestId, (ushort)2,", StringComparison.Ordinal);
+        var accepted = lastUploadRoute < 0
+            ? -1
+            : stub.IndexOf("bridge.EnsureInputRoutesReady(requestId);", lastUploadRoute, StringComparison.Ordinal);
+        Ensure(accepted >= 0 && accepted < stub.IndexOf("impl.Upload(", accepted, StringComparison.Ordinal),
+            "multi-input acceptance must follow the last typed route and precede calling the handler");
         foreach (var forbidden in new[]
                  {
                      "SharpLink.Runtime", "IRpcSession", "RuntimeContext",

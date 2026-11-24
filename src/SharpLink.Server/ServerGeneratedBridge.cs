@@ -12,6 +12,12 @@ internal sealed class ServerGeneratedBridge(
     private readonly RpcSessionGeneratedServerBridge _protocolBridge = new(session);
 
     public void EnsureUserCodeEntry(long requestId)
+        => EnsureUserCodeEntry(requestId, inputRoutesReady: false);
+
+    public void EnsureInputRoutesReady(long requestId)
+        => EnsureUserCodeEntry(requestId, inputRoutesReady: true);
+
+    private void EnsureUserCodeEntry(long requestId, bool inputRoutesReady)
     {
         if (callCancellations.TryCapture(
                 requestId,
@@ -21,10 +27,10 @@ internal sealed class ServerGeneratedBridge(
         {
             try
             {
-                if (callLease.State.NStudyAcceptancePending)
+                if (inputRoutesReady && callLease.State.NStudyAcceptancePending)
                 {
-                    // Generated stubs have already decoded the original arguments
-                    // and registered every input route at this entry boundary.
+                    // A service factory, interceptor or enumerator re-entry only
+                    // checks the terminal; only the generated stub can signal this.
                     if (PublishNStudyStreamAcceptance(requestId, callLease.State))
                         return;
                     _ = callLease.State.TryAcceptStreamData();

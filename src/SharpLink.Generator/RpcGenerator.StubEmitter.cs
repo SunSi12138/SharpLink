@@ -278,7 +278,8 @@ public partial class RpcGenerator
                 streamId++;
             }
 
-            sb.AppendLine("                bridge.EnsureUserCodeEntry(requestId);");
+            var entry = streamParams.Length > 0 && !method.IsOneWay ? "EnsureInputRoutesReady" : "EnsureUserCodeEntry";
+            sb.AppendLine($"                bridge.{entry}(requestId);");
             var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"stream_{p.Name}" : $"arg_{p.Name}"));
             var callLine = $"impl.{EscapeIdentifier(method.Name)}({callArgs})";
 
