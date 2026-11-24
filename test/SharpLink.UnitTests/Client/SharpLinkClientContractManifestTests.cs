@@ -36,9 +36,8 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
         var proxy = client.CreateProxy<IOrdersContract>();
         var failure = await CaptureExceptionAsync(proxy.PrepareAsync(TimeSpan.FromSeconds(2)).AsTask());
 
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "a mismatched RpcAssemblyHash must fail preparation with FailedPrecondition");
-        var exception = (SharpLinkException)failure;
+        if (failure is not SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition } exception)
+            throw new Exception("A mismatched RpcAssemblyHash must fail preparation with FailedPrecondition.", failure);
         Ensure(exception.Message.Contains(typeof(IOrdersContract).FullName!, StringComparison.Ordinal) &&
                exception.Message.Contains(OrdersContractId.ToString(), StringComparison.Ordinal) &&
                exception.Message.Contains(Manifest.Instance.RpcAssemblyHash.ToString(), StringComparison.Ordinal) &&
