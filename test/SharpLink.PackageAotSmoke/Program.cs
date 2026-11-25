@@ -32,7 +32,19 @@ public static class Program
         public int Value;
     }
 
-    public static void Main()
+    public static async Task Main(string[] args)
+    {
+        var transport = args switch
+        {
+            [] => "tcp",
+            ["--shared-memory"] => "shared-memory",
+            _ => throw new ArgumentException("Expected no arguments or --shared-memory.", nameof(args))
+        };
+        VerifyPackagedCodecs();
+        await NativeVersionInventoryProbe.RunAsync(transport);
+    }
+
+    private static void VerifyPackagedCodecs()
     {
         SharpLink.PackageSmoke.GenerationControlSerializationProbe.Run();
         // The generated owner-local factory carries and validates the ABI requirement.

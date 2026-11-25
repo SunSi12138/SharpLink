@@ -14,9 +14,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="SharpLink.Client" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.GenerationControl" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Runtime" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Sdk" Version="$(SharpLinkPackageVersion)" />
+    <PackageReference Include="SharpLink.Server" Version="$(SharpLinkPackageVersion)" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../SharpLink.PackageSmoke/GenerationControlSerializationProbe.cs" Link="GenerationControlSerializationProbe.cs" />
