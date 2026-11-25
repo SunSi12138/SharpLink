@@ -26,7 +26,7 @@ Coordinator 也必须显式选择 child Client 的 request-timeout policy。`Use
 
 Coordinator 的 canonical lifecycle 是 `StartAsync / WaitForReadyAsync / WaitForShutdownAsync / StopAsync`。`StartAsync` 只启动本地 child runtime，不把远端 readiness 混入生命周期；`WaitForReadyAsync()` 可以等待当前所有 slot，`WaitForReadyAsync(cluster)` 可以只等待指定 slot。兼容 `ConnectAsync` 仍提供 legacy all-required-slots connection operation，但不会定义 coordinator lifecycle。
 
-一个 slot 的连接/Resolver/Breaker 状态不与其他 slot 共享。`Get<TContract>` 根据 immutable route snapshot 选择唯一 slot；缺失或冲突路由立即失败，不做猜测或广播。
+一个 slot 的连接/Resolver/Breaker 状态不与其他 slot 共享。`CreateProxy<TContract>` 根据路由快照选择唯一 slot；缺失或冲突路由立即失败，不做猜测或广播。
 
 ## 运行时 slot 生命周期
 
@@ -136,7 +136,7 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 动态模块由 generated Manifest 描述 contract、service、Codec 和 cluster route。注册流程先验证版本、依赖闭包、contract id、schema/wire identity 和路由所有权，再原子发布 snapshot。
 
-替换不是覆盖字典：新 generation 先完整验证并发布，旧 generation 进入 draining；已开始调用继续使用旧服务/Codec，新的调用路由到新 generation。注销等待 active calls/streams 和 adapter scope 释放，超时不会假装成功。
+替换不是覆盖字典：新一代先完整验证并发布，旧一代进入排空；已获准执行的调用继续使用旧服务和 Codec。已有客户端绑定不会自动改指向新一代。保留本地契约时，可以重新准备代理，或用[原生版本协调](coordinated-version-change.md)在同一物理连接恢复获准路由。若客户端也替换了契约程序集，须用新代类型创建并准备新代理。注销等待活动调用、流和 adapter scope 释放；超时单独报告。
 
 ## 远端 wire contract 可见性
 
@@ -161,9 +161,9 @@ await proxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
 不保证实现代次仍在，也不会建立绑定。`CreateProxy` 在本地同步执行；只有 `PrepareAsync` 让契约在选定连接上可调用。
 重连、注销或替换后，旧绑定可能失效；应为当前兼容契约重新准备。
 
-## 跨端 generation synchronization
+## 应用自定义的跨端 generation 清单
 
-当调用侧 generated proxy/codec/contract generation 与服务侧 implementation generation 可能独立变化时，单端的 `ISharpLinkAssemblyRegistry` 不负责驱动另一个 endpoint 升级。可选包 [`SharpLink.GenerationControl`](generation-control.md) 提供静态 RPC 声明面。由于 SharpLink v2 只允许 Client 发起 RPC，Client 可用 `GetInventoryAsync` 查询 Server snapshot，并通过一个 Client 发起的 `SynchronizeAsync` duplex stream 双向交换双方完整 generation inventory。每份 inventory 携带 `EndpointEpoch` 和 epoch-local `Revision`；revision 可能重置或 endpoint 实例/authority 切换时必须更换 epoch，接收方看到新 epoch 时不能用旧 revision 判 stale。
+单端的 `ISharpLinkAssemblyRegistry` 不负责驱动另一个 endpoint 升级。如果应用需要交换自定义部署清单，可选包 [`SharpLink.GenerationControl`](generation-control.md) 提供静态 RPC 声明面。它与恢复指定连接绑定的 [Core 版本协调](coordinated-version-change.md) 是两项不同的能力。由于 SharpLink v2 只允许 Client 发起普通 RPC，Client 可用 `GetInventoryAsync` 查询 Server snapshot，并通过 `SynchronizeAsync` duplex stream 双向交换双方完整 generation inventory。每份 inventory 携带 `EndpointEpoch` 和 epoch-local `Revision`；revision 可能重置或 endpoint 实例/authority 切换时必须更换 epoch，接收方看到新 epoch 时不能用旧 revision 判 stale。
 
 任一端收到 peer 的新 snapshot 后，都只在本地比较 local/peer generation，再由自己的 provider 决定是否 stage/validate/activate/drain。远端没有 Stage/Activate RPC，也不能直接改变本端状态。该扩展不改变 Protocol v2，也不传输 artifact bytes；JIT 可在本地映射到 collectible ALC + assembly registry，NativeAOT 则由本地 provider 返回 process replacement required。
 
@@ -185,11 +185,10 @@ NativeAOT 不支持运行时加载未知插件，动态模块只适用于 JIT �
 
 运行时 slot 的 unit 与真实 TCP 证据位于 `test/SharpLink.UnitTests/Client/SharpLinkMultiCluster*Tests.cs` 和 `RuntimeMultiClusterIntegrationTests`，覆盖 Created/Running 状态、Add publication 与 readiness 解耦、structured expected rejection、Replace ready-before-swap、publication-vs-cleanup 结果、取消/Stop race、预算、Proxy 一次绑定、Add/Replace/Remove 和删除后的资源释放结果。
 
-## 2.0 Generated ABI 和发布门禁
+## 3.0 Generated ABI 和发布门禁
 
-所有契约/服务/插件必须用 2.0 SDK 重新生成 API 4，并携带当前 ABI identity。
+所有契约、服务和插件须用同一套 3.0 SDK 重新生成 API 5，并携带精确 identity `sharplink-3.0-api5-prepared-contract-v1`。
 locator 在 manifest materialization 之前 fail fast；Catalog 是 generated bootstrap，
 应用只通过 `ISharpLinkAssemblyRegistry` 注册、替换和注销。
 `ReferencesReleased` 描述框架引用释放，不保证应用自身 Assembly/Type/proxy 引用已清空，
-因此 ALC 卸载仍需调用方释放引用并验证回收。版本/identity 与完整公开签名由
-[API baseline](../eng/public-api/2.0.0) 和 [版本清单](../eng/release-versions.json) 检查。
+因此 ALC 卸载仍需调用方释放引用并验证回收。部署和兼容性要求见[迁移到 3.0](migration.md)。

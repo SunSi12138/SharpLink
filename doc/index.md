@@ -17,18 +17,18 @@
 11. [Hosting 与服务生命周期](hosting-and-services.md)：Generic Host、DI、健康检查、排空与动态模块。
 12. [拦截器与可观测性](observability.md)：Interceptor、Activity、Meter 与日志事件。
 13. [多集群与动态模块](dynamic-modules-and-multicluster.md)：编译期路由、动态注册/替换/注销和 ALC 所有权。
-14. [Generation control extension](generation-control.md)：peer inventory/query + duplex sync 契约、本地 provider SPI，以及 JIT/NativeAOT 边界。
+14. [在现有连接上协调服务换代](coordinated-version-change.md)：启用协调、选择参与者、确认恢复和排空。应用自定义清单见可选的 [Generation control extension](generation-control.md)。
 15. [限制与调优](limits-and-tuning.md)：默认值、硬上限和性能 Profile。
 16. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
-17. [迁移到 3.0](unsafe-blit-3.0-migration.md)：Generated API 5、精确 ABI identity、Codec 策略与重新生成要求。历史 1.1.1→2.0/API 4 的迁移保留在 [2.0 迁移文档](migration.md)。
+17. [迁移到 3.0](migration.md)：Generated API 5、协议升级、代理准备和重新生成要求。[Codec 专项迁移](unsafe-blit-3.0-migration.md)覆盖 owner-bound ABI 和序列化策略。
 
 深入资料：[架构总览](architecture.md)（[Generator](architecture-generator.md) / [Runtime](architecture-runtime.md) / [Client](architecture-client.md) / [Server](architecture-server.md)）、[生产项目引用边界](project-reference-boundaries.md)、[测试项目引用边界](test-project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[Desired Session Configuration 与 Rolling Refresh](session-refresh.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[Issue #430 Zstd 可行性与性能证据](issue-430-zstd-evidence.md)、[发布流程](releasing.md)。
 
 工程与 CI 资料：[ADR 约定](adr/README.md)、[CI validation tiers](ci-validation-tiers.md)、[PR Fast gate](pr-fast.md)。
 
-## 尚未实现的目标合同
+## 历史设计记录
 
-[#775 N0：单一契约通道合同冻结](issue-775-n0-contract.md) 是后续采用的权威目标入口，规定API/ABI、wire、容量、排队cut与迁移验收；不是当前产品用法。N0文档合并不授权实施新方案或恢复历史候选，当前用户API仍以上述文档为准。
+[#775 N0：单一契约通道合同冻结](issue-775-n0-contract.md) 保留早期 API/ABI、wire、容量和排队边界的设计背景。当前调用与部署说明以上述用户文档为准。
 
 ## 特性与可运行证据
 

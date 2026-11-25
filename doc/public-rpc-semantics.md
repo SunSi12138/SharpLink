@@ -133,7 +133,7 @@ Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate �
 - 旧路由退役后，通过它发出的新调用不会被转到新代。在本地契约注册未变的情况下，应用可以在同一代理上重新执行 `PrepareAsync`。若参与版本协调，则由协调流程在对应物理会话发布获准的新路由；客户端 `Resumed` 才表示已恢复调用，服务端 `ActivationSent` 不等于这一步已完成。
 - 在准入队列里等待只保留原 registration 的身份，不等于持有执行租约，也不会阻止旧模块卸载。排队时若原注册退役，有响应的调用以 `Unavailable` 拒绝；OneWay 不执行 handler，并按原请求形态排空。即使两代契约相同，也不混用旧调用的取消令牌和新代的服务或 Codec。
 
-如果替换的是 **客户端可卸载契约程序集**，旧代理、类型和 Codec 仍属于旧 AssemblyLoadContext。用新一代的契约类型创建并准备新代理，并释放对旧对象的强引用，才能让旧 ALC 回收。换代中断后的恢复步骤见 [3.0 迁移](rpc-channel-3.0-migration.md#换代中断后先查清单再重试)。
+如果替换的是 **客户端可卸载契约程序集**，旧代理、类型和 Codec 仍属于旧 AssemblyLoadContext。用新一代的契约类型创建并准备新代理，并释放对旧对象的强引用，才能让旧 ALC 回收。双端操作见[在现有连接上协调服务换代](coordinated-version-change.md)；换代中断后的恢复步骤见 [3.0 迁移](rpc-channel-3.0-migration.md#换代中断后先查清单再重试)。
 
 ### 4.3 Dynamic endpoint topology / selection policy
 
