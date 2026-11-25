@@ -908,12 +908,16 @@ public sealed partial class StaticEndpointIntegrationTests
     private sealed class ThrowOnceSelector : ISharpLinkEndpointSelector
     {
         private int _remainingFailures = 1;
+        internal Exception Failure { get; } = new InvalidOperationException("test selector failure");
 
         public int Select(in SharpLinkEndpointSelectionContext context)
         {
             if (Interlocked.Exchange(ref _remainingFailures, 0) != 0)
-                throw new InvalidOperationException("test selector failure");
-            return 0;
+                throw Failure;
+            for (var index = 0; index < context.Count; index++)
+                if ((context.ExcludedMask & (1UL << index)) == 0)
+                    return index;
+            return -1;
         }
     }
 
