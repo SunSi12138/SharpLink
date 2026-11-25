@@ -60,6 +60,10 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             releaseHooks.TrySetResult();
             await connect.WaitAsync(TimeSpan.FromSeconds(5));
 
+            // A prepared cohort only captures currently Ready sessions. ConnectAsync
+            // can finish after the first one, before the other released hook publishes.
+            using var readinessBudget = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await client.WaitForReadinessAsync(servers.Count, readinessBudget.Token);
             var proxy = client.CreateProxy<ICompressionService>(topology == "static"
                 ? new RpcProxyOptions { BalancePreparedEndpoints = true }
                 : null);
