@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, 'codex/999-api5-validation']
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -18,6 +18,7 @@ on:
 
 jobs:
   codec-compatibility:
+    if: github.ref != 'refs/heads/codex/999-api5-validation'
     uses: ./.github/workflows/codec-compatibility.yml
 
   codec-servicing-compatibility:
@@ -25,7 +26,7 @@ jobs:
     uses: ./.github/workflows/codec-servicing-compatibility.yml
 
   merge-chaos-smoke:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -237,11 +238,11 @@ jobs:
           retention-days: 14
 
   generated-abi-dynamic-module-soak:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' || github.ref == 'refs/heads/codex/999-api5-validation'
     runs-on: ubuntu-latest
     timeout-minutes: 135
     env:
-      SHARPLINK_P3_DYNAMIC_SOAK_DURATION_SECONDS: ${{ inputs.release_soak && '600' || '7200' }}
+      SHARPLINK_P3_DYNAMIC_SOAK_DURATION_SECONDS: ${{ (inputs.release_soak || github.ref == 'refs/heads/codex/999-api5-validation') && '600' || '7200' }}
       SHARPLINK_P3_DYNAMIC_SOAK_OUTPUT: ${{ github.workspace }}/artifacts/p3-generated-abi/dynamic-module-soak
     steps:
       - name: Checkout
@@ -263,7 +264,7 @@ jobs:
           retention-days: 14
 
   release-soak:
-    if: github.event_name == 'workflow_dispatch' && inputs.release_soak
+    if: (github.event_name == 'workflow_dispatch' && inputs.release_soak) || github.ref == 'refs/heads/codex/999-api5-validation'
     strategy:
       fail-fast: false
       matrix:
