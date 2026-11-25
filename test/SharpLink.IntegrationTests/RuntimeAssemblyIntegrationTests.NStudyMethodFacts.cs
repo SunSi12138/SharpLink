@@ -99,6 +99,36 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "one real persistent decode and the same generated method facts reach the server interceptor");
             trace.Record("PersistentWorkerAndInterceptorReuseExactMethodFacts", aBinding);
 
+            Ensure(await a.UploadSamplesAsync(FactInput(), ct) == 23,
+                "actual generated ClientStreaming consumes the expected typed values");
+            var duplex = new List<int>();
+            await foreach (var value in a.ExchangeSamplesAsync(FactInput(), ct).WithCancellation(ct))
+                duplex.Add(value);
+            Ensure(duplex.SequenceEqual([12, 13]), "actual generated Duplex preserves input order and returns both results");
+
+            await a.NotifySampleAsync(5);
+            await a.NotifySamplesAsync(FactInput());
+            await WaitForNStudyAsync(() => probe.NotifyValue == 5 && probe.NotifyStreamTotal == 23 &&
+                peer.NStudyBindings.Snapshot() == (2, 0, 0) && peer.Session.StreamManager.ActiveStreamCount == 0, ct);
+
+            foreach (var (name, kind, inputs) in new[]
+            {
+                (nameof(INStudyFactsProbe.UploadSamplesAsync), RpcMethodKind.ClientStreaming, 1),
+                (nameof(INStudyFactsProbe.ExchangeSamplesAsync), RpcMethodKind.DuplexStreaming, 1),
+                (nameof(INStudyFactsProbe.NotifySampleAsync), RpcMethodKind.OneWay, 0),
+                (nameof(INStudyFactsProbe.NotifySamplesAsync), RpcMethodKind.OneWay, 1)
+            })
+            {
+                var entry = aContract.Methods.Single(item => item.Name == name);
+                Ensure(recorder.Methods.TryGetValue(entry.MethodId, out var observed) &&
+                       observed == entry.Invocation && observed.Kind == kind &&
+                       observed.ClientStreamCount == inputs && observed.HasClientStreams == (inputs != 0) &&
+                       recorder.Visits(entry.MethodId) == 1 && count.Invocations(entry.MethodId) == 1 &&
+                       count.PreparedCount == cold,
+                    $"the interceptor and generated executor use the same complete {kind} descriptor for {name}");
+            }
+            trace.Record("GeneratedUploadDuplexAndBothOneWayShapesUseTheirExactFacts", aBinding, bBinding);
+
             // Exercise ordinary application error mapping without interceptor
             // context. The original streaming call supplies its own method facts.
             server.ReplaceInterceptors([]);
@@ -129,6 +159,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             trace.Record("OutputErrorMapsOriginalFactsWithoutInterceptorOrStubRead", aBinding, bBinding);
         }
         finally { probe.Release(); }
+    }
+
+    private static async IAsyncEnumerable<int> FactInput()
+    {
+        yield return 11;
+        await Task.CompletedTask;
+        yield return 12;
     }
 
     private sealed class NStudyFactsInterceptor : ISharpLinkServerInterceptor
@@ -220,6 +257,16 @@ public interface INStudyFactsProbe : IService
     ValueTask<int> MeasureAsync(byte[] batch, CancellationToken cancellationToken);
 
     IAsyncEnumerable<int> ReadSamplesAsync(CancellationToken cancellationToken);
+    ValueTask<int> UploadSamplesAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+    IAsyncEnumerable<int> ExchangeSamplesAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifySampleAsync(int value);
+
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifySamplesAsync(IAsyncEnumerable<int> values);
 }
 
 [RpcService]
@@ -227,7 +274,12 @@ public sealed class NStudyFactsProbe : INStudyFactsProbe
 {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _notifyValue;
+    private int _notifyStreamTotal;
+
     internal Task Started => _entered.Task;
+    internal int NotifyValue => Volatile.Read(ref _notifyValue);
+    internal int NotifyStreamTotal => Volatile.Read(ref _notifyStreamTotal);
     internal void Release() => _release.TrySetResult();
 
     public async ValueTask<int> OccupyAsync(CancellationToken cancellationToken)
@@ -239,6 +291,30 @@ public sealed class NStudyFactsProbe : INStudyFactsProbe
 
     public ValueTask<int> MeasureAsync(byte[] batch, CancellationToken cancellationToken)
         => ValueTask.FromResult(batch.Length + batch[0]);
+
+    public async ValueTask<int> UploadSamplesAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken)
+    {
+        var sum = 0;
+        await foreach (var value in values.WithCancellation(cancellationToken))
+            sum += value;
+        return sum;
+    }
+
+    public async IAsyncEnumerable<int> ExchangeSamplesAsync(IAsyncEnumerable<int> values,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var value in values.WithCancellation(cancellationToken))
+            yield return value + 1;
+    }
+
+    public ValueTask NotifySampleAsync(int value)
+    {
+        Volatile.Write(ref _notifyValue, value);
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask NotifySamplesAsync(IAsyncEnumerable<int> values)
+        => Volatile.Write(ref _notifyStreamTotal, await UploadSamplesAsync(values, CancellationToken.None));
 
     public async IAsyncEnumerable<int> ReadSamplesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
