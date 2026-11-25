@@ -312,60 +312,51 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         throw CreateResourceExhaustedException();
     }
 
-    public bool Dispatch(long id, ref ReadOnlySequence<byte> payload)
+    public bool Dispatch(long id, ref ReadOnlySequence<byte> payload, bool requireProducerAcceptance = false)
     {
         var slots = Volatile.Read(ref _slots);
         if (slots is null)
             return false;
 
         var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
-        if (current is not null && current.Id == id &&
-            current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
+        while (true)
         {
-            // A successful Response is only the server's acknowledgement; StreamComplete owns
-            // the terminal transition for server and duplex streams. Deadline equality is checked
-            // under the same completion gate so a late acknowledgement cannot beat the monotonic
-            // boundary merely because the timer callback has not run yet.
-            PendingCall? expiredCall = null;
+            var current = Volatile.Read(ref slots[index]);
+            if (current is null || current.Id != id)
+                return false;
+
+            bool deadlineExpired;
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) ||
-                    current.Id != id ||
-                    current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
-                {
-                    return false;
-                }
+                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+                    continue;
 
-                if (current.Deadline.IsExpired(_timeProvider))
-                {
-                    var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
-                    if (!ReferenceEquals(exchanged, current))
-                        return false;
-                    current.WaitUntilRegistered();
-                    expiredCall = current;
-                }
-                else
+                // Inspect the receipt on the exact pending call before observing or decoding
+                // business success. Compressed frames are also checked before decompression.
+                if (requireProducerAcceptance)
+                    RequireNStudyAcceptance(current);
+
+                deadlineExpired = current.Deadline.IsExpired(_timeProvider);
+                // Response acknowledges server/duplex streams; StreamComplete owns their end.
+                if (!deadlineExpired &&
+                    current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
                 {
                     current.CompletionObserver?.OnResponseObserved();
                     return true;
                 }
+
+                var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+                if (!ReferenceEquals(exchanged, current))
+                    continue;
+                current.WaitUntilRegistered();
             }
 
-            var emptyPayload = ReadOnlySequence<byte>.Empty;
-            CompleteTakenCall(
-                expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+            var reason = deadlineExpired
+                ? PendingCallCompletionReason.DeadlineExceeded
+                : PendingCallCompletionReason.Response;
+            CompleteTakenCall(current, reason, exception: null, ref payload);
             return true;
         }
-
-        if (!TryTakeMatchingCall(id, out var call, out var deadlineExpired))
-            return false;
-
-        var reason = deadlineExpired
-            ? PendingCallCompletionReason.DeadlineExceeded
-            : PendingCallCompletionReason.Response;
-        CompleteTakenCall(call!, reason, exception: null, ref payload);
-        return true;
     }
 
     public bool DispatchError(long id, Exception exception)

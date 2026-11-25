@@ -143,10 +143,16 @@ internal sealed partial class PendingRequestTable
                 return;
             lock (call.CompletionGate)
             {
-                if (call.Id == id && ReferenceEquals(Volatile.Read(ref slots[index]), call) &&
-                    call.NStudyAdmission is { Confirmed: false })
-                    throw RpcSession.InvalidNStudy("Successful stream progress preceded admission.");
+                if (call.Id == id && ReferenceEquals(Volatile.Read(ref slots[index]), call))
+                    RequireNStudyAcceptance(call);
             }
         }
+    }
+
+    // Call under CompletionGate, after establishing the exact live slot.
+    private static void RequireNStudyAcceptance(PendingCall call)
+    {
+        if (call.NStudyAdmission is { Confirmed: false })
+            throw RpcSession.InvalidNStudy("Successful stream progress preceded admission.");
     }
 }
