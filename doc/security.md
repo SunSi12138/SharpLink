@@ -28,7 +28,7 @@ serverBuilder
 - `Success`：成功但没有 identity；不适合后续授权。
 - `Reject(code, message)`：使用具体错误 code 拒绝。不要把内部异常、SQL、证书或 token 内容放入 peer-facing message。
 
-认证 context 会规范化 scope、按 ordinal 比较 claim/tenant，并可带 `ExpiresAt`。它在连接握手时建立；长连接不会自动刷新 token，过期策略应结合连接期限或服务端逐调用检查。
+认证 context 会规范化 scope、按 ordinal 比较 claim/tenant，并可带 `ExpiresAt`。它在连接握手时建立。长连接不会自动刷新 token；如果调用到达服务实例解析阶段时凭据已经过期，服务端会在取得实例前拒绝。带响应的调用返回 `AuthenticationExpired`；OneWay 不增加回执。客户端需要用有效凭据建立新连接。
 
 ## 服务端授权
 
