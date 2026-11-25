@@ -18,6 +18,8 @@ public static class SharpLinkServerVersionCoordinationExtensions
 
     /// <summary>Stages and negotiates replacement of an installed assembly group with an application-provided assembly.</summary>
     /// <remarks>
+    /// Include every coordination-capable peer with an open binding to any service in the old assembly,
+    /// even when that peer has no binding for <paramref name="contractId"/>. Omitting one prevents publication.
     /// The first participant authorizes the server publication; other participants govern only their own resume.
     /// In Manual mode each session must support deferral, and the callback decides each participant separately.
     /// Defer ends that peer's attempt without approval. The primary can defer publication; other participants
