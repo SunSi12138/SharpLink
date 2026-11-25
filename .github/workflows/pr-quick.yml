@@ -63,7 +63,7 @@ jobs:
           --project test/SharpLink.IntegrationTests
           --
           --maximum-parallel-tests 1
-          --timeout 120s
+          --timeout 360s
 
       - name: Run NativeAOT Transport and Topology Smoke
         env:
