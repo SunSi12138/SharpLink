@@ -14,11 +14,10 @@ internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
     internal RpcHash128 Hash => ack.Hash;
     internal NStudyAck Acknowledgement => ack;
 
+    // Selection checks a snapshot; only TryEnter grants authority to append.
+    // Retire still closes that gate and drains the publishers admitted under it.
     internal bool IsOpenOn(RpcSession owner)
-    {
-        lock (_gate)
-            return !_retired && ReferenceEquals(owner, session);
-    }
+        => ReferenceEquals(owner, session) && !Volatile.Read(ref _retired);
 
     internal bool TryEnter(RpcSession owner)
     {
@@ -49,7 +48,7 @@ internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
     {
         lock (_gate)
         {
-            _retired = true;
+            Volatile.Write(ref _retired, true);
             return _publishers == 0
                 ? Task.CompletedTask
                 : (_drained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
