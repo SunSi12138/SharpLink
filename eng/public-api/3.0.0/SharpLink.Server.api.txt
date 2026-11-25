@@ -144,6 +144,18 @@ namespace SharpLink.Server
         public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateResponseCompressionPolicy(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
         public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateTelemetryDetailPolicy(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkTelemetryDetailMode mode) { }
     }
+    public static class SharpLinkServerVersionCoordinationExtensions
+    {
+        public static void ObserveVersionChanges(this SharpLink.Abstractions.ISharpLinkServer server, System.Func<SharpLink.Abstractions.SharpLinkVersionChangeNotice, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> observer) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkServerVersionChangeResult> ReplaceAssemblyCoordinatedAsync(this SharpLink.Abstractions.ISharpLinkServer server, System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly, long contractId, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkVersionParticipant> participants, System.TimeSpan gracefulTimeout, System.Func<SharpLink.Abstractions.SharpLinkVersionChange, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionDecision>>? approveLocally = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public static void SetVersionCoordinationMode(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkVersionCoordinationMode mode) { }
+    }
+    public static class SharpLinkServerVersionInventoryExtensions
+    {
+        public static SharpLink.Abstractions.SharpLinkVersionInventory GetLocalVersionInventory(this SharpLink.Abstractions.ISharpLinkServer server) { }
+        public static System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkVersionSession> GetVersionPeers(this SharpLink.Abstractions.ISharpLinkServer server) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionInventory> QueryPeerVersionInventoryAsync(this SharpLink.Abstractions.ISharpLinkServer server, SharpLink.Abstractions.SharpLinkVersionSession peer, System.Threading.CancellationToken cancellationToken = default) { }
+    }
     public sealed class SharpLinkSlidingWindowLimitOptions
     {
         public SharpLinkSlidingWindowLimitOptions() { }
