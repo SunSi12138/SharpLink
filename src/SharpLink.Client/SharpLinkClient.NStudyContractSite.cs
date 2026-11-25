@@ -82,18 +82,34 @@ internal sealed partial class SharpLinkClient
             return _single?.TryGetConnection(out connection) == true;
         }
 
-        internal NStudyPreparedRoute? Find(ClientConnection connection)
+        internal bool TryGetReadyPinnedConnection(out ClientConnection connection)
+        {
+            connection = null!;
+            return _single?.TryGetReadyConnection(out connection) == true;
+        }
+
+        internal NStudyPreparedRoute? Find(ClientConnection connection) => Find(connection, out _);
+
+        private NStudyPreparedRoute? Find(ClientConnection connection, out NStudyClientRoute? route)
         {
             if (_cohort is null)
-                return _single?.IsReadyOn(connection) == true ? _single : null;
-            foreach (var route in _cohort)
-                if (route.IsReadyOn(connection))
-                    return route;
+            {
+                route = _single?.ReadReadyRouteOn(connection);
+                return route is not null ? _single : null;
+            }
+            foreach (var member in _cohort)
+                if ((route = member.ReadReadyRouteOn(connection)) is not null)
+                    return member;
+            route = null;
             return null;
         }
 
-        internal NStudyClientRoute RequireRoute(ClientConnection connection) =>
-            Find(connection)?.RequireRoute() ?? throw Unavailable();
+        internal NStudyClientRoute RequireRoute(ClientConnection connection)
+        {
+            // Reuse the route from the readiness check, not a second weak lookup.
+            _ = Find(connection, out var route);
+            return route ?? throw Unavailable();
+        }
 
         internal bool ContainsReceipt(ClientConnection connection, NStudyAck receipt)
             => _cohort is null ? _single?.MatchesReceipt(connection, receipt) == true
@@ -148,15 +164,21 @@ internal sealed partial class SharpLinkClient
         internal NStudyAck Ack { get; } = ack;
 
         internal bool TryGetConnection(out ClientConnection connection) => _connection.TryGetTarget(out connection!);
-        internal NStudyClientRoute RequireRoute() =>
-            _route.TryGetTarget(out var route) ? route : throw NStudyPreparedSite.Unavailable();
+        internal bool TryGetReadyConnection(out ClientConnection connection)
+            => TryGetConnection(out connection) && ReadOpenRouteOn(connection) is not null;
+
         // During coordinated resume the old business gate is already closed.
         // Match the exact earlier publication even though it is no longer callable.
         internal bool MatchesReceipt(ClientConnection connection, NStudyAck receipt)
             => Ack == receipt && _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection);
-        internal bool IsReadyOn(ClientConnection connection)
-            => _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection) &&
-               _route.TryGetTarget(out var route) && route.IsOpenOn(connection.Session);
+        internal NStudyClientRoute? ReadReadyRouteOn(ClientConnection connection)
+            => _connection.TryGetTarget(out var original) && ReferenceEquals(original, connection)
+                ? ReadOpenRouteOn(connection) : null;
+
+        internal bool IsReadyOn(ClientConnection connection) => ReadReadyRouteOn(connection) is not null;
+
+        private NStudyClientRoute? ReadOpenRouteOn(ClientConnection connection)
+            => _route.TryGetTarget(out var route) && route.IsOpenOn(connection.Session) ? route : null;
 
     }
 

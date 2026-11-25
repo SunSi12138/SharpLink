@@ -240,7 +240,7 @@ internal sealed partial class SharpLinkClient
 
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
-        if (!prepared.TryGetConnection(out var owner) || prepared.Find(owner) is null ||
+        if (!prepared.TryGetReadyPinnedConnection(out var owner) ||
             !TryGetNStudyClusterCandidate(owner, out var candidate))
             throw NStudyPreparedSite.Unavailable();
         if (!outcome.TryAcquire(candidate))
@@ -264,8 +264,7 @@ internal sealed partial class SharpLinkClient
         if (prepared.IsBalanced)
             return ReserveFixedPoolPreparedCohort(prepared);
 
-        if (!prepared.TryGetConnection(out var connection) ||
-            prepared.Find(connection) is null ||
+        if (!prepared.TryGetReadyPinnedConnection(out var connection) ||
             !connection.TryReserveExactCallAdmission())
             throw NStudyPreparedSite.Unavailable();
         return connection;
