@@ -4,6 +4,11 @@ using SharpLink.Client;
 using SharpLink.Sdk;
 using SharpLink.Server;
 
+if (args is ["process-coordination", ("server" or "client"), var processPlugins, var processHandoff])
+{
+    await CoordinationSmoke.RunProcessAsync(args[1], Path.GetFullPath(processPlugins), Path.GetFullPath(processHandoff));
+    return;
+}
 if (args is ["independent-endpoints", ("tcp" or "shared-memory"), ("static" or "resolver"), var endpointPlugins])
 {
     await CoordinationSmoke.RunIndependentEndpointsAsync(args[1], args[2], Path.GetFullPath(endpointPlugins));
@@ -20,7 +25,7 @@ if (args is ["coordinate", ("tcp" or "shared-memory"), ("manual" or "automatic" 
     return;
 }
 if (args is not [("tcp" or "shared-memory")])
-    throw new ArgumentException("Use <transport>, coordinate <transport> <mode> <plugin-directory>, multi-ready <transport> <approve|defer|relocal> <plugin-directory>, or independent-endpoints <transport> <static|resolver> <plugin-directory>.");
+    throw new ArgumentException("Use <transport>, coordinate <transport> <mode> <plugin-directory>, multi-ready <transport> <approve|defer|relocal> <plugin-directory>, independent-endpoints <transport> <static|resolver> <plugin-directory>, or process-coordination <server|client> <plugin-directory> <handoff-directory>.");
 
 var transport = args[0];
 using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
