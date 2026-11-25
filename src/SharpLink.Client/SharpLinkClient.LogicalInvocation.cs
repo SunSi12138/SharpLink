@@ -4,6 +4,8 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    internal void ReleaseDirectLogicalInvocation() => Interlocked.Decrement(ref _activeLogicalInvocations);
+
     private ValueTask<T> CompleteLogicalInvocation<T>(ValueTask<T> invocation)
     {
         if (invocation.IsCompleted)

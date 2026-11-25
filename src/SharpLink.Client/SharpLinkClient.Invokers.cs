@@ -13,11 +13,17 @@ internal sealed partial class SharpLinkClient
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: true, interceptors) with { PreparedSite = prepared };
+        var telemetryEnabled = SharpLinkTelemetry.ClientCallsEnabled;
         Interlocked.Increment(ref _activeLogicalInvocations);
+        // A bare one-attempt Unary has no logical work after its pending result. Keep that
+        // result's asynchronous scheduling and release its logical count at completion.
+        if (!telemetryEnabled && interceptors.Count == 0 && _endpointAdmissionPolicy is null && !method.IsIdempotent)
+            return InvokeUnaryCoreAsync(method, request, requestCodec, responseCodec, control, cancellationToken,
+                completeLogicalWithResult: true);
         try
         {
             ValueTask<TResponse> invocation;
-            if (SharpLinkTelemetry.ClientCallsEnabled)
+            if (telemetryEnabled)
                 invocation = InvokeUnaryWithTelemetryAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             else if (interceptors.Count != 0)
                 invocation = InvokeUnaryInterceptedAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
@@ -234,49 +240,64 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool completeLogicalWithResult = false)
     {
-        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
-        if (outcome is null)
-            SharpLinkTelemetry.RecordClientAttempt();
-        ClientConnection? connection = null;
-        var reservationOwned = false;
+        var logicalTransferred = false;
         try
         {
-            // Connection selection is the first step that can block, so the pre-registration
-            // checkpoint below is the first place a fresh sample carries new information. A sample
-            // here would only repeat the stage-local validation the call control already did.
-            connection = GetReadyConnection(method, retrySelection: null, outcome, control.SiteForDispatch);
-            reservationOwned = true;
-            EnsureLogicalCallProgress(control);
-            var operation = connection.PendingCalls.Rent(
-                responseCodec,
-                PendingCallKind.Unary,
-                control.Deadline,
-                cancellationToken,
-                out var requestId,
-                outcome,
-                hasResponsePayload: method.HasResponsePayload,
-                responseNullable: method.ResponseNullable);
-            reservationOwned = false;
-            return StartUnaryCall(
-                connection,
-                method.MethodId,
-                requestId,
-                method.HasResponsePayload,
-                request,
-                requestCodec,
-                operation,
-                control,
-                cancellationToken);
+            var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+            if (outcome is null)
+                SharpLinkTelemetry.RecordClientAttempt();
+            ClientConnection? connection = null;
+            var reservationOwned = false;
+            try
+            {
+                // Connection selection is the first step that can block, so the pre-registration
+                // checkpoint below is the first place a fresh sample carries new information.
+                connection = GetReadyConnection(method, retrySelection: null, outcome, control.SiteForDispatch);
+                reservationOwned = true;
+                EnsureLogicalCallProgress(control);
+                var operation = connection.PendingCalls.Rent(
+                    responseCodec,
+                    PendingCallKind.Unary,
+                    control.Deadline,
+                    cancellationToken,
+                    out var requestId,
+                    outcome,
+                    hasResponsePayload: method.HasResponsePayload,
+                    responseNullable: method.ResponseNullable,
+                    completeLogicalWithResult: completeLogicalWithResult);
+                reservationOwned = false;
+                if (completeLogicalWithResult)
+                {
+                    logicalTransferred = true;
+                    operation.AdoptLogicalOwner(this);
+                }
+                return StartUnaryCall(
+                    connection,
+                    method.MethodId,
+                    requestId,
+                    method.HasResponsePayload,
+                    request,
+                    requestCodec,
+                    operation,
+                    control,
+                    cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                if (reservationOwned)
+                    connection!.ReleaseCallAdmissionReservation();
+                exception = ArbitrateLogicalCallFailure(control, exception);
+                outcome?.CompleteLocalFailure(exception);
+                return ValueTask.FromException<TResponse>(exception);
+            }
         }
-        catch (Exception exception)
+        finally
         {
-            if (reservationOwned)
-                connection!.ReleaseCallAdmissionReservation();
-            exception = ArbitrateLogicalCallFailure(control, exception);
-            outcome?.CompleteLocalFailure(exception);
-            return ValueTask.FromException<TResponse>(exception);
+            if (completeLogicalWithResult && !logicalTransferred)
+                ReleaseDirectLogicalInvocation();
         }
     }
 

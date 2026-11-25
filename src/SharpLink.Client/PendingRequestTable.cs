@@ -151,13 +151,14 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         out long id,
         IPendingCallCompletionObserver? completionObserver = null,
         bool hasResponsePayload = true,
-        bool responseNullable = false)
+        bool responseNullable = false,
+        bool completeLogicalWithResult = false)
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
                 responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
-                completionObserver, out id, out var operation))
+                completionObserver, out id, out var operation, completeLogicalWithResult))
             return operation;
 
         throw CreateResourceExhaustedException();
@@ -580,9 +581,12 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         bool responseNullable,
         IPendingCallCompletionObserver? completionObserver,
         out long id,
-        out RpcRequestOperation<T> operation)
+        out RpcRequestOperation<T> operation,
+        bool completeLogicalWithResult = false)
     {
         operation = RpcOperationPool<T>.Rent();
+        if (completeLogicalWithResult)
+            operation.ExpectLogicalOwner();
         if (TryRegister(
                 kind,
                 operation,

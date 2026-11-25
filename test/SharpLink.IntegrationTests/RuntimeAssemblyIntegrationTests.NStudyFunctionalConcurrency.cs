@@ -31,9 +31,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await server.StartAsync(ct);
         await client.ConnectAsync(ct);
         var proxy = client.CreateProxy<INStudyFunctionalConcurrencyProbe>();
+        var logicalCalls = (ISharpLinkClientDrainInspector)client;
+        try
+        {
+            await proxy.Service.EchoAsync(1, ct);
+            throw new InvalidOperationException("A call before Prepare must not reach the service.");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.Unavailable) { }
+        Ensure(logicalCalls.ActiveCallCount == 0, "local rejection leaves no logical owner or pending reservation");
         await proxy.PrepareAsync(TimeSpan.FromSeconds(5), ct);
         var connection = NStudyClientConnection(client);
-        var logicalCalls = (ISharpLinkClientDrainInspector)client;
         var peer = NStudyServerConnection(server);
         var session = connection.Session;
         var initialBinds = session.NStudyBindOperationForDiagnostics;
@@ -78,6 +85,26 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             finally { oneWay.Release.TrySetResult(); }
             await WaitForNStudyAsync(() => peer.ActiveCalls == 0 && connection.PendingCalls.ActiveCount == 0, ct);
             Console.WriteLine($"F22_PASS transport={transport} shape=oneway concurrency={count} completed={count}");
+        }
+
+        var cancelled = service.Begin(1);
+        using (var caller = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            var call = proxy.Service.EchoAsync(1, caller.Token);
+            try
+            {
+                await cancelled.AllEntered.Task.WaitAsync(ct);
+                Ensure(logicalCalls.ActiveCallCount == 1, "the cancelled call was active at the service");
+                caller.Cancel();
+                try
+                {
+                    await call;
+                    throw new InvalidOperationException("The caller must observe its cancellation.");
+                }
+                catch (OperationCanceledException) when (caller.IsCancellationRequested) { }
+                Ensure(logicalCalls.ActiveCallCount == 0, "cancellation releases the same logical count once");
+            }
+            finally { cancelled.Release.TrySetResult(); }
         }
 
         await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (1, 0, 0) &&

@@ -15,11 +15,15 @@ internal interface IRpcOperation
 
 internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation
 {
+    private static readonly object AwaitingLogicalOwner = new();
+    private static readonly object TerminalChosen = new();
+
     private ManualResetValueTaskSourceCore<T> _core;
     private IRpcCodec<T>? _codec;
     private T? _response;
     private bool _hasResponsePayload;
     private bool _responseNullable;
+    private object? _logicalOwner;
 
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -53,6 +57,9 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
 
     public T GetResult(short token)
     {
+        // Validate before taking responsibility for the operation's return to the pool.
+        if (_core.GetStatus(token) == ValueTaskSourceStatus.Pending)
+            throw new InvalidOperationException("The RPC request has not completed.");
         try
         {
             return _core.GetResult(token);
@@ -101,17 +108,41 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
 
     public void CompleteResponse(Exception? exception)
     {
+        var response = _response;
+        ReleaseCompletionOwners();
         if (exception is null)
-            _core.SetResult(_response!);
+            _core.SetResult(response!);
         else
             _core.SetException(exception);
     }
 
     public void SetError(Exception ex)
     {
+        ReleaseCompletionOwners();
         _core.SetException(ex);
     }
     public ValueTask<T> AsValueTask() => new(this, _core.Version);
+
+    internal void ExpectLogicalOwner() => _logicalOwner = AwaitingLogicalOwner;
+
+    internal void AdoptLogicalOwner(SharpLinkClient owner)
+    {
+        // Cancellation, expiry or disposal can complete a newly registered operation
+        // before Rent returns. Exactly one side ends the logical invocation in that race.
+        if (ReferenceEquals(Interlocked.CompareExchange(ref _logicalOwner, owner, AwaitingLogicalOwner), TerminalChosen))
+            owner.ReleaseDirectLogicalInvocation();
+    }
+
+    private void ReleaseCompletionOwners()
+    {
+        if (Volatile.Read(ref _logicalOwner) is null)
+            return;
+        // Results may remain unobserved; retain the result, not its original codec or client.
+        _codec = null;
+        _response = default;
+        if (Interlocked.Exchange(ref _logicalOwner, TerminalChosen) is SharpLinkClient owner)
+            owner.ReleaseDirectLogicalInvocation();
+    }
 
     private void ReturnToPool()
     {
@@ -119,6 +150,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         _response = default;
         _hasResponsePayload = false;
         _responseNullable = false;
+        _logicalOwner = null;
         // Clear the continuation and its state before this operation enters the
         // process-wide generic pool. A continuation can close over request types
         // from a collectible AssemblyLoadContext even when T itself is static.
