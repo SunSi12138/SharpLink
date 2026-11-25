@@ -15,15 +15,12 @@ internal interface IRpcOperation
 
 internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation
 {
-    private static readonly object AwaitingLogicalOwner = new();
-    private static readonly object TerminalChosen = new();
-
     private ManualResetValueTaskSourceCore<T> _core;
     private IRpcCodec<T>? _codec;
     private T? _response;
     private bool _hasResponsePayload;
     private bool _responseNullable;
-    private object? _logicalOwner;
+    private SharpLinkClient? _logicalOwner;
 
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -123,25 +120,20 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     }
     public ValueTask<T> AsValueTask() => new(this, _core.Version);
 
-    internal void ExpectLogicalOwner() => _logicalOwner = AwaitingLogicalOwner;
-
-    internal void AdoptLogicalOwner(SharpLinkClient owner)
-    {
-        // Cancellation, expiry or disposal can complete a newly registered operation
-        // before Rent returns. Exactly one side ends the logical invocation in that race.
-        if (ReferenceEquals(Interlocked.CompareExchange(ref _logicalOwner, owner, AwaitingLogicalOwner), TerminalChosen))
-            owner.ReleaseDirectLogicalInvocation();
-    }
+    // Set before the pending table publishes the operation. Only its terminal winner
+    // can clear the owner; the application cannot consume the result before that.
+    internal void SetLogicalOwner(SharpLinkClient? owner) => _logicalOwner = owner;
 
     private void ReleaseCompletionOwners()
     {
-        if (Volatile.Read(ref _logicalOwner) is null)
+        var owner = _logicalOwner;
+        if (owner is null)
             return;
         // Results may remain unobserved; retain the result, not its original codec or client.
         _codec = null;
         _response = default;
-        if (Interlocked.Exchange(ref _logicalOwner, TerminalChosen) is SharpLinkClient owner)
-            owner.ReleaseDirectLogicalInvocation();
+        _logicalOwner = null;
+        owner.ReleaseDirectLogicalInvocation();
     }
 
     private void ReturnToPool()

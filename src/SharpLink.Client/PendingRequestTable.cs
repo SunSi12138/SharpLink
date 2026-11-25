@@ -152,13 +152,23 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IPendingCallCompletionObserver? completionObserver = null,
         bool hasResponsePayload = true,
         bool responseNullable = false,
-        bool completeLogicalWithResult = false)
+        SharpLinkClient? logicalOwner = null)
     {
-        ArgumentNullException.ThrowIfNull(responseCodec);
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        // A supplied logical count belongs to this registration attempt, including
+        // a rejection before a pending slot exists.
+        try
+        {
+            ArgumentNullException.ThrowIfNull(responseCodec);
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        }
+        catch
+        {
+            logicalOwner?.ReleaseDirectLogicalInvocation();
+            throw;
+        }
         if (TryRent(
                 responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
-                completionObserver, out id, out var operation, completeLogicalWithResult))
+                completionObserver, out id, out var operation, logicalOwner))
             return operation;
 
         throw CreateResourceExhaustedException();
@@ -293,6 +303,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var operation = RpcOperationPool<RpcEmptyRequest>.Rent();
+        var published = false;
         if (TryRegister(
                 PendingCallKind.OneWayClientStreaming,
                 operation,
@@ -303,7 +314,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 RpcEmptyRequestCodec.Instance,
                 completionObserver,
                 hasResponsePayload: false,
-                responseNullable: false))
+                responseNullable: false,
+                ref published))
         {
             return new PendingRequestLease<RpcEmptyRequest>(id, operation);
         }
@@ -573,29 +585,32 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IPendingCallCompletionObserver? completionObserver,
         out long id,
         out RpcRequestOperation<T> operation,
-        bool completeLogicalWithResult = false)
+        SharpLinkClient? logicalOwner = null)
     {
-        operation = RpcOperationPool<T>.Rent();
-        if (completeLogicalWithResult)
-            operation.ExpectLogicalOwner();
-        if (TryRegister(
-                kind,
-                operation,
-                dispatcher: null,
-                deadline,
-                cancellationToken,
-                out id,
-                responseCodec,
-                completionObserver,
-                hasResponsePayload,
-                responseNullable))
+        var published = false;
+        RpcRequestOperation<T>? rented = null;
+        try
         {
-            return true;
+            rented = RpcOperationPool<T>.Rent();
+            rented.SetLogicalOwner(logicalOwner);
+            if (TryRegister(kind, rented, dispatcher: null, deadline, cancellationToken, out id,
+                    responseCodec, completionObserver, hasResponsePayload, responseNullable, ref published))
+            {
+                operation = rented;
+                return true;
+            }
+            operation = null!;
+            return false;
         }
-
-        operation.ReturnError();
-        operation = null!;
-        return false;
+        finally
+        {
+            // Publication transfers logical completion to the same winner as the result.
+            if (!published)
+            {
+                rented?.ReturnError();
+                logicalOwner?.ReleaseDirectLogicalInvocation();
+            }
+        }
     }
 
     private bool TryRegister<T>(
@@ -608,7 +623,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IRpcCodec<T> responseCodec,
         IPendingCallCompletionObserver? completionObserver,
         bool hasResponsePayload,
-        bool responseNullable)
+        bool responseNullable,
+        ref bool published)
     {
         if (!TryAcquireCapacity())
         {
@@ -616,7 +632,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             return false;
         }
 
-        var published = false;
         try
         {
             var slots = GetOrCreateSlots();

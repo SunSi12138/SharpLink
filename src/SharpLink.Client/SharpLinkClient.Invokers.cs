@@ -258,6 +258,7 @@ internal sealed partial class SharpLinkClient
                 connection = GetReadyConnection(method, retrySelection: null, outcome, control.SiteForDispatch);
                 reservationOwned = true;
                 EnsureLogicalCallProgress(control);
+                logicalTransferred = completeLogicalWithResult;
                 var operation = connection.PendingCalls.Rent(
                     responseCodec,
                     PendingCallKind.Unary,
@@ -267,13 +268,8 @@ internal sealed partial class SharpLinkClient
                     outcome,
                     hasResponsePayload: method.HasResponsePayload,
                     responseNullable: method.ResponseNullable,
-                    completeLogicalWithResult: completeLogicalWithResult);
+                    logicalOwner: completeLogicalWithResult ? this : null);
                 reservationOwned = false;
-                if (completeLogicalWithResult)
-                {
-                    logicalTransferred = true;
-                    operation.AdoptLogicalOwner(this);
-                }
                 return StartUnaryCall(
                     connection,
                     method.MethodId,

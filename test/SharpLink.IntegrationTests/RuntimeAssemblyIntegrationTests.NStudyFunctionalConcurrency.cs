@@ -107,6 +107,32 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             finally { cancelled.Release.TrySetResult(); }
         }
 
+        var neverSent = service.Begin(1);
+        using (var caller = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            // An ordinary cancellation can arrive after selection, before Rent has
+            // returned the result to the caller.
+            client._callAdmissionReservedTestHook = _ => caller.Cancel();
+            try
+            {
+                var call = proxy.Service.EchoAsync(1, caller.Token);
+                Ensure(call.IsCompleted, "cancellation during registration is visible before Rent returns");
+                try
+                {
+                    await call;
+                    throw new InvalidOperationException("A cancellation racing registration must reach the caller.");
+                }
+                catch (OperationCanceledException) when (caller.IsCancellationRequested) { }
+                Ensure(logicalCalls.ActiveCallCount == 0 && !neverSent.AllEntered.Task.IsCompleted,
+                    "early completion retires one logical owner and publishes no business request");
+            }
+            finally
+            {
+                client._callAdmissionReservedTestHook = null;
+                neverSent.Release.TrySetResult();
+            }
+        }
+
         await WaitForNStudyAsync(() => peer.NStudyBindings.Snapshot() == (1, 0, 0) &&
             connection.ActiveCallCount == 0 && connection.PendingCalls.NStudyProducerCount == 0 &&
             session.QueuedSendBytes == 0 && session.StreamManager.ActiveStreamCount == 0 &&
