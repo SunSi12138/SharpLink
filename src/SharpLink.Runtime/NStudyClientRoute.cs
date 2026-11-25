@@ -4,9 +4,9 @@ namespace SharpLink.Runtime;
 // joins only publishers already admitted there, never a compressor or old call.
 internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
 {
-    private readonly Lock _gate = new();
-    private bool _retired;
-    private int _publishers;
+    private const int Retired = int.MinValue;
+    // The sign bit closes admission; the remaining bits count admitted appends.
+    private int _state;
     private TaskCompletionSource? _drained;
 
     internal long Token => ack.BindingId;
@@ -15,43 +15,43 @@ internal sealed class NStudyClientRoute(RpcSession session, NStudyAck ack)
     internal NStudyAck Acknowledgement => ack;
 
     // Selection checks a snapshot; only TryEnter grants authority to append.
-    // Retire still closes that gate and drains the publishers admitted under it.
+    // Retire closes that gate and drains the publishers admitted before its cut.
     internal bool IsOpenOn(RpcSession owner)
-        => ReferenceEquals(owner, session) && !Volatile.Read(ref _retired);
+        => ReferenceEquals(owner, session) && Volatile.Read(ref _state) >= 0;
 
     internal bool TryEnter(RpcSession owner)
     {
-        lock (_gate)
+        if (!ReferenceEquals(owner, session))
+            return false;
+
+        var state = Volatile.Read(ref _state);
+        while (state >= 0)
         {
-            if (_retired || !ReferenceEquals(owner, session))
-                return false;
-            checked { _publishers++; }
-            return true;
+            var observed = Interlocked.CompareExchange(ref _state, checked(state + 1), state);
+            if (observed == state)
+                return true;
+            state = observed;
         }
+        return false;
     }
 
     internal void Leave()
     {
-        TaskCompletionSource? drained = null;
-        lock (_gate)
-        {
-            if (--_publishers == 0)
-            {
-                drained = _drained;
-                _drained = null;
-            }
-        }
-        drained?.TrySetResult();
+        if (Interlocked.Decrement(ref _state) == Retired)
+            Volatile.Read(ref _drained)?.TrySetResult();
     }
 
     internal Task Retire()
     {
-        lock (_gate)
-        {
-            Volatile.Write(ref _retired, true);
-            return _publishers == 0
-                ? Task.CompletedTask
-                : (_drained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
-        }
+        var prior = Interlocked.Or(ref _state, Retired);
+        if ((prior & int.MaxValue) == 0)
+            return Task.CompletedTask;
+
+        var drained = LazyInitializer.EnsureInitialized(ref _drained,
+            static () => new(TaskCreationOptions.RunContinuationsAsynchronously));
+        // Pair the last Leave's waiter check with a count check after publishing the waiter.
+        if (Volatile.Read(ref _state) == Retired)
+            drained.TrySetResult();
+        return drained.Task;
     }
 }
