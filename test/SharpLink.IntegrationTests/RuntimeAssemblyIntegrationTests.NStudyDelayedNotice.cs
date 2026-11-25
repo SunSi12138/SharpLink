@@ -18,6 +18,84 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    [Arguments("tcp")]
+    [Arguments("shared-memory")]
+    public Task NStudyBindAckDelayedAcrossRetirementCannotPublishTheOldRoute(string transport)
+    {
+        var flush = new NStudyHeldResponseFlush();
+        return WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: false,
+            (fixture, trace, ct) => VerifyLateBindAckAfterRetirementAsync(fixture, trace, flush, ct),
+            decorateServerTransport: inner => new NStudyHeldResponseListener(inner, flush));
+    }
+
+    private static async Task VerifyLateBindAckAfterRetirementAsync(NStudyCoordinationFixture fixture,
+        NStudyTrace trace, NStudyHeldResponseFlush flush, CancellationToken ct)
+    {
+        var (server, contracts, oldAssembly, newAssembly, _, _, first, _, _) = fixture;
+        var (client, session, peer, a, b, receiver, sibling) = first;
+        IRpcContractChannel channel = client.CreateContractChannel(client.GetLocalContract(contracts.ContractAssembly, a.Contract));
+        var site = (SharpLinkClient.NStudyContractSite)channel;
+        var permitPublication = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var counter = new NStudyDelayedNoticeCounter(a.Contract);
+        server.ReplaceInterceptors([counter]);
+        Ensure(await client.ReleaseNStudyContractAsync(a.Contract, ct) && await sibling.TouchAsync(1, ct) == 101 &&
+               peer.NStudyBindings.Snapshot() == (1, 0, 0),
+            "normal release leaves a single independent sibling binding before starting a new Prepare");
+        var operations = session.NStudyBindOperationForDiagnostics;
+        await WaitForNStudyAsync(() => peer.ActiveCalls == 0 && peer.Session.QueuedSendBytes == 0, ct);
+        // If the Ack is applied before the ordered invalidation is read, hold only
+        // local publication; the actual reader can consume both messages normally.
+        site.BeforePublishingPreparationForTests = (_, token) => new(permitPublication.Task.WaitAsync(token));
+
+        try
+        {
+            flush.Arm();
+            var pending = channel.PrepareAsync(TimeSpan.FromSeconds(5), ct).AsTask();
+            await flush.Entered.Task.WaitAsync(ct);
+            var delayedToken = NStudyWire.BindingId(NStudyWire.SlotIndex(a.BindingId), NStudyWire.Incarnation(a.BindingId) + 1);
+            Ensure(!pending.IsCompleted && session.NStudyPreparedCount == 1 &&
+                   session.NStudyBindOperationForDiagnostics == operations + 1 &&
+                   peer.NStudyBindings.TryResolve(delayedToken, out var delayedService) && delayedService.NStudyTarget == a.Target,
+                "the normal Bind installed another R1 grant before its real Ack reached the client");
+            EnsureReplacementReleased(await server.ReplaceAssemblyAsync(oldAssembly, newAssembly,
+                TimeSpan.FromSeconds(5), ct), "publish R2 while the real BindAck is held in the writer");
+            var target = server.ReadNStudyTarget(newAssembly, a.Contract);
+            Ensure(target != a.Target && !peer.NStudyBindings.HasOpenTarget(a.Target) && !pending.IsCompleted,
+                "group cut retires the granted R1 route before the delayed acknowledgement leaves the writer");
+            trace.Record("RealBindAckIsStillHeldWhenItsRegistrationRetires", a with { BindingId = delayedToken }, b);
+
+            flush.Release.TrySetResult();
+            Ensure(await sibling.TouchAsync(2, ct) == 102,
+                "the sibling response crosses the writer after both the original acknowledgement and retirement notice");
+            permitPublication.TrySetResult();
+            try
+            {
+                await pending.WaitAsync(ct);
+                throw new InvalidOperationException("A retired grant must not be published after its invalidation.");
+            }
+            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable) { }
+            Ensure(session.NStudyPreparedCount == 1 && session.CaptureNStudyBinding(b.Contract) == b.BindingId &&
+                   peer.NStudyBindings.Snapshot() == (1, 0, 0) && counter.Calls == 0,
+                "neither the client nor the server retained the retired A grant; B was not rebound");
+
+            var ready = await receiver.PrepareExact(new(a.Authority, a.Contract, a.Hash, target),
+                TimeSpan.FromSeconds(5), ct);
+            Ensure(ready.Target == target && ready.BindingId != delayedToken &&
+                   await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 3, ct) == 4 &&
+                   ReferenceEquals(NStudyClientSession(client), session) && counter.Calls == 1,
+                "a fresh preparation is required to reach R2, on the original physical connection");
+            trace.Record("LateAckCannotPublishRetiredAAndFreshBindRestoresR2", ready, b);
+        }
+        finally
+        {
+            permitPublication.TrySetResult();
+            flush.Release.TrySetResult();
+            site.BeforePublishingPreparationForTests = null;
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     [Arguments("tcp", false)]
     [Arguments("tcp", true)]
     [Arguments("shared-memory", false)]
