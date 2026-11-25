@@ -30,22 +30,47 @@ public sealed partial class StaticEndpointIntegrationTests
     [Test]
     public async Task ThrowingCustomSelectorShouldLeaveTheClusterHealthyForLaterCalls()
     {
-        await using var first = await TcpServerScope.StartAsync();
-        await using var second = await TcpServerScope.StartAsync();
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var gatedFirst = new GatedConnectFactory(sockets(Endpoint("first", first.Port)));
+        var selector = new ThrowOnceSelector();
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
-
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
-                SharpLinkTransportFactories.Sockets())
-            .UseEndpointSelector(new ThrowOnceSelector())
+                endpoint => endpoint.Id == "first" ? gatedFirst : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .UseEndpointSelector(selector)
             .Build();
 
-        await client.ConnectAsync();
-        var service = (await PrepareBalancedProxyAsync(client)).Service;
-        var exception = await EnsureThrowsSharpLink(service.PingAsync(1).AsTask(), "throwing custom selector");
-        Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition, "throwing selector error code");
-        Ensure(await service.PingAsync(1) == 2, "later RPC should remain healthy");
-        Ensure(client.State == SharpLinkConnectionState.Ready, "selector failure must not change client state");
+        try
+        {
+            var connecting = client.ConnectAsync().AsTask();
+            await gatedFirst.Entered.WaitAsync(TimeSpan.FromSeconds(4));
+            await connecting.WaitAsync(TimeSpan.FromSeconds(4));
+            var service = (await PrepareBalancedProxyAsync(client)).Service;
+            Ensure(first.OpenBindings == 0 && second.OpenBindings == 1,
+                "only the initially Ready endpoint is prepared");
+
+            gatedFirst.Release();
+            await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+            var exception = await EnsureThrowsSharpLink(service.PingAsync(1).AsTask(), "throwing custom selector");
+            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition &&
+                   ReferenceEquals(exception.InnerException, selector.Failure), "the first RPC fails with the actual selector exception");
+            Ensure(await service.PingAsync(1) == 2 && await service.GetEndpointIdAsync() == "second" &&
+                   first.OpenBindings == 0 && second.OpenBindings == 1,
+                "later RPC uses the original prepared endpoint without implicitly binding the newly Ready endpoint");
+            Ensure(client.State == SharpLinkConnectionState.Ready, "selector failure must not change client state");
+        }
+        finally
+        {
+            gatedFirst.Release();
+        }
     }
 
     [Test]
