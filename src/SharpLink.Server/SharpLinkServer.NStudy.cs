@@ -122,8 +122,6 @@ internal sealed class NStudyServerBindings
 {
     private readonly Lock _gate = new();
     private Slot[]? _slots;
-    // Odd means an entire group or Session is being cut under _gate.
-    private long _bulkCutVersion;
     private ulong _operation;
     private bool _publishingInvalidations;
     private bool _closed;
@@ -136,10 +134,7 @@ internal sealed class NStudyServerBindings
         internal uint PendingInvalidation;
         internal int Users;
         internal bool Occupied;
-        internal uint OpenIncarnation;
-        internal readonly bool IsOpen => OpenIncarnation != 0;
-
-        internal void Close() => Volatile.Write(ref OpenIncarnation, 0);
+        internal bool Open;
     }
 
     internal void ObserveOperation(ulong operation)
@@ -166,9 +161,8 @@ internal sealed class NStudyServerBindings
                     continue;
                 entry.Service = new(service);
                 entry.Target = service.NStudyTarget;
-                entry.Occupied = true;
+                entry.Open = entry.Occupied = true;
                 entry.Incarnation++;
-                Volatile.Write(ref entry.OpenIncarnation, entry.Incarnation);
                 bindingId = NStudyWire.BindingId(index, entry.Incarnation);
                 return true;
             }
@@ -181,7 +175,7 @@ internal sealed class NStudyServerBindings
     {
         lock (_gate)
         {
-            if (TryFind(bindingId, out var index) && _slots![index].IsOpen)
+            if (TryFind(bindingId, out var index) && _slots![index].Open)
                 return _slots[index].Service.TryGetService(out service);
         }
         service = null!;
@@ -195,7 +189,7 @@ internal sealed class NStudyServerBindings
             if (TryFind(bindingId, out var index))
             {
                 ref var entry = ref _slots![index];
-                if (entry.IsOpen && entry.Service.TryGetService(out service))
+                if (entry.Open && entry.Service.TryGetService(out service))
                 {
                     checked { entry.Users++; }
                     use = new(this, bindingId);
@@ -215,7 +209,7 @@ internal sealed class NStudyServerBindings
             if (!TryFind(bindingId, out var index))
                 return;
             ref var entry = ref _slots![index];
-            entry.Close();
+            entry.Open = false;
             ReclaimIfIdle(ref entry);
         }
     }
@@ -227,19 +221,14 @@ internal sealed class NStudyServerBindings
             _closed = true;
             if (_slots is not { } slots)
                 return;
-            Interlocked.Increment(ref _bulkCutVersion);
-            try
+            foreach (ref var entry in slots.AsSpan())
             {
-                foreach (ref var entry in slots.AsSpan())
-                {
-                    entry.Close();
-                    // The closed peer cannot consume new invalidations. Physical borrowers
-                    // still return their exact original slot through Return.
-                    entry.PendingInvalidation = 0;
-                    ReclaimIfIdle(ref entry);
-                }
+                entry.Open = false;
+                // The closed peer cannot consume new invalidations. Physical borrowers
+                // still return their exact original slot through Return.
+                entry.PendingInvalidation = 0;
+                ReclaimIfIdle(ref entry);
             }
-            finally { Interlocked.Increment(ref _bulkCutVersion); }
         }
     }
 
@@ -252,20 +241,15 @@ internal sealed class NStudyServerBindings
             if (_slots is not { } slots)
                 return false;
             var marked = false;
-            Interlocked.Increment(ref _bulkCutVersion);
-            try
+            foreach (ref var entry in slots.AsSpan())
             {
-                foreach (ref var entry in slots.AsSpan())
-                {
-                    if (!entry.IsOpen || entry.Target != target)
-                        continue;
-                    entry.Close();
-                    entry.PendingInvalidation = entry.Incarnation;
-                    ReclaimIfIdle(ref entry);
-                    marked = true;
-                }
+                if (!entry.Open || entry.Target != target)
+                    continue;
+                entry.Open = false;
+                entry.PendingInvalidation = entry.Incarnation;
+                ReclaimIfIdle(ref entry);
+                marked = true;
             }
-            finally { Interlocked.Increment(ref _bulkCutVersion); }
             if (!marked || _publishingInvalidations)
                 return false;
             return _publishingInvalidations = true;
@@ -300,26 +284,14 @@ internal sealed class NStudyServerBindings
             var incarnation = NStudyWire.Incarnation(token);
             return incarnation != 0 && _slots is { } slots && (uint)index < (uint)slots.Length &&
                 (incarnation < slots[index].Incarnation ||
-                 incarnation == slots[index].Incarnation && !slots[index].IsOpen);
+                 incarnation == slots[index].Incarnation && !slots[index].Open);
         }
     }
 
     private bool ClaimStart(long bindingId)
     {
-        var cut = Volatile.Read(ref _bulkCutVersion);
-        var index = NStudyWire.SlotIndex(bindingId);
-        var incarnation = NStudyWire.Incarnation(bindingId);
-        var slots = Volatile.Read(ref _slots);
-        if ((cut & 1) == 0 && slots is not null && (uint)index < (uint)slots.Length && incarnation != 0)
-        {
-            // The borrowed slot cannot be recycled until Return. Read its exact open identity
-            // at the business-start point. Join the writer gate if a multi-slot cut overlaps it.
-            var open = Volatile.Read(ref slots[index].OpenIncarnation) == incarnation;
-            if (Volatile.Read(ref _bulkCutVersion) == cut)
-                return open;
-        }
         lock (_gate)
-            return TryFind(bindingId, out index) && _slots![index].IsOpen;
+            return TryFind(bindingId, out var index) && _slots![index].Open;
     }
 
     private void Return(long bindingId)
@@ -343,7 +315,7 @@ internal sealed class NStudyServerBindings
 
     private static void ReclaimIfIdle(ref Slot entry)
     {
-        if (!entry.IsOpen && entry.Users == 0)
+        if (!entry.Open && entry.Users == 0)
         {
             entry.Service = default;
             entry.Target = default;
@@ -362,7 +334,7 @@ internal sealed class NStudyServerBindings
             {
                 foreach (var slot in _slots)
                 {
-                    if (slot.IsOpen) open++;
+                    if (slot.Open) open++;
                     else if (slot.Occupied) retiring++;
                     users += slot.Users;
                 }
@@ -378,7 +350,7 @@ internal sealed class NStudyServerBindings
             if (_slots is { } slots)
             {
                 foreach (var slot in slots)
-                    if (slot.IsOpen && slot.Target == target)
+                    if (slot.Open && slot.Target == target)
                         return true;
             }
             return false;
