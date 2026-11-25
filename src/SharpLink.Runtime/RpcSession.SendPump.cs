@@ -186,6 +186,7 @@ internal sealed partial class RpcSession
         {
             var pending = new List<OwnedFrame>(32);
             Exception terminalException = CreateTransportClosedException();
+            Exception? flushCleanupFailure = null;
             var bytesAccumulated = 0;
             var batchStartTimestamp = 0L;
 
@@ -229,7 +230,7 @@ internal sealed partial class RpcSession
 
                         // Take ownership of the frame before any write can fail: a fault during
                         // the batch copy/FlushAsync must still release the frame and complete its
-                        // flush waiter through the terminal ReleaseBatch in the finally block.
+                        // flush waiter through the terminal drain in the finally block.
                         pending.Add(frame);
                         // The frame already carries the wire TimeBudget stamped once by the
                         // producer, so the pump never samples, rewrites, or compacts a
@@ -292,6 +293,12 @@ internal sealed partial class RpcSession
             catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
             {
             }
+            catch (FlushCleanupException ex)
+            {
+                flushCleanupFailure = ex.Failure;
+                terminalException = NormalizeTransportException(ex.Failure);
+                ReportFaultOnce(terminalException);
+            }
             catch (Exception ex)
             {
                 terminalException = NormalizeTransportException(ex);
@@ -306,8 +313,15 @@ internal sealed partial class RpcSession
                 _progressQueue.Writer.TryComplete();
                 _normalQueue.Writer.TryComplete();
                 _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
-                DrainTerminalFrames(pending, terminalException);
+                try { DrainTerminalFrames(pending, terminalException); }
+                catch (Exception ex) when (flushCleanupFailure is not null)
+                {
+                    flushCleanupFailure = CombineCleanupExceptions(flushCleanupFailure, ex);
+                }
             }
+
+            if (flushCleanupFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(flushCleanupFailure).Throw();
         }
 
         private async ValueTask<bool> DrainProgressQueueAsync(List<OwnedFrame> pending)
@@ -366,7 +380,7 @@ internal sealed partial class RpcSession
             var result = await flush.ConfigureAwait(false);
             if (result.IsCanceled || result.IsCompleted)
                 throw CreateTransportClosedException();
-            ReleaseBatch(pending, exception: null);
+            ReleaseFlushedBatch(pending);
         }
 
         private async ValueTask<bool> WaitForMoreUntilFlushBoundaryAsync(
@@ -459,11 +473,27 @@ internal sealed partial class RpcSession
             }
         }
 
-        private void ReleaseBatch(List<OwnedFrame> pending, Exception? exception)
+        private void ReleaseFlushedBatch(List<OwnedFrame> pending)
         {
-            for (var index = 0; index < pending.Count; index++)
-                CompleteReserved(pending[index], exception, completeFlushWaiter: true);
+            var index = 0;
+            try
+            {
+                for (; index < pending.Count; index++)
+                    CompleteReserved(pending[index], exception: null);
+            }
+            catch (Exception error)
+            {
+                // CompleteReserved settles the current reservation even if returning
+                // its owner throws. Terminal drain owns only the untouched suffix.
+                pending.RemoveRange(0, index + 1);
+                throw new FlushCleanupException(error);
+            }
             pending.Clear();
+        }
+
+        private sealed class FlushCleanupException(Exception failure) : Exception(null, failure)
+        {
+            internal Exception Failure => InnerException!;
         }
 
         private void CompleteReserved(
