@@ -33,6 +33,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var proxy = client.CreateProxy<INStudyFunctionalConcurrencyProbe>();
         await proxy.PrepareAsync(TimeSpan.FromSeconds(5), ct);
         var connection = NStudyClientConnection(client);
+        var logicalCalls = (ISharpLinkClientDrainInspector)client;
         var peer = NStudyServerConnection(server);
         var session = connection.Session;
         var initialBinds = session.NStudyBindOperationForDiagnostics;
@@ -46,12 +47,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var unary = service.Begin(count);
             try
             {
-                var calls = ids.Select(id => proxy.Service.EchoAsync(id, ct).AsTask()).ToArray();
+                var calls = ids.Select(id => proxy.Service.EchoAsync(id, ct)).ToArray();
                 await unary.AllEntered.Task.WaitAsync(ct);
-                Ensure(calls.All(call => !call.IsCompleted) && unary.Completed.IsEmpty,
+                Ensure(calls.All(call => !call.IsCompleted) && unary.Completed.IsEmpty && logicalCalls.ActiveCallCount == count,
                     "all distinct Unary requests actually reached the service while replies are withheld");
                 unary.Release.TrySetResult();
-                var responses = await Task.WhenAll(calls).WaitAsync(ct);
+                await WaitForNStudyAsync(() => calls.All(call => call.IsCompleted), ct);
+                Ensure(logicalCalls.ActiveCallCount == 0, "logical ownership ends before the application consumes the results");
+                var responses = count == 1
+                    ? new[] { await calls[0] }
+                    : await Task.WhenAll(calls.Select(call => call.AsTask())).WaitAsync(ct);
                 Ensure(responses.SequenceEqual(ids.Select(id => id + 100)) &&
                        unary.Completed.Keys.Order().SequenceEqual(ids), "Unary returns the exact results once");
             }

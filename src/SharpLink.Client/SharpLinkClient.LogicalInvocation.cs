@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -22,6 +24,7 @@ internal sealed partial class SharpLinkClient
         return AwaitLogicalInvocationAsync(invocation);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<T> AwaitLogicalInvocationAsync<T>(ValueTask<T> invocation)
     {
         try { return await invocation.ConfigureAwait(false); }
