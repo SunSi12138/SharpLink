@@ -1,0 +1,35 @@
+name: 'SharpLink #999 integration complement'
+
+on:
+  push:
+    branches: ['codex/999-integration-complement']
+
+permissions:
+  contents: read
+
+jobs:
+  missing-ordinary-cases:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 9
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build only the integration project
+        run: dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+      - name: Run the exact complement of ordinary tests
+        run: python eng/native-version-negotiation-study/temporary-integration-complement/run.py
+      - name: Retain discovery, selection and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: 999-complement-${{ runner.os }}
+          path: artifacts/999-integration-complement
+          if-no-files-found: warn
+          retention-days: 14
