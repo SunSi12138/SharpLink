@@ -21,6 +21,7 @@
 3. 打包全部九个 NuGet 包并确认：版本一致、依赖版本正确、仓库提交正确、主程序集具有 XML 文档、符号包具有 portable PDB、SDK 包具有 Generator。
 4. 使用空 NuGet 缓存执行 `SharpLink.PackageSmoke`，避免项目引用或开发机缓存掩盖缺包。
 5. 在支持的平台执行独立进程 SharedMemory NativeAOT smoke；其余平台由 Release Gate 矩阵完成。
+   - 发布门禁还直接运行以实际包发布的 NativeAOT 消费者：三个桌面平台验证 TCP，Linux 加验 SharedMemory。两端清单必须与同一条认证连接的本地注册一致；静态代理须在正常拒绝动态注册后继续可用。运行记录保留在各平台的 `packaged-trim` 工件中。
 6. 对当前候选在 GitHub Actions 手动运行 [Nightly Regression](../.github/workflows/nightly.yml)，设置 `release_soak: true`；本地不运行长稳。核对以下工件来自同一候选 SHA，记录实际时长：
    - `release-soak` 的 TCP 和 SharedMemory 两个并行任务，各跑约 10 分钟，每 2 分钟记录检查点。保留并发、正常滚动重启、恢复和资源归零检查；受控故障覆盖仍按相应回归门禁执行。
    - `generated-abi-dynamic-module-soak` 的 Generated ABI Dynamic-module Churn，目标 600 秒，每轮完整执行，实际时长可能更长。日常定时 ABI 长稳仍为两小时。

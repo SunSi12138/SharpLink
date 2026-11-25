@@ -203,5 +203,18 @@ class PackagedTrimSmokeTests(unittest.TestCase):
         self.assertIn("run-project-reference-trim-smoke.sh", (ROOT / ".github/workflows/pr-package-smoke.yml").read_text())
 
 
+class NativeVersionInventoryReceiptTests(unittest.TestCase):
+    def test_host_transport_populations(self):
+        tcp = "PACKAGE_AOT_VERSION_INVENTORY_PASS transport=tcp\n"
+        shm = "PACKAGE_AOT_VERSION_INVENTORY_PASS transport=shared-memory\n"
+        self.assertEqual(smoke.verify_inventory_cases(tcp, False), ["tcp"])
+        self.assertEqual(smoke.verify_inventory_cases(tcp + shm, True), ["tcp", "shared-memory"])
+
+    def test_zero_cases_and_missing_linux_case_do_not_pass(self):
+        for output, shared in (("", False), ("PACKAGE_AOT_VERSION_INVENTORY_PASS transport=tcp\n", True)):
+            with self.subTest(shared=shared), self.assertRaisesRegex(ValueError, "did not complete"):
+                smoke.verify_inventory_cases(output, shared)
+
+
 if __name__ == "__main__":
     unittest.main()

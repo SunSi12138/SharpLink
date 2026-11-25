@@ -34,14 +34,16 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
-        var transport = args switch
+        var includeSharedMemory = args switch
         {
-            [] => "tcp",
-            ["--shared-memory"] => "shared-memory",
-            _ => throw new ArgumentException("Expected no arguments or --shared-memory.", nameof(args))
+            [] => false,
+            ["--include-shared-memory"] => true,
+            _ => throw new ArgumentException("Expected no arguments or --include-shared-memory.", nameof(args))
         };
         VerifyPackagedCodecs();
-        await NativeVersionInventoryProbe.RunAsync(transport);
+        await NativeVersionInventoryProbe.RunAsync("tcp");
+        if (includeSharedMemory)
+            await NativeVersionInventoryProbe.RunAsync("shared-memory");
     }
 
     private static void VerifyPackagedCodecs()
