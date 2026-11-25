@@ -56,6 +56,20 @@ public partial class PendingRequestTableTests
     }
 
     [Test]
+    public async Task UnaryResponseDoesNotWaitForInputAcceptance()
+    {
+        using var manager = CreateTable(1);
+        var operation = manager.Rent(Int32Codec.Instance, PendingCallKind.Unary, default,
+            CancellationToken.None, out var requestId);
+        var payload = SInt32Payload;
+
+        manager.RequireNStudyAcceptance(requestId);
+        Ensure(manager.Dispatch(requestId, ref payload), "the unary response should complete without an input receipt");
+        Ensure(await operation.AsValueTask() == 0 && manager.ActiveCount == 0,
+            "the response must decode and release the pending slot");
+    }
+
+    [Test]
     public async Task PayloadBearingResponseShouldNotTreatMissingPayloadAsDefaultValue()
     {
         using var manager = CreateTable(8);

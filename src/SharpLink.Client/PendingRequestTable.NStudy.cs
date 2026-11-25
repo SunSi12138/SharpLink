@@ -137,6 +137,10 @@ internal sealed partial class PendingRequestTable
         var index = (int)(id & _indexMask);
         if (slots is not null && Volatile.Read(ref slots[index]) is { } call)
         {
+            // Producer admission is installed before publication and cleared only after the slot is removed.
+            // A live call without a producer has no receipt to check; its completion still claims the slot normally.
+            if (call.Id == id && call.NStudyAdmission is null)
+                return;
             lock (call.CompletionGate)
             {
                 if (call.Id == id && ReferenceEquals(Volatile.Read(ref slots[index]), call) &&
