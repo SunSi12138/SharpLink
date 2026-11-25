@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
@@ -55,6 +56,8 @@ public static class Program
         Console.WriteLine("  --operation all|unary|c2s|s2c|duplex|duplex-equivalent|mixed");
         Console.WriteLine("  --unary-workers 3 --unary-pause-us 1000 (mixed: paced unary workers; the rest stream)");
         Console.WriteLine("  --stream-size 256");
+        Console.WriteLine("  --short-stream-phases (formal c2s/s2c/duplex; 32 or 256 items)");
+        Console.WriteLine("  --verify-short-streams (one call per shape and length; no performance report)");
         Console.WriteLine("  --message-bytes 4096 --messages-per-stream 8 (duplex-equivalent)");
         Console.WriteLine("  --consumer-delay-ms 0 --early-break-after 0 --pause-after 0 --pause-ms 0");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
@@ -221,6 +224,14 @@ public static class Program
         {
             BalancePreparedEndpoints = options.MaxConnections > 1
         });
+        if (options.VerifyShortStreams)
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await proxy.PrepareAsync(s_prepareTimeout, budget.Token);
+            await VerifyShortStreamsAsync(proxy.Service, budget.Token);
+            return;
+        }
+
         var results = new List<StageResult>();
         foreach (var operation in ResolveOperations(options.Operation))
         {
@@ -254,7 +265,9 @@ public static class Program
                     concurrency,
                     isWarmup: false);
                 Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} validationFail={result.ValidationFailure} cancelled={result.Cancelled} err={result.ErrorRatePercent:F2}% p50={FormatLatency(result.P50Us)} p95={FormatLatency(result.P95Us)} p99={FormatLatency(result.P99Us)} p999={FormatLatency(result.P999Us)} avg={FormatLatency(result.AvgUs)} min={FormatLatency(result.MinUs)} max={FormatLatency(result.MaxUs)} measurement={result.MeasurementDurationSeconds:F2}s drain={result.DrainDurationSeconds:F3}s");
-                if (result.ValidatedMessages > 0)
+                if (result.ShortStreamPhases is { } phases)
+                    Console.WriteLine($"[ShortStream] {phases.FirstProgressMeaning} P99={phases.FirstProgress.P99Us:F2}us, business P99={phases.BusinessComplete.P99Us:F2}us, application owners P99={phases.ApplicationOwnersExited.P99Us:F2}us");
+                else if (result.ValidatedMessages > 0)
                     Console.WriteLine($"[EquivalentDuplex] messages={result.ValidatedMessages} msgps={result.MessagesPerSecond:F2} directionalMiBps={result.DirectionalBusinessMiBPerSecond:F2}");
                 if (!string.IsNullOrEmpty(result.TopFailures))
                     Console.WriteLine($"[Failures] {result.TopFailures}");
@@ -288,6 +301,9 @@ public static class Program
             : null;
         var diagnosticHistogram = LatencyRecordingPolicy.CreatesDiagnosticRecorder(recordingMode)
             ? new LatencyHistogram()
+            : null;
+        var shortPhases = options.ShortStreamPhases && formalRecorder is not null
+            ? new ShortStreamPhaseRecorder(formalRecorder)
             : null;
         var lifecycle = new MeasurementStageLifecycle(concurrency);
         var failures = new FailureRecorder();
@@ -329,21 +345,18 @@ public static class Program
                         {
                             var operationId = ((long)workerIndex << 48) | ++workerOperationId;
                             pendingOperation = new PendingStreamOperation(
-                                workerRecorder is not null || recordHistogram
+                                (shortPhases is null && workerRecorder is not null) || recordHistogram
                                     ? Stopwatch.GetTimestamp()
                                     : 0,
-                                InvokeOperationAsync(
-                                    rpc,
-                                    effectiveOperation,
-                                    operationId,
-                                    payload,
-                                    equivalentMessages,
-                                    options,
-                                    CancellationToken.None));
+                                options.ShortStreamPhases
+                                    ? InvokeQualifiedShortStreamAsync(rpc, effectiveOperation, payload, shortPhases,
+                                        workerIndex, CancellationToken.None)
+                                    : InvokeOperationAsync(rpc, effectiveOperation, operationId, payload,
+                                        equivalentMessages, options, CancellationToken.None));
                         }
 
                         var messages = await pendingOperation.Completion.ConfigureAwait(false);
-                        if (workerRecorder is not null)
+                        if (shortPhases is null && workerRecorder is not null)
                         {
                             var elapsedTicks = Stopwatch.GetTimestamp() - pendingOperation.StartedTimestamp;
                             workerRecorder.RecordTicks(workerIndex, elapsedTicks);
@@ -469,7 +482,7 @@ public static class Program
             isMixed ? streamFailure : failure,
             validatedMessages,
             elapsed,
-            options.MessageBytes);
+            options.ShortStreamPhases ? sizeof(int) : options.MessageBytes);
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
@@ -533,7 +546,10 @@ public static class Program
             LatencyRecordingPolicy.IsFormalComparable(recordingMode),
             errRate,
             failures.Top(3),
-            evidence);
+            evidence)
+        {
+            ShortStreamPhases = shortPhases?.Complete(operation, formalStatistics!.Value)
+        };
     }
 
     private static string FormatLatency(double? microseconds)
@@ -543,6 +559,31 @@ public static class Program
         => requestedUnaryWorkers > 0
             ? Math.Min(requestedUnaryWorkers, Math.Max(1, concurrency - 1))
             : Math.Max(1, concurrency / 3);
+
+    private static async Task VerifyShortStreamsAsync(IStreamLoadService rpc, CancellationToken ct)
+    {
+        var runtime = RuntimeFeature.IsDynamicCodeSupported ? "jit" : "aot";
+        foreach (var operation in new[] { "c2s", "s2c", "duplex" })
+        {
+            foreach (var size in new[] { 32, 256 })
+            {
+                var sample = await QualifiedShortStream.ExecuteAsync(
+                    rpc, operation, Enumerable.Range(1, size).ToArray(), ct);
+                if (sample.Items != size)
+                    throw new InvalidOperationException($"Validation expected {size} items for {operation}.");
+                Console.WriteLine($"SHORT_STREAM_VERIFIED {operation} items={size} runtime={runtime}");
+            }
+        }
+    }
+
+    private static async Task<int> InvokeQualifiedShortStreamAsync(
+        IStreamLoadService rpc, string operation, int[] values, ShortStreamPhaseRecorder? phases,
+        int workerIndex, CancellationToken ct)
+    {
+        var observation = await QualifiedShortStream.ExecuteAsync(rpc, operation, values, ct).ConfigureAwait(false);
+        phases?.Record(workerIndex, observation);
+        return observation.Items;
+    }
 
     private static async Task<int> InvokeOperationAsync(
         IStreamLoadService rpc,
@@ -630,6 +671,8 @@ public sealed class StreamLoadOptions
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16];
     public string Operation { get; private init; } = "all";
     public int StreamSize { get; private init; } = 256;
+    public bool ShortStreamPhases { get; private init; }
+    public bool VerifyShortStreams { get; private init; }
     public int MessageBytes { get; private init; } = EquivalentDuplexWorkload.DefaultMessageBytes;
     public int MessagesPerStream { get; private init; } = EquivalentDuplexWorkload.DefaultMessagesPerStream;
     public int HeartbeatIntervalSeconds { get; private init; } = 10;
@@ -746,6 +789,20 @@ public sealed class StreamLoadOptions
         if (drainTimeoutSeconds is < 1 or > 3600)
             throw new ArgumentOutOfRangeException(nameof(drainTimeoutSeconds));
 
+        var streamSize = int.Parse(map.GetValueOrDefault("stream-size", "256"));
+        var consumerDelay = ParseNonNegative(map, "consumer-delay-ms");
+        var earlyBreak = ParseNonNegative(map, "early-break-after");
+        var pauseAfter = ParseNonNegative(map, "pause-after");
+        var pauseMilliseconds = ParseNonNegative(map, "pause-ms");
+        var shortPhases = map.TryGetValue("short-stream-phases", out var phasesText) && bool.Parse(phasesText);
+        var verifyShortStreams = map.TryGetValue("verify-short-streams", out var verifyText) && bool.Parse(verifyText);
+        if (verifyShortStreams && (mode != RunMode.Local || shortPhases || map.ContainsKey("json-output")))
+            throw new ArgumentException("Short-stream verification uses local mode without a performance report.");
+        if (shortPhases && (!QualifiedShortStream.Supports(operation, streamSize) ||
+                           recordingMode != LatencyRecordingMode.Formal ||
+                           consumerDelay != 0 || earlyBreak != 0 || pauseAfter != 0 || pauseMilliseconds != 0))
+            throw new ArgumentException("Short-stream phases require a complete formal c2s, s2c or duplex workload with 32 or 256 items.");
+
         return new StreamLoadOptions
         {
             Mode = mode,
@@ -764,7 +821,9 @@ public sealed class StreamLoadOptions
             WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
             ConcurrencyConfig = concurrencyConfig.Length == 0 ? [1] : concurrencyConfig,
             Operation = operation,
-            StreamSize = int.Parse(map.GetValueOrDefault("stream-size", "256")),
+            StreamSize = streamSize,
+            ShortStreamPhases = shortPhases,
+            VerifyShortStreams = verifyShortStreams,
             MessageBytes = messageBytes,
             MessagesPerStream = messagesPerStream,
             HeartbeatIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-interval", "10")),
@@ -772,10 +831,10 @@ public sealed class StreamLoadOptions
             HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
             MinConnections = minConnections,
             MaxConnections = maxConnections,
-            ConsumerDelayMilliseconds = ParseNonNegative(map, "consumer-delay-ms"),
-            EarlyBreakAfter = ParseNonNegative(map, "early-break-after"),
-            PauseAfter = ParseNonNegative(map, "pause-after"),
-            PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
+            ConsumerDelayMilliseconds = consumerDelay,
+            EarlyBreakAfter = earlyBreak,
+            PauseAfter = pauseAfter,
+            PauseMilliseconds = pauseMilliseconds,
             PerformanceProfile = profile,
             MaxSendQueueBytes = maxSendQueueBytes,
             UnaryWorkers = unaryWorkers,
@@ -831,6 +890,7 @@ public sealed record StageResult(
     PerformanceStageEvidence Evidence)
 {
     public int WorkerCount => Concurrency;
+    public ShortStreamPhaseStatistics? ShortStreamPhases { get; init; }
 }
 
 [JsonSourceGenerationOptions(

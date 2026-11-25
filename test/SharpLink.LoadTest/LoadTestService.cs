@@ -35,6 +35,10 @@ public interface ILoadTestService : IService
     [Oneway]
     [NonCancellable]
     ValueTask NotifyAsync(int left, int right);
+    [Oneway]
+    [NonCancellable]
+    ValueTask Notify32Async(string value);
+    ValueTask<long> ReadOneWay32CompletedAsync(CancellationToken cancellationToken = default);
     [NonCancellable]
     ValueTask<int> ResetHoldProbeAsync();
     [NonCancellable]
@@ -51,6 +55,7 @@ public interface ILoadTestService : IService
 public class LoadTestService : ILoadTestService
 {
     private readonly HoldCapacityProbe _holdProbe = new();
+    private long _oneWay32Completed;
 
     public ValueTask PingAsync() => ValueTask.CompletedTask;
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
@@ -69,6 +74,20 @@ public class LoadTestService : ILoadTestService
     }
 
     public ValueTask NotifyAsync(int left, int right) => ValueTask.CompletedTask;
+
+    public ValueTask Notify32Async(string value)
+    {
+        if (value.Length != Qualified32Workload.PayloadChars)
+            throw new ArgumentException("Expected a 32-byte business payload.", nameof(value));
+        Interlocked.Increment(ref _oneWay32Completed);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<long> ReadOneWay32CompletedAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Interlocked.Read(ref _oneWay32Completed));
+    }
 
     public ValueTask<int> ResetHoldProbeAsync() => ValueTask.FromResult(_holdProbe.Reset());
 

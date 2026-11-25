@@ -286,6 +286,8 @@ public class OneWayRetryDrainTests
 
         // Any other RPC indicates that the production worker took the wrong path.
         public ValueTask PingAsync() => throw UnexpectedRpc();
+        public ValueTask Notify32Async(string value) => throw UnexpectedRpc();
+        public ValueTask<long> ReadOneWay32CompletedAsync(CancellationToken cancellationToken = default) => throw UnexpectedRpc();
         public ValueTask<int> AddAsync(int left, int right) => throw UnexpectedRpc();
         public ValueTask<string> EchoAsync(string value) => throw UnexpectedRpc();
         public ValueTask<int> YieldAsync(int left, int right) => throw UnexpectedRpc();

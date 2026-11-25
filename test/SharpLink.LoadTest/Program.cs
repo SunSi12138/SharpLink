@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Text.Json.Serialization;
 using System.Linq;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,7 +34,24 @@ public static class Program
             return;
         }
 
-        var options = LoadTestOptions.Parse(args);
+        const string verifyFlag = "--verify-qualified32";
+        var verify = args.Contains(verifyFlag, StringComparer.Ordinal);
+        var options = LoadTestOptions.Parse(verify ? args.Where(x => x != verifyFlag).ToArray() : args);
+        if (verify)
+        {
+            if (options.Mode != RunMode.Local || options.Transport is not (TransportMode.Tcp or TransportMode.SharedMemory) ||
+                options.UseStaticEndpoints || options.UseDynamicResolver || options.MinConnections != 1 ||
+                options.MaxConnections != 1 || options.ColdFirstRpcSamples != 0 || options.MetricsPort != 0)
+                throw new ArgumentException("Fixed-count verification requires local TCP or SharedMemory and one connection.");
+            await RunLocalAsync(options, new MetricsRegistry(), verifyQualified32: true);
+            return;
+        }
+        if (options.ColdFirstRpcSamples > 0)
+        {
+            await ColdFirstRpcEvidence.RunAsync(options, builder => ConfigureServer(builder, options),
+                runtime => ConfigureRuntime(runtime, options), OpenColdReceiverAsync);
+            return;
+        }
         using var evidenceCollector = new PerformanceEvidenceCollector(options.DetailedSharedMemoryEvidence);
         s_evidenceCollector = evidenceCollector;
         var metrics = new MetricsRegistry();
@@ -54,6 +72,15 @@ public static class Program
                 await RunLocalAsync(options, metrics);
                 return;
         }
+    }
+
+    private static async ValueTask<ColdReceiver> OpenColdReceiverAsync(ISharpLinkClient client, CancellationToken ct)
+    {
+        var start = Stopwatch.GetTimestamp();
+        var proxy = client.CreateProxy<ILoadTestService>();
+        var handleEnd = Stopwatch.GetTimestamp();
+        await proxy.PrepareAsync(s_prepareTimeout, ct);
+        return new(proxy.Service, handleEnd - start, Stopwatch.GetTimestamp() - handleEnd);
     }
 
     private static void PrintConfig(LoadTestOptions options)
@@ -96,6 +123,9 @@ public static class Program
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19100");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
         Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay|hold --payload-size 64");
+        Console.WriteLine("  --operation unary32|oneway32 (fixed 32-byte study workloads, local TCP/SharedMemory)");
+        Console.WriteLine("  --oneway32-rate N (aggregate offered calls/s, in bounded batches; 0 is unpaced)");
+        Console.WriteLine("  --operation unary32 --concurrency 1 --cold-first-rpc-samples 1000 --json-output <path>");
         Console.WriteLine("  --client-count 4 --concurrency-per-client 2048 --hold-duration 30 (hold only)");
         Console.WriteLine("  --max-concurrent-calls-per-connection 2048 --max-concurrent-calls-per-server 32768");
         Console.WriteLine("  --max-pending-requests-per-connection 65536");
@@ -123,7 +153,7 @@ public static class Program
         Console.WriteLine("  dotnet run --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory");
     }
 
-    private static async Task RunLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
+    private static async Task RunLocalAsync(LoadTestOptions options, MetricsRegistry metrics, bool verifyQualified32 = false)
     {
         if (options.UseStaticEndpoints || options.UseDynamicResolver)
         {
@@ -159,7 +189,10 @@ public static class Program
         try
         {
             await Task.Delay(200, serverToken);
-            await RunClientOnlyAsync(options, metrics, harness.Client);
+            if (verifyQualified32)
+                await VerifyQualified32Async(harness.Client, options.Transport);
+            else
+                await RunClientOnlyAsync(options, metrics, harness.Client);
         }
         finally
         {
@@ -167,6 +200,28 @@ public static class Program
             await harness.DisposeServerAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
+    }
+
+    private static async Task VerifyQualified32Async(ISharpLinkClient client, TransportMode transport)
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = budget.Token;
+        await client.ConnectAsync(ct);
+        var receiver = (await OpenColdReceiverAsync(client, ct)).Service;
+        var payload = new string('x', Qualified32Workload.PayloadChars);
+        const int count = 16;
+        if (await receiver.ReadOneWay32CompletedAsync(ct) != 0)
+            throw new InvalidOperationException("Fixed-count verification must start from a fresh server.");
+        for (var i = 0; i < count; i++)
+        {
+            if (await receiver.EchoAsync(payload).AsTask().WaitAsync(ct) != payload)
+                throw new InvalidOperationException("The verified Unary did not return its 32-byte business value.");
+            await receiver.Notify32Async(payload).AsTask().WaitAsync(ct);
+        }
+        if (await Qualified32Workload.ObserveRemoteAsync(receiver, count, 5) != count)
+            throw new InvalidOperationException("The verified OneWay notifications did not all complete on the server.");
+        var runtime = RuntimeFeature.IsDynamicCodeSupported ? "jit" : "aot";
+        Console.WriteLine($"QUALIFIED32_VERIFIED runtime={runtime} transport={transport} unary={count} oneway-remote={count}");
     }
 
     private static async Task RunStaticTcpLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
@@ -385,7 +440,7 @@ public static class Program
                     await proxy.PrepareAsync(s_prepareTimeout);
                     Console.WriteLine($"[Client] warmup {options.WarmupSeconds}s @ c={concurrency}");
                     var warmupStarted = Stopwatch.GetTimestamp();
-                    _ = await ExecuteStageAsync(
+                    var warmed = await ExecuteStageAsync(
                         proxy.Service,
                         null,
                         options,
@@ -396,7 +451,18 @@ public static class Program
                         retryOneWaySendQueueBackpressure,
                         new LoadTestStageRecording(options, concurrency, isWarmup: true),
                         isWarmup: true);
-                    warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
+                    warmupDurationSeconds = Qualified32Workload.Includes(options.Operation)
+                        ? warmed.MeasurementDurationSeconds
+                        : Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
+                    if (Qualified32Workload.Includes(options.Operation) &&
+                        (warmed.Failure != 0 || (options.Operation == Qualified32Workload.OneWay &&
+                            warmed.OneWay32BusinessCompleted != warmed.Success)))
+                        throw new InvalidOperationException(
+                            $"Unqualified warmup: local={warmed.Success}, remote={warmed.OneWay32BusinessCompleted}, failures={warmed.Failure}.");
+                    if (options.OneWay32Rate > 0 && (warmed.Qps < options.OneWay32Rate * 0.8 ||
+                        warmed.Qps > options.OneWay32Rate * 1.03))
+                        throw new InvalidOperationException(
+                            $"Paced OneWay warmup offered {warmed.Qps:F0}/s, outside the frozen range around {options.OneWay32Rate}/s.");
                 }
 
                 // Include newly Ready Sessions at the boundary, never inside a timed worker.
@@ -456,6 +522,13 @@ public static class Program
         bool isWarmup)
     {
         var operation = options.Operation;
+        long? remoteBefore = null;
+        if (operation == Qualified32Workload.OneWay)
+        {
+            remoteBefore = await Qualified32Workload.ObserveRemoteAsync(rpc, null, options.DrainTimeoutSeconds);
+            if (remoteBefore is null)
+                throw new TimeoutException("Could not read the OneWay business count before the stage.");
+        }
         var recordingMode = recording.Mode;
         var formalRecorder = recording.FormalRecorder;
         var diagnosticHistogram = recording.DiagnosticHistogram;
@@ -554,13 +627,16 @@ public static class Program
             var workerIndex = i;
             var workerRecorder = formalRecorder?.GetWorker(workerIndex);
             // StringCodec writes UTF-16 bytes; keep the requested business payload size exact.
-            var echoPayload = operation == "echo"
+            var echoPayload = operation == "echo" || Qualified32Workload.Includes(operation)
                 ? CreateEchoPayload(options.PayloadSize, options.PayloadPattern, workerIndex)
                 : string.Empty;
             workers[i] = Task.Run(() => LoadTestWorker.RunAsync(
                 rpc, operation, echoPayload, workerIndex, lifecycle, workerRecorder,
                 formalRecorder, diagnosticHistogram, realtime, failures,
-                retryOneWaySendQueueBackpressure), CancellationToken.None);
+                retryOneWaySendQueueBackpressure,
+                options.OneWay32Rate == 0 ? null :
+                    new OneWay32Pacer(options.OneWay32Rate / OneWay32Pacer.BatchesPerSecond / concurrency)),
+                CancellationToken.None);
         }
 
         var workersTask = Task.WhenAll(workers);
@@ -619,15 +695,30 @@ public static class Program
             0.001,
             Stopwatch.GetElapsedTime(measurementStarted, measurementStopped).TotalSeconds);
         var qps = LatencyRecordingPolicy.CalculateThroughput(success, measurementSeconds);
-        var oneWayPayloadMegabytesPerSecond = operation == "echo"
+        var oneWayPayloadMegabytesPerSecond = operation == "echo" || Qualified32Workload.Includes(operation)
             ? qps * options.PayloadSize / (1024d * 1024d)
             : 0;
-        var roundTripPayloadMegabytesPerSecond = oneWayPayloadMegabytesPerSecond * 2;
+        var roundTripPayloadMegabytesPerSecond = operation == Qualified32Workload.OneWay
+            ? 0 : oneWayPayloadMegabytesPerSecond * 2;
         var total = success + failure;
         var errorRate = total == 0 ? 0 : failure * 100.0 / total;
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
+        // Observe server completion after the client timing/CPU boundary. There is no per-call ACK.
+        long? remoteCompleted = null;
+        double? confirmationSeconds = null;
+        PerformanceStageEvidence? settledEvidence = null;
+        if (remoteBefore is { } beginning)
+        {
+            var confirmationStarted = Stopwatch.GetTimestamp();
+            var remoteAfter = await Qualified32Workload.ObserveRemoteAsync(rpc, checked(beginning + success), options.DrainTimeoutSeconds);
+            remoteCompleted = remoteAfter - beginning;
+            confirmationSeconds = Stopwatch.GetElapsedTime(confirmationStarted).TotalSeconds;
+            // A slow receiver must not appear to use less CPU by moving business work
+            // out of the client latency window. Keep the confirmation cost visible.
+            settledEvidence = PerformanceEvidenceCollector.Delta(evidenceBefore, s_evidenceCollector.Capture());
+        }
         LatencyStatistics? formalStatistics = formalRecorder?.Complete();
         var tailObserverOutcome = tailObserverTask is null
             ? TailObserverOutcome.Empty
@@ -676,7 +767,12 @@ public static class Program
             tailObserverStatistics?.P999Us,
             errorRate,
             failures.Top(3),
-            evidence);
+            evidence)
+        {
+            OneWay32BusinessCompleted = remoteCompleted,
+            OneWay32ConfirmationSeconds = confirmationSeconds,
+            OneWay32SettledEvidence = settledEvidence
+        };
 
         if (!isWarmup)
             metrics.UpdateStage(result);

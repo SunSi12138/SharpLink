@@ -37,6 +37,8 @@ public sealed class LoadTestOptions
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16, 32];
     public string Operation { get; private init; } = "add";
     public int PayloadSize { get; private init; } = 64;
+    public int ColdFirstRpcSamples { get; private init; }
+    public int OneWay32Rate { get; private init; }
     public int MetricsPort { get; private init; } = 9464;
     public int HeartbeatIntervalSeconds { get; private init; } = 10;
     public int HeartbeatCheckIntervalSeconds { get; private init; } = 10;
@@ -129,9 +131,26 @@ public sealed class LoadTestOptions
             : [1, 2, 4, 8, 16, 32];
 
         var operation = map.GetValueOrDefault("operation", "add").ToLowerInvariant();
-        if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay" or "hold"))
+        if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay" or "hold"
+            or Qualified32Workload.Unary or Qualified32Workload.OneWay))
             throw new ArgumentException(
-                $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay, hold.");
+                $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay, hold, unary32, oneway32.");
+        var qualified32 = Qualified32Workload.Includes(operation);
+        var oneWay32Rate = int.Parse(map.GetValueOrDefault("oneway32-rate", "0"));
+        if (oneWay32Rate < 0 || (oneWay32Rate > 0 &&
+            (operation != Qualified32Workload.OneWay || concurrencyNum.Length == 0 ||
+             concurrencyNum.Any(workers => oneWay32Rate % ((long)workers * OneWay32Pacer.BatchesPerSecond) != 0))))
+            throw new ArgumentException("A paced OneWay32 rate must be positive and divisible into equal batches across the configured workers.");
+        var coldSamples = int.Parse(map.GetValueOrDefault("cold-first-rpc-samples", "0"));
+        if (coldSamples is < 0 or > ColdFirstRpcEvidence.MaximumSamples)
+            throw new ArgumentOutOfRangeException(nameof(coldSamples));
+        if (coldSamples > 0 && (operation != Qualified32Workload.Unary || concurrencyNum is not [1] ||
+            string.IsNullOrWhiteSpace(map.GetValueOrDefault("json-output"))))
+            throw new ArgumentException("Cold first RPC requires --operation unary32 --concurrency 1 and --json-output.");
+        var payloadSize = int.Parse(map.GetValueOrDefault("payload-size", qualified32 ? "32" : "64"));
+        if (qualified32 && (payloadSize != Qualified32Workload.PayloadBytes || mode != RunMode.Local ||
+            transport is not (TransportMode.Tcp or TransportMode.SharedMemory)))
+            throw new ArgumentException("The 32-byte study operations require a local TCP or SharedMemory transport and a 32-byte payload.");
 
         var profileText = map.GetValueOrDefault("profile", "balanced");
         var profile = profileText.ToLowerInvariant() switch
@@ -194,6 +213,8 @@ public sealed class LoadTestOptions
             MaxConnections = maxConnections
         };
         connectionPool.Validate();
+        if (qualified32 && (maxConnections != 1 || useStaticEndpoints || useDynamicResolver))
+            throw new ArgumentException("The 32-byte study operations require exactly one direct connection.");
         if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
             throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
         if (recordingMode is LatencyRecordingMode.Formal or LatencyRecordingMode.ValidationDual &&
@@ -278,7 +299,9 @@ public sealed class LoadTestOptions
             WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
             ConcurrencyConfig = concurrencyNum.Length == 0 ? [1] : concurrencyNum,
             Operation = operation,
-            PayloadSize = int.Parse(map.GetValueOrDefault("payload-size", "64")),
+            PayloadSize = payloadSize,
+            ColdFirstRpcSamples = coldSamples,
+            OneWay32Rate = oneWay32Rate,
             MetricsPort = int.Parse(map.GetValueOrDefault("metrics-port", "9464")),
             HeartbeatIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-interval", "10")),
             HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),

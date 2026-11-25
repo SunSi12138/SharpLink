@@ -55,6 +55,12 @@ public sealed record StageResult(
     PerformanceStageEvidence Evidence)
 {
     public int WorkerCount => Concurrency;
+
+    // Only the dedicated OneWay workload emits a remote-completion count.
+    // Success remains local acceptance and latency never includes this observation.
+    public long? OneWay32BusinessCompleted { get; init; }
+    public double? OneWay32ConfirmationSeconds { get; init; }
+    public PerformanceStageEvidence? OneWay32SettledEvidence { get; init; }
 }
 
 public sealed record RealtimeResult(
@@ -71,6 +77,7 @@ public sealed record RealtimeResult(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(PerformanceReport<LoadTestOptions, StageResult>))]
 [JsonSerializable(typeof(PerformanceReport<LoadTestOptions, HoldCapacityResult>))]
+[JsonSerializable(typeof(PerformanceReport<LoadTestOptions, ColdFirstRpcSample>))]
 internal sealed partial class LoadTestJsonContext : JsonSerializerContext;
 
 internal readonly record struct WorkerStageOutcome(

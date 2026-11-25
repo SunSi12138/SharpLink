@@ -19,7 +19,8 @@ internal static class LoadTestWorker
         LatencyHistogram? diagnosticHistogram,
         RealtimeLatencyState? realtime,
         FailureRecorder failures,
-        bool retryOneWaySendQueueBackpressure)
+        bool retryOneWaySendQueueBackpressure,
+        OneWay32Pacer? pacer = null)
     {
         long success = 0;
         long failure = 0;
@@ -27,8 +28,14 @@ internal static class LoadTestWorker
         long operationsStarted = 0;
         await lifecycle.ReadyAndWaitForStartAsync(workerIndex).ConfigureAwait(false);
 
-        while (lifecycle.TryBeginOperationStart(workerIndex, out var admission))
+        while (true)
         {
+            if (pacer is not null)
+                await pacer.WaitForPermitAsync().ConfigureAwait(false);
+            if (!lifecycle.TryBeginOperationStart(workerIndex, out var admission))
+                break;
+
+            // Pacing is outside the latency sample and never delays an admitted start.
             operationsStarted++;
             var start = workerRecorder is not null || diagnosticHistogram is not null
                 ? Stopwatch.GetTimestamp()
@@ -54,7 +61,10 @@ internal static class LoadTestWorker
                             _ = await pendingOperation.Int32Completion.ConfigureAwait(false);
                             break;
                         case PendingLoadOperationKind.String:
-                            _ = await pendingOperation.StringCompletion.ConfigureAwait(false);
+                            var received = await pendingOperation.StringCompletion.ConfigureAwait(false);
+                            if (operation == Qualified32Workload.Unary &&
+                                !string.Equals(received, echoPayload, StringComparison.Ordinal))
+                                throw new InvalidOperationException("The unary response did not echo the sent payload.");
                             break;
                         default:
                             throw new InvalidOperationException("Unknown pending load operation kind.");
@@ -117,11 +127,12 @@ internal static class LoadTestWorker
         string echoPayload)
         => operation switch
         {
-            "echo" => PendingLoadOperation.From(rpc.EchoAsync(echoPayload)),
+            "echo" or Qualified32Workload.Unary => PendingLoadOperation.From(rpc.EchoAsync(echoPayload)),
             "empty" => PendingLoadOperation.From(rpc.PingAsync()),
             "yield" => PendingLoadOperation.From(rpc.YieldAsync(7, 9)),
             "delay" => PendingLoadOperation.From(rpc.DelayAsync(7, 9)),
             "oneway" => PendingLoadOperation.From(rpc.NotifyAsync(7, 9)),
+            Qualified32Workload.OneWay => PendingLoadOperation.From(rpc.Notify32Async(echoPayload)),
             _ => PendingLoadOperation.From(rpc.AddAsync(7, 9))
         };
 

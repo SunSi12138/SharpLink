@@ -1,0 +1,58 @@
+name: 'SharpLink #999 paired first-RPC evidence'
+
+# Keep this definition off the product tree; publish only after D4/D5 and the initial steady stage.
+on:
+  push:
+    branches: ['codex/999-perf-cold', 'codex/999-perf-cold-aot']
+
+permissions:
+  contents: read
+
+jobs:
+  cold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: [tcp, sharedmemory]
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      RUNTIME: ${{ endsWith(github.ref_name, '-aot') && 'aot' || 'jit' }}
+      BASELINE_PRODUCT: 2948de82fff77d66fce51ecec9a5783b6ef3cb62
+      BASELINE_OVERLAY: 6a8f6fea5719fb7b0b79370d015fd44528cf375f
+      CANDIDATE_PRODUCT: 36775802f4a352d6eb3b1aa06c8d7d0b829cb33a
+    steps:
+      - name: Checkout the candidate workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+      - name: Checkout the baseline workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASELINE_OVERLAY }}
+          fetch-depth: 0
+          path: baseline
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: candidate/global.json
+      - name: Pair fresh Sessions on this runner
+        env:
+          TRANSPORT: ${{ matrix.transport }}
+        run: >-
+          python3 -B candidate/eng/native-version-negotiation-study/d6_run_steady.py "$TRANSPORT" 1 --runtime "$RUNTIME" --cold-first-rpc
+          --baseline-dir baseline --candidate-dir candidate
+          --baseline-overlay "$BASELINE_OVERLAY" --candidate-overlay "$GITHUB_SHA"
+          --baseline-product "$BASELINE_PRODUCT" --candidate-product "$CANDIDATE_PRODUCT"
+          --output "$RUNNER_TEMP/999-cold"
+      - name: Retain raw evidence and decisions
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: '999-cold-${{ env.RUNTIME }}-${{ matrix.transport }}'
+          path: '${{ runner.temp }}/999-cold'
+          if-no-files-found: error
+          retention-days: 30
