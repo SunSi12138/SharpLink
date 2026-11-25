@@ -34,11 +34,13 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 ## ClientStreaming 与 Duplex
 
-客户端流泵在初始 Request 被本地 SendPump 接收/入队后即可启动；有 deadline 时，还先等待该 Request 的本地 emission/flush。pending cancellation/deadline 可以抑制尚未启动的 producer。这不是等待 Server 对该请求的接受确认。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
+ClientStreaming 和 Duplex 不会在初始 Request 入队后立即开始枚举输入。若调用有 deadline，先在原预算内等待本地发出 Request；随后须收到服务端准入后的 `RequestAccepted`，并且原待完成请求仍允许启动生产者。取消或 deadline 先结束调用时，迟到的确认不会启动生产者。收到确认只表示可以开始发送输入，不代表业务完成。
+
+请求和流使用同一物理连接。重连不会迁移已开始的流，Streaming 和 OneWay 也不自动重试。
 
 ## OneWay
 
-普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还等待本地 emission/flush，等待受原 deadline 约束。带 client stream 的 OneWay 还需完成本地 producer 生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
+普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还在原预算内等待本地 emission/flush。带输入流的 OneWay 没有逐请求的 `RequestAccepted`，在达到同样的本地发送边界且未取消时即可开始生产，成功还需完成本地生产者生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
 
 服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察；需要远端结果确认时使用有响应的 RPC。
 

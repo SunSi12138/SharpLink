@@ -9,9 +9,9 @@
 | Deadline | 在逻辑调用创建时冻结为单调时钟 deadline；同一个 deadline 约束后续调用阶段和所有 retry，不会在重试、重选 endpoint 或 stream 启动后重新计时。此前的 `ConnectAsync`、transport dial、handshake、readiness wait 不属于这个 RPC deadline。 |
 | `ConnectAsync` | 启动或加入 client 自己的连接生命周期；它不是“所有 endpoint 已 Ready”的屏障。需要 N 个 Ready endpoint 时使用 `WaitForReadinessAsync(N)`。 |
 | `[OneWay]` | 成功只承诺本地发送边界成功，不承诺远端 handler 已执行，更不承诺业务成功。需要确认远端执行结果时使用 request/response RPC。 |
-| Retry | 只可能发生在 `[Idempotent]` Unary；OneWay/Streaming 不 retry。每次 retry 是同一逻辑调用的新物理 attempt，并重新执行 endpoint selection，但仍共享原 logical deadline。timeout/disconnect 不证明 Server 未执行过请求。 |
-| Multi-cluster replace | `ReplaceClusterAsync` 前已经取得的 proxy 固定绑定旧 child；要调用 replacement child，需要重新 `Get<T>()`。 |
-| Server module / endpoint update | Server-side service/module generation replacement、resolver topology 和 endpoint-selection policy 更新不会要求重取普通 client proxy；但已经开始的 call / physical attempt 不会中途迁移到新 generation 或 endpoint。 |
+| Retry | 只可能发生在已准备的 `[Idempotent]` Unary。每次 retry 是新的物理 attempt，只能在该逻辑调用捕获的已准备连接中选择，并共享原 deadline。timeout/disconnect 不证明 Server 未执行过请求。 |
+| Multi-cluster replace | 已取得的代理仍属于旧 child。要调用新 child，在切换后重新 `CreateProxy<T>()` 并 `PrepareAsync`，再通过 `Service` 调用。 |
+| Server module / endpoint update | 已开始的调用不换代、不换连接。旧路由失效后，须显式重新准备，或等版本协调在对应会话发布获准的新路由；连接 Ready 自身不授予契约调用权。 |
 
 ## 1. Deadline、timeout 与 cancellation
 
@@ -111,39 +111,30 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 如果业务必须确认“远端 handler 已成功完成”或“副作用已经提交”，应使用有响应的 RPC，或在应用协议中设计明确 acknowledgement / idempotency mechanism，而不是把 `await OneWay` 当成远端确认。
 
-## 4. Replacement 后 proxy 与 in-flight call 如何绑定
+## 4. 准备、换代与重连
 
-Replacement 不能用一条“proxy 会/不会自动 rebind”覆盖所有类型；binding boundary 取决于替换发生在哪一层。
+先用 `CreateProxy<T>()` 获取本地代理，连接就绪后执行有时限的 `PrepareAsync`，再通过 `proxy.Service` 调用。默认准备一条物理连接上的契约路由；设置 `RpcProxyOptions.BalancePreparedEndpoints` 后，可在已准备的连接组内选路。每次逻辑调用在开始时捕获其路由或连接组；之后的准备只影响后续新调用。
 
 ### 4.1 Multi-cluster child replacement
 
 Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate 到可发布状态，再原子切换 slot，最后排空旧 child。
 
-- publication **之后**的新 `Get<T>()` 绑定新 child；
-- publication **之前**已经取得的 proxy 仍绑定旧 child，不会自动 rebind；
-- 已经开始的 in-flight call 不迁移到新 child；它按旧 child 的连接/排空/取消生命周期完成或失败；
-- 旧 proxy 在旧 child 进入停止阶段后发起的新调用会看到旧 child 的 lifecycle rejection，而不是偷偷转发到新 child。
-
-因此要使用 replacement child，应用必须重新 `Get<T>()`。这个设计刻意避免每次 proxy 调用都回到 coordinator 做热路径 lookup。
+- 切换之后，重新 `CreateProxy<T>()` 以选中新 child，在新代理上 `PrepareAsync`，再调用 `Service`。
+- 切换之前已取得的代理仍绑定旧 child。已开始的调用按旧 child 的排空和取消规则完成或失败；旧 child 停止后，旧代理的新调用会被拒绝，不转发到新 child。
 
 ### 4.2 Server-side dynamic service/module generation replacement
 
-Server-side dynamic service/module replacement 的 publication boundary 与 multi-cluster proxy binding 不同：
+服务端发布新代不会把客户端已有的绑定改指向新代。
 
-- 已经开始的调用保持其捕获的旧 server generation/service/codec 选择，不会中途改投新 generation；
-- replacement publication 之后到达 Server 的新调用使用新 generation；
-- 旧 generation 在 drain 完成后才可卸载；
-- 普通 client proxy 只绑定自己的 client/channel，并不持有某个 server service object，因此仅仅因为 Server 发布了新 service/module generation，**不需要重新 `Get<T>()`**。
+- 已取得执行租约的调用保持原注册、服务和 Codec，直到物理退出；旧代完成排空后才可回收。
+- 旧路由退役后，通过它发出的新调用不会被转到新代。在本地契约注册未变的情况下，应用可以在同一代理上重新执行 `PrepareAsync`。若参与版本协调，则由协调流程在对应物理会话发布获准的新路由；客户端 `Resumed` 才表示已恢复调用，服务端 `ActivationSent` 不等于这一步已完成。
+- 在准入队列里等待只保留原 registration 的身份，不等于持有执行租约，也不会阻止旧模块卸载。排队时若原注册退役，有响应的调用以 `Unavailable` 拒绝；OneWay 不执行 handler，并按原请求形态排空。即使两代契约相同，也不混用旧调用的取消令牌和新代的服务或 Codec。
 
-Admission 排队只保留所选 registration 的身份，不代表已经取得旧 module 的执行租约，也不会阻止旧 collectible service 卸载。排队期间旧 registration 被 replacement / unregister 退役时，恢复后的 request/response RPC 以 `Unavailable` 拒绝；OneWay 不执行 handler，并按原请求的 stream shape 排空。即使 replacement 使用相同 contract assembly 和兼容 wire shape，也不会让旧 cancellation token 与新 service / codec 混用。已经取得旧 module 执行租约的调用仍按原 drain / cancellation 生命周期完成。 客户端另行获准的 retry 是新的 physical attempt，可以按既有 deadline / retry policy 选择新 generation；这不等于把同一已排队 attempt 转移到新 registration。
-
-如果替换的是 **client-side collectible contract assembly** 本身，则旧 proxy/type/codec 仍属于旧 AssemblyLoadContext；要使用新 contract assembly 并允许旧 ALC 卸载，必须释放旧 proxy/type 等强引用，并从新 contract generation 获取新的 proxy。这是 client module ownership 问题，不是 server service rebind。
+如果替换的是 **客户端可卸载契约程序集**，旧代理、类型和 Codec 仍属于旧 AssemblyLoadContext。用新一代的契约类型创建并准备新代理，并释放对旧对象的强引用，才能让旧 ALC 回收。换代中断后的恢复步骤见 [3.0 迁移](rpc-channel-3.0-migration.md#换代中断后先查清单再重试)。
 
 ### 4.3 Dynamic endpoint topology / selection policy
 
-Endpoint resolver 或 runtime selection-policy 更新不会重绑 proxy；proxy 仍属于同一个 client。每个**物理 attempt**捕获自己的 endpoint/topology/selection 边界，已选中的 in-flight attempt 不会在中途搬到另一个 endpoint。后续 retry 是新的 attempt，因此可以看到更新后的 topology/policy 并重新执行 endpoint selection；它仍可能因为当前 Ready set/policy 选择到与前一 attempt 相同的 endpoint。
-
-因此 resolver/selection-policy 更新通常由已有 proxy 的**后续新 attempt**透明观察，不要求重新 `Get<T>()`。
+连接 Ready 不等于该契约已准备。resolver 更新、扩池或重连得到的新连接不会自动加入已准备的连接组；要使用新连接，须显式准备，或由该会话上的协调流程发布获准路由。其间仍可在已有、可用的已准备连接上调用。选择策略只在该调用的已准备候选内生效，已经选中的 attempt 不会中途换连接。
 
 ## 5. Retry 的公开边界
 
@@ -156,9 +147,9 @@ OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 都不 retry。自�
 
 默认 retryable error 是 `Unavailable` 和 `ConnectionClosed`。`MaxAttempts` 是**总 attempts 数，包含首次**。
 
-每个 logical call 在开始时捕获 retry-policy generation，并共享同一个 logical deadline。每次 retry：
+每个 logical call 在开始时捕获 retry-policy generation 与已准备路由，并共享同一个 logical deadline。每次 retry：
 
-- 重新执行 endpoint selection；
+- 可在捕获的已准备连接组内重新选路；单连接绑定不能通过 retry 扩成连接组，已失效的路由也不会由 retry 重新绑定；
 - 使用原 logical call 的剩余 deadline；
 - delay 取 policy/backoff 与 endpoint admission `RetryAfter` 中需要等待的边界；
 - delay 前后都检查 caller cancellation、client shutdown 和 deadline；
@@ -188,7 +179,9 @@ OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 都不 retry。自�
 
 Streaming 不自动获得 Unary 的 client fallback timeout；但一旦它有方法 deadline 或继承的 ambient deadline，这个 deadline 属于**整个 logical stream call**，不会在 request startup 完成、第一次 `MoveNextAsync` 或 producer 启动后重置。已开始的 stream 也不会因为 reconnect/retry 跨连接迁移。
 
-对 ServerStreaming / Duplex，初始 `Response` 只是服务端对 stream request 的 acknowledgement，不是整个 stream 的 terminal success；真正的正常终止由 `StreamComplete` 驱动。业务不能把“stream 已开始”解释成“所有 item 已成功完成”。
+ClientStreaming 和 Duplex 的输入端必须收到服务端准入后的 `RequestAccepted`，并由原待完成请求取得启动许可后，才能开始生产。取消或 deadline 终结了原请求时，迟到的确认不会启动生产者。带输入的 OneWay 没有逐请求确认。
+
+对 ServerStreaming / Duplex，输出端的初始 `Response` 不是整个 stream 的成功终态；正常终止由 `StreamComplete` 驱动。不要把输入获准或输出已开始理解为所有数据已处理完毕。
 
 ### Shutdown / drain 与 cancellation
 
@@ -210,6 +203,7 @@ Client `StopAsync` 是不同语义：它停止 reconnect、拒绝新调用、失
 | multi-cluster replace / rollback / proxy binding | `SharpLinkMultiClusterMutationTests.cs`, `SharpLinkMultiClusterMutationConcurrencyTests.cs`, `RuntimeMultiClusterIntegrationTests.cs` |
 | dynamic module generation replacement / drain / unload | `test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs` |
 | runtime endpoint policy 与 attempt capture | `EndpointSelectionRuntimeInteractionTests.cs`, `EndpointSelectionRuntimeTests.cs` |
+| 已准备路由、双端协调与输入启动边界 | `RuntimeAssemblyIntegrationTests.NStudyTwoWaySite.cs`, `PreAdmissionStreamActivationRaceIntegrationTests.cs` |
 
 可运行示例：`demo/Timeout`, `demo/Cancel`, `demo/Oneway`, `demo/Resilience`, `demo/MultiCluster`。
 
