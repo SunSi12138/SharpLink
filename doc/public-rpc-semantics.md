@@ -115,6 +115,8 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 先用 `CreateProxy<T>()` 获取本地代理，连接就绪后执行有时限的 `PrepareAsync`，再通过 `proxy.Service` 调用。默认准备一条物理连接上的契约路由；设置 `RpcProxyOptions.BalancePreparedEndpoints` 后，可在已准备的连接组内选路。每次逻辑调用在开始时捕获其路由或连接组；之后的准备只影响后续新调用。
 
+在同一物理连接上准备多个契约时，逐个等待 `PrepareAsync`。连接一次只接受一项绑定控制操作；不同契约并行准备时，后到的操作可能收到 `ResourceExhausted`。这不限制已经准备好的契约并行发起业务调用。
+
 ### 4.1 Multi-cluster child replacement
 
 Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate 到可发布状态，再原子切换 slot，最后排空旧 child。

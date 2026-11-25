@@ -66,6 +66,32 @@ public class ServerConnectionStateTests
     }
 
     [Test]
+    public async Task CloseShouldReleaseIdleGrantsAndKeepEachBorrowReturnable()
+    {
+        var state = CreateState(static () => { });
+        Ensure(state.MarkReady(null), "connection ready");
+        var bindings = state.NStudyBindings;
+        await using var active = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var idle = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var invalidating = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(bindings.TryInstall(active, out var activeId), "install the active grant");
+        Ensure(bindings.TryInstall(idle, out var idleId), "install another independent idle grant");
+        Ensure(bindings.TryInstall(invalidating, out _), "install a different registration");
+        Ensure(bindings.Seal(invalidating.NStudyTarget), "an invalidation is pending before closure");
+        Ensure(bindings.TryBorrow(activeId, out _, out var use), "borrow the original slot");
+        using (use)
+        {
+            Ensure(use.ClaimStart() && bindings.Snapshot() == (2, 0, 1), "one exact borrowed grant is active");
+            await state.CloseAsync();
+            Ensure(bindings.Snapshot() == (0, 1, 1) && !use.ClaimStart() &&
+                   !bindings.TryResolve(idleId, out _) && !bindings.TryInstall(idle, out _) &&
+                   bindings.TakeInvalidated(new long[NStudyWire.BindingLimit]) == 0,
+                "close drops idle grants and pending notices without forgetting the exact physical borrower");
+        }
+        Ensure(bindings.Snapshot() == (0, 0, 0), "the last original borrow can return normally");
+    }
+
+    [Test]
     public async Task CloseShouldWaitForSessionLoopToReleaseItsReadBuffer()
     {
         var input = new Pipe();
