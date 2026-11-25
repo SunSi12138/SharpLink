@@ -11,6 +11,7 @@ on:
     branches:
       - 'validation/dependency-forward-dev-20261030'
       - 'validation/933-absolute-stop-budget-20261031'
+      - 'codex/999-release-qualification'
     tags:
       - 'v*'
   workflow_dispatch:
