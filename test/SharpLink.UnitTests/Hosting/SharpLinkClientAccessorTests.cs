@@ -55,14 +55,17 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
-    public async Task ConcurrentPublicationMustNotResurrectClientAfterStop()
+    // Give the framework time for the already bounded workers and both cleanup joins.
+    [TUnit.Core.Timeout(150_000)]
+    public async Task ConcurrentPublicationMustNotResurrectClientAfterStop(CancellationToken cancellationToken)
     {
         const int attempts = 100_000;
         using var start = new Barrier(3);
         // Keep all 100,000 race rounds. Hosted macOS runners can spend over 30 seconds
         // scheduling these barriers alongside the full suite; this bounds test workers,
         // not any production lifecycle operation.
-        using var workersCancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var workersCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        workersCancellation.CancelAfter(TimeSpan.FromMinutes(2));
         var accessor = new SharpLinkClientAccessor();
         var client = new FakeSharpLinkClient();
         Exception? publicationFailure = null;

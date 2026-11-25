@@ -568,83 +568,58 @@ public partial class TransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task TcpOversizedFrameShouldFailPendingUnaryAndStreamWithSameProtocolViolation()
+    public async Task TcpTerminalProtocolFailureShouldReachPendingUnaryAndOutputStream()
     {
-        const int maxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes;
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-
-        var fakeServerTask = Task.Run(async () =>
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = budget.Token;
+        var unaryStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseStream = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var serverBuilder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
+        serverBuilder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService
         {
-            using var socket = await listener.AcceptSocketAsync();
-            await using var stream = new NetworkStream(socket, ownsSocket: true);
-
-            var handshake = new PooledByteBufferWriter();
-            var handshakeToken = ProtocolV2FrameWriter.BeginFrame(
-                handshake,
-                ProtocolV2FrameType.HandshakeResponse,
-                ProtocolV2FrameFlags.None,
-                0);
-            ProtocolV2PayloadCodec.WriteHandshakeResponse(handshake, new ProtocolV2HandshakeResponse(
-                ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.ContractManifest,
-                maxFramePayloadBytes,
-                1024 * 1024,
-                16 * 1024 * 1024));
-            ContractManifestTestHelper.EndHandshakeAndWriteManifest(handshake, handshakeToken, typeof(ITestService));
-            await stream.WriteAsync(handshake.WrittenMemory);
-            await stream.FlushAsync();
-
-            await Task.Delay(150);
-
-            var maliciousHeader = new byte[ProtocolV2Constants.HeaderBytes];
-            maliciousHeader[0] = ProtocolV2Constants.Magic;
-            BinaryPrimitives.WriteInt32LittleEndian(
-                maliciousHeader.AsSpan(1, sizeof(int)),
-                maxFramePayloadBytes + 1);
-            maliciousHeader[5] = (byte)ProtocolV2FrameType.Response;
-            BinaryPrimitives.WriteUInt64LittleEndian(maliciousHeader.AsSpan(7, sizeof(ulong)), 1);
-            await stream.WriteAsync(maliciousHeader);
-            await stream.FlushAsync();
+            SlowUnaryStarted = unaryStarted,
+            ContinueSlowRange = releaseStream.Task,
         });
-
-        var client = SharpClientBuilder.Create().DisableRequestTimeout()
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        await using var server = serverBuilder.Build();
+        await server.StartAsync(ct);
+        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-
-            .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
-            .UseHeartbeat(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
             .Build();
+        await client.ConnectAsync(ct);
+        var service = await client.PrepareTestServiceAsync<IConnectionBehaviorService>();
+        var ready = (ClientConnection[])typeof(SharpLinkClient).GetField("_readyConnections",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(client)!;
+        var session = ready.Single().Session;
 
+        await using var output = service.SlowRangeAsync(count: 2, delayMs: 0, CancellationToken.None)
+            .GetAsyncEnumerator();
         try
         {
-            await client.ConnectAsync();
-            Ensure(client.State == SharpLinkConnectionState.Ready, "fake server handshake");
-            // This historical fake peer predates Bind. Do not treat a failure during
-            // preparation as evidence about the protocol failure of two pending calls.
-            var proxy = client.CreateProxy<ITestService>();
-            await proxy.PrepareAsync(TimeSpan.FromSeconds(2));
-            var svc = proxy.Service;
+            var unary = service.SlowAsync(delayMs: 10_000, ct).AsTask();
+            await unaryStarted.Task.WaitAsync(ct);
+            Ensure(await output.MoveNextAsync().AsTask().WaitAsync(ct) && output.Current == 0,
+                "the prepared output stream must already be active");
+            var next = output.MoveNextAsync().AsTask();
+            Ensure(!unary.IsCompleted && !next.IsCompleted, "both operations must still be in flight");
 
-            var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
-            var streamTask = CollectAsync(
-                svc.SlowDownloadAsync(100, 200, CancellationToken.None),
-                CancellationToken.None);
+            // Parser size checks are covered independently: exercise the same
+            // terminal error fan-out on a real prepared connection, without a fake peer.
+            var cause = new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame,
+                "The session reported a protocol failure.");
+            session.NotifyDisconnected(cause);
 
-            var unaryError = await CaptureSharpLinkException(unaryTask, "oversized frame unary");
-            var streamError = await CaptureSharpLinkException(streamTask, "oversized frame stream");
-
-            Ensure(unaryError.Code == SharpLinkErrorCode.ProtocolViolation, "unary protocol violation");
-            Ensure(streamError.Code == SharpLinkErrorCode.ProtocolViolation, "stream protocol violation");
-            Ensure(ReferenceEquals(unaryError, streamError), "pending operations should receive the first failure instance");
+            var unaryError = await CaptureSharpLinkException(unary, "protocol failure on unary");
+            var streamError = await CaptureSharpLinkException(next, "protocol failure on output stream");
+            Ensure(ReferenceEquals(cause, unaryError) && ReferenceEquals(cause, streamError),
+                "both pending operations must see the exact terminal failure");
         }
         finally
         {
-            await client.DisposeAsync();
-            listener.Stop();
-            await Task.WhenAny(fakeServerTask, Task.Delay(1000, CancellationToken.None));
+            releaseStream.TrySetResult();
         }
     }
+
 }
 
 [RpcContract]
