@@ -16,6 +16,83 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             decorateServerTransport: inner => new NStudyHeldResponseListener(inner, flush));
     }
 
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp", false)]
+    [Arguments("tcp", true)]
+    [Arguments("shared-memory", false)]
+    [Arguments("shared-memory", true)]
+    public Task RetiredOneWayInputIsDrainedBeforeTheNoticeReachesTheClient(string transport, bool compressed)
+    {
+        var flush = new NStudyHeldResponseFlush();
+        var sender = new NStudyCountingCompression();
+        var receiver = new NStudyCountingCompression();
+
+        void Configure(SharpLinkRuntimeOptions options, NStudyCountingCompression provider)
+        {
+            options.FlowControl.StreamReceiveWindowBytes = 128;
+            options.FlowControl.ConnectionReceiveWindowBytes = 256;
+            if (compressed)
+                options.Compression.Providers.Add(provider);
+        }
+
+        return WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: false,
+            (fixture, trace, ct) => VerifyRetiredOneWayInputAsync(fixture, trace, flush, sender, receiver, compressed, ct),
+            configureClient: builder => builder.UseRuntime(options => Configure(options, sender))
+                .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
+                {
+                    Enabled = compressed, MinimumPayloadBytes = 32, MinimumSavingsBytes = 1, MinimumSavingsRatio = 0,
+                }),
+            configureServer: builder => builder.UseRuntime(options => Configure(options, receiver)),
+            decorateServerTransport: inner => new NStudyHeldResponseListener(inner, flush));
+    }
+
+    private static async Task VerifyRetiredOneWayInputAsync(NStudyCoordinationFixture fixture, NStudyTrace trace,
+        NStudyHeldResponseFlush flush, NStudyCountingCompression sender, NStudyCountingCompression decompressor,
+        bool compressed, CancellationToken ct)
+    {
+        var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, _, _) = fixture;
+        var (client, session, peer, a1, _, receiver, sibling) = first;
+        var route = session.CaptureNStudyRoute(a1.Contract);
+        var counter = new NStudyDelayedNoticeCounter(a1.Contract);
+        server.ReplaceInterceptors([counter]);
+        var drain = new OneWayDrainObservation(client, server);
+        await WaitForNStudyAsync(() => peer.ActiveCalls == 0 && peer.Session.QueuedSendBytes == 0, ct);
+
+        try
+        {
+            flush.Arm();
+            var earlier = sibling.TouchAsync(2, ct).AsTask();
+            await flush.Entered.Task.WaitAsync(ct);
+            EnsureReplacementReleased(await server.ReplaceAssemblyAsync(oldAssembly, newAssembly,
+                TimeSpan.FromSeconds(5), ct), "R1 retired while the prior response delayed its notice");
+            Ensure(route.IsOpenOn(session) && !peer.NStudyBindings.HasOpenTarget(a1.Target),
+                "the client still has its R1 route while the server has sealed it");
+
+            var previousId = peer.LastAcceptedRequestId;
+            var payload = Enumerable.Repeat((byte)0x27, 512).ToArray();
+            var stale = InvokeValueTaskAsync(receiver.Service, contracts.ContractType, "NotifyBatchAsync", payload,
+                NStudyBatchItems(16, 64, CancellationToken.None), NStudyBatchItems(16, 64, CancellationToken.None), ct)
+                .AsTask();
+            await WaitForNStudyAsync(() => peer.LastAcceptedRequestId > previousId &&
+                peer.Session.StreamManager.ActiveStreamCount == 2, ct);
+            Ensure(!stale.IsCompleted && !earlier.IsCompleted && route.IsOpenOn(session) &&
+                   counter.Calls == 0 && decompressor.Decoded == 0 && (sender.Compressed > 0) == compressed,
+                "the real old head establishes discard routes without admission or decode");
+
+            flush.Release.TrySetResult();
+            Ensure(await earlier.WaitAsync(ct) == 102, "the original sibling response still succeeds");
+            await stale.WaitAsync(ct);
+            await drain.WaitForDrainAsync(TimeSpan.FromSeconds(5));
+            Ensure(counter.Calls == 0 && decompressor.Decoded == 0 &&
+                   NStudyCount(oldType, "NotifiedBatchBytes") == 0 && NStudyCount(newType, "NotifiedBatchBytes") == 0 &&
+                   await sibling.TouchAsync(3, ct) == 103,
+                "no generation executes or decodes the retired input; the same Session returns credit and stays usable");
+            trace.Record("RetiredOneWayInputDrainsOnOriginalSessionWithoutDecode", a1);
+        }
+        finally { flush.Release.TrySetResult(); }
+    }
+
     private static async Task VerifyNStudyDelayedNoticeAsync(NStudyCoordinationFixture fixture,
         NStudyTrace trace, NStudyHeldResponseFlush flush, CancellationToken ct)
     {

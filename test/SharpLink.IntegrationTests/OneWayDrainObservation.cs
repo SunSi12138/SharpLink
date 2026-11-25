@@ -11,7 +11,7 @@ internal sealed class OneWayDrainObservation(ISharpLinkClient client, ISharpLink
         ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)server).Values.Single();
 
     private StreamFlowController Flow => Field<RpcSessionProtocolState>(_connection.Session, "_protocolState")
-        .FlowController ?? throw new InvalidOperationException("The TCP session did not negotiate stream credit.");
+        .FlowController ?? throw new InvalidOperationException("The session did not negotiate stream credit.");
 
     internal Task WaitForCreditBlockAsync(TimeSpan timeout)
     {
@@ -33,7 +33,7 @@ internal sealed class OneWayDrainObservation(ISharpLinkClient client, ISharpLink
             _connection.PendingCalls.NStudyProducerCount == 0 && _peer.Session.StreamManager.ActiveStreamCount == 0, timeout,
             "The OneWay producer, credit and peer stream route did not drain.");
         if (!ReferenceEquals(ReadyConnection(client), _connection))
-            throw new InvalidOperationException("Stream drain must leave the original TCP connection usable.");
+            throw new InvalidOperationException("Stream drain must leave the original physical connection usable.");
     }
 
     private static ClientConnection ReadyConnection(ISharpLinkClient client) =>
