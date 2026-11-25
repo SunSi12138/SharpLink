@@ -11,7 +11,7 @@
 | `[OneWay]` | 成功只承诺本地发送边界成功，不承诺远端 handler 已执行，更不承诺业务成功。需要确认远端执行结果时使用 request/response RPC。 |
 | Retry | 只可能发生在已准备的 `[Idempotent]` Unary。每次 retry 是新的物理 attempt，只能在该逻辑调用捕获的已准备连接中选择，并共享原 deadline。timeout/disconnect 不证明 Server 未执行过请求。 |
 | Multi-cluster replace | 已取得的代理仍属于旧 child。要调用新 child，在切换后重新 `CreateProxy<T>()` 并 `PrepareAsync`，再通过 `Service` 调用。 |
-| Server module / endpoint update | 已开始的调用不换代、不换连接。旧路由失效后，须显式重新准备，或等版本协调在对应会话发布获准的新路由；连接 Ready 自身不授予契约调用权。 |
+| Server module / endpoint update | 已开始的调用不换代、不换连接。版本协调不迁移已准备的代理；重连或扩池后，要使用新连接须显式重新准备。 |
 
 ## 1. Deadline、timeout 与 cancellation
 
@@ -134,7 +134,7 @@ Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate �
 
 ### 4.3 Dynamic endpoint topology / selection policy
 
-连接 Ready 不等于该契约已准备。resolver 更新、扩池或重连得到的新连接不会自动加入已准备的连接组；要使用新连接，须显式准备，或由该会话上的协调流程发布获准路由。其间仍可在已有、可用的已准备连接上调用。选择策略只在该调用的已准备候选内生效，已经选中的 attempt 不会中途换连接。
+连接 Ready 不等于该契约已准备。resolver 更新、扩池或重连得到的新连接须经显式 `PrepareAsync` 才能用于调用。版本协调只能在同一物理会话恢复已有代理的获准路由，不会迁移固定绑定或扩充连接组。其间仍可在已有、可用的已准备连接上调用。选择策略只在该调用的已准备候选内生效，已经选中的 attempt 不会中途换连接。
 
 ## 5. Retry 的公开边界
 
