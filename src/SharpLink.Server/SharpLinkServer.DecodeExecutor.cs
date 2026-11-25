@@ -54,14 +54,14 @@ internal sealed partial class SharpLinkServer
             ProtocolV2FrameType.Request,
             flags,
             payload);
-
-        // Execution location is a pre-invocation decode decision. It is intentionally independent
-        // from whether the eventual service handler consumes a cancellation token. Include both
-        // output work and compressed-input work so a small declared output cannot force a large
-        // synchronous provider pre-scan onto the RequestLoop.
-        return decodedPayloadBytes >= InitialPersistentDecodeThresholdBytes ||
-               payload.Length >= InitialPersistentDecodeThresholdBytes;
+        return MeetsPersistentDecodeSizeThreshold(payload.Length, decodedPayloadBytes);
     }
+
+    // A provider may scan the encoded input before producing output. Budget both
+    // sizes independently, regardless of the eventual handler's cancellation support.
+    internal static bool MeetsPersistentDecodeSizeThreshold(long encodedBytes, int decodedBytes)
+        => decodedBytes >= InitialPersistentDecodeThresholdBytes ||
+           encodedBytes >= InitialPersistentDecodeThresholdBytes;
 
     private ServerDecodeExecutor DecodeExecutor
         => Volatile.Read(ref _decodeExecutor) ?? throw new InvalidOperationException(
