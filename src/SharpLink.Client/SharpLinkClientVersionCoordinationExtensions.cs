@@ -37,6 +37,7 @@ public static class SharpLinkClientVersionCoordinationExtensions
     /// Defer settles this attempt without approval; retry explicitly for a fresh decision.
     /// Automatic mode still requires this call.
     /// Only a result with Resumed set confirms the client has prepared the new route.
+    /// If a decline arrives after the source route was frozen, prepare the proxy again before calling it.
     /// An interrupted connection can fail with <see cref="SharpLinkErrorCode.Unavailable"/>.
     /// Query current inventory before retrying; interruption does not establish whether the server published.
     /// </remarks>

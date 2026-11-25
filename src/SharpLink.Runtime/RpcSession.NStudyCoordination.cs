@@ -229,6 +229,20 @@ internal sealed partial class RpcSession
         }
     }
 
+    internal ValueTask ReleaseFrozenNStudySourceAsync(NStudyChange change, CancellationToken ct)
+    {
+        long token;
+        lock (_nStudyGate)
+        {
+            if (_nStudyCandidate != change || !_nStudySourceFrozen || _nStudyCandidateSource is not { } route)
+                throw InvalidNStudy("Releasing a frozen binding requires its exact version transition.");
+            token = route.Token;
+        }
+        // Ready was sent only after the last source publisher exited. Release
+        // follows it on that same FIFO and is harmless if a registry cut won.
+        return SendNStudyReleaseAsync(token, ct);
+    }
+
     private void EnsureNStudyCoordinationAvailable()
     {
         EnsureNStudyReady(Role);

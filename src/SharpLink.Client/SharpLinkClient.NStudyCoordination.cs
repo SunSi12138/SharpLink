@@ -136,7 +136,12 @@ internal sealed partial class SharpLinkClient
                 var activated = await session.ReadNStudyCoordinationAsync(change, NStudyPhase.Activated,
                     ct, allowDecline: true).ConfigureAwait(false);
                 if (activated.Phase == NStudyPhase.Declined)
+                {
+                    // The client has detached its source. If the server did not
+                    // publish, no registry cut will reclaim that old binding.
+                    await session.ReleaseFrozenNStudySourceAsync(change, ct).ConfigureAwait(false);
                     return Declined(change, activated.DeclineReason);
+                }
                 if (!IsStillLocalNStudyRegistration(change.Contract, registration))
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The prepared local contract changed before activation.");
                 var binding = await session.PrepareNStudyBindAsync(new(change.Contract, change.Hash, change.Target),
