@@ -14,6 +14,16 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context)
     {
         var methodDescriptor = facts.Descriptor;
+        if (context.Authentication?.IsExpired() == true)
+        {
+            // A valid connection can outlive its credential. A request already
+            // expired here must not resolve a service factory or create a scope.
+            var error = CreateExpiredAuthenticationError();
+            var rejectedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
+            rejectedTelemetry.Complete(error);
+            return ValueTask.FromException(error);
+        }
+
         var execute = registration.GetNStudyExecutor(facts.ExecutorSlot);
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
@@ -411,12 +421,9 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context,
         in RpcMethodDescriptor method)
     {
+        // The credential can also expire while service acquisition awaits.
         if (context.Authentication?.IsExpired() == true)
-        {
-            return ValueTask.FromException(new SharpLinkException(
-                SharpLinkErrorCode.AuthenticationExpired,
-                "Authentication token has expired."));
-        }
+            return ValueTask.FromException(CreateExpiredAuthenticationError());
         var interceptors = (context as SharpLinkServerInvocationContext)?.InterceptorGeneration as ServerInterceptorGeneration;
         if (interceptors is null || interceptors.Count == 0)
         {
@@ -435,6 +442,9 @@ internal sealed partial class SharpLinkServer
             cancellationToken,
             (SharpLinkServerInvocationContext)context);
     }
+
+    private static SharpLinkException CreateExpiredAuthenticationError()
+        => new(SharpLinkErrorCode.AuthenticationExpired, "Authentication token has expired.");
 
     private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
         ServerInterceptorGeneration interceptors,
