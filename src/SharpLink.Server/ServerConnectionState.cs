@@ -372,6 +372,10 @@ internal sealed class ServerConnectionState
         if (Volatile.Read(ref _sessionLoopState) == 1)
             await _sessionLoopCompleted.Task.ConfigureAwait(false);
 
+        // The receive loop cannot publish another grant. Drop idle binding references
+        // now, even when a retired connection still owns an unrelated physical call.
+        NStudyBindings.Close();
+
         try
         {
             await Session.DisposeAsync().ConfigureAwait(false);

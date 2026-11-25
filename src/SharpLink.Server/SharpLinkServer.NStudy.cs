@@ -124,6 +124,7 @@ internal sealed class NStudyServerBindings
     private Slot[]? _slots;
     private ulong _operation;
     private bool _publishingInvalidations;
+    private bool _closed;
 
     private struct Slot
     {
@@ -147,6 +148,11 @@ internal sealed class NStudyServerBindings
     {
         lock (_gate)
         {
+            if (_closed)
+            {
+                bindingId = 0;
+                return false;
+            }
             var slots = _slots ??= new Slot[NStudyWire.BindingLimit];
             for (var index = 0; index < slots.Length; index++)
             {
@@ -205,6 +211,24 @@ internal sealed class NStudyServerBindings
             ref var entry = ref _slots![index];
             entry.Open = false;
             ReclaimIfIdle(ref entry);
+        }
+    }
+
+    internal void Close()
+    {
+        lock (_gate)
+        {
+            _closed = true;
+            if (_slots is not { } slots)
+                return;
+            foreach (ref var entry in slots.AsSpan())
+            {
+                entry.Open = false;
+                // The closed peer cannot consume new invalidations. Physical borrowers
+                // still return their exact original slot through Return.
+                entry.PendingInvalidation = 0;
+                ReclaimIfIdle(ref entry);
+            }
         }
     }
 
