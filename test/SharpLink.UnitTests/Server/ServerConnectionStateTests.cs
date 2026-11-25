@@ -92,6 +92,42 @@ public class ServerConnectionStateTests
     }
 
     [Test]
+    public async Task BindingGroupCutClosesOldStartsAndKeepsTheirSlotsUntilReturn()
+    {
+        var table = new NStudyServerBindings();
+        await using var group = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var sibling = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(table.TryInstall(group, out var first), "install the first group member");
+        Ensure(table.TryInstall(group, out var second), "install the second group member");
+        Ensure(table.TryInstall(sibling, out var other), "install the unrelated member");
+        Ensure(table.TryBorrow(first, out _, out var firstUse), "capture the first exact slot");
+        using (firstUse)
+        {
+            Ensure(table.TryBorrow(second, out _, out var secondUse), "capture the second exact slot");
+            using (secondUse)
+            {
+                Ensure(firstUse.ClaimStart() && secondUse.ClaimStart(), "both start on the original group before the cut");
+                Ensure(table.Seal(group.NStudyTarget), "the group has pending invalidations");
+                Ensure(!firstUse.ClaimStart() && !secondUse.ClaimStart() && table.Snapshot() == (1, 2, 2),
+                    "the cut denies both new starts but keeps both physical owners until they return");
+                Ensure(table.TryResolve(other, out var current) && ReferenceEquals(current, sibling),
+                    "the cut does not close the unrelated binding");
+            }
+        }
+
+        Ensure(table.Snapshot() == (1, 0, 0), "both old slots are reclaimable only after return");
+        Ensure(table.TryInstall(sibling, out var replacement) && NStudyWire.SlotIndex(replacement) == NStudyWire.SlotIndex(first) &&
+               replacement != first && !table.TryResolve(first, out _), "slot reuse does not reopen the previous incarnation");
+        Ensure(table.TryBorrow(replacement, out _, out var nextUse), "capture the new incarnation");
+        using (nextUse)
+        {
+            Ensure(nextUse.ClaimStart(), "the newly published incarnation can start");
+            table.Release(replacement);
+            Ensure(!nextUse.ClaimStart(), "single-binding release closes the new incarnation too");
+        }
+    }
+
+    [Test]
     public async Task CloseShouldWaitForSessionLoopToReleaseItsReadBuffer()
     {
         var input = new Pipe();
