@@ -144,6 +144,27 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 clientOutcome, serverError = stopped.Replacement.Error!.Code.ToString(), serverDecline = report.DeclineReason.ToString(),
                 activation = report.ActivationSent, cancelled = decisionCancelled, elapsedWithinApproval = true,
                 sourceClosed = !old.Session.IsConnected, approvals = old.Session.RuntimeContext.NStudyApprovals.ActiveCount });
+
+            ISharpLinkClient publicClient = client;
+            ISharpLinkServer publicServer = server;
+            var staleVotes = 0;
+            ValueTask<SharpLinkVersionDecision> CountStaleVote(SharpLinkVersionChange _, CancellationToken __)
+            {
+                Interlocked.Increment(ref staleVotes);
+                return ValueTask.FromResult(SharpLinkVersionDecision.Approve);
+            }
+            // The application can still hold the participant value it got from the old connection.
+            await ExpectStaleParticipantAsync(() => publicClient.JoinVersionChangeAsync(
+                localLoad.Proxy.Local, participant, CountStaleVote, ct));
+            await ExpectStaleParticipantAsync(() => publicServer.ReplaceAssemblyCoordinatedAsync(
+                sourceService.Assembly, abandoned.Assembly, aId, [participant], bound, CountStaleVote, ct));
+            Ensure(staleVotes == 0 && !fresh.Session.NStudyOfferPendingForDiagnostics &&
+                   fresh.Session.NStudyBindOperationForDiagnostics == 0 &&
+                   SamePrecommitInventory(serverOriginal, server.GetLocalVersionInventory()),
+                "neither public operation moves the retired participant's decision onto the newer connection");
+            PrecommitEvent(new { edge = "RetiredParticipantRefusedByBothPublicOperations", old = original.PhysicalSessionId,
+                current = freshSession.PhysicalSessionId, votes = staleVotes, freshBinds = fresh.Session.NStudyBindOperationForDiagnostics });
+
             var failedContext = abandoned.Retire();
             await RequireCombinedCollectionAsync([failedContext], [], ct);
             var initialHeads = freshPeer.LastAcceptedRequestId;
@@ -182,12 +203,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             EnsureReplacementReleased(installed.Replacement, "new explicit attempt after refresh");
             var sent = installed.Peers.Single();
             Ensure(resumed.Resumed && resumed.LocalRegistrationId == localA.RegistrationId && resumed.Change == retrySeen &&
+                   resumed.Change.TransitionId == proposed.TransitionId &&
                    resumed.Change.Session == freshSession && resumed.Change.Current == originalA && resumed.Change.Candidate != proposed.Candidate &&
                    sent.Change == resumed.Change && sent.ActivationSent && sent.PreparedClientRegistrationId == localA.RegistrationId &&
                    retryClientVotes == 1 && retryServerVotes == 1 && NStudyCount(sourceService.ServiceType, "Disposed") == 1 &&
                    await localLoad.Call("UnaryAsync", 9, ct) == 10 && NStudyCount(retry.ServiceType, "Created") == 1 &&
                    await b.Service.TouchAsync(9, ct) == 109 && fresh.Session.NStudyBindOperationForDiagnostics == 3,
-                "fresh Manual votes and matching activation/resume, exact new application handler and independent B");
+                "even when the transition number repeats, fresh Manual votes belong only to the new physical session");
             var current = await client.QueryPeerVersionInventoryAsync(ct);
             Ensure(current.Session == freshSession && current.Registrations.Contains(resumed.Change.Candidate) &&
                    !current.Registrations.Contains(proposed.Candidate),
@@ -198,6 +220,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             PrecommitEvent(new { edge = "FreshManualRetry", session = freshSession.PhysicalSessionId,
                 original = originalA.RegistrationId, abandoned = proposed.Candidate.RegistrationId,
                 current = resumed.Change.Candidate.RegistrationId, clientVote = retryClientVotes, serverVote = retryServerVotes,
+                transition = resumed.Change.TransitionId, originalTransition = proposed.TransitionId,
                 bind = fresh.Session.NStudyBindOperationForDiagnostics, counts = settled, inactiveAlcs = 2 });
 
             EnsureUnregisterReleased(await client.UnregisterAssemblyAsync(localLoad.Assembly, bound, ct), "final client contract");
@@ -221,6 +244,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     private static bool SamePrecommitInventory(SharpLinkVersionInventory a, SharpLinkVersionInventory b)
         => a.PublisherEpoch == b.PublisherEpoch && a.Revision == b.Revision && a.Registrations.SequenceEqual(b.Registrations);
+
+    private static async Task ExpectStaleParticipantAsync<T>(Func<ValueTask<T>> operation)
+    {
+        try { _ = await operation(); }
+        catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable) { return; }
+        throw new InvalidOperationException("Expected a retired participant to be unavailable without selecting a different connection.");
+    }
 
     private static async Task ExpectPrecommitUnavailableAsync(Func<ValueTask<int>> call)
     {
