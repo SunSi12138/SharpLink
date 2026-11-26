@@ -132,6 +132,39 @@ public class ServerConnectionStateTests
     }
 
     [Test]
+    public async Task BindingTableGrowthPreservesRetiringBorrowAndPendingNotice()
+    {
+        var table = new NStudyServerBindings();
+        await using var retiring = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var live = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(table.TryInstall(retiring, out var original), "install the initial grant");
+        Ensure(table.TryBorrow(original, out _, out var borrow), "hold the old grant through table growth");
+        using (borrow)
+        {
+            Ensure(table.Seal(retiring.NStudyTarget), "retirement records a notice while the borrower is active");
+            for (var index = 1; index < NStudyWire.BindingLimit; index++)
+            {
+                Ensure(table.TryInstall(live, out var binding) && NStudyWire.SlotIndex(binding) == index &&
+                       table.TryResolve(binding, out var current) && ReferenceEquals(current, live),
+                    "growing the table must retain published indices and exact service selection");
+            }
+
+            Ensure(!borrow.CanPrepareDispatch() && table.Snapshot() == (NStudyWire.BindingLimit - 1, 1, 1) &&
+                   !table.TryInstall(live, out _), "an old physical borrower still occupies one of the 64 slots");
+            var notices = new long[NStudyWire.BindingLimit];
+            Ensure(table.TakeInvalidated(notices) == 1 && notices[0] == original && table.TakeInvalidated(notices) == 0,
+                "growth preserves the queued notice for the exact original token");
+        }
+
+        Ensure(table.TryInstall(live, out var replacement) &&
+               NStudyWire.SlotIndex(replacement) == NStudyWire.SlotIndex(original) && replacement != original &&
+               !table.TryResolve(original, out _) && table.IsRetired(original),
+            "only physical return enables reuse at the next incarnation");
+        table.Close();
+        Ensure(table.Snapshot() == (0, 0, 0), "close reclaims all grown slots");
+    }
+
+    [Test]
     public async Task CloseShouldWaitForSessionLoopToReleaseItsReadBuffer()
     {
         var input = new Pipe();

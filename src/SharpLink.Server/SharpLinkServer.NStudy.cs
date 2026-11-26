@@ -120,6 +120,7 @@ internal sealed partial class SharpLinkServer
 // bounded scalar changes; existing user work is always outside it.
 internal sealed class NStudyServerBindings
 {
+    private const int InitialSlotCount = 4;
     private readonly Lock _gate = new();
     private Slot[]? _slots;
     private ulong _operation;
@@ -153,22 +154,33 @@ internal sealed class NStudyServerBindings
                 bindingId = 0;
                 return false;
             }
-            var slots = _slots ??= new Slot[NStudyWire.BindingLimit];
-            for (var index = 0; index < slots.Length; index++)
+            var slots = _slots ??= new Slot[Math.Min(InitialSlotCount, NStudyWire.BindingLimit)];
+            var index = 0;
+            while (index < slots.Length && (slots[index].Occupied || slots[index].Incarnation == uint.MaxValue))
+                index++;
+            if (index == slots.Length)
             {
-                ref var entry = ref slots[index];
-                if (entry.Occupied || entry.Incarnation == uint.MaxValue)
-                    continue;
-                entry.Service = new(service);
-                entry.Target = service.NStudyTarget;
-                entry.Open = entry.Occupied = true;
-                entry.Incarnation++;
-                bindingId = NStudyWire.BindingId(index, entry.Incarnation);
-                return true;
+                if (index == NStudyWire.BindingLimit)
+                {
+                    bindingId = 0;
+                    return false;
+                }
+
+                // No slot reference escapes the gate. Copy the complete slot at
+                // the same index, including physical users and pending notices.
+                var expanded = new Slot[Math.Min(index * 2, NStudyWire.BindingLimit)];
+                slots.AsSpan().CopyTo(expanded);
+                _slots = slots = expanded;
             }
+
+            ref var entry = ref slots[index];
+            entry.Service = new(service);
+            entry.Target = service.NStudyTarget;
+            entry.Open = entry.Occupied = true;
+            entry.Incarnation++;
+            bindingId = NStudyWire.BindingId(index, entry.Incarnation);
+            return true;
         }
-        bindingId = 0;
-        return false;
     }
 
     internal bool TryResolve(long bindingId, out ServiceRegistration service)
