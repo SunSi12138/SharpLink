@@ -4,7 +4,7 @@
 
 SharpLink 3.0 是破坏性 major 升级，不承诺与 2.0.3 的源代码、进程内二进制或跨版本 Client/Server 互操作兼容。同一进程内的 SharpLink 包须统一为匹配的 3.0 版本；删除旧 `bin/obj` 和缓存生成源码，重新生成、构建并部署全部契约、服务和插件程序集。原有 `Get` / `GetWithMetadata` 调用改用准备过的代理；相关输入流取消写法见 [3.0 调用与输入流迁移](rpc-channel-3.0-migration.md)。
 
-当前 Generated ABI 是 **API 5**，要求精确 identity `sharplink-3.0-api5-prepared-contract-v1`。API 3、API 4，以及使用其他开发期 API 5 identity 的程序集必须在 Manifest 构造/发布前被拒绝；不能只比较整数 API 号。手写 locator 应使用当前 `SharpLinkGeneratedManifestVersions` 常量。owner-bound UnsafeBlit 和 standalone generated Codec 的迁移见 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
+当前 Generated ABI 是 **API 5**，要求精确 identity `sharplink-3.0-api5-prepared-contract-v1`。契约清单的 JSON 格式仍为 **Manifest 2**，不会随 ABI 升为 5。API 3、API 4，以及使用其他开发期 API 5 identity 的程序集会在 Manifest 构造或发布前被拒绝；不能只比较整数 API 号。手写 locator 应使用当前 `SharpLinkGeneratedManifestVersions` 常量。owner-bound UnsafeBlit 和 standalone generated Codec 的迁移见 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
 
 Generated ABI 与网络协议是独立版本轴：3.0 使用 **Protocol v2 / minor 5**，兼容下限为 5。旧 minor 在握手阶段拒绝，不把旧 ContractId 当作 3.0 的 Session BindingId。握手仍校验 required capabilities、compression profile 与 frame/window 限制；契约绑定按精确 `RpcAssemblyHash` 校验。不支持的 wire generation 或不匹配的契约不得被当作可执行业务的输入。
 
