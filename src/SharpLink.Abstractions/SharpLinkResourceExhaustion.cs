@@ -17,6 +17,7 @@ internal static class SharpLinkResourceExhaustion
     internal const string ServerDecodedBytes = "server_decoded_bytes";
     internal const string ServerDecodeQueue = "server_decode_queue";
     internal const string ServerPreAdmissionStreamBytes = "server_pre_admission_stream_bytes";
+    internal const string PreparedBindingCapacity = "prepared_binding_capacity";
 
     internal static SharpLinkException Create(string reason, string message)
     {
@@ -63,6 +64,7 @@ internal static class SharpLinkResourceExhaustion
             ServerDecodedBytes => SharpLinkErrorDetails.ResourceExhausted.ServerDecodedBytes,
             ServerDecodeQueue => SharpLinkErrorDetails.ResourceExhausted.ServerDecodeQueue,
             ServerPreAdmissionStreamBytes => SharpLinkErrorDetails.ResourceExhausted.ServerPreAdmissionStreamBytes,
+            PreparedBindingCapacity => SharpLinkErrorDetails.ResourceExhausted.PreparedBindingCapacity,
             _ => SharpLinkErrorDetails.ResourceExhausted.Unspecified
         };
 
@@ -83,6 +85,7 @@ internal static class SharpLinkResourceExhaustion
             SharpLinkErrorDetails.ResourceExhausted.ServerDecodedBytes => ServerDecodedBytes,
             SharpLinkErrorDetails.ResourceExhausted.ServerDecodeQueue => ServerDecodeQueue,
             SharpLinkErrorDetails.ResourceExhausted.ServerPreAdmissionStreamBytes => ServerPreAdmissionStreamBytes,
+            SharpLinkErrorDetails.ResourceExhausted.PreparedBindingCapacity => PreparedBindingCapacity,
             _ => Unspecified
         };
 }

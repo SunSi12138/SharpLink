@@ -104,10 +104,16 @@ internal sealed partial class SharpLinkClient
         RpcHash128 hash, NStudyTarget expected, CancellationToken ct)
     {
         var ack = await connection.Session.PrepareNStudyBindAsync(new NStudyBind(contract, hash, expected), ct).ConfigureAwait(false);
+        if (ack.Status == NStudyBindStatus.Full)
+            throw CreatePreparedBindingCapacityError();
         if (ack.Status != NStudyBindStatus.Bound)
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, $"Private Bind outcome: {ack.Status}.");
         return ack;
     }
+
+    private static SharpLinkException CreatePreparedBindingCapacityError()
+        => SharpLinkResourceExhaustion.Create(SharpLinkResourceExhaustion.PreparedBindingCapacity,
+            $"The connection's {NStudyWire.BindingLimit} prepared binding slots are occupied.");
 
     internal Task<bool> ReleaseNStudyContractAsync(long contract, CancellationToken ct)
     {

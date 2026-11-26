@@ -10,6 +10,61 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [NotInParallel]
     [Arguments("tcp")]
     [Arguments("shared-memory")]
+    public Task NStudyPrepareReportsBindingCapacityAndRecoversWithoutDisconnect(string transport)
+        => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Automatic, twoPeers: false,
+            async (fixture, _, ct) =>
+            {
+                var peer = fixture.First;
+                var table = peer.ServerConnection.NStudyBindings;
+                Ensure(table.TryResolve(peer.A.BindingId, out var registration), "the prepared service exists");
+                Ensure(await peer.Client.ReleaseNStudyContractAsync(peer.A.Contract, ct),
+                    "release A so its next Prepare actually sends a Bind");
+                await WaitForNStudyAsync(() => table.Snapshot() == (1, 0, 0), ct);
+
+                // Fill the bounded server table directly. The probe then uses only
+                // normal public Prepare and ordinary business calls on the real Session.
+                var held = new List<long>(NStudyWire.BindingLimit - 1);
+                try
+                {
+                    for (var i = 1; i < NStudyWire.BindingLimit; i++)
+                    {
+                        Ensure(table.TryInstall(registration, out var binding), "fill one binding slot");
+                        held.Add(binding);
+                    }
+
+                    var local = peer.Client.GetLocalContract(fixture.Contracts.ContractAssembly, peer.A.Contract);
+                    var channel = peer.Client.CreateContractChannel(local);
+                    try
+                    {
+                        await channel.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+                        throw new InvalidOperationException("A full binding table must reject Prepare.");
+                    }
+                    catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.ResourceExhausted)
+                    {
+                        Ensure(error.DetailCode == SharpLinkErrorDetails.ResourceExhausted.PreparedBindingCapacity,
+                            "capacity rejection is distinguishable from a busy preparation control operation");
+                    }
+                    Ensure(await peer.Sibling.TouchAsync(2, ct) == 102 && table.Snapshot() == (NStudyWire.BindingLimit, 0, 0),
+                        "the existing unrelated binding stays usable and the rejection reserves nothing");
+                    table.Release(held[^1]);
+                    held.RemoveAt(held.Count - 1);
+                    await channel.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+                    Ensure(await InvokeValueTaskAsync<int>(peer.Receiver.Service, fixture.Contracts.ContractType,
+                               "UnaryAsync", 8, ct) == 9 &&
+                           ReferenceEquals(NStudyClientSession(peer.Client), peer.Session),
+                        "freeing a slot allows the public Prepare to succeed on the original connection");
+                }
+                finally
+                {
+                    foreach (var binding in held)
+                        table.Release(binding);
+                }
+            });
+
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp")]
+    [Arguments("shared-memory")]
     public async Task NStudyReleaseShouldDrainBeforeReuseAndRebindAfterRefresh(string transport)
     {
         const int frameLimit = 256 * 1024;

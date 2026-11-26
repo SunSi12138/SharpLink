@@ -26,8 +26,13 @@ public sealed class RpcProxy<TContract> where TContract : IService
     public TContract Service { get; }
 
     /// <summary>Prepares this proxy's selected Ready Session or endpoint cohort within a finite timeout.</summary>
+    /// <remarks>Each physical session has a bounded binding table. Unloading a local contract alone
+    /// does not close its remote binding; the session can retain it for coordinated redeployment.</remarks>
     /// <param name="timeout">The maximum time to wait for preparation.</param>
     /// <param name="cancellationToken">Cancels this caller's preparation wait.</param>
+    /// <exception cref="SharpLinkException">A full binding table returns
+    /// <see cref="SharpLinkErrorCode.ResourceExhausted"/> with
+    /// <see cref="SharpLinkErrorDetails.ResourceExhausted.PreparedBindingCapacity"/>.</exception>
     public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
         => _channel.PrepareAsync(timeout, cancellationToken);
 }

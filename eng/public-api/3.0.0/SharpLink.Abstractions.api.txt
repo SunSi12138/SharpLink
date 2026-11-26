@@ -912,6 +912,7 @@ namespace SharpLink.Abstractions
             public const ushort AdmissionRate = 5;
             public const ushort PendingRequestCapacity = 8;
             public const ushort PerConnectionCallCapacity = 2;
+            public const ushort PreparedBindingCapacity = 15;
             public const ushort SendQueueCapacity = 9;
             public const ushort ServerCallCapacity = 1;
             public const ushort ServerDecodeConcurrency = 10;

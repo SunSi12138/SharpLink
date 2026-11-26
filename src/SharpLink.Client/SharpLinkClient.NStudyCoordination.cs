@@ -146,6 +146,8 @@ internal sealed partial class SharpLinkClient
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The prepared local contract changed before activation.");
                 var binding = await session.PrepareNStudyBindAsync(new(change.Contract, change.Hash, change.Target),
                     ct, resuming: change).ConfigureAwait(false);
+                if (binding.Status == NStudyBindStatus.Full)
+                    throw CreatePreparedBindingCapacityError();
                 if (binding.Status != NStudyBindStatus.Bound || binding.Target != change.Target ||
                     binding.Authority != change.Authority)
                     throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The exact activated target is no longer bindable.");

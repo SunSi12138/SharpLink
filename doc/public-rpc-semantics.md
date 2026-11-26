@@ -117,6 +117,8 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 在同一物理连接上准备多个契约时，逐个等待 `PrepareAsync`。连接一次只接受一项绑定控制操作；不同契约并行准备时，后到的操作可能收到 `ResourceExhausted`。这不限制已经准备好的契约并行发起业务调用。
 
+每条物理连接最多占用 64 个准备绑定槽，正在排空的绑定也占槽。仅在客户端卸载契约不会立即归还远端绑定：协调换代可能仍需用原绑定识别来源。表满时，`PrepareAsync` 返回 `ResourceExhausted`，明细为 `SharpLinkErrorDetails.ResourceExhausted.PreparedBindingCapacity`；已有可用绑定不受影响。若服务端退役的绑定正在排空，等排空后再准备；若连接积累了仍未退役的绑定，在新的物理连接上重新准备所需契约。
+
 ### 4.1 Multi-cluster child replacement
 
 Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate 到可发布状态，再原子切换 slot，最后排空旧 child。

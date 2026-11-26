@@ -1,6 +1,6 @@
 namespace SharpLink.Abstractions;
 
-/// <summary>Defines stable machine-readable detail codes for SharpLink wire errors.</summary>
+/// <summary>Defines stable machine-readable detail codes for SharpLink errors.</summary>
 /// <remarks>
 /// Detail-code namespaces are scoped by the top-level <see cref="SharpLinkErrorCode"/>. A value of
 /// <see cref="Unspecified"/> means that no finer-grained classification was supplied.
@@ -43,5 +43,7 @@ public static class SharpLinkErrorDetails
         public const ushort ServerDecodeQueue = 13;
         /// <summary>The server pre-admission stream-byte budget was exhausted.</summary>
         public const ushort ServerPreAdmissionStreamBytes = 14;
+        /// <summary>The physical session's prepared-contract binding table was full.</summary>
+        public const ushort PreparedBindingCapacity = 15;
     }
 }

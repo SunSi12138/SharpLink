@@ -7,6 +7,9 @@ public interface IRpcContractChannel
     IRpcRuntimeContext RuntimeContext { get; }
 
     /// <summary>Prepares this channel on the current Ready connection within a finite timeout.</summary>
+    /// <exception cref="SharpLinkException">A full binding table returns
+    /// <see cref="SharpLinkErrorCode.ResourceExhausted"/> with
+    /// <see cref="SharpLinkErrorDetails.ResourceExhausted.PreparedBindingCapacity"/>.</exception>
     ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 
     /// <summary>Invokes a unary method of this contract.</summary>
