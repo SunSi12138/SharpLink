@@ -245,7 +245,7 @@ internal sealed partial class RpcSession
     private ValueTask SendNStudyReleaseAsync(long token, CancellationToken ct)
         => SendNStudyControlAsync(NStudyWire.Release, 0, default, default, ct, token);
 
-    private async ValueTask SendNStudyControlAsync(ProtocolV2FrameType type, ulong operation,
+    private ValueTask SendNStudyControlAsync(ProtocolV2FrameType type, ulong operation,
         NStudyBind bind, NStudyAck ack, CancellationToken ct, long retiredToken = 0,
         ReadOnlyMemory<long> retired = default)
     {
@@ -265,9 +265,10 @@ internal sealed partial class RpcSession
                     NStudyWire.WriteAck(writer, ack);
             }
             ownsWriter = false;
-            // Normal existing FIFO, and actual send completion, not a local
-            // promise that business or a remote replacement has completed.
-            await SendPacketAndFlushAsync(writer, ct).ConfigureAwait(false);
+            // Hand the packet to the existing FIFO/flush owner. Return its
+            // actual flush completion directly rather than resuming two
+            // forwarding async frames before the control operation can proceed.
+            return SendPacketAsync(writer, waitForCapacity: true, forceFlush: true, ct);
         }
         finally
         {

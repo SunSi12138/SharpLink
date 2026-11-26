@@ -592,8 +592,13 @@ internal sealed partial class SharpLinkClient
                 // Exact observations bypass only the broadcast manifest, not the peer's registry gate.
                 if (observation is null)
                     _client.ValidateNStudyRemoteContractOn(_registration, session);
-                bound = await BindNStudyContractOnAsync(connection, contract, _hash,
-                    observation?.Target ?? default, ct).ConfigureAwait(false);
+                var ack = await session.PrepareNStudyBindAsync(new NStudyBind(contract, _hash,
+                    observation?.Target ?? default), ct).ConfigureAwait(false);
+                if (ack.Status == NStudyBindStatus.Full)
+                    throw CreatePreparedBindingCapacityError();
+                if (ack.Status != NStudyBindStatus.Bound)
+                    throw new SharpLinkException(SharpLinkErrorCode.Unavailable, $"Private Bind outcome: {ack.Status}.");
+                bound = ack;
                 if (BeforePublishingPreparationForTests is { } beforePublish)
                     await beforePublish(bound, ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
