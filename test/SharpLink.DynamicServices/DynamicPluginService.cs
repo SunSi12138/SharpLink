@@ -21,6 +21,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static int _inputStreamExits;
     private static int _inputItemsConsumed;
     private static int _notifiedBatchBytes;
+    private static int _failNextUnary;
 
     public DynamicPluginService(TimeProvider timeProvider)
     {
@@ -70,6 +71,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Write(ref _inputStreamExits, 0);
         Volatile.Write(ref _inputItemsConsumed, 0);
         Volatile.Write(ref _notifiedBatchBytes, 0);
+        Volatile.Write(ref _failNextUnary, 0);
     }
 
     public static void ReleaseBlock() => Volatile.Read(ref _blockRelease).TrySetResult();
@@ -80,8 +82,14 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     public static void ReleaseRejectResponse()
         => Volatile.Read(ref _rejectResponseRelease).TrySetResult();
 
+    public static void FailNextUnary() => Volatile.Write(ref _failNextUnary, 1);
+
     public ValueTask<int> UnaryAsync(int value, CancellationToken cancellationToken)
-        => ValueTask.FromResult(value + 1);
+    {
+        if (Interlocked.Exchange(ref _failNextUnary, 0) != 0)
+            throw new InvalidOperationException("The dynamic service could not complete this call.");
+        return ValueTask.FromResult(value + 1);
+    }
 
     public ValueTask NotifyAsync(int value, CancellationToken cancellationToken)
     {

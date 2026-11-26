@@ -73,6 +73,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private long _leaseGeneration;
     private AdmissionProgram? _admissionProgramUse;
     private AdmissionLease? _admissionLease;
+    private SharpLinkDynamicModuleLease _executionLease;
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
     private ServerDecodedBytesPermit? _decodedBytesPermit;
@@ -217,6 +218,23 @@ internal sealed class ServerCallCancellationState : IDisposable
         ArgumentNullException.ThrowIfNull(lease);
         if (Interlocked.CompareExchange(ref _admissionLease, lease, null) is not null)
             throw new InvalidOperationException("An admission lease is already attached to this call.");
+    }
+
+    // Dispatch transfers its one original execution lease. The call owner
+    // outlives application exception mapping, scope cleanup, and callbacks.
+    internal void AttachExecutionLease(SharpLinkDynamicModuleLease lease)
+    {
+        lock (_lifetimeGate)
+        {
+            if (!_disposeRequested && !_executionLease.IsAcquired && lease.IsAcquired)
+            {
+                _executionLease = lease;
+                return;
+            }
+        }
+
+        lease.Dispose();
+        throw new InvalidOperationException("A dynamic execution lease needs one live call owner.");
     }
 
     internal void AttachPayloadOwner(
@@ -431,6 +449,30 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     private void ReturnCore()
     {
+        var executionLease = _executionLease;
+        _executionLease = default;
+        try
+        {
+            ClearOwnedResources();
+        }
+        finally
+        {
+            executionLease.Dispose();
+        }
+
+        while (true)
+        {
+            var retained = Volatile.Read(ref s_retainedCount);
+            if (retained >= MaxRetained)
+                return;
+            if (Interlocked.CompareExchange(ref s_retainedCount, retained + 1, retained) == retained)
+                break;
+        }
+        Pool.Push(this);
+    }
+
+    private void ClearOwnedResources()
+    {
         _moduleDrainingRegistration.Dispose();
         _connectionClosedRegistration.Dispose();
         _serverStoppingRegistration.Dispose();
@@ -463,15 +505,5 @@ internal sealed class ServerCallCancellationState : IDisposable
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;
-
-        while (true)
-        {
-            var retained = Volatile.Read(ref s_retainedCount);
-            if (retained >= MaxRetained)
-                return;
-            if (Interlocked.CompareExchange(ref s_retainedCount, retained + 1, retained) == retained)
-                break;
-        }
-        Pool.Push(this);
     }
 }

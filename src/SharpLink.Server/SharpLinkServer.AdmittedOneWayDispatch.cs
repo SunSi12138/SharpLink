@@ -279,6 +279,7 @@ internal sealed partial class SharpLinkServer
                     session,
                     facts,
                     binding,
+                    callState,
                     requestId,
                     request.Arguments,
                     output: null,

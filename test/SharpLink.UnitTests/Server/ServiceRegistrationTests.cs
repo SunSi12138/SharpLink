@@ -220,6 +220,9 @@ public partial class ServiceRegistrationTests
                 "fixture holds the original binding through physical dispatch");
             using (binding)
             {
+                using var callState = ServerCallCancellationState.Rent(requestId, default,
+                    TimeProvider.System, CancellationToken.None, CancellationToken.None, registration.ModuleCancellation,
+                    supportsCooperativeCancellation: false);
                 await (ValueTask)(method.Invoke(server,
                 [
                     registration,
@@ -227,6 +230,7 @@ public partial class ServiceRegistrationTests
                     connection.Session,
                     facts,
                     binding,
+                    callState,
                     requestId,
                     ReadOnlySequence<byte>.Empty,
                     null,

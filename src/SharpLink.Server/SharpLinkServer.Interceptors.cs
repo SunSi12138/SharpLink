@@ -8,6 +8,7 @@ internal sealed partial class SharpLinkServer
         RpcSession session,
         NStudyMethodFacts facts,
         NStudyServerBindings.Use binding,
+        ServerCallCancellationState? callState,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -66,10 +67,13 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        SharpLinkDynamicModuleLease executionLease = default;
-        if (registration.HasModule &&
-            !binding.TryEnterExecution(registration, isStream, out executionLease))
-            return RejectRetiredExecution();
+        if (registration.HasModule)
+        {
+            var executionOwner = callState ?? throw new InvalidOperationException("A dynamic call needs a physical owner.");
+            if (!binding.TryEnterExecution(registration, isStream, out var executionLease))
+                return RejectRetiredExecution();
+            executionOwner.AttachExecutionLease(executionLease);
+        }
 
         try
         {
@@ -90,29 +94,18 @@ internal sealed partial class SharpLinkServer
                     context,
                     methodDescriptor);
                 if (!inputDrain.IsEmpty)
-                    return CompleteDynamicOneWayInputAsync(invocation,
-                        new ServiceLease(dynamicSingleton, moduleLease: executionLease), inputDrain);
-                return CompleteDynamicSingletonInvocationAsync(
-                    invocation,
-                    executionLease,
-                    session,
-                    requestId,
-                    hasRequestStreams);
+                    return CompleteDynamicOneWayInputAsync(invocation, default, inputDrain);
+                return hasRequestStreams ? CompleteDynamicInputAsync(invocation, session, requestId) : invocation;
             }
         }
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
+            var failed = ValueTask.FromException(exception);
             if (!inputDrain.IsEmpty)
-                return CompleteDynamicOneWayInputAsync(ValueTask.FromException(exception),
-                    new ServiceLease(registration, moduleLease: executionLease), inputDrain);
-            return CompleteDynamicSingletonInvocationAsync(
-                ValueTask.FromException(exception),
-                executionLease,
-                session,
-                requestId,
-                hasRequestStreams);
+                return CompleteDynamicOneWayInputAsync(failed, default, inputDrain);
+            return hasRequestStreams ? CompleteDynamicInputAsync(failed, session, requestId) : failed;
         }
 
         ValueTask<ServiceLease> acquisition;
@@ -122,7 +115,7 @@ internal sealed partial class SharpLinkServer
                 connection,
                 connection.GeneratedBridge,
                 requestId,
-                executionLease);
+                moduleLease: default); // Owned by the call, not by the service activation.
         }
         catch (Exception exception)
         {
@@ -172,12 +165,10 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private static async ValueTask CompleteDynamicSingletonInvocationAsync(
+    private static async ValueTask CompleteDynamicInputAsync(
         ValueTask invocation,
-        SharpLinkDynamicModuleLease moduleLease,
         RpcSession session,
-        long requestId,
-        bool hasRequestStreams)
+        long requestId)
     {
         Exception? terminalException = null;
         try
@@ -191,17 +182,8 @@ internal sealed partial class SharpLinkServer
 
         try
         {
-            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams)
+            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams: true)
                 .ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            terminalException = CombineTerminalExceptions(terminalException, exception);
-        }
-
-        try
-        {
-            moduleLease.Dispose();
         }
         catch (Exception exception)
         {
@@ -226,7 +208,7 @@ internal sealed partial class SharpLinkServer
         RpcMethodDescriptor methodDescriptor,
         StreamManager.InputStreamDrain inputDrain)
     {
-        if (!lease.RequiresDisposal)
+        if (!lease.RequiresDisposal && !hasRequestStreams && inputDrain.IsEmpty)
         {
             return InvokeServiceTrackedAsync(
                 execute,
