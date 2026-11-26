@@ -88,6 +88,29 @@ public class SharedMemoryPipelineLifecycleTests
     }
 
     [Test]
+    [Arguments(8)]
+    [Arguments(64)]
+    public async Task ShortSpinShouldStillArmAndReceiveARegularWrite(int spinCount)
+    {
+        await using var harness = await PipelineHarness.CreateAsync();
+        var reader = new SharedMemoryPipeReader(harness.Direction, harness.Control, spinCount);
+        var writer = new SharedMemoryPipeWriter(harness.Direction, harness.PeerControl, spinCount);
+        var read = reader.ReadAsync().AsTask();
+        await Assert.That(read.IsCompleted).IsFalse();
+
+        writer.GetSpan(1)[0] = 42;
+        writer.Advance(1);
+        await writer.FlushAsync();
+
+        var result = await read.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(result.Buffer.Length).IsEqualTo(1L);
+        await Assert.That(result.Buffer.FirstSpan[0]).IsEqualTo((byte)42);
+        reader.AdvanceTo(result.Buffer.End);
+        reader.Complete();
+        writer.Complete();
+    }
+
+    [Test]
     public async Task WriterCompletionShouldJoinAnActiveFlushBeforeReturning()
     {
         await using var harness = await PipelineHarness.CreateAsync();

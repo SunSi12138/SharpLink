@@ -376,11 +376,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private bool TakePeerWriterArmed()
         => Interlocked.Exchange(ref _peerWriterArmed, 0) != 0;
 
-    private void SpinBriefly()
-    {
-        for (var index = 0; index < _spinCount; index++)
-            Thread.SpinWait(4);
-    }
+    private void SpinBriefly() => SharedMemorySpin.Wait(_spinCount);
 
     private Task WaitForReadActivityReleaseAsync()
     {
@@ -944,11 +940,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private bool TakePeerReaderArmed()
         => Interlocked.Exchange(ref _peerReaderArmed, 0) != 0;
 
-    private void SpinBriefly()
-    {
-        for (var index = 0; index < _spinCount; index++)
-            Thread.SpinWait(4);
-    }
+    private void SpinBriefly() => SharedMemorySpin.Wait(_spinCount);
 
     private long RefreshReadPosition()
     {
