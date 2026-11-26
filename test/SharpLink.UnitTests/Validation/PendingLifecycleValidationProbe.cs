@@ -34,7 +34,7 @@ public sealed class PendingLifecycleValidationProbe
         var oldDeadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), clock);
         var first = table.Rent(Int32Codec.Instance, PendingCallKind.Unary, oldDeadline,
             cancellation.Token, out var firstId).AsValueTask().AsTask();
-        var original = Slot(table);
+        var original = PendingRequestTableTestFixture.CaptureSinglePendingCall(table);
         clock.Now = TimeSpan.FromSeconds(2).Ticks;
         Exception? scanFailure = null;
         var scan = new Thread(() =>
@@ -78,7 +78,7 @@ public sealed class PendingLifecycleValidationProbe
             var newDeadline = RpcDeadline.Create(TimeSpan.FromHours(1), clock);
             var second = table.Rent(Int32Codec.Instance, PendingCallKind.Unary, newDeadline,
                 CancellationToken.None, out var secondId).AsValueTask().AsTask();
-            var sameReference = ReferenceEquals(original, Slot(table));
+            var sameReference = ReferenceEquals(original, PendingRequestTableTestFixture.CaptureSinglePendingCall(table));
             var futureBefore = !newDeadline.IsExpired(clock);
             Require(sameReference, "fixture failed to reuse the exact PendingCall object");
             Require(firstId != secondId && futureBefore, "new request identity/deadline invalid");
@@ -160,7 +160,7 @@ public sealed class PendingLifecycleValidationProbe
         var activeBefore = table.ActiveCount;
         if (scenario == "metric-plus")
         {
-            var call = table.Count == 0 ? null : Slot(table);
+            var call = table.Count == 0 ? null : PendingRequestTableTestFixture.CaptureSinglePendingCall(table);
             var registered = call is null ? -1 : (int)call.GetType().GetField("_registered",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(call)!;
             // This file is written atomically BEFORE Dispose. On a broken baseline the outer
@@ -244,13 +244,6 @@ public sealed class PendingLifecycleValidationProbe
                 ownerRegisteredBeforeNext == 1 && nextSucceeded &&
                 table.ActiveCount == 0 && table.Count == 0
         });
-    }
-
-    private static object Slot(PendingRequestTable table)
-    {
-        var slots = (Array)typeof(PendingRequestTable).GetField("_slots",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(table)!;
-        return slots.GetValue(0) ?? throw new InvalidOperationException("slot is empty");
     }
 
     private static void Respond(PendingRequestTable table, long id)

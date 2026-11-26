@@ -37,9 +37,7 @@ public sealed class AdmissionDiagnosticsValidationProbe
         // scheduled continuation. Otherwise a healthy response can look incomplete.
         var operation = table.Rent(Int32Codec.Instance, PendingCallKind.Unary, default,
             CancellationToken.None, out var id, completionObserver: observer).AsValueTask();
-        var slots = (Array)typeof(PendingRequestTable).GetField("_slots",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(table)!;
-        var original = slots.GetValue(0)!;
+        var original = PendingRequestTableTestFixture.CaptureSinglePendingCall(table);
         string? escaped = null;
         var payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
         try

@@ -228,9 +228,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
 
         internal static OperationProbe Capture(ClientConnection connection)
         {
-            var slots = (Array)typeof(PendingRequestTable).GetField(
-                "_slots", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection.PendingCalls)!;
-            var call = slots.Cast<object?>().Single(static call => call is not null)!;
+            var call = PendingRequestTableTestFixture.CaptureSinglePendingCall(connection.PendingCalls);
             var operation = (RpcRequestOperation<RpcEmptyRequest>)call.GetType().GetProperty("Operation")!.GetValue(call)!;
             return new OperationProbe(operation, connection.PendingCalls.GetProducerCancellationToken(operation.Id));
         }
