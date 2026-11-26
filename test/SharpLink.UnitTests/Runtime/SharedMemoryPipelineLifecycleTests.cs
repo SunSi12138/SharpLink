@@ -88,6 +88,59 @@ public class SharedMemoryPipelineLifecycleTests
     }
 
     [Test]
+    [Arguments(8)]
+    [Arguments(64)]
+    public async Task ShortSpinShouldStillArmAndReceiveARegularWrite(int spinCount)
+    {
+        await using var harness = await PipelineHarness.CreateAsync();
+        var reader = new SharedMemoryPipeReader(harness.Direction, harness.Control, spinCount);
+        var writer = new SharedMemoryPipeWriter(harness.Direction, harness.PeerControl, spinCount);
+        var read = reader.ReadAsync().AsTask();
+        await Assert.That(read.IsCompleted).IsFalse();
+
+        writer.GetSpan(1)[0] = 42;
+        writer.Advance(1);
+        await writer.FlushAsync();
+
+        var result = await read.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(result.Buffer.Length).IsEqualTo(1L);
+        await Assert.That(result.Buffer.FirstSpan[0]).IsEqualTo((byte)42);
+        reader.AdvanceTo(result.Buffer.End);
+        reader.Complete();
+        writer.Complete();
+    }
+
+    [Test]
+    [Arguments(8)]
+    [Arguments(64)]
+    public async Task ShortSpinShouldStillResumeAWriterAfterSpaceReturns(int spinCount)
+    {
+        await using var harness = await PipelineHarness.CreateAsync();
+        var reader = new SharedMemoryPipeReader(harness.Direction, harness.Control, spinCount);
+        var writer = new SharedMemoryPipeWriter(harness.Direction, harness.PeerControl, spinCount);
+        var capacity = harness.Direction.Capacity;
+        writer.GetSpan(capacity)[..capacity].Clear();
+        writer.Advance(capacity);
+        await writer.FlushAsync();
+
+        writer.GetSpan(1)[0] = 42;
+        writer.Advance(1);
+        var flush = writer.FlushAsync().AsTask();
+        await Assert.That(flush.IsCompleted).IsFalse();
+        await Assert.That(reader.TryRead(out var full)).IsTrue();
+        await Assert.That(full.Buffer.Length).IsEqualTo((long)capacity);
+        reader.AdvanceTo(full.Buffer.End);
+
+        await flush.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.That(reader.TryRead(out var next)).IsTrue();
+        await Assert.That(next.Buffer.Length).IsEqualTo(1L);
+        await Assert.That(next.Buffer.FirstSpan[0]).IsEqualTo((byte)42);
+        reader.AdvanceTo(next.Buffer.End);
+        reader.Complete();
+        writer.Complete();
+    }
+
+    [Test]
     public async Task WriterCompletionShouldJoinAnActiveFlushBeforeReturning()
     {
         await using var harness = await PipelineHarness.CreateAsync();
