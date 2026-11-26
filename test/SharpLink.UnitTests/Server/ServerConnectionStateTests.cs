@@ -126,8 +126,8 @@ public class ServerConnectionStateTests
                    ReferenceEquals(selected, sibling) && !lease.IsAcquired,
                 "the new static incarnation can start without a dynamic module lease");
             table.Release(replacement);
-            Ensure(!nextUse.TryEnterExecution(isStream: false, out _, out _),
-                "single-binding release prevents a later execution claim");
+            Ensure(!nextUse.CanPrepareDispatch() && !nextUse.TryEnterExecution(isStream: false, out _, out _),
+                "single-binding release prevents subsequent preparation and execution claims");
         }
     }
 
@@ -139,6 +139,7 @@ public class ServerConnectionStateTests
         await using var live = CreateConnectionRegistration(new ThrowingService("never activated"));
         Ensure(table.TryInstall(retiring, out var original), "install the initial grant");
         Ensure(table.TryBorrow(original, out _, out var borrow), "hold the old grant through table growth");
+        long last = 0;
         using (borrow)
         {
             Ensure(table.Seal(retiring.NStudyTarget), "retirement records a notice while the borrower is active");
@@ -147,6 +148,7 @@ public class ServerConnectionStateTests
                 Ensure(table.TryInstall(live, out var binding) && NStudyWire.SlotIndex(binding) == index &&
                        table.TryResolve(binding, out var current) && ReferenceEquals(current, live),
                     "growing the table must retain published indices and exact service selection");
+                last = binding;
             }
 
             Ensure(!borrow.CanPrepareDispatch() && table.Snapshot() == (NStudyWire.BindingLimit - 1, 1, 1) &&
@@ -160,6 +162,14 @@ public class ServerConnectionStateTests
                NStudyWire.SlotIndex(replacement) == NStudyWire.SlotIndex(original) && replacement != original &&
                !table.TryResolve(original, out _) && table.IsRetired(original),
             "only physical return enables reuse at the next incarnation");
+        Ensure(table.TryBorrow(last, out _, out var lastUse), "borrow the last protocol slot after growth");
+        using (lastUse)
+        {
+            Ensure(lastUse.CanPrepareDispatch(), "the last protocol slot retains its independent open state");
+            table.Release(last);
+            Ensure(!lastUse.CanPrepareDispatch() && table.TryResolve(replacement, out _),
+                "retiring the last slot leaves the first slot open");
+        }
         table.Close();
         Ensure(table.Snapshot() == (0, 0, 0), "close reclaims all grown slots");
     }

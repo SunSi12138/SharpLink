@@ -123,6 +123,9 @@ internal sealed class NStudyServerBindings
     private const int InitialSlotCount = 4;
     private readonly Lock _gate = new();
     private Slot[]? _slots;
+    // One open bit per protocol slot (64). Mutations hold _gate; an exact Use
+    // can read the published bits because it pins its index until Return.
+    private ulong _openSlots;
     private ulong _operation;
     private bool _publishingInvalidations;
     private bool _closed;
@@ -135,7 +138,6 @@ internal sealed class NStudyServerBindings
         internal uint PendingInvalidation;
         internal int Users;
         internal bool Occupied;
-        internal bool Open;
     }
 
     internal void ObserveOperation(ulong operation)
@@ -176,9 +178,10 @@ internal sealed class NStudyServerBindings
             ref var entry = ref slots[index];
             entry.Service = new(service);
             entry.Target = service.NStudyTarget;
-            entry.Open = entry.Occupied = true;
+            entry.Occupied = true;
             entry.Incarnation++;
             bindingId = NStudyWire.BindingId(index, entry.Incarnation);
+            Volatile.Write(ref _openSlots, _openSlots | SlotBit(index));
             return true;
         }
     }
@@ -187,8 +190,8 @@ internal sealed class NStudyServerBindings
     {
         lock (_gate)
         {
-            if (TryFind(bindingId, out var index) && _slots![index].Open)
-                return _slots[index].Service.TryGetService(out service);
+            if (TryFind(bindingId, out var index) && IsOpenUnderGate(index))
+                return _slots![index].Service.TryGetService(out service);
         }
         service = null!;
         return false;
@@ -201,7 +204,7 @@ internal sealed class NStudyServerBindings
             if (TryFind(bindingId, out var index))
             {
                 ref var entry = ref _slots![index];
-                if (entry.Open && entry.Service.TryGetService(out service))
+                if (IsOpenUnderGate(index) && entry.Service.TryGetService(out service))
                 {
                     checked { entry.Users++; }
                     use = new(this, bindingId);
@@ -229,9 +232,8 @@ internal sealed class NStudyServerBindings
         {
             if (!TryFind(bindingId, out var index))
                 return;
-            ref var entry = ref _slots![index];
-            entry.Open = false;
-            ReclaimIfIdle(ref entry);
+            Volatile.Write(ref _openSlots, _openSlots & ~SlotBit(index));
+            ReclaimRetiredIfIdle(ref _slots![index]);
         }
     }
 
@@ -240,15 +242,15 @@ internal sealed class NStudyServerBindings
         lock (_gate)
         {
             _closed = true;
+            Volatile.Write(ref _openSlots, 0);
             if (_slots is not { } slots)
                 return;
             foreach (ref var entry in slots.AsSpan())
             {
-                entry.Open = false;
                 // The closed peer cannot consume new invalidations. Physical borrowers
                 // still return their exact original slot through Return.
                 entry.PendingInvalidation = 0;
-                ReclaimIfIdle(ref entry);
+                ReclaimRetiredIfIdle(ref entry);
             }
         }
     }
@@ -261,17 +263,21 @@ internal sealed class NStudyServerBindings
         {
             if (_slots is not { } slots)
                 return false;
-            var marked = false;
-            foreach (ref var entry in slots.AsSpan())
+            var open = _openSlots;
+            for (var index = 0; index < slots.Length; index++)
             {
-                if (!entry.Open || entry.Target != target)
+                ref var entry = ref slots[index];
+                var bit = SlotBit(index);
+                if ((open & bit) == 0 || entry.Target != target)
                     continue;
-                entry.Open = false;
+                open &= ~bit;
                 entry.PendingInvalidation = entry.Incarnation;
-                ReclaimIfIdle(ref entry);
-                marked = true;
+                ReclaimRetiredIfIdle(ref entry);
             }
-            if (!marked || _publishingInvalidations)
+            if (open == _openSlots)
+                return false;
+            Volatile.Write(ref _openSlots, open);
+            if (_publishingInvalidations)
                 return false;
             return _publishingInvalidations = true;
         }
@@ -305,15 +311,16 @@ internal sealed class NStudyServerBindings
             var incarnation = NStudyWire.Incarnation(token);
             return incarnation != 0 && _slots is { } slots && (uint)index < (uint)slots.Length &&
                 (incarnation < slots[index].Incarnation ||
-                 incarnation == slots[index].Incarnation && !slots[index].Open);
+                 incarnation == slots[index].Incarnation && !IsOpenUnderGate(index));
         }
     }
 
+    private static ulong SlotBit(int index) => 1UL << index;
+
+    private bool IsOpenUnderGate(int index) => (_openSlots & SlotBit(index)) != 0;
+
     private bool CanPrepareDispatch(long bindingId)
-    {
-        lock (_gate)
-            return TryFind(bindingId, out var index) && _slots![index].Open;
-    }
+        => (Volatile.Read(ref _openSlots) & SlotBit(NStudyWire.SlotIndex(bindingId))) != 0;
 
     private bool TryEnterExecution(long bindingId, bool isStream, out ServiceRegistration registration,
         out SharpLinkDynamicModuleLease lease)
@@ -324,7 +331,7 @@ internal sealed class NStudyServerBindings
             if (TryFind(bindingId, out var index))
             {
                 ref var slot = ref _slots![index];
-                if (slot.Open && slot.Users != 0 && slot.Service.TryGetService(out registration))
+                if (IsOpenUnderGate(index) && slot.Users != 0 && slot.Service.TryGetService(out registration))
                 {
                     // Release/Close are ordered by this table gate. Registry retirement
                     // closes the module's admission before it seals the slots. Resolve and
@@ -347,7 +354,8 @@ internal sealed class NStudyServerBindings
                 throw new InvalidOperationException("The exact N-study binding use was returned without an owner.");
             ref var entry = ref _slots[index];
             entry.Users--;
-            ReclaimIfIdle(ref entry);
+            if (!IsOpenUnderGate(index))
+                ReclaimRetiredIfIdle(ref entry);
         }
     }
 
@@ -358,9 +366,9 @@ internal sealed class NStudyServerBindings
                slots[index].Occupied && slots[index].Incarnation == NStudyWire.Incarnation(bindingId);
     }
 
-    private static void ReclaimIfIdle(ref Slot entry)
+    private static void ReclaimRetiredIfIdle(ref Slot entry)
     {
-        if (!entry.Open && entry.Users == 0)
+        if (entry.Users == 0)
         {
             entry.Service = default;
             entry.Target = default;
@@ -375,11 +383,12 @@ internal sealed class NStudyServerBindings
             var open = 0;
             var retiring = 0;
             var users = 0;
-            if (_slots is not null)
+            if (_slots is { } slots)
             {
-                foreach (var slot in _slots)
+                for (var index = 0; index < slots.Length; index++)
                 {
-                    if (slot.Open) open++;
+                    ref var slot = ref slots[index];
+                    if (IsOpenUnderGate(index)) open++;
                     else if (slot.Occupied) retiring++;
                     users += slot.Users;
                 }
@@ -394,16 +403,17 @@ internal sealed class NStudyServerBindings
         {
             if (_slots is { } slots)
             {
-                foreach (var slot in slots)
-                    if (slot.Open && slot.Target == target)
+                for (var index = 0; index < slots.Length; index++)
+                    if (IsOpenUnderGate(index) && slots[index].Target == target)
                         return true;
             }
             return false;
         }
     }
 
-    // Only DispatchRequestAsync owns Return. Preparation checks can reject
-    // before decode/queue work, but only TryEnterExecution admits business.
+    // Only DispatchRequestAsync owns Return. Its dispatch shares this Use only
+    // until that return, so no valid preparation can read a reused slot index.
+    // Preparation can reject early; exact TryEnterExecution still admits business.
     internal readonly struct Use(NStudyServerBindings owner, long bindingId) : IDisposable
     {
         internal bool CanPrepareDispatch() => owner?.CanPrepareDispatch(bindingId) == true;
