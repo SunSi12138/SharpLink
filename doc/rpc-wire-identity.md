@@ -8,9 +8,9 @@ SharpLink uses deterministic generated identities to separate fast lookup from w
 
 Each generated contract assembly therefore carries a deterministic 128-bit `RpcAssemblyHash`. The generator derives this hash from the canonical RPC wire surface of the assembly. Two peers may bind an RPC contract only when the local and remote `RpcAssemblyHash` values are exactly equal.
 
-The compatibility invariant is strict:
+The compatibility check is strict:
 
-- equal `RpcAssemblyHash` values permit contract binding;
+- equal `RpcAssemblyHash` values satisfy the wire-compatibility check;
 - different hashes reject contract binding;
 - a missing remote contract entry rejects binding;
 - an empty local generated hash is invalid.
@@ -25,25 +25,21 @@ Protocol v2 negotiates the `ContractManifest` capability. A server publishes a d
 - each remotely callable `ContractId`;
 - the `RpcAssemblyHash` of the generated assembly that owns that contract.
 
-The initial snapshot is a connection-bootstrap step. The normal protocol handshake is completed first, then the server sends the initial `ContractManifest`; the client does not publish that connection into its callable ready pool until the manifest has been received and any proxy acquired before `ConnectAsync` has been validated.
-
-This preserves the synchronous `Get<TContract>()` API. `Get<TContract>()` never performs a hidden network round trip.
+The server sends the initial `ContractManifest` after the handshake response. The client receives it before making the connection Ready. Ready means the connection is available to prepare contracts; individual proxies can call only after their own preparation.
 
 ## Bind-time validation
 
-In the #999 study, `CreateProxy<TContract>()` creates a local handle. Its explicit `PrepareAsync` compares the local contract's assembly hash with the remote manifest on the selected physical Session before binding. Metadata belongs to the handle's calls, not to the bind identity.
+`CreateProxy<TContract>()` creates a local handle. Ordinary `PrepareAsync` checks the selected connection's manifest before sending `Bind`. Coordinated replacement can use its observed target instead of the broadcast manifest. In both cases the server checks its current registration. A successful `BindAck` grants a `BindingId` for that exact registration on that physical session. Metadata belongs to the calls, not to the bind identity.
 
-During migration, `Get<TContract>()` still compares the local assembly hash with the discovered manifest when returning a proxy on a connected client.
+A manifest mismatch fails with `FailedPrecondition`. Its diagnostic identifies the contract, local assembly/hash, remote hash, session, and remote manifest generation. If the registration changes after the manifest check, the server can reject the bind, which fails preparation with `Unavailable`. Neither failure sends a business `Request`.
 
-A mismatch fails with `FailedPrecondition`. The diagnostic identifies the contract, local assembly/hash, remote hash, session, and remote manifest generation. Rejection happens before an RPC `Request` payload is emitted.
-
-The request/response wire layout does not carry `RpcAssemblyHash`, and the normal invocation hot path does not repeat the comparison on every RPC.
+Normal requests carry `BindingId + MethodId`. They do not carry or recompare the assembly hash. A binding cannot be reused on another connection; prepare again after reconnecting.
 
 ## Dynamic assembly lifecycle
 
 When the server registers, replaces, or drains a dynamic RPC assembly while running, it coalesces registry changes and publishes a newer manifest snapshot to ready clients.
 
-A client uses the newer snapshot for subsequent `Get<TContract>()` calls. A proxy reference already returned to application code is not silently rebound or replaced by a manifest refresh; existing assembly drain/replacement lifecycle rules remain responsible for retiring old bindings.
+A newer snapshot informs future preparations. It does not retarget an existing binding. Work already admitted to the old registration keeps it until physical completion. Use [coordinated replacement](coordinated-version-change.md) to resume a prepared route on the same connection when both sides agree.
 
 During server shutdown, manifest publication is not scheduled. Registry cleanup must not create new framework work after draining begins.
 
