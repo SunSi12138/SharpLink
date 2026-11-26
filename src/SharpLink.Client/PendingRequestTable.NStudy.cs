@@ -60,13 +60,12 @@ internal sealed partial class PendingRequestTable
 
     internal NStudyProducerAdmission? RetainNStudyProducer(long id)
     {
-        var slots = Volatile.Read(ref _slots);
-        var index = (int)(id & _indexMask);
-        if (slots is null || Volatile.Read(ref slots[index]) is not { } call)
+        ref var slot = ref ReadSlot(id);
+        if (Volatile.Read(ref slot) is not { } call)
             return null;
         lock (call.CompletionGate)
         {
-            if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slots[index]), call) ||
+            if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slot), call) ||
                 call.NStudyAdmission is not { } admission || Volatile.Read(ref _disposed) != 0)
                 return null;
             if (Interlocked.Increment(ref _nStudyProducerCount) > _capacity)
@@ -90,13 +89,12 @@ internal sealed partial class PendingRequestTable
     {
         if (id <= 0 || id > Volatile.Read(ref _nextId))
             throw RpcSession.InvalidNStudy("Stream acceptance does not match an issued request.");
-        var slots = Volatile.Read(ref _slots);
-        var index = (int)(id & _indexMask);
-        if (slots is null || Volatile.Read(ref slots[index]) is not { } call)
+        ref var slot = ref ReadSlot(id);
+        if (Volatile.Read(ref slot) is not { } call)
             return;
         lock (call.CompletionGate)
         {
-            if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slots[index]), call))
+            if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slot), call))
                 return; // Ordinary terminal completion, concurrent with the receipt.
             if (!call.RequestPublished || call.NStudyAdmission is not { RequiresAcceptance: true } admission)
                 throw RpcSession.InvalidNStudy("Stream acceptance does not match a published input stream.");
@@ -111,13 +109,12 @@ internal sealed partial class PendingRequestTable
 
     internal bool TryStartNStudyProducer(long id, NStudyProducerAdmission admission)
     {
-        var slots = Volatile.Read(ref _slots);
-        var index = (int)(id & _indexMask);
-        if (slots is null || Volatile.Read(ref slots[index]) is not { } call)
+        ref var slot = ref ReadSlot(id);
+        if (Volatile.Read(ref slot) is not { } call)
             return false;
         lock (call.CompletionGate)
         {
-            if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slots[index]), call) ||
+            if (call.Id != id || !ReferenceEquals(Volatile.Read(ref slot), call) ||
                 !call.RequestPublished || !ReferenceEquals(call.NStudyAdmission, admission) ||
                 !admission.Confirmed || admission.Started)
                 return false;
@@ -133,9 +130,8 @@ internal sealed partial class PendingRequestTable
 
     internal void RequireNStudyAcceptance(long id)
     {
-        var slots = Volatile.Read(ref _slots);
-        var index = (int)(id & _indexMask);
-        if (slots is not null && Volatile.Read(ref slots[index]) is { } call)
+        ref var slot = ref ReadSlot(id);
+        if (Volatile.Read(ref slot) is { } call)
         {
             // Producer admission is installed before publication and cleared only after the slot is removed.
             // A live call without a producer has no receipt to check; its completion still claims the slot normally.
@@ -143,7 +139,7 @@ internal sealed partial class PendingRequestTable
                 return;
             lock (call.CompletionGate)
             {
-                if (call.Id == id && ReferenceEquals(Volatile.Read(ref slots[index]), call))
+                if (call.Id == id && ReferenceEquals(Volatile.Read(ref slot), call))
                     RequireNStudyAcceptance(call);
             }
         }

@@ -55,19 +55,15 @@ partial class PendingRequestTable
     {
         emission = default;
         rejection = null;
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return false;
-
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
+        ref var slot = ref ReadSlot(id);
+        var current = Volatile.Read(ref slot);
         if (current is null || current.Id != id)
             return false;
 
         PendingCall? expiredCall = null;
         lock (current.CompletionGate)
         {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+            if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id)
                 return false;
 
             if (current.Deadline.IsExpired(_timeProvider))
@@ -76,7 +72,7 @@ partial class PendingRequestTable
                 // the scheduler callback here would let a late callback publish a Request whose
                 // budget already elapsed, and the peer would then dispatch work the caller has
                 // already given up on.
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref slot, null, current), current))
                     return false;
                 current.WaitUntilRegistered();
                 expiredCall = current;

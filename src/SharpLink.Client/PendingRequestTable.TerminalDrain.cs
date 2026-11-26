@@ -5,7 +5,7 @@ internal sealed partial class PendingRequestTable
     private void CompleteTransportFailure(long id, PendingCallCompletionReason reason, Exception? exception)
     {
         List<Exception>? failures = null;
-        if (!TryTakeTransportFailure((int)(id & _indexMask), id, out var call, out var expired, ref failures))
+        if (!TryTakeTransportFailure(ref ReadSlot(id), id, out var call, out var expired, ref failures))
             return;
         if (expired)
         {
@@ -18,18 +18,17 @@ internal sealed partial class PendingRequestTable
 
     // Only transport-terminal paths use this fallback. Normal response/cancel/deadline races
     // retain their authoritative clock sample and existing completion implementation.
-    private bool TryTakeTransportFailure(int index, long? expectedId, out PendingCall? call,
+    private bool TryTakeTransportFailure(ref PendingCall? slot, long? expectedId, out PendingCall? call,
         out bool deadlineExpired, ref List<Exception>? failures)
     {
-        var slots = Volatile.Read(ref _slots);
-        while (slots is not null)
+        while (true)
         {
-            var current = Volatile.Read(ref slots[index]);
+            var current = Volatile.Read(ref slot);
             if (current is null || expectedId is { } id && current.Id != id)
                 break;
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) ||
+                if (!ReferenceEquals(Volatile.Read(ref slot), current) ||
                     expectedId is { } requestId && current.Id != requestId)
                     continue;
 
@@ -37,7 +36,7 @@ internal sealed partial class PendingRequestTable
                 deadlineExpired = false;
                 try { deadlineExpired = current.Deadline.IsExpired(_timeProvider); }
                 catch (Exception exception) { clockFailure = exception; }
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref slot, null, current), current))
                     continue;
                 current.WaitUntilRegistered();
                 call = current;

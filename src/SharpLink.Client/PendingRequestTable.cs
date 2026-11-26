@@ -58,7 +58,9 @@ internal interface IPendingCallCompletionObserver
 /// Stores all pending calls for one physical connection in a bounded power-of-two table.
 /// </summary>
 /// <remarks>
-/// A slot contains the complete request ID. Completion removes the slot with one compare/exchange,
+/// A connection starts with an inline slot. Overlap may publish a flat table without
+/// moving the original call. A slot contains the complete request ID. Completion removes
+/// the slot with one compare/exchange,
 /// so response, cancellation, deadline and disconnect races converge on one terminal path. The
 /// operation object is returned to its type-specific pool only after its caller observes GetResult.
 /// </remarks>
@@ -68,6 +70,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     private readonly int _capacity;
     private readonly object _slotsInitializationGate = new();
     private PendingCall?[]? _slots;
+    private PendingCall? _inlineSlot;
+    private long _inlineRequestId;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
     private readonly TimeProvider _timeProvider;
@@ -115,16 +119,17 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     internal int ActiveCount => Volatile.Read(ref _activeSlots);
 
     internal bool SlotsMaterialized => Volatile.Read(ref _slots) is not null;
+    internal int DeadlineSlotSpan => 1 + (Volatile.Read(ref _slots)?.Length ?? 0);
 
     public int Count
     {
         get
         {
+            var count = Volatile.Read(ref _inlineSlot) is null ? 0 : 1;
             var slots = Volatile.Read(ref _slots);
             if (slots is null)
-                return 0;
+                return count;
 
-            var count = 0;
             for (var index = 0; index < slots.Length; index++)
                 if (Volatile.Read(ref slots[index]) is not null)
                     count++;
@@ -326,21 +331,17 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool Dispatch(long id, ref ReadOnlySequence<byte> payload, bool requireProducerAcceptance = false)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return false;
-
-        var index = (int)(id & _indexMask);
+        ref var slot = ref ReadSlot(id);
         while (true)
         {
-            var current = Volatile.Read(ref slots[index]);
+            var current = Volatile.Read(ref slot);
             if (current is null || current.Id != id)
                 return false;
 
             bool deadlineExpired;
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+                if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id)
                     continue;
 
                 // Inspect the receipt on the exact pending call before observing or decoding
@@ -357,7 +358,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                     return true;
                 }
 
-                var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+                var exchanged = Interlocked.CompareExchange(ref slot, null, current);
                 if (!ReferenceEquals(exchanged, current))
                     continue;
                 current.WaitUntilRegistered();
@@ -404,12 +405,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool TryAcceptStreamData(long id)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return false;
-
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
+        ref var slot = ref ReadSlot(id);
+        var current = Volatile.Read(ref slot);
         if (current is null || current.Id != id ||
             current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
         {
@@ -419,7 +416,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         PendingCall? expiredCall = null;
         lock (current.CompletionGate)
         {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+            if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id ||
                 current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
             {
                 return false;
@@ -428,7 +425,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             if (!current.Deadline.IsExpired(_timeProvider))
                 return true;
 
-            var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+            var exchanged = Interlocked.CompareExchange(ref slot, null, current);
             if (!ReferenceEquals(exchanged, current))
                 return false;
             current.WaitUntilRegistered();
@@ -461,21 +458,13 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool Contains(long id)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return false;
-
-        var call = Volatile.Read(ref slots[(int)(id & _indexMask)]);
+        var call = Volatile.Read(ref ReadSlot(id));
         return call is not null && call.Id == id;
     }
 
     public CancellationToken GetProducerCancellationToken(long id)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return new CancellationToken(canceled: true);
-
-        var call = Volatile.Read(ref slots[(int)(id & _indexMask)]);
+        var call = Volatile.Read(ref ReadSlot(id));
         if (call is null || call.Id != id)
             return new CancellationToken(canceled: true);
         return call.ProducerCancellationToken;
@@ -483,15 +472,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public bool TryGetProducerDeadline(long id, out RpcDeadline deadline)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-        {
-            deadline = default;
-            return false;
-        }
-
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
+        ref var slot = ref ReadSlot(id);
+        var current = Volatile.Read(ref slot);
         if (current is null || current.Id != id ||
             current.Kind is not (PendingCallKind.OneWayClientStreaming or
                                  PendingCallKind.ClientStreaming or
@@ -503,7 +485,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         lock (current.CompletionGate)
         {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+            if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id ||
                 current.Kind is not (PendingCallKind.OneWayClientStreaming or
                                      PendingCallKind.ClientStreaming or
                                      PendingCallKind.DuplexStreaming))
@@ -526,16 +508,21 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     public void FailAllPendingRequests(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return;
-
         List<Exception>? failures = null;
-        for (var index = 0; index < slots.Length; index++)
+        FailPendingSlot(ref _inlineSlot, exception, ref failures);
+        if (Volatile.Read(ref _slots) is { } slots)
         {
-            if (!TryTakeTransportFailure(index, expectedId: null, out var call, out var deadlineExpired, ref failures))
-                continue;
+            for (var index = 0; index < slots.Length; index++)
+                FailPendingSlot(ref slots[index], exception, ref failures);
+        }
+        ThrowTerminalCleanupFailures(failures);
+    }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void FailPendingSlot(ref PendingCall? slot, Exception exception, ref List<Exception>? failures)
+    {
+        if (TryTakeTransportFailure(ref slot, expectedId: null, out var call, out var deadlineExpired, ref failures))
+        {
             CompleteTransportFailureCall(
                 call!,
                 deadlineExpired
@@ -544,7 +531,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 deadlineExpired ? null : exception,
                 ref failures);
         }
-        ThrowTerminalCleanupFailures(failures);
     }
 
     public void Dispose()
@@ -634,14 +620,31 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
         try
         {
-            var slots = GetOrCreateSlots();
+            var slots = Volatile.Read(ref _slots);
+            if (slots is null && Volatile.Read(ref _inlineSlot) is null)
+            {
+                id = NextRequestId();
+                operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
+                var call = PendingCall.Rent(this, id, kind, operation, dispatcher, deadline,
+                    cancellationToken, completionObserver);
+                if (TryInstallInline(call, id))
+                {
+                    published = true;
+                    OnRegistered(call);
+                    CompleteRegistrationIfDisposed(call);
+                    return true;
+                }
+                call.ReturnUnused();
+            }
+
+            slots ??= GetOrCreateSlots();
             while (true)
             {
                 for (var attempt = 0; attempt < slots.Length; attempt++)
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (Volatile.Read(ref slots[index]) is not null)
+                    if (Volatile.Read(ref slots[index]) is not null || IsLegacyInlineId(id))
                         continue;
 
                     operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
@@ -697,14 +700,30 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         var published = false;
         try
         {
-            var slots = GetOrCreateSlots();
+            var slots = Volatile.Read(ref _slots);
+            if (slots is null && Volatile.Read(ref _inlineSlot) is null)
+            {
+                id = NextRequestId();
+                var call = PendingCall.Rent(this, id, kind, operation, dispatcher, deadline,
+                    cancellationToken, completionObserver);
+                if (TryInstallInline(call, id))
+                {
+                    published = true;
+                    OnRegistered(call);
+                    CompleteRegistrationIfDisposed(call);
+                    return true;
+                }
+                call.ReturnUnused();
+            }
+
+            slots ??= GetOrCreateSlots();
             while (true)
             {
                 for (var attempt = 0; attempt < slots.Length; attempt++)
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (Volatile.Read(ref slots[index]) is not null)
+                    if (Volatile.Read(ref slots[index]) is not null || IsLegacyInlineId(id))
                         continue;
 
                     var call = PendingCall.Rent(
@@ -739,6 +758,34 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 ReleaseCapacity();
             throw;
         }
+    }
+
+    private bool TryInstallInline(PendingCall call, long id)
+    {
+        // Only pre-promotion writers take this lock. Completion may remove
+        // the call in parallel, but publication cannot change the ID past promotion.
+        lock (_slotsInitializationGate)
+        {
+            if (_slots is not null || Interlocked.CompareExchange(ref _inlineSlot, call, null) is not null)
+                return false;
+            _inlineRequestId = id;
+            return true;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsLegacyInlineId(long id)
+        => id == Volatile.Read(ref _inlineRequestId) && Volatile.Read(ref _inlineSlot) is not null;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private ref PendingCall? ReadSlot(long id)
+    {
+        var slots = Volatile.Read(ref _slots);
+        // The published flat table freezes the last inline ID. A live call
+        // never moves between cells, even across a completion gate.
+        if (slots is null || IsLegacyInlineId(id))
+            return ref _inlineSlot;
+        return ref slots[(int)(id & _indexMask)];
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -807,18 +854,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         out PendingCall? call,
         out bool deadlineExpired)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-        {
-            call = null;
-            deadlineExpired = false;
-            return false;
-        }
-
-        var index = (int)(id & _indexMask);
+        ref var slot = ref ReadSlot(id);
         while (true)
         {
-            var current = Volatile.Read(ref slots[index]);
+            var current = Volatile.Read(ref slot);
             if (current is null || current.Id != id)
             {
                 call = null;
@@ -828,7 +867,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
             lock (current.CompletionGate)
             {
-                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+                if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id)
                     continue;
 
                 // Sample the authoritative monotonic boundary while owning the same
@@ -837,7 +876,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 // descheduled until after the boundary; a response claiming after it loses.
                 deadlineExpired = current.Deadline.IsExpired(_timeProvider);
 
-                var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
+                var exchanged = Interlocked.CompareExchange(ref slot, null, current);
                 if (!ReferenceEquals(exchanged, current))
                     continue;
 
@@ -980,16 +1019,15 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         return id != 0 ? id : Interlocked.Increment(ref _nextId);
     }
 
-    private bool TryTakeExpiredCallAtIndex(
-        PendingCall?[] slots,
-        int index,
+    private bool TryTakeExpiredCall(
+        ref PendingCall? slot,
         PendingCall expected,
         long expectedId,
         out PendingCall? call)
     {
         lock (expected.CompletionGate)
         {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), expected) ||
+            if (!ReferenceEquals(Volatile.Read(ref slot), expected) ||
                 expected.Id != expectedId ||
                 !expected.Deadline.HasValue ||
                 !expected.Deadline.IsExpired(_timeProvider))
@@ -998,7 +1036,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 return false;
             }
 
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, expected), expected))
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref slot, null, expected), expected))
             {
                 call = null;
                 return false;
@@ -1015,36 +1053,38 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
+        ScanSlotDeadline(ref _inlineSlot);
+        if (Volatile.Read(ref _slots) is not { } slots)
             return;
 
         for (var index = 0; index < slots.Length; index++)
+            ScanSlotDeadline(ref slots[index]);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ScanSlotDeadline(ref PendingCall? slot)
+    {
+        var call = Volatile.Read(ref slot);
+        if (call is null)
+            return;
+
+        // The authoritative deadline, full ID and removal are still checked
+        // together, even if dense storage was published after this read.
+        var expectedId = call.Id;
+        var deadline = call.Deadline;
+        if (!deadline.HasValue)
+            return;
+        if (!deadline.IsExpired(_timeProvider))
         {
-            var call = Volatile.Read(ref slots[index]);
-            if (call is null)
-                continue;
-
-            // This first sample is only a cheap candidate filter. The request identity,
-            // authoritative deadline check and slot removal are revalidated together below.
-            var expectedId = call.Id;
-            var deadline = call.Deadline;
-            if (!deadline.HasValue)
-                continue;
-            if (deadline.IsExpired(_timeProvider))
-            {
-                if (!TryTakeExpiredCallAtIndex(slots, index, call, expectedId, out var expiredCall))
-                    continue;
-
-                var emptyPayload = ReadOnlySequence<byte>.Empty;
-                CompleteTakenCall(
-                    expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
-            }
-            else
-            {
-                _deadlineScheduler.Observe(deadline);
-            }
+            _deadlineScheduler.Observe(deadline);
+            return;
         }
+        if (!TryTakeExpiredCall(ref slot, call, expectedId, out var expiredCall))
+            return;
+
+        var emptyPayload = ReadOnlySequence<byte>.Empty;
+        CompleteTakenCall(
+            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
     }
 
     private static SharpLinkException CreateResourceExhaustedException()
