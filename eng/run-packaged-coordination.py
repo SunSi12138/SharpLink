@@ -20,7 +20,8 @@ smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 
-def stage_project(work, source_name, name, packages, *, host=False, project_reference=None, directory=None):
+def stage_project(work, source_name, name, packages, *, host=False, project_reference=None, directory=None,
+                  release_variant=False):
     source = ROOT / "test" / source_name
     dest = work / (directory or name)
     dest.mkdir()
@@ -34,6 +35,8 @@ def stage_project(work, source_name, name, packages, *, host=False, project_refe
         "OutputType": "Exe" if host else "Library",
     }.items():
         ET.SubElement(props, key).text = value
+    if release_variant:
+        ET.SubElement(props, "DefineConstants").text = "$(DefineConstants);SHARPLINK_PACKAGED_COORDINATION_R2"
     references = ET.SubElement(project, "ItemGroup")
     for package, version in packages.items():
         ET.SubElement(references, "PackageReference", Include=package, Version=version)
@@ -140,13 +143,7 @@ def main():
         r2 = None
         if args.cross_process:
             r2 = stage_project(work, "SharpLink.DynamicServices", SERVICE, released("Sdk"),
-                               project_reference=CONTRACT, directory="r2")
-            implementation = r2.parent / "DynamicPluginService.cs"
-            content = implementation.read_text()
-            original = "public ValueTask<int> UnaryAsync(int value, CancellationToken cancellationToken)\n        => ValueTask.FromResult(value + 1);"
-            if content.count(original) != 1:
-                raise ValueError("The known sample Unary implementation has changed")
-            implementation.write_text(content.replace(original, original.replace("value + 1", "value + 10")), encoding="utf-8")
+                               project_reference=CONTRACT, directory="r2", release_variant=True)
             projects.append(r2)
         run(["dotnet", "--info"], "sdk.log")
         for project in projects:

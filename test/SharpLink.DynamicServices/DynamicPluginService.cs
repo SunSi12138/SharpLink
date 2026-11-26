@@ -88,7 +88,11 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     {
         if (Interlocked.Exchange(ref _failNextUnary, 0) != 0)
             throw new InvalidOperationException("The dynamic service could not complete this call.");
+#if SHARPLINK_PACKAGED_COORDINATION_R2
+        return ValueTask.FromResult(value + 10);
+#else
         return ValueTask.FromResult(value + 1);
+#endif
     }
 
     public ValueTask NotifyAsync(int value, CancellationToken cancellationToken)
