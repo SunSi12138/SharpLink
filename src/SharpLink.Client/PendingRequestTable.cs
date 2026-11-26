@@ -644,7 +644,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (Volatile.Read(ref slots[index]) is not null || IsLegacyInlineId(id))
+                    if (Volatile.Read(ref slots[index]) is not null || IsReservedInlineIndex(index))
                         continue;
 
                     operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
@@ -723,7 +723,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (Volatile.Read(ref slots[index]) is not null || IsLegacyInlineId(id))
+                    if (Volatile.Read(ref slots[index]) is not null || IsReservedInlineIndex(index))
                         continue;
 
                     var call = PendingCall.Rent(
@@ -776,6 +776,13 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool IsLegacyInlineId(long id)
         => id == Volatile.Read(ref _inlineRequestId) && Volatile.Read(ref _inlineSlot) is not null;
+
+    // A promoted connection still reserves the old call's logical ring cell
+    // until that inline call finishes. Keep the original ID collision rule.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsReservedInlineIndex(int index)
+        => index == (int)(Volatile.Read(ref _inlineRequestId) & _indexMask) &&
+           Volatile.Read(ref _inlineSlot) is not null;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ref PendingCall? ReadSlot(long id)
