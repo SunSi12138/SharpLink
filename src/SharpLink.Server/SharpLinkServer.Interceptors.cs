@@ -3,7 +3,6 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     private ValueTask InvokeServiceAsync(
-        ServiceRegistration registration,
         ServerConnectionState connection,
         RpcSession session,
         NStudyMethodFacts facts,
@@ -26,54 +25,36 @@ internal sealed partial class SharpLinkServer
             return ValueTask.FromException(error);
         }
 
+        var oneWayInput = methodDescriptor.Kind == RpcMethodKind.OneWay && methodDescriptor.HasClientStreams;
+        var isStream = oneWayInput || methodDescriptor.Kind is RpcMethodKind.ClientStreaming or
+            RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+        if (!binding.TryEnterExecution(isStream, out var registration, out var executionLease))
+        {
+            var error = NStudyBindingRetiredError();
+            var rejectedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
+            rejectedTelemetry.Complete(error);
+            return ValueTask.FromException(error);
+        }
+        if (executionLease.IsAcquired)
+        {
+            if (callState is null)
+            {
+                executionLease.Dispose();
+                throw new InvalidOperationException("A dynamic call needs a physical owner.");
+            }
+            callState.AttachExecutionLease(executionLease);
+        }
+
         var execute = registration.GetNStudyExecutor(facts.ExecutorSlot);
-        StreamManager.InputStreamDrain inputDrain = default;
-        if (!registration.HasModule)
-        {
-            if (!binding.TryEnterExecution(registration, isStream: false, out _))
-                return RejectRetiredExecution();
-            if (registration.TryGetStaticSingleton(
-                    connection.GeneratedBridge,
-                    requestId,
-                    out var singleton))
-            {
-                return InvokeServiceTrackedAsync(
-                    execute,
-                    singleton,
-                    session,
-                    connection.GeneratedBridge,
-                    requestId,
-                    arguments,
-                    output,
-                    cancellationToken,
-                    context,
-                    methodDescriptor);
-            }
-        }
+        if (registration.TryGetStaticSingleton(connection.GeneratedBridge, requestId, out var singleton))
+            return InvokeServiceTrackedAsync(execute, singleton, session, connection.GeneratedBridge,
+                requestId, arguments, output, cancellationToken, context, methodDescriptor);
 
-        var isStream = false;
-        var hasRequestStreams = false;
-        if (registration.HasModule)
-        {
-            var descriptor = methodDescriptor;
-            isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
-            hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.DuplexStreaming;
-            if (descriptor.Kind == RpcMethodKind.OneWay && descriptor.ClientStreamCount > 0)
-            {
-                isStream = hasRequestStreams = true;
-                inputDrain = session.StreamManager.CaptureInputStreamDrain(requestId, descriptor.ClientStreamCount);
-            }
-        }
-
-        if (registration.HasModule)
-        {
-            var executionOwner = callState ?? throw new InvalidOperationException("A dynamic call needs a physical owner.");
-            if (!binding.TryEnterExecution(registration, isStream, out var executionLease))
-                return RejectRetiredExecution();
-            executionOwner.AttachExecutionLease(executionLease);
-        }
+        var hasRequestStreams = registration.HasModule && (oneWayInput ||
+            methodDescriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming);
+        var inputDrain = registration.HasModule && oneWayInput
+            ? session.StreamManager.CaptureInputStreamDrain(requestId, methodDescriptor.ClientStreamCount)
+            : default;
 
         try
         {
@@ -155,14 +136,6 @@ internal sealed partial class SharpLinkServer
             methodDescriptor,
             inputDrain);
 
-        ValueTask RejectRetiredExecution()
-        {
-            var error = NStudyBindingRetiredError();
-            var rejectedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
-            rejectedTelemetry.Complete(error);
-            var rejection = ValueTask.FromException(error);
-            return inputDrain.IsEmpty ? rejection : CompleteDynamicOneWayInputAsync(rejection, default, inputDrain);
-        }
     }
 
     private static async ValueTask CompleteDynamicInputAsync(

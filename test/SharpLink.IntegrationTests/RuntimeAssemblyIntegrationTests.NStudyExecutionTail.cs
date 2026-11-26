@@ -4,6 +4,98 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
+    [Arguments("tcp", true)]
+    [Arguments("shared-memory", true)]
+    [Arguments("tcp", false)]
+    [Arguments("shared-memory", false)]
+    public Task NStudySynchronousPreparationDoesNotKeepRetiredRegistration(string transport, bool inlineDecode)
+    {
+        var decoder = new NStudyHeldServerDecoder();
+        var selectorEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var selectorRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long selectedContract = 0;
+        return WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: true,
+            async (fixture, trace, ct) =>
+            {
+                var (server, contracts, oldAssembly, newAssembly, oldType, _, first, secondOrNull, _) = fixture;
+                var second = secondOrNull ?? throw new InvalidOperationException("Expected an independent connection.");
+                var oldRegistration = ObserveDecoderRegistration(first.ServerConnection, first.A.BindingId);
+                var module = GetDynamicModule(server, oldAssembly);
+                Volatile.Write(ref selectedContract, first.A.Contract);
+                try
+                {
+                    Task<int> pending;
+                    if (inlineDecode)
+                    {
+                        var payloadType = contracts.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
+                        var payload = Activator.CreateInstance(payloadType)!;
+                        payloadType.GetProperty("Label")!.SetValue(payload, new string('x', 4096));
+                        pending = InvokeValueTaskAsync<int>(first.Receiver.Service, contracts.ContractType,
+                            "UsePayloadAsync", payload, ct).AsTask();
+                        _ = await decoder.FirstEntered.Task.WaitAsync(ct);
+                        Ensure(server.DecodeStartedWorkCountForDiagnostics == 0,
+                            "this ordinary 4 KiB request decodes inline, not in the persistent executor");
+                    }
+                    else
+                    {
+                        pending = InvokeValueTaskAsync<int>(first.Receiver.Service, contracts.ContractType,
+                            "UnaryAsync", 7, ct).AsTask();
+                        await selectorEntered.Task.WaitAsync(ct);
+                    }
+
+                    Ensure(module.RemainingCalls == 0 && !pending.IsCompleted,
+                        "the held provider or selector has not entered application execution");
+                    var retired = await server.ReplaceAssemblyAsync(oldAssembly, newAssembly, TimeSpan.FromSeconds(5), ct)
+                        .AsTask().WaitAsync(ct).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                    EnsureReplacementReleased(retired, "preparation does not block the original registration's release");
+                    await CollectPreparedRegistrationAsync(oldRegistration, ct);
+                    Ensure(!oldRegistration.IsAlive && !pending.IsCompleted &&
+                           await second.Sibling.TouchAsync(6, ct) == 106,
+                        "the synchronous preparation still runs without rooting the old registration or affecting a different connection");
+
+                    decoder.Release();
+                    selectorRelease.TrySetResult();
+                    await EnsureQueuedSelectionUnavailableAsync(pending);
+                    Ensure(NStudyCount(oldType, "Created") == 0,
+                        "the old request may not activate the retired registration after preparation");
+                }
+                finally
+                {
+                    decoder.Release();
+                    selectorRelease.TrySetResult();
+                }
+            },
+            configureClient: inlineDecode ? builder =>
+                builder.UseRuntime(options => options.Compression.Providers.Add(new TestCompressionProvider()))
+                    .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
+                    {
+                        MinimumPayloadBytes = 256,
+                        MinimumSavingsBytes = 8,
+                        MinimumSavingsRatio = 0.05
+                    }) : null,
+            configureServer: builder =>
+            {
+                if (inlineDecode)
+                    builder.UseRuntime(options => options.Compression.Providers.Add(decoder));
+                else
+                    builder.UseAdmissionControl(options => options.UsePartition(context =>
+                    {
+                        if (context.ContractId == Volatile.Read(ref selectedContract))
+                        {
+                            selectorEntered.TrySetResult();
+                            selectorRelease.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                        }
+                        return "normal-tenant";
+                    }, partition =>
+                    {
+                        partition.MaxPartitions = 8;
+                        partition.UseConcurrency(8);
+                    }));
+            });
+    }
+
+    [Test]
+    [NotInParallel]
     [Arguments("tcp")]
     [Arguments("shared-memory")]
     public Task NStudyDynamicExecutionOwnsOldModuleThroughExceptionMapping(string transport)

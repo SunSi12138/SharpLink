@@ -37,12 +37,8 @@ internal sealed partial class SharpLinkServer
 
     private bool ShouldUsePersistentDecode(
         ProtocolV2FrameFlags flags,
-        ServiceRegistration serviceInfo,
-        ServerRequestEnvelope request,
         ReadOnlySequence<byte> payload)
     {
-        _ = serviceInfo;
-        _ = request;
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0 ||
             (flags & ProtocolV2FrameFlags.Cancellable) == 0 ||
             Volatile.Read(ref _decodeExecutor) is null)

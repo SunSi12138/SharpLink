@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
         ServerRequestEnvelope request,
-        ServiceRegistration? serviceInfo,
+        in DispatchPreparation preparation,
         NStudyServerBindings.Use binding,
         int declaredClientStreamCount,
         ServerCallCancellationState? admittedCallState = null,
@@ -25,7 +25,7 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
-            if (serviceInfo is null)
+            if (!preparation.IsBound)
             {
                 if (admittedCallState is not null)
                 {
@@ -46,7 +46,8 @@ internal sealed partial class SharpLinkServer
 
             // Only the exact method's shape can reach a typed route. The independent
             // count is enough to discard input even if the exact method isn't available.
-            if (!serviceInfo.TryGetNStudyMethod(request.MethodHash, out var facts) ||
+            var facts = preparation.Facts;
+            if (!preparation.HasMethod ||
                 facts.Descriptor.Kind != RpcMethodKind.OneWay ||
                 facts.Descriptor.HasClientStreams != (declaredClientStreamCount != 0) ||
                 facts.Descriptor.ClientStreamCount != declaredClientStreamCount)
@@ -77,7 +78,7 @@ internal sealed partial class SharpLinkServer
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                 return ValueTask.CompletedTask;
             }
-            if (!serviceInfo.AcceptsCalls)
+            if (!preparation.AcceptsCalls)
             {
                 DrainRejectedOneWayStreams(
                     session,
@@ -90,6 +91,7 @@ internal sealed partial class SharpLinkServer
                 return ValueTask.CompletedTask;
             }
 
+            var moduleCancellation = preparation.ModuleCancellation;
             if (admissionProgram is not null && !admissionGranted)
             {
                 admittedCallState = CreateAdmissionWaitState(
@@ -97,7 +99,7 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     request.RpcDeadline,
                     serverLoopToken,
-                    serviceInfo.ModuleCancellation,
+                    moduleCancellation,
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
@@ -128,7 +130,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, out var retainedPayload))
+                    if (!TryCopyAdmissionPayload(payload, flags, out var retainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return new ValueTask(RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -166,7 +168,8 @@ internal sealed partial class SharpLinkServer
                         facts,
                         admittedCallState,
                         admissionProgram,
-                        binding));
+                        binding,
+                        moduleCancellation));
                 }
 
                 var decision = admissionTask.Result;
@@ -217,7 +220,7 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         request.RpcDeadline,
                         serverLoopToken,
-                        serviceInfo.ModuleCancellation,
+                        moduleCancellation,
                         requestCancellationMap);
                     if (!TryPrepareCompressedRequestDecode(
                             requestOwner,
@@ -364,21 +367,21 @@ internal sealed partial class SharpLinkServer
             }
 
             var supportsCooperativeCancellation =
-                (isCancellable || serviceInfo.Module is not null) &&
+                (isCancellable || moduleCancellation.CanBeCanceled) &&
                 facts.Descriptor.SupportsCancellation;
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,
                 request.RpcDeadline,
                 serverLoopToken,
-                serviceInfo.ModuleCancellation,
+                moduleCancellation,
                 supportsCooperativeCancellation,
                 requestCancellationMap);
             if (decodedRequestOwner is not null)
             {
                 callState = EnsureTrackedCallState(
                     connection, callState, requestId, request.RpcDeadline,
-                    serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                    serverLoopToken, moduleCancellation, requestCancellationMap);
                 callState.AttachPayloadOwner(_runtimeContext.Buffers, decodedRequestOwner);
                 decodedRequestOwner = null;
             }
@@ -400,7 +403,7 @@ internal sealed partial class SharpLinkServer
                     // yet. Establish its exact owner before the mailbox becomes visible.
                     callState = EnsureTrackedCallState(
                         connection, callState, requestId, request.RpcDeadline,
-                        serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                        serverLoopToken, moduleCancellation, requestCancellationMap);
                     ReservePreInvocationRequestStreams(
                         session, descriptor.ClientStreamCount, requestId, invokeToken,
                         callState.CaptureLease(requestId).TerminalOwner);
@@ -408,7 +411,6 @@ internal sealed partial class SharpLinkServer
 
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(
-                    serviceInfo,
                     connection,
                     session,
                     facts,
@@ -439,7 +441,7 @@ internal sealed partial class SharpLinkServer
 
                 callState = EnsureTrackedCallState(
                     connection, callState, requestId, request.RpcDeadline,
-                    serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                    serverLoopToken, moduleCancellation, requestCancellationMap);
                 return new ValueTask(AwaitOneWayDispatchAsync(
                     invokeTask,
                     callState,

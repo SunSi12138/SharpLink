@@ -13,7 +13,8 @@ internal sealed partial class SharpLinkServer
         NStudyMethodFacts facts,
         ServerCallCancellationState callState,
         AdmissionProgram admissionProgram,
-        NStudyServerBindings.Use binding)
+        NStudyServerBindings.Use binding,
+        CancellationToken moduleCancellation)
     {
         var transferred = false;
         try
@@ -37,7 +38,7 @@ internal sealed partial class SharpLinkServer
             if (!binding.CanPrepareDispatch())
                 return;
             var dispatchTask = DispatchAdmittedOneWayRpc(
-                retainedPayload.SelectedService,
+                moduleCancellation,
                 facts,
                 binding,
                 connection,
@@ -74,7 +75,8 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState callState,
         AdmissionProgram admissionProgram,
         NStudyServerBindings.Use binding,
-        NStudyMethodFacts facts)
+        NStudyMethodFacts facts,
+        CancellationToken moduleCancellation)
     {
         var transferred = false;
         try
@@ -108,7 +110,7 @@ internal sealed partial class SharpLinkServer
                 return;
             }
             var dispatchTask = DispatchAdmittedRpcAsync(
-                retainedPayload.SelectedService,
+                moduleCancellation,
                 facts,
                 binding,
                 connection,

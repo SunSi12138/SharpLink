@@ -116,14 +116,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
             EnsureReplacementReleased((await replacing.WaitAsync(ct).ConfigureAwait(
                 ConfigureAwaitOptions.ForceYielding)).Replacement, "original service registration retirement");
-            for (var attempt = 0; attempt < 16 && r1Registration.IsAlive; attempt++)
-            {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
-                if (r1Registration.IsAlive)
-                    await Task.Delay(25, ct);
-            }
+            await CollectPreparedRegistrationAsync(r1Registration, ct);
             Ensure(!r1Registration.IsAlive && decoder.Finished == 0 && !decoding.IsCompleted &&
                    connection.NStudyBindings.Snapshot() == (2, 1, 1),
                 "ReferencesReleased means the actual decoder does not hold the old registration while it owns bytes and a binding borrow");
@@ -163,6 +156,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(connection.NStudyBindings.TryResolve(bindingId, out var registration),
             "the original prepared binding resolves its live registration before decode");
         return new WeakReference(registration);
+    }
+
+    private static async Task CollectPreparedRegistrationAsync(WeakReference registration, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 16 && registration.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            if (registration.IsAlive)
+                await Task.Delay(25, ct);
+        }
     }
 
     private sealed class NStudyHeldServerDecoder : ISharpLinkCompressionProvider

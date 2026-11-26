@@ -122,10 +122,11 @@ public class ServerConnectionStateTests
         Ensure(table.TryBorrow(replacement, out _, out var nextUse), "capture the new incarnation");
         using (nextUse)
         {
-            Ensure(nextUse.TryEnterExecution(sibling, isStream: false, out var lease) && !lease.IsAcquired,
+            Ensure(nextUse.TryEnterExecution(isStream: false, out var selected, out var lease) &&
+                   ReferenceEquals(selected, sibling) && !lease.IsAcquired,
                 "the new static incarnation can start without a dynamic module lease");
             table.Release(replacement);
-            Ensure(!nextUse.TryEnterExecution(sibling, isStream: false, out _),
+            Ensure(!nextUse.TryEnterExecution(isStream: false, out _, out _),
                 "single-binding release prevents a later execution claim");
         }
     }

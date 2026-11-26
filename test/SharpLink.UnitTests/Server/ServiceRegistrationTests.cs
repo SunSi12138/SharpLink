@@ -225,7 +225,6 @@ public partial class ServiceRegistrationTests
                     supportsCooperativeCancellation: false);
                 await (ValueTask)(method.Invoke(server,
                 [
-                    registration,
                     connection,
                     connection.Session,
                     facts,
@@ -278,7 +277,8 @@ public partial class ServiceRegistrationTests
         Ensure(bindings.TryInstall(registration, out var id), "the module is published on this binding");
         Ensure(bindings.TryBorrow(id, out _, out var binding), "the request borrows its exact binding");
         using var bindingUse = binding;
-        Ensure(binding.TryEnterExecution(registration, isStream: false, out var lease), "execution obtains the module lease");
+        Ensure(binding.TryEnterExecution(isStream: false, out var selected, out var lease) &&
+               ReferenceEquals(selected, registration), "execution obtains the original module lease");
         var failing = CaptureAsync(() => registration.AcquireAdmittedServiceAsync(null!, null, 102, lease));
         Exception? result = null;
         try

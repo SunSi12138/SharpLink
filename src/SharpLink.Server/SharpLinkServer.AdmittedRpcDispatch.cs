@@ -5,7 +5,7 @@ internal sealed partial class SharpLinkServer
     // Dedicated queued continuation: admission identity never enters immediate dispatch.
     // The post-admission resource skeleton mirrors the immediate method and requires parity tests.
     private ValueTask DispatchAdmittedRpcAsync(
-        QueuedServiceSelection serviceSelection,
+        CancellationToken moduleCancellation,
         NStudyMethodFacts facts,
         NStudyServerBindings.Use binding,
         ServerConnectionState connection,
@@ -46,26 +46,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceSelection.TryGetService(out var serviceInfo))
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unavailable,
-                            "RPC module is draining"),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
-            }
-            if (!serviceInfo.AcceptsCalls)
+            if (!binding.CanPrepareDispatch())
             {
                 ValueTask responseSend;
                 try
@@ -111,7 +92,7 @@ internal sealed partial class SharpLinkServer
             }
             var requestOwner = requestPermit;
 
-            if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
+            if (isCompressed && ShouldUsePersistentDecode(flags, payload))
             {
                 return DispatchRpcWithPersistentDecodeAsync(
                     connection,
@@ -119,7 +100,7 @@ internal sealed partial class SharpLinkServer
                     flags,
                     payload,
                     request,
-                    serviceInfo,
+                    moduleCancellation,
                     facts,
                     binding,
                     requestCancellationMap,
@@ -140,7 +121,7 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         request.RpcDeadline,
                         serverLoopToken,
-                        serviceInfo.ModuleCancellation,
+                        moduleCancellation,
                         requestCancellationMap);
                     if (!TryPrepareCompressedRequestDecode(
                             requestOwner,
@@ -252,7 +233,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                moduleCancellation,
                 facts,
                 binding,
                 requestCancellationMap,

@@ -202,6 +202,15 @@ internal sealed class NStudyServerBindings
         return false;
     }
 
+    internal SharpLinkServer.DispatchPreparation BorrowDispatch(long bindingId, long method, out Use use)
+    {
+        if (!TryBorrow(bindingId, out var registration, out use))
+            return default;
+
+        var hasMethod = registration.TryGetNStudyMethod(method, out var facts);
+        return new(facts, registration.ModuleCancellation, IsBound: true, registration.AcceptsCalls, hasMethod);
+    }
+
     internal void Release(long bindingId)
     {
         lock (_gate)
@@ -294,25 +303,28 @@ internal sealed class NStudyServerBindings
             return TryFind(bindingId, out var index) && _slots![index].Open;
     }
 
-    private bool TryEnterExecution(long bindingId, ServiceRegistration registration, bool isStream,
+    private bool TryEnterExecution(long bindingId, bool isStream, out ServiceRegistration registration,
         out SharpLinkDynamicModuleLease lease)
     {
         lease = default;
         lock (_gate)
         {
-            if (!TryFind(bindingId, out var index))
-                return false;
-            ref var slot = ref _slots![index];
-            if (!slot.Open || slot.Users == 0 ||
-                !slot.Service.TryGetService(out var selected) || !ReferenceEquals(selected, registration))
-                return false;
-
-            // Release/Close are ordered by this table gate. Registry retirement
-            // closes the module's admission before it seals the slots. Acquiring
-            // under the open-slot check makes both conditions true at one point.
-            // No service activation, Codec or application callback runs here.
-            return registration.Module is not { } module || module.TryAcquire(isStream, out lease);
+            if (TryFind(bindingId, out var index))
+            {
+                ref var slot = ref _slots![index];
+                if (slot.Open && slot.Users != 0 && slot.Service.TryGetService(out registration))
+                {
+                    // Release/Close are ordered by this table gate. Registry retirement
+                    // closes the module's admission before it seals the slots. Resolve and
+                    // acquire together so both conditions are true at one point.
+                    // No service activation, Codec or application callback runs here.
+                    if (registration.Module is not { } module || module.TryAcquire(isStream, out lease))
+                        return true;
+                }
+            }
         }
+        registration = null!;
+        return false;
     }
 
     private void Return(long bindingId)
@@ -383,11 +395,12 @@ internal sealed class NStudyServerBindings
     internal readonly struct Use(NStudyServerBindings owner, long bindingId) : IDisposable
     {
         internal bool CanPrepareDispatch() => owner?.CanPrepareDispatch(bindingId) == true;
-        internal bool TryEnterExecution(ServiceRegistration registration, bool isStream,
+        internal bool TryEnterExecution(bool isStream, out ServiceRegistration registration,
             out SharpLinkDynamicModuleLease lease)
         {
+            registration = null!;
             lease = default;
-            return owner is not null && owner.TryEnterExecution(bindingId, registration, isStream, out lease);
+            return owner is not null && owner.TryEnterExecution(bindingId, isStream, out registration, out lease);
         }
         public void Dispose() => owner?.Return(bindingId);
     }

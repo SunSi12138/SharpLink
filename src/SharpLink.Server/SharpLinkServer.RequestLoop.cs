@@ -464,7 +464,8 @@ internal sealed partial class SharpLinkServer
             try
             {
                 var request = ReadRequestEnvelope(connection.Session, payload, flags);
-                _ = connection.NStudyBindings.TryBorrow(request.InterfaceHash, out var selected, out bindingUse);
+                var preparation = connection.NStudyBindings.BorrowDispatch(request.InterfaceHash, request.MethodHash,
+                    out bindingUse);
                 var admissionProgram = CaptureAdmissionProgram(requestId);
                 dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
                     ? DispatchOneWayRpc(
@@ -476,7 +477,7 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         admissionProgram,
                         request,
-                        selected,
+                        in preparation,
                         bindingUse,
                         oneWayInputCount)
                     : DispatchRpcAsync(
@@ -488,7 +489,7 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         admissionProgram,
                         request,
-                        selected,
+                        in preparation,
                         bindingUse);
             }
             catch (SharpLinkException exception) when (

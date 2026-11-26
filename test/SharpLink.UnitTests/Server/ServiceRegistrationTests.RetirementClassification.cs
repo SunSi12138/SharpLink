@@ -76,7 +76,8 @@ public partial class ServiceRegistrationTests
             {
                 Ensure(preparing.CanPrepareDispatch() && module.RemainingCalls == 0,
                     "transport preparation takes no business lease");
-                Ensure(running.TryEnterExecution(registration, isStream: true, out var executionLease),
+                Ensure(running.TryEnterExecution(isStream: true, out var selected, out var executionLease) &&
+                       ReferenceEquals(selected, registration),
                     "a request can enter business on the original open module");
                 using (executionLease)
                 {
@@ -91,7 +92,7 @@ public partial class ServiceRegistrationTests
                         Ensure(registration.AcceptsCalls, "the module is still open after single-slot release");
                     }
 
-                    Ensure(!preparing.TryEnterExecution(registration, isStream: true, out var denied) && !denied.IsAcquired,
+                    Ensure(!preparing.TryEnterExecution(isStream: true, out _, out var denied) && !denied.IsAcquired,
                         "passing preparation cannot bypass either final admission gate");
                     if (moduleClosesFirst)
                         Ensure(table.Seal(registration.NStudyTarget), "seal the retiring module's exact slot");

@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
         ServerRequestEnvelope request,
-        ServiceRegistration? serviceInfo,
+        in DispatchPreparation preparation,
         NStudyServerBindings.Use binding,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
@@ -42,7 +42,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (serviceInfo is null)
+            if (!preparation.IsBound)
             {
                 ValueTask responseSend;
                 try
@@ -61,7 +61,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceInfo.AcceptsCalls)
+            if (!preparation.AcceptsCalls)
             {
                 ValueTask responseSend;
                 try
@@ -80,7 +80,8 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceInfo.TryGetNStudyMethod(request.MethodHash, out var facts) ||
+            var facts = preparation.Facts;
+            if (!preparation.HasMethod ||
                 !IsSupportedNStudyTwoWayShape(facts.Descriptor, flags))
             {
                 return session.SendRpcErrorWithBackpressureAsync(requestId,
@@ -89,6 +90,7 @@ internal sealed partial class SharpLinkServer
                     connection.ConnectionToken);
             }
 
+            var moduleCancellation = preparation.ModuleCancellation;
             if (admissionProgram is not null && !admissionGranted)
             {
                 admittedCallState = CreateAdmissionWaitState(
@@ -96,7 +98,7 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     request.RpcDeadline,
                     serverLoopToken,
-                    serviceInfo.ModuleCancellation,
+                    moduleCancellation,
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
@@ -137,7 +139,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, out var queuedRetainedPayload))
+                    if (!TryCopyAdmissionPayload(payload, flags, out var queuedRetainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -165,7 +167,8 @@ internal sealed partial class SharpLinkServer
                         admittedCallState,
                         admissionProgram,
                         binding,
-                        facts);
+                        facts,
+                        moduleCancellation);
                 }
 
                 var decision = admissionTask.Result;
@@ -225,7 +228,7 @@ internal sealed partial class SharpLinkServer
             }
             var requestOwner = requestPermit;
 
-            if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
+            if (isCompressed && ShouldUsePersistentDecode(flags, payload))
             {
                 return DispatchRpcWithPersistentDecodeAsync(
                     connection,
@@ -233,7 +236,7 @@ internal sealed partial class SharpLinkServer
                     flags,
                     payload,
                     request,
-                    serviceInfo,
+                    moduleCancellation,
                     facts,
                     binding,
                     requestCancellationMap,
@@ -254,7 +257,7 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         request.RpcDeadline,
                         serverLoopToken,
-                        serviceInfo.ModuleCancellation,
+                        moduleCancellation,
                         requestCancellationMap);
                     if (!TryPrepareCompressedRequestDecode(
                             requestOwner,
@@ -366,7 +369,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                moduleCancellation,
                 facts,
                 binding,
                 requestCancellationMap,
