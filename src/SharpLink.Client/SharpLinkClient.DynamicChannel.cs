@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace SharpLink.Client;
 
 internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLinkDynamicModule module) : IRpcChannel
@@ -20,7 +22,11 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
                 combined.Dispose();
                 return call;
             }
-            return AwaitAsync(call, lease, combined);
+            // A collectible result would also make the pooling builder's
+            // thread-static cache collectible (dotnet/runtime#134983).
+            return typeof(TResponse).IsCollectible
+                ? AwaitAsync(call, lease, combined)
+                : AwaitPooledUnaryAsync(call, lease, combined);
         }
         catch { lease.Dispose(); combined.Dispose(); throw; }
     }
@@ -107,6 +113,14 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
     }
 
     private static async ValueTask<T> AwaitAsync<T>(ValueTask<T> call, SharpLinkDynamicModuleLease lease,
+        CombinedCancellation combined)
+    {
+        try { return await call.ConfigureAwait(false); }
+        finally { lease.Dispose(); combined.Dispose(); }
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<T> AwaitPooledUnaryAsync<T>(ValueTask<T> call, SharpLinkDynamicModuleLease lease,
         CombinedCancellation combined)
     {
         try { return await call.ConfigureAwait(false); }
