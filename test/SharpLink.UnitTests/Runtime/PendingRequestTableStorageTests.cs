@@ -53,6 +53,8 @@ public class PendingRequestTableStorageTests
         var second = table.Rent<int>(out var secondId);
         Ensure(table.SlotsMaterialized && table.Contains(firstId) && table.Contains(secondId),
             "promotion must publish the new request without moving or losing the original");
+        Ensure(table.DeadlineSlotSpan == table.Capacity + 1,
+            "the live inline request must still be included in deadline scans");
         await FinishResponseAsync(table, secondId, second);
 
         clock.Advance(delay - TimeSpan.FromTicks(1));
@@ -79,8 +81,15 @@ public class PendingRequestTableStorageTests
             "the original cancellation must be delivered to its own operation");
         Ensure(!table.Contains(firstId) && table.Contains(secondId),
             "inline completion must not remove the dense call");
+        var third = table.Rent<int>(out var thirdId);
+        Ensure(table.DeadlineSlotSpan == table.Capacity,
+            "the next registration must settle on the flat route after the inline request exits");
+        Ensure((firstId & 1) == (thirdId & 1), "the old ring index must be available again");
+        Ensure(!table.TryComplete(firstId, PendingCallCompletionReason.ConnectionClosed),
+            "the old full ID must not claim the newly registered call in the same ring index");
         await FinishResponseAsync(table, secondId, second);
-        Ensure(table.Count == 0 && table.ActiveCount == 0, "both reservations must be released");
+        await FinishResponseAsync(table, thirdId, third);
+        Ensure(table.Count == 0 && table.ActiveCount == 0, "all reservations must be released");
     }
 
     [Test]

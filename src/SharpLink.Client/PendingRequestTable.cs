@@ -59,7 +59,8 @@ internal interface IPendingCallCompletionObserver
 /// </summary>
 /// <remarks>
 /// A connection starts with an inline slot. Overlap may publish a flat table without
-/// moving the original call. A slot contains the complete request ID. Completion removes
+/// moving the original call; once that call leaves, the flat table is the only route.
+/// A slot contains the complete request ID. Completion removes
 /// the slot with one compare/exchange,
 /// so response, cancellation, deadline and disconnect races converge on one terminal path. The
 /// operation object is returned to its type-specific pool only after its caller observes GetResult.
@@ -69,7 +70,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     private readonly int _indexMask;
     private readonly int _capacity;
     private readonly object _slotsInitializationGate = new();
+    // The two references can only point to the same array. _slots is published
+    // after the inline cell is empty and can no longer accept new calls.
     private PendingCall?[]? _slots;
+    private PendingCall?[]? _transitionSlots;
     private PendingCall? _inlineSlot;
     private long _inlineRequestId;
     private readonly IRpcCodecProvider _codecProvider;
@@ -118,15 +122,21 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     internal int ActiveCount => Volatile.Read(ref _activeSlots);
 
-    internal bool SlotsMaterialized => Volatile.Read(ref _slots) is not null;
-    internal int DeadlineSlotSpan => 1 + (Volatile.Read(ref _slots)?.Length ?? 0);
+    internal bool SlotsMaterialized => Volatile.Read(ref _transitionSlots) is not null;
+    internal int DeadlineSlotSpan =>
+        Volatile.Read(ref _slots)?.Length ?? 1 + (Volatile.Read(ref _transitionSlots)?.Length ?? 0);
 
     public int Count
     {
         get
         {
-            var count = Volatile.Read(ref _inlineSlot) is null ? 0 : 1;
             var slots = Volatile.Read(ref _slots);
+            var count = 0;
+            if (slots is null)
+            {
+                count = Volatile.Read(ref _inlineSlot) is null ? 0 : 1;
+                slots = Volatile.Read(ref _transitionSlots);
+            }
             if (slots is null)
                 return count;
 
@@ -509,8 +519,13 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     {
         ArgumentNullException.ThrowIfNull(exception);
         List<Exception>? failures = null;
-        FailPendingSlot(ref _inlineSlot, exception, ref failures);
-        if (Volatile.Read(ref _slots) is { } slots)
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+        {
+            FailPendingSlot(ref _inlineSlot, exception, ref failures);
+            slots = Volatile.Read(ref _transitionSlots);
+        }
+        if (slots is not null)
         {
             for (var index = 0; index < slots.Length; index++)
                 FailPendingSlot(ref slots[index], exception, ref failures);
@@ -621,30 +636,35 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         try
         {
             var slots = Volatile.Read(ref _slots);
-            if (slots is null && Volatile.Read(ref _inlineSlot) is null)
+            var reservedIndex = -1;
+            if (slots is null)
             {
-                id = NextRequestId();
-                operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
-                var call = PendingCall.Rent(this, id, kind, operation, dispatcher, deadline,
-                    cancellationToken, completionObserver);
-                if (TryInstallInline(call, id))
+                if (Volatile.Read(ref _transitionSlots) is null && Volatile.Read(ref _inlineSlot) is null)
                 {
-                    published = true;
-                    OnRegistered(call);
-                    CompleteRegistrationIfDisposed(call);
-                    return true;
+                    id = NextRequestId();
+                    operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
+                    var call = PendingCall.Rent(this, id, kind, operation, dispatcher, deadline,
+                        cancellationToken, completionObserver);
+                    if (TryInstallInline(call, id))
+                    {
+                        published = true;
+                        OnRegistered(call);
+                        CompleteRegistrationIfDisposed(call);
+                        return true;
+                    }
+                    call.ReturnUnused();
                 }
-                call.ReturnUnused();
+                slots = PrepareFlatSlots(out reservedIndex);
             }
 
-            slots ??= GetOrCreateSlots();
             while (true)
             {
                 for (var attempt = 0; attempt < slots.Length; attempt++)
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (Volatile.Read(ref slots[index]) is not null || IsReservedInlineIndex(index))
+                    if (Volatile.Read(ref slots[index]) is not null ||
+                        index == reservedIndex && Volatile.Read(ref _inlineSlot) is not null)
                         continue;
 
                     operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
@@ -701,29 +721,34 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         try
         {
             var slots = Volatile.Read(ref _slots);
-            if (slots is null && Volatile.Read(ref _inlineSlot) is null)
+            var reservedIndex = -1;
+            if (slots is null)
             {
-                id = NextRequestId();
-                var call = PendingCall.Rent(this, id, kind, operation, dispatcher, deadline,
-                    cancellationToken, completionObserver);
-                if (TryInstallInline(call, id))
+                if (Volatile.Read(ref _transitionSlots) is null && Volatile.Read(ref _inlineSlot) is null)
                 {
-                    published = true;
-                    OnRegistered(call);
-                    CompleteRegistrationIfDisposed(call);
-                    return true;
+                    id = NextRequestId();
+                    var call = PendingCall.Rent(this, id, kind, operation, dispatcher, deadline,
+                        cancellationToken, completionObserver);
+                    if (TryInstallInline(call, id))
+                    {
+                        published = true;
+                        OnRegistered(call);
+                        CompleteRegistrationIfDisposed(call);
+                        return true;
+                    }
+                    call.ReturnUnused();
                 }
-                call.ReturnUnused();
+                slots = PrepareFlatSlots(out reservedIndex);
             }
 
-            slots ??= GetOrCreateSlots();
             while (true)
             {
                 for (var attempt = 0; attempt < slots.Length; attempt++)
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (Volatile.Read(ref slots[index]) is not null || IsReservedInlineIndex(index))
+                    if (Volatile.Read(ref slots[index]) is not null ||
+                        index == reservedIndex && Volatile.Read(ref _inlineSlot) is not null)
                         continue;
 
                     var call = PendingCall.Rent(
@@ -766,7 +791,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         // the call in parallel, but publication cannot change the ID past promotion.
         lock (_slotsInitializationGate)
         {
-            if (_slots is not null || Interlocked.CompareExchange(ref _inlineSlot, call, null) is not null)
+            if (_transitionSlots is not null ||
+                Interlocked.CompareExchange(ref _inlineSlot, call, null) is not null)
                 return false;
             _inlineRequestId = id;
             return true;
@@ -774,41 +800,50 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool IsLegacyInlineId(long id)
-        => id == Volatile.Read(ref _inlineRequestId) && Volatile.Read(ref _inlineSlot) is not null;
-
-    // A promoted connection still reserves the old call's logical ring cell
-    // until that inline call finishes. Keep the original ID collision rule.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool IsReservedInlineIndex(int index)
-        => index == (int)(Volatile.Read(ref _inlineRequestId) & _indexMask) &&
-           Volatile.Read(ref _inlineSlot) is not null;
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ref PendingCall? ReadSlot(long id)
     {
         var slots = Volatile.Read(ref _slots);
-        // The published flat table freezes the last inline ID. A live call
-        // never moves between cells, even across a completion gate.
-        if (slots is null || IsLegacyInlineId(id))
+        if (slots is not null)
+            return ref slots[(int)(id & _indexMask)];
+        return ref ReadUnsettledSlot(id);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ref PendingCall? ReadUnsettledSlot(long id)
+    {
+        // Keep the original reference even after settling. A reader which
+        // already saw _slots == null must resolve the same dense array.
+        var slots = Volatile.Read(ref _transitionSlots);
+        if (slots is null ||
+            (id == Volatile.Read(ref _inlineRequestId) && Volatile.Read(ref _inlineSlot) is not null))
             return ref _inlineSlot;
         return ref slots[(int)(id & _indexMask)];
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private PendingCall?[] GetOrCreateSlots()
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private PendingCall?[] PrepareFlatSlots(out int reservedIndex)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is not null)
-            return slots;
-
         lock (_slotsInitializationGate)
         {
-            slots = Volatile.Read(ref _slots);
+            var slots = _transitionSlots;
             if (slots is null)
             {
                 slots = new PendingCall?[_capacity];
-                Volatile.Write(ref _slots, slots);
+                Volatile.Write(ref _transitionSlots, slots);
+            }
+
+            if (Volatile.Read(ref _inlineSlot) is null)
+            {
+                // Inline publishes under the same gate and is disabled once
+                // _transitionSlots exists. The empty cell is now permanent.
+                reservedIndex = -1;
+                if (_slots is null)
+                    Volatile.Write(ref _slots, slots);
+            }
+            else
+            {
+                // While the inline call remains live, keep its original ring index reserved.
+                reservedIndex = (int)(_inlineRequestId & _indexMask);
             }
 
             return slots;
@@ -1060,8 +1095,13 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        ScanSlotDeadline(ref _inlineSlot);
-        if (Volatile.Read(ref _slots) is not { } slots)
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+        {
+            ScanSlotDeadline(ref _inlineSlot);
+            slots = Volatile.Read(ref _transitionSlots);
+        }
+        if (slots is null)
             return;
 
         for (var index = 0; index < slots.Length; index++)
