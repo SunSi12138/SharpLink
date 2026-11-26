@@ -8,7 +8,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [NotInParallel]
     [Arguments("tcp")]
     [Arguments("shared-memory")]
-    public async Task NStudyAwaitedUnaryDoesNotKeepTheCollectibleResultAssembly(string transport)
+    public Task NStudyAwaitedUnaryDoesNotKeepTheCollectibleResultAssembly(string transport)
+        => VerifyCollectibleUnaryResultAsync(transport, intercept: false);
+
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp")]
+    [Arguments("shared-memory")]
+    public Task NStudyInterceptedUnaryDoesNotKeepTheCollectibleResultAssembly(string transport)
+        => VerifyCollectibleUnaryResultAsync(transport, intercept: true);
+
+    private static async Task VerifyCollectibleUnaryResultAsync(string transport, bool intercept)
     {
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var ct = budget.Token;
@@ -21,7 +31,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         {
             var provider = serverContext.LoadFromAssemblyPath(path);
             Ensure(harness.Server.RegisterAssembly(provider).Succeeded, "the server registers its own matching assembly");
-            var retired = await RoundTripAndRetireUnaryResultAsync(harness, directory, path, ct)
+            var retired = await RoundTripAndRetireUnaryResultAsync(harness, directory, path, intercept, ct)
                 .ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             for (var i = 0; retired.IsAlive && i < 24; i++)
             {
@@ -39,10 +49,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<WeakReference> RoundTripAndRetireUnaryResultAsync(
-        DynamicHarness harness, string directory, string path, CancellationToken ct)
+        DynamicHarness harness, string directory, string path, bool intercept, CancellationToken ct)
     {
         var loader = new PluginLoadContext("typed-unary-result-client", directory);
         var hold = new UnaryResultHold();
+        var forwarder = intercept ? new UnaryResultForwarder() : null;
         try
         {
             var assembly = loader.LoadFromAssemblyPath(path);
@@ -52,6 +63,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "a separate collectible client registers the actual result type");
             var proxy = CreatePreparedGeneratedProxy(harness.Client, contract);
             await proxy.PrepareAsync(ct);
+            if (forwarder is not null)
+                harness.Client.ReplaceInterceptors([forwarder]);
             harness.Server.ReplaceInterceptors([hold]);
             var read = (Task<int>)typeof(RuntimeAssemblyIntegrationTests)
                 .GetMethod(nameof(ReadCollectibleUnaryResultAsync), BindingFlags.Static | BindingFlags.NonPublic)!
@@ -60,6 +73,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(!read.IsCompleted, "the result was genuinely asynchronous on the generated public proxy");
             hold.Release.TrySetResult();
             Ensure(await read.WaitAsync(ct) == 37, "the original generated codec returns the typed result");
+            Ensure(forwarder is null || forwarder.Visits == 1,
+                "the genuinely asynchronous intercepted call took the logical invocation wrapper");
             var retired = await harness.Client.UnregisterAssemblyAsync(assembly, TimeSpan.FromSeconds(5), ct);
             Ensure(retired.ReferencesReleased, "the original local registration retires after the call");
             return new WeakReference(loader);
@@ -68,6 +83,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         {
             hold.Release.TrySetResult();
             harness.Server.ReplaceInterceptors([]);
+            if (forwarder is not null)
+                harness.Client.ReplaceInterceptors([]);
             loader.Unload();
         }
     }
@@ -89,6 +106,20 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Entered.TrySetResult();
             await Release.Task.WaitAsync(context.CancellationToken);
             await next(context);
+        }
+    }
+
+    private sealed class UnaryResultForwarder : ISharpLinkClientInterceptor
+    {
+        private int _visits;
+
+        internal int Visits => Volatile.Read(ref _visits);
+
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context, SharpLinkClientInvocationDelegate next)
+        {
+            Interlocked.Increment(ref _visits);
+            return next(context);
         }
     }
 }

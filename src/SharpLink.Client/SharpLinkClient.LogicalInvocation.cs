@@ -13,7 +13,11 @@ internal sealed partial class SharpLinkClient
             Interlocked.Decrement(ref _activeLogicalInvocations);
             return invocation;
         }
-        return AwaitLogicalInvocationAsync(invocation);
+        // The pooling builder uses thread-static state-machine caches. A collectible
+        // result would make the cache itself collectible (dotnet/runtime#134983).
+        return typeof(T).IsCollectible
+            ? AwaitLogicalInvocationAsync(invocation)
+            : AwaitPooledLogicalInvocationAsync(invocation);
     }
 
     private ValueTask CompleteLogicalInvocation(ValueTask invocation)
@@ -27,6 +31,12 @@ internal sealed partial class SharpLinkClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<T> AwaitPooledLogicalInvocationAsync<T>(ValueTask<T> invocation)
+    {
+        try { return await invocation.ConfigureAwait(false); }
+        finally { Interlocked.Decrement(ref _activeLogicalInvocations); }
+    }
+
     private async ValueTask<T> AwaitLogicalInvocationAsync<T>(ValueTask<T> invocation)
     {
         try { return await invocation.ConfigureAwait(false); }
