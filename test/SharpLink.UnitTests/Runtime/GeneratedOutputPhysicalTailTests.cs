@@ -5,6 +5,7 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class GeneratedOutputPhysicalTailTests
 {
     [Test]
+    [NotInParallel]
     public async Task PhysicalWorkFaultMustStillPrecedeUniqueDisposalAndCtsRelease()
     {
         var tail = new GeneratedOutputPhysicalTail();
@@ -16,10 +17,16 @@ public sealed class GeneratedOutputPhysicalTailTests
         var join = tail.JoinAsync().AsTask();
         Ensure(disposal.Calls == 0 && cancellation.DisposeCount == 0, "pending work must precede disposal");
         work.SetException(new InvalidOperationException("late MoveNext failure"));
-        await disposal.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(disposal.Calls == 1 && !join.IsCompleted && cancellation.DisposeCount == 0,
-            "late work failure cannot skip or concurrently start a second disposal");
-        disposal.Release.SetResult();
+        try
+        {
+            await disposal.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(disposal.Calls == 1 && !join.IsCompleted && cancellation.DisposeCount == 0,
+                "late work failure cannot skip or concurrently start a second disposal");
+        }
+        finally
+        {
+            disposal.Release.TrySetResult();
+        }
         await join.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(disposal.Calls == 1 && cancellation.DisposeCount == 1, "full ordered chain releases exactly once");
     }
