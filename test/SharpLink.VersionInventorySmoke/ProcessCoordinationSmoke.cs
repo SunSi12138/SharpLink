@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using SharpLink.Abstractions;
 using SharpLink.Client;
@@ -20,11 +21,7 @@ internal static partial class CoordinationSmoke
         var contractType = contract.GetType("SharpLink.DynamicPlugin.IDynamicPluginService", throwOnError: true)!;
         if (role == "server")
         {
-            using var oldLoader = new PluginContext("process-r1", plugins, contract);
             using var newLoader = new PluginContext("process-r2", plugins, contract);
-            const string filename = "SharpLink.DynamicPlugin.Services.dll";
-            var original = oldLoader.LoadFromAssemblyPath(Path.Combine(plugins, "r1", filename));
-            var oldHandler = original.GetType("SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
             await using var services = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
             var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback).UseServiceProvider(services)
                 .UseAuthenticator(SharpLinkAuthenticator.CreateServer((request, _) => ValueTask.FromResult(
@@ -37,42 +34,20 @@ internal static partial class CoordinationSmoke
             await using var server = builder.Build();
             server.SetVersionCoordinationMode(SharpLinkVersionCoordinationMode.Automatic);
             RequireRegistration(server.RegisterAssembly(contract), "server contract");
-            RequireRegistration(server.RegisterAssembly(original), "server implementation R1");
-            await server.StartAsync(ct);
-            Signal("server-ready", port.ToString(CultureInfo.InvariantCulture));
-
-            try
+            var retired = await ReplaceOriginalAsync(server, newLoader, port);
+            for (int attempt = 0; attempt < 10 && (retired.Context.IsAlive || retired.Assembly.IsAlive); attempt++)
             {
-                await WaitForAsync("client-joined");
-                await ((Task)oldHandler.GetProperty("BlockStarted")!.GetValue(null)!).WaitAsync(ct);
-                // The replacement binary is deployed independently of the running R1 request.
-                var replacement = newLoader.LoadFromAssemblyPath(Path.Combine(plugins, "r2", filename));
-                var newHandler = replacement.GetType(oldHandler.FullName!, throwOnError: true)!;
-                var declaration = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(entry =>
-                    entry.Contracts.Any(item => item.ContractType == contractType));
-                var contractId = declaration.Contracts.Single(item => item.ContractType == contractType).ContractId;
-                var before = server.GetLocalVersionInventory().Registrations.Single(item => item.ContractId == contractId);
-                var peer = server.GetVersionPeers().Single();
-                var participant = new SharpLinkVersionParticipant(peer, SharpLinkVersionInitiator.Server);
-                var replacing = server.ReplaceAssemblyCoordinatedAsync(original, replacement, contractId,
-                    [participant], budget, cancellationToken: ct).AsTask();
-                await WaitForAsync("client-resumed");
-                Check(!replacing.IsCompleted && Count(oldHandler, "Disposed") == 0 && Count(newHandler, "Created") == 1,
-                    "the independently deployed R2 serves requests while the admitted R1 remains owned");
-                oldHandler.GetMethod("ReleaseBlock")!.Invoke(null, null);
-                var completed = await replacing.WaitAsync(ct);
-                var after = server.GetLocalVersionInventory().Registrations.Single(item => item.ContractId == contractId);
-                Check(completed.Replacement.Succeeded && completed.Replacement.ReferencesReleased &&
-                      completed.Replacement.RemainingCalls == 0 && Count(oldHandler, "Disposed") == 1 &&
-                      completed.Peers.Single().Session == peer && completed.Peers.Single().ActivationSent &&
-                      after.RegistrationId != before.RegistrationId && after.AssemblyHash == before.AssemblyHash &&
-                      server.GetVersionPeers().Single() == peer,
-                    "replacement publishes a new registration and joins the old physical work on the original connection");
-                Signal("server-drained");
-                await WaitForAsync("client-verified");
-                Console.WriteLine("PACKAGE_COORDINATION_PROCESS_SERVER_PASS original-drained=true");
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                await Task.Delay(20, ct);
             }
-            finally { oldHandler.GetMethod("ReleaseBlock")!.Invoke(null, null); }
+            Check(!retired.Context.IsAlive && !retired.Assembly.IsAlive && server.GetVersionPeers().Single() == retired.Peer,
+                "both the retired implementation and its load context are collected with the original Session open");
+            Console.WriteLine("PACKAGE_COORDINATION_PROCESS_R1_UNLOADED same-session=true");
+            Signal("server-drained");
+            await WaitForAsync("client-verified");
+            Console.WriteLine("PACKAGE_COORDINATION_PROCESS_SERVER_PASS original-drained=true");
         }
         else
         {
@@ -111,6 +86,51 @@ internal static partial class CoordinationSmoke
                 "new and unrelated calls still work after the old owner releases");
             Signal("client-verified");
             Console.WriteLine("PACKAGE_COORDINATION_PROCESS_CLIENT_PASS same-session=true different-implementation=true");
+        }
+
+        // Keep every strong R1 reference in this activation scope. The live server,
+        // shared contract and R2 loader remain owned by the caller during collection.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        async Task<(WeakReference Context, WeakReference Assembly, SharpLinkVersionSession Peer)> ReplaceOriginalAsync(
+            ISharpLinkServer server, PluginContext newLoader, int port)
+        {
+            using var oldLoader = new PluginContext("process-r1", plugins, contract);
+            const string filename = "SharpLink.DynamicPlugin.Services.dll";
+            var original = oldLoader.LoadFromAssemblyPath(Path.Combine(plugins, "r1", filename));
+            var oldHandler = original.GetType("SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
+            RequireRegistration(server.RegisterAssembly(original), "server implementation R1");
+            await server.StartAsync(ct);
+            Signal("server-ready", port.ToString(CultureInfo.InvariantCulture));
+            try
+            {
+                await WaitForAsync("client-joined");
+                await ((Task)oldHandler.GetProperty("BlockStarted")!.GetValue(null)!).WaitAsync(ct);
+                // The replacement binary is deployed independently of the running R1 request.
+                var replacement = newLoader.LoadFromAssemblyPath(Path.Combine(plugins, "r2", filename));
+                var newHandler = replacement.GetType(oldHandler.FullName!, throwOnError: true)!;
+                var declaration = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Single(entry =>
+                    entry.Contracts.Any(item => item.ContractType == contractType));
+                var contractId = declaration.Contracts.Single(item => item.ContractType == contractType).ContractId;
+                var before = server.GetLocalVersionInventory().Registrations.Single(item => item.ContractId == contractId);
+                var peer = server.GetVersionPeers().Single();
+                var participant = new SharpLinkVersionParticipant(peer, SharpLinkVersionInitiator.Server);
+                var replacing = server.ReplaceAssemblyCoordinatedAsync(original, replacement, contractId,
+                    [participant], budget, cancellationToken: ct).AsTask();
+                await WaitForAsync("client-resumed");
+                Check(!replacing.IsCompleted && Count(oldHandler, "Disposed") == 0 && Count(newHandler, "Created") == 1,
+                    "the independently deployed R2 serves requests while the admitted R1 remains owned");
+                oldHandler.GetMethod("ReleaseBlock")!.Invoke(null, null);
+                var completed = await replacing.WaitAsync(ct);
+                var after = server.GetLocalVersionInventory().Registrations.Single(item => item.ContractId == contractId);
+                Check(completed.Replacement.Succeeded && completed.Replacement.ReferencesReleased &&
+                      completed.Replacement.RemainingCalls == 0 && Count(oldHandler, "Disposed") == 1 &&
+                      completed.Peers.Single().Session == peer && completed.Peers.Single().ActivationSent &&
+                      after.RegistrationId != before.RegistrationId && after.AssemblyHash == before.AssemblyHash &&
+                      server.GetVersionPeers().Single() == peer,
+                    "replacement publishes a new registration and joins the old physical work on the original connection");
+                return (new WeakReference(oldLoader), new WeakReference(original), peer);
+            }
+            finally { oldHandler.GetMethod("ReleaseBlock")!.Invoke(null, null); }
         }
 
         // These files sequence the two test applications only. The actual proposal,

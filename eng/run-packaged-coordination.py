@@ -91,6 +91,7 @@ def run_process_pair(host, plugins, handoff, output, env, evidence):
                 server.wait()
             evidence["commands"].append(dict(argv=server_args, exitCode=server.returncode, log=server_log.name))
     markers = [
+        (server_log, "PACKAGE_COORDINATION_PROCESS_R1_UNLOADED same-session=true"),
         (server_log, "PACKAGE_COORDINATION_PROCESS_SERVER_PASS original-drained=true"),
         (client_log, "PACKAGE_COORDINATION_PROCESS_CLIENT_PASS same-session=true different-implementation=true"),
     ]
