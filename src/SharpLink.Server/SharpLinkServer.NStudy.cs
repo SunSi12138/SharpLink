@@ -168,11 +168,12 @@ internal sealed class NStudyServerBindings
                     return false;
                 }
 
-                // No slot reference escapes the gate. Copy the complete slot at
-                // the same index, including physical users and pending notices.
+                // Preserve both the gated bookkeeping and the immutable service
+                // selection of every borrowed slot at its original index.
                 var expanded = new Slot[Math.Min(index * 2, NStudyWire.BindingLimit)];
                 slots.AsSpan().CopyTo(expanded);
-                _slots = slots = expanded;
+                Volatile.Write(ref _slots, expanded);
+                slots = expanded;
             }
 
             ref var entry = ref slots[index];
@@ -326,6 +327,16 @@ internal sealed class NStudyServerBindings
         out SharpLinkDynamicModuleLease lease)
     {
         lease = default;
+        // A physical Use pins this incarnation and its service selection through Return.
+        // Growth only copies that selection. For a static service the open-bit read is
+        // the admission point, ordered against Release, Seal and Close; there is no lease.
+        var slots = Volatile.Read(ref _slots)!;
+        if (slots[NStudyWire.SlotIndex(bindingId)].Service.StaticService is { } staticService)
+        {
+            registration = CanPrepareDispatch(bindingId) ? staticService : null!;
+            return registration is not null;
+        }
+
         lock (_gate)
         {
             if (TryFind(bindingId, out var index))

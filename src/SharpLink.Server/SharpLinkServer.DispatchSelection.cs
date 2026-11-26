@@ -22,6 +22,8 @@ internal sealed partial class SharpLinkServer
         private readonly ServiceRegistration? _staticService;
         private readonly WeakReference<ServiceRegistration>? _dynamicService;
 
+        internal ServiceRegistration? StaticService => _staticService;
+
         internal QueuedServiceSelection(ServiceRegistration service)
         {
             if (service.HasModule)

@@ -84,6 +84,7 @@ public class ServerConnectionStateTests
             Ensure(use.CanPrepareDispatch() && bindings.Snapshot() == (2, 0, 1), "one exact borrowed grant is active");
             await state.CloseAsync();
             Ensure(bindings.Snapshot() == (0, 1, 1) && !use.CanPrepareDispatch() &&
+                   !use.TryEnterExecution(isStream: false, out _, out _) &&
                    !bindings.TryResolve(idleId, out _) && !bindings.TryInstall(idle, out _) &&
                    bindings.TakeInvalidated(new long[NStudyWire.BindingLimit]) == 0,
                 "close drops idle grants and pending notices without forgetting the exact physical borrower");
@@ -109,7 +110,9 @@ public class ServerConnectionStateTests
                 Ensure(firstUse.CanPrepareDispatch() && secondUse.CanPrepareDispatch(),
                     "both original routes pass preparation before the cut");
                 Ensure(table.Seal(group.NStudyTarget), "the group has pending invalidations");
-                Ensure(!firstUse.CanPrepareDispatch() && !secondUse.CanPrepareDispatch() && table.Snapshot() == (1, 2, 2),
+                Ensure(!firstUse.CanPrepareDispatch() && !secondUse.CanPrepareDispatch() &&
+                       !firstUse.TryEnterExecution(isStream: false, out _, out _) &&
+                       !secondUse.TryEnterExecution(isStream: true, out _, out _) && table.Snapshot() == (1, 2, 2),
                     "the cut denies both new starts but keeps both physical owners until they return");
                 Ensure(table.TryResolve(other, out var current) && ReferenceEquals(current, sibling),
                     "the cut does not close the unrelated binding");
@@ -151,7 +154,8 @@ public class ServerConnectionStateTests
                 last = binding;
             }
 
-            Ensure(!borrow.CanPrepareDispatch() && table.Snapshot() == (NStudyWire.BindingLimit - 1, 1, 1) &&
+            Ensure(!borrow.CanPrepareDispatch() && !borrow.TryEnterExecution(isStream: false, out _, out _) &&
+                   table.Snapshot() == (NStudyWire.BindingLimit - 1, 1, 1) &&
                    !table.TryInstall(live, out _), "an old physical borrower still occupies one of the 64 slots");
             var notices = new long[NStudyWire.BindingLimit];
             Ensure(table.TakeInvalidated(notices) == 1 && notices[0] == original && table.TakeInvalidated(notices) == 0,
@@ -172,6 +176,32 @@ public class ServerConnectionStateTests
         }
         table.Close();
         Ensure(table.Snapshot() == (0, 0, 0), "close reclaims all grown slots");
+    }
+
+    [Test]
+    public async Task OpenBorrowAdmitsOriginalStaticRegistrationAfterTableGrowth()
+    {
+        var table = new NStudyServerBindings();
+        await using var first = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var sibling = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(table.TryInstall(first, out var original), "publish the original static binding");
+        Ensure(table.TryBorrow(original, out _, out var borrow), "borrow it before table growth");
+        using (borrow)
+        {
+            for (var index = 1; index < NStudyWire.BindingLimit; index++)
+                Ensure(table.TryInstall(sibling, out _), "fill the table through every growth step");
+
+            Ensure(borrow.TryEnterExecution(isStream: false, out var selected, out var lease) &&
+                   ReferenceEquals(selected, first) && !lease.IsAcquired,
+                "the physical borrow still admits its original static service, without a dynamic lease");
+            table.Release(original);
+            Ensure(!borrow.TryEnterExecution(isStream: false, out _, out _) && !table.TryInstall(sibling, out _),
+                "release closes admission but the physical borrow still pins the full table");
+        }
+
+        Ensure(table.TryInstall(sibling, out var next) && next != original &&
+               NStudyWire.SlotIndex(next) == NStudyWire.SlotIndex(original),
+            "return frees the old slot for a new incarnation");
     }
 
     [Test]
