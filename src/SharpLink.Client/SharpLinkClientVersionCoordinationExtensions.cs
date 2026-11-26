@@ -38,6 +38,8 @@ public static class SharpLinkClientVersionCoordinationExtensions
     /// Automatic mode still requires this call.
     /// Only a result with Resumed set confirms the client has prepared the new route.
     /// If a decline arrives after the source route was frozen, prepare the proxy again before calling it.
+    /// If the server published but this follower session was not activated, prepare the new group on a
+    /// fresh physical session; the original session still permits unrelated groups.
     /// An interrupted connection can fail with <see cref="SharpLinkErrorCode.Unavailable"/>.
     /// Query current inventory before retrying; interruption does not establish whether the server published.
     /// </remarks>

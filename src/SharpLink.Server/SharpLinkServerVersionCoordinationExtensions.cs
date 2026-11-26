@@ -26,6 +26,8 @@ public static class SharpLinkServerVersionCoordinationExtensions
     /// cannot veto publication approved by the primary. Retry with a fresh attempt, not a saved vote.
     /// Automatic mode still requires explicit participation by each client.
     /// An activation sent by the server is not proof of client resume.
+    /// After publication an unactivated follower cannot prepare the new group on that physical session;
+    /// a fresh physical session is required to prepare the group. Unrelated groups remain usable.
     /// Cancellation after publication does not roll it back; query local inventory to reconcile.
     /// </remarks>
     public static ValueTask<SharpLinkServerVersionChangeResult> ReplaceAssemblyCoordinatedAsync(

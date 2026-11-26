@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | Generator | 契约/服务编译期分析、诊断、生成 Proxy/Stub/Codec/Manifest | [Generator 架构](architecture-generator.md) |
 | Runtime | 协议、Session、帧/流调度、发送泵、Runtime Context 内部 Codec/Manifest/Buffer 机制状态、传输机制 | [Runtime 架构](architecture-runtime.md) |
-| Client | Client 配置、连接/端点拓扑、请求状态、重连、取消/deadline 与 `IRpcChannel` | [Client 架构](architecture-client.md) |
+| Client | Client 配置、连接/端点拓扑、已准备的契约通道、请求状态、重连与取消/deadline | [Client 架构](architecture-client.md) |
 | Server | Server 配置、监听/会话编排、服务注册与调用生命周期、认证/异常边界 | [Server 架构](architecture-server.md) |
 
 `SharpLink.Abstractions` 是跨子系统的稳定公共契约层；`SharpLink.Sdk` 是契约项目的包入口并以 analyzer-only 方式携带 Generator；`SharpLink.GenerationControl` 提供可选的 peer generation 声明/同步契约；`SharpLink.Hosting` 提供 Generic Host 集成；`SharpLink.Serializer.SharpPack` 提供序列化 Adapter 集成。
@@ -109,7 +109,7 @@ Server 拥有从 Build 到 Run/Stop 的服务端实例生命周期及其 Runtime
 1. Generator 生成的 Proxy 通过 Abstractions 定义的调用契约进入 Client。
 2. Client 解析实例配置、endpoint/connection 选择、deadline/取消并建立 pending call。
 3. Runtime 把调用编码为协议帧，通过选定 transport/session 发送和接收。
-4. Server 根据生成 Descriptor/Stub 与服务 Registry 建立调用上下文并执行服务。
+4. Server 按当前物理 Session 的准备绑定选中确切注册，使用同一注册上的生成 Method Facts 和 Stub 建立调用上下文并执行。
 5. Runtime 负责响应帧和 stream terminal 的传输机制；Server 负责异常映射等服务端策略。
 6. Client 完成对应 pending call，并以调用侧语义暴露结果、取消、deadline 或远端错误。
 
