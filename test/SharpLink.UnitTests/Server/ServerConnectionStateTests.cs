@@ -81,9 +81,9 @@ public class ServerConnectionStateTests
         Ensure(bindings.TryBorrow(activeId, out _, out var use), "borrow the original slot");
         using (use)
         {
-            Ensure(use.ClaimStart() && bindings.Snapshot() == (2, 0, 1), "one exact borrowed grant is active");
+            Ensure(use.CanPrepareDispatch() && bindings.Snapshot() == (2, 0, 1), "one exact borrowed grant is active");
             await state.CloseAsync();
-            Ensure(bindings.Snapshot() == (0, 1, 1) && !use.ClaimStart() &&
+            Ensure(bindings.Snapshot() == (0, 1, 1) && !use.CanPrepareDispatch() &&
                    !bindings.TryResolve(idleId, out _) && !bindings.TryInstall(idle, out _) &&
                    bindings.TakeInvalidated(new long[NStudyWire.BindingLimit]) == 0,
                 "close drops idle grants and pending notices without forgetting the exact physical borrower");
@@ -106,9 +106,10 @@ public class ServerConnectionStateTests
             Ensure(table.TryBorrow(second, out _, out var secondUse), "capture the second exact slot");
             using (secondUse)
             {
-                Ensure(firstUse.ClaimStart() && secondUse.ClaimStart(), "both start on the original group before the cut");
+                Ensure(firstUse.CanPrepareDispatch() && secondUse.CanPrepareDispatch(),
+                    "both original routes pass preparation before the cut");
                 Ensure(table.Seal(group.NStudyTarget), "the group has pending invalidations");
-                Ensure(!firstUse.ClaimStart() && !secondUse.ClaimStart() && table.Snapshot() == (1, 2, 2),
+                Ensure(!firstUse.CanPrepareDispatch() && !secondUse.CanPrepareDispatch() && table.Snapshot() == (1, 2, 2),
                     "the cut denies both new starts but keeps both physical owners until they return");
                 Ensure(table.TryResolve(other, out var current) && ReferenceEquals(current, sibling),
                     "the cut does not close the unrelated binding");
@@ -121,9 +122,11 @@ public class ServerConnectionStateTests
         Ensure(table.TryBorrow(replacement, out _, out var nextUse), "capture the new incarnation");
         using (nextUse)
         {
-            Ensure(nextUse.ClaimStart(), "the newly published incarnation can start");
+            Ensure(nextUse.TryEnterExecution(sibling, isStream: false, out var lease) && !lease.IsAcquired,
+                "the new static incarnation can start without a dynamic module lease");
             table.Release(replacement);
-            Ensure(!nextUse.ClaimStart(), "single-binding release closes the new incarnation too");
+            Ensure(!nextUse.TryEnterExecution(sibling, isStream: false, out _),
+                "single-binding release prevents a later execution claim");
         }
     }
 

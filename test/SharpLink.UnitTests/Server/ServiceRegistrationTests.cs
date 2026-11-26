@@ -201,7 +201,7 @@ public partial class ServiceRegistrationTests
         }
     }
 
-    private static ValueTask InvokeRegisteredServiceAsync(
+    private static async ValueTask InvokeRegisteredServiceAsync(
         SharpLinkServer server,
         ServiceRegistration registration,
         ServerConnectionState connection,
@@ -212,18 +212,33 @@ public partial class ServiceRegistrationTests
             ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
         if (!registration.TryGetNStudyMethod(17, out var facts))
             throw new InvalidOperationException("the registration must have the prepared method facts");
-        return (ValueTask)(method.Invoke(server,
-        [
-            registration,
-            connection,
-            connection.Session,
-            facts,
-            requestId,
-            ReadOnlySequence<byte>.Empty,
-            null,
-            CancellationToken.None,
-            new SharpLinkCallContextSnapshot(connection.Session.Id, authentication: null)
-        ]) ?? throw new InvalidOperationException("server invocation did not return a ValueTask"));
+        var table = connection.NStudyBindings;
+        Ensure(table.TryInstall(registration, out var id), "fixture installs the exact service binding");
+        try
+        {
+            Ensure(table.TryBorrow(id, out var selected, out var binding) && ReferenceEquals(selected, registration),
+                "fixture holds the original binding through physical dispatch");
+            using (binding)
+            {
+                await (ValueTask)(method.Invoke(server,
+                [
+                    registration,
+                    connection,
+                    connection.Session,
+                    facts,
+                    binding,
+                    requestId,
+                    ReadOnlySequence<byte>.Empty,
+                    null,
+                    CancellationToken.None,
+                    new SharpLinkCallContextSnapshot(connection.Session.Id, authentication: null)
+                ]) ?? throw new InvalidOperationException("server invocation did not return a ValueTask"));
+            }
+        }
+        finally
+        {
+            table.Release(id);
+        }
     }
 
     [Test]

@@ -288,10 +288,31 @@ internal sealed class NStudyServerBindings
         }
     }
 
-    private bool ClaimStart(long bindingId)
+    private bool CanPrepareDispatch(long bindingId)
     {
         lock (_gate)
             return TryFind(bindingId, out var index) && _slots![index].Open;
+    }
+
+    private bool TryEnterExecution(long bindingId, ServiceRegistration registration, bool isStream,
+        out SharpLinkDynamicModuleLease lease)
+    {
+        lease = default;
+        lock (_gate)
+        {
+            if (!TryFind(bindingId, out var index))
+                return false;
+            ref var slot = ref _slots![index];
+            if (!slot.Open || slot.Users == 0 ||
+                !slot.Service.TryGetService(out var selected) || !ReferenceEquals(selected, registration))
+                return false;
+
+            // Release/Close are ordered by this table gate. Registry retirement
+            // closes the module's admission before it seals the slots. Acquiring
+            // under the open-slot check makes both conditions true at one point.
+            // No service activation, Codec or application callback runs here.
+            return registration.Module is not { } module || module.TryAcquire(isStream, out lease);
+        }
     }
 
     private void Return(long bindingId)
@@ -357,11 +378,17 @@ internal sealed class NStudyServerBindings
         }
     }
 
-    // Only DispatchRequestAsync owns Return. Queued continuations borrow this
-    // scalar identity to arbitrate their eventual start, never return the use.
+    // Only DispatchRequestAsync owns Return. Preparation checks can reject
+    // before decode/queue work, but only TryEnterExecution admits business.
     internal readonly struct Use(NStudyServerBindings owner, long bindingId) : IDisposable
     {
-        internal bool ClaimStart() => owner?.ClaimStart(bindingId) == true;
+        internal bool CanPrepareDispatch() => owner?.CanPrepareDispatch(bindingId) == true;
+        internal bool TryEnterExecution(ServiceRegistration registration, bool isStream,
+            out SharpLinkDynamicModuleLease lease)
+        {
+            lease = default;
+            return owner is not null && owner.TryEnterExecution(bindingId, registration, isStream, out lease);
+        }
         public void Dispose() => owner?.Return(bindingId);
     }
 }

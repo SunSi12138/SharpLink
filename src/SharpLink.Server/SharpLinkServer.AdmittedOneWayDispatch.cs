@@ -7,6 +7,7 @@ internal sealed partial class SharpLinkServer
     private ValueTask DispatchAdmittedOneWayRpc(
         QueuedServiceSelection serviceSelection,
         NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -277,6 +278,7 @@ internal sealed partial class SharpLinkServer
                     connection,
                     session,
                     facts,
+                    binding,
                     requestId,
                     request.Arguments,
                     output: null,

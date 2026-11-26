@@ -10,6 +10,7 @@ internal sealed partial class SharpLinkServer
         ServerRequestEnvelope request,
         ServiceRegistration serviceInfo,
         NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState? admittedCallState,
@@ -152,8 +153,9 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                new QueuedServiceSelection(serviceInfo),
                 facts,
+                binding,
                 requestCancellationMap,
                 serverLoopToken,
                 callState,
@@ -182,8 +184,9 @@ internal sealed partial class SharpLinkServer
         long requestId,
         ProtocolV2FrameFlags flags,
         ServerRequestEnvelope request,
-        ServiceRegistration serviceInfo,
+        QueuedServiceSelection selectedService,
         NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState callState,
@@ -296,18 +299,43 @@ internal sealed partial class SharpLinkServer
 
         var decodedOwner = result.Owner;
         result.Owner = null;
-        await ContinueRpcDispatch(
+        // The transport worker owns bytes and a physical binding borrow, not
+        // the service. Resolve only the original registration after decode.
+        // Keep the recovered reference off this async method's state machine.
+        await ContinueDecodedRpcDispatch(
+            selectedService,
             connection,
             requestId,
             flags,
             request,
-            serviceInfo,
             facts,
+            binding,
             requestCancellationMap,
             serverLoopToken,
             callState,
             requestOwner,
             decodedOwner).ConfigureAwait(false);
+    }
+
+    private ValueTask ContinueDecodedRpcDispatch(
+        QueuedServiceSelection selectedService,
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ServerRequestEnvelope request,
+        NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        ServerCallCancellationState callState,
+        ServerRequestPermit requestOwner,
+        IRpcByteBufferWriter? decodedOwner)
+    {
+        ServiceRegistration? registration = null;
+        if (binding.CanPrepareDispatch())
+            _ = selectedService.TryGetService(out registration);
+        return ContinueRpcDispatch(connection, requestId, flags, request, registration, facts, binding,
+            requestCancellationMap, serverLoopToken, callState, requestOwner, decodedOwner);
     }
 
     private static void ReconcileRetainedPayloadUse(

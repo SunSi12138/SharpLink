@@ -191,7 +191,7 @@ internal sealed partial class SharpLinkServer
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
             }
 
-            if (!binding.ClaimStart())
+            if (!binding.CanPrepareDispatch())
             {
                 if (admittedCallState is not null)
                     ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
@@ -235,6 +235,7 @@ internal sealed partial class SharpLinkServer
                     request,
                     serviceInfo,
                     facts,
+                    binding,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -367,6 +368,7 @@ internal sealed partial class SharpLinkServer
                 request,
                 serviceInfo,
                 facts,
+                binding,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,

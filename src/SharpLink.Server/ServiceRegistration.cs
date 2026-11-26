@@ -141,7 +141,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal bool TryGetNStudyMethod(long method, out NStudyMethodFacts facts) =>
         _nStudyMethods.TryGetValue(method, out facts);
 
-    // Only dereference the slot on the same registration after its start claim.
+    // The slot is local to the exact registration which supplied the facts.
     internal RpcGeneratedMethodExecutor GetNStudyExecutor(int slot) => _nStudyExecutors[slot];
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.
@@ -168,6 +168,23 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
+        return true;
+    }
+
+    // The caller already holds the exact dynamic execution lease.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetAdmittedDynamicSingleton(
+        IRpcGeneratedServerBridge generatedBridge, long requestId, out object service)
+    {
+        if (!_hasModule || Lifetime != SharpLinkServiceLifetime.Singleton)
+        {
+            service = null!;
+            return false;
+        }
+
+        if (Volatile.Read(ref _disposed) != 0)
+            throw CreateDisposedRegistrationException();
         service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
         return true;
     }
@@ -271,8 +288,20 @@ internal sealed class ServiceRegistration : IAsyncDisposable
                 "RPC module is draining"));
         }
 
+        return AcquireAdmittedServiceAsync(connection, generatedBridge, requestId, moduleLease);
+    }
+
+    // Takes ownership of the module lease, including when activation fails.
+    internal ValueTask<ServiceLease> AcquireAdmittedServiceAsync(
+        ServerConnectionState connection,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId,
+        SharpLinkDynamicModuleLease moduleLease)
+    {
         try
         {
+            if (Volatile.Read(ref _disposed) != 0)
+                throw CreateDisposedRegistrationException();
             if (_rootProvider is not null)
                 return ValueTask.FromResult(new ServiceLease(
                     GetOrCreateSingleton(generatedBridge, requestId),

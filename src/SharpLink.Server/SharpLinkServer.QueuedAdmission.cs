@@ -34,11 +34,12 @@ internal sealed partial class SharpLinkServer
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
-            if (!binding.ClaimStart())
+            if (!binding.CanPrepareDispatch())
                 return;
             var dispatchTask = DispatchAdmittedOneWayRpc(
                 retainedPayload.SelectedService,
                 facts,
+                binding,
                 connection,
                 requestId,
                 flags,
@@ -100,7 +101,7 @@ internal sealed partial class SharpLinkServer
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
-            if (!binding.ClaimStart())
+            if (!binding.CanPrepareDispatch())
             {
                 await PublishAdmissionError(connection.Session, requestId, callState, NStudyBindingRetiredError(),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -109,6 +110,7 @@ internal sealed partial class SharpLinkServer
             var dispatchTask = DispatchAdmittedRpcAsync(
                 retainedPayload.SelectedService,
                 facts,
+                binding,
                 connection,
                 requestId,
                 flags,

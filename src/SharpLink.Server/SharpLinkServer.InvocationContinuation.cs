@@ -3,17 +3,17 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     /// <summary>
-    /// Continues one two-way RPC after request preparation has completed. The caller supplies the
-    /// exact service-registration snapshot captured before any await so dynamic generation changes
-    /// cannot retarget an in-flight request.
+    /// Continues one two-way RPC after preparation. The registration is the exact original
+    /// selection, or null if it retired and was collected while transport decode was pending.
     /// </summary>
     private ValueTask ContinueRpcDispatch(
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
         ServerRequestEnvelope request,
-        ServiceRegistration serviceInfo,
+        ServiceRegistration? serviceInfo,
         NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState? callState,
@@ -59,6 +59,20 @@ internal sealed partial class SharpLinkServer
                 connection,
                 requestOwner);
             return ValueTask.FromException(exception);
+        }
+
+        if (serviceInfo is null)
+        {
+            // There is no service activation, so the decoded owner and its
+            // still-reserved permit are released here rather than transferred.
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            var exception = NStudyBindingRetiredError();
+            CompleteFailedRequestStreams(session, requestId, exception);
+            var responseSend = TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken)
+                ? session.SendRpcErrorWithBackpressureAsync(requestId, exception, connection.ConnectionToken)
+                : TrySendModuleDrainError(callState, session, requestId, connection.ConnectionToken);
+            return ReleaseDispatchResourcesAfterResponseAsync(
+                responseSend, callState, requestId, requestCancellationMap, connection, requestOwner);
         }
 
         if (callState is not null)
@@ -138,7 +152,7 @@ internal sealed partial class SharpLinkServer
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(
-                    serviceInfo, connection, session, facts, requestId,
+                    serviceInfo, connection, session, facts, binding, requestId,
                     request.Arguments, output: null, invokeToken, callContext);
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
@@ -251,7 +265,7 @@ internal sealed partial class SharpLinkServer
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);
             var invokeTask = InvokeServiceAsync(
-                serviceInfo, connection, session, facts, requestId,
+                serviceInfo, connection, session, facts, binding, requestId,
                 request.Arguments, writer, invokeToken, responseCallContext);
             if (!invokeTask.IsCompletedSuccessfully)
             {

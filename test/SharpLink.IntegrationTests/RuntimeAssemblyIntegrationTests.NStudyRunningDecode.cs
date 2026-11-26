@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace SharpLink.IntegrationTests;
@@ -38,6 +39,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var contract = contracts.ContractType;
         var payloadType = contracts.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
         var r1Module = GetDynamicModule(server, r1Assembly);
+        var r1Registration = ObserveDecoderRegistration(connection, original.BindingId);
         Ensure(SharpLinkAssemblyManifestLoader.TryLoad(contracts.ContractAssembly, out var manifest).Succeeded,
             "shared generated contract metadata for the method observer");
         var method = manifest!.Contracts.Single(item => item.ContractId == original.Contract).Methods
@@ -112,9 +114,23 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitForNStudyAsync(() => connection.NStudyBindings.Snapshot() == (2, 1, 1), ct);
             Record("R2WorksWhileOriginalDecoderAndRetiringBindingAreHeld");
 
+            EnsureReplacementReleased((await replacing.WaitAsync(ct).ConfigureAwait(
+                ConfigureAwaitOptions.ForceYielding)).Replacement, "original service registration retirement");
+            for (var attempt = 0; attempt < 16 && r1Registration.IsAlive; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                if (r1Registration.IsAlive)
+                    await Task.Delay(25, ct);
+            }
+            Ensure(!r1Registration.IsAlive && decoder.Finished == 0 && !decoding.IsCompleted &&
+                   connection.NStudyBindings.Snapshot() == (2, 1, 1),
+                "ReferencesReleased means the actual decoder does not hold the old registration while it owns bytes and a binding borrow");
+            Record("OriginalRegistrationReleasedWhileTransportDecodeStillOwnsBytes");
+
             decoder.Release();
             await EnsureQueuedSelectionUnavailableAsync(decoding);
-            EnsureReplacementReleased((await replacing.WaitAsync(ct)).Replacement, "original service registration retirement");
             await WaitForNStudyAsync(() => connection.NStudyBindings.Snapshot() == (2, 0, 0) &&
                 server.ActiveDecodeCountForDiagnostics == 0 && server.RetainedCompressedBytesForDiagnostics == 0 &&
                 server.DecodedBytesInFlightForDiagnostics == 0 && server.DecodeQueueDepthForDiagnostics == 0 &&
@@ -139,6 +155,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Record("FreshCompressedCallUsesR2AndReturnsAllBudgets");
         }
         finally { decoder.Release(); }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference ObserveDecoderRegistration(ServerConnectionState connection, long bindingId)
+    {
+        Ensure(connection.NStudyBindings.TryResolve(bindingId, out var registration),
+            "the original prepared binding resolves its live registration before decode");
+        return new WeakReference(registration);
     }
 
     private sealed class NStudyHeldServerDecoder : ISharpLinkCompressionProvider

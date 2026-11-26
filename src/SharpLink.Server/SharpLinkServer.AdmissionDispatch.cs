@@ -180,7 +180,7 @@ internal sealed partial class SharpLinkServer
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
             }
 
-            if (!binding.ClaimStart())
+            if (!binding.CanPrepareDispatch())
             {
                 DrainRejectedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
                 if (admittedCallState is not null)
@@ -412,6 +412,7 @@ internal sealed partial class SharpLinkServer
                     connection,
                     session,
                     facts,
+                    binding,
                     requestId,
                     request.Arguments,
                     output: null,

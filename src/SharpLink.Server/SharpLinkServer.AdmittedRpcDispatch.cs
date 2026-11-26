@@ -7,6 +7,7 @@ internal sealed partial class SharpLinkServer
     private ValueTask DispatchAdmittedRpcAsync(
         QueuedServiceSelection serviceSelection,
         NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -120,6 +121,7 @@ internal sealed partial class SharpLinkServer
                     request,
                     serviceInfo,
                     facts,
+                    binding,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -252,6 +254,7 @@ internal sealed partial class SharpLinkServer
                 request,
                 serviceInfo,
                 facts,
+                binding,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,

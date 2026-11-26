@@ -7,6 +7,7 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         RpcSession session,
         NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -25,27 +26,32 @@ internal sealed partial class SharpLinkServer
         }
 
         var execute = registration.GetNStudyExecutor(facts.ExecutorSlot);
-        if (registration.TryGetStaticSingleton(
-                connection.GeneratedBridge,
-                requestId,
-                out var singleton))
+        StreamManager.InputStreamDrain inputDrain = default;
+        if (!registration.HasModule)
         {
-            return InvokeServiceTrackedAsync(
-                execute,
-                singleton,
-                session,
-                connection.GeneratedBridge,
-                requestId,
-                arguments,
-                output,
-                cancellationToken,
-                context,
-                methodDescriptor);
+            if (!binding.TryEnterExecution(registration, isStream: false, out _))
+                return RejectRetiredExecution();
+            if (registration.TryGetStaticSingleton(
+                    connection.GeneratedBridge,
+                    requestId,
+                    out var singleton))
+            {
+                return InvokeServiceTrackedAsync(
+                    execute,
+                    singleton,
+                    session,
+                    connection.GeneratedBridge,
+                    requestId,
+                    arguments,
+                    output,
+                    cancellationToken,
+                    context,
+                    methodDescriptor);
+            }
         }
 
         var isStream = false;
         var hasRequestStreams = false;
-        StreamManager.InputStreamDrain inputDrain = default;
         if (registration.HasModule)
         {
             var descriptor = methodDescriptor;
@@ -60,15 +66,17 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        SharpLinkDynamicModuleLease dynamicSingletonLease = default;
+        SharpLinkDynamicModuleLease executionLease = default;
+        if (registration.HasModule &&
+            !binding.TryEnterExecution(registration, isStream, out executionLease))
+            return RejectRetiredExecution();
+
         try
         {
-            if (registration.TryAcquireDynamicSingleton(
-                    isStream,
+            if (registration.TryGetAdmittedDynamicSingleton(
                     connection.GeneratedBridge,
                     requestId,
-                    out var dynamicSingleton,
-                    out dynamicSingletonLease))
+                    out var dynamicSingleton))
             {
                 var invocation = InvokeServiceTrackedAsync(
                     execute,
@@ -83,10 +91,10 @@ internal sealed partial class SharpLinkServer
                     methodDescriptor);
                 if (!inputDrain.IsEmpty)
                     return CompleteDynamicOneWayInputAsync(invocation,
-                        new ServiceLease(dynamicSingleton, moduleLease: dynamicSingletonLease), inputDrain);
+                        new ServiceLease(dynamicSingleton, moduleLease: executionLease), inputDrain);
                 return CompleteDynamicSingletonInvocationAsync(
                     invocation,
-                    dynamicSingletonLease,
+                    executionLease,
                     session,
                     requestId,
                     hasRequestStreams);
@@ -98,10 +106,10 @@ internal sealed partial class SharpLinkServer
             failedTelemetry.Complete(exception);
             if (!inputDrain.IsEmpty)
                 return CompleteDynamicOneWayInputAsync(ValueTask.FromException(exception),
-                    new ServiceLease(registration, moduleLease: dynamicSingletonLease), inputDrain);
+                    new ServiceLease(registration, moduleLease: executionLease), inputDrain);
             return CompleteDynamicSingletonInvocationAsync(
                 ValueTask.FromException(exception),
-                dynamicSingletonLease,
+                executionLease,
                 session,
                 requestId,
                 hasRequestStreams);
@@ -110,11 +118,11 @@ internal sealed partial class SharpLinkServer
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync(
+            acquisition = registration.AcquireAdmittedServiceAsync(
                 connection,
-                isStream,
                 connection.GeneratedBridge,
-                requestId);
+                requestId,
+                executionLease);
         }
         catch (Exception exception)
         {
@@ -153,6 +161,15 @@ internal sealed partial class SharpLinkServer
             hasRequestStreams,
             methodDescriptor,
             inputDrain);
+
+        ValueTask RejectRetiredExecution()
+        {
+            var error = NStudyBindingRetiredError();
+            var rejectedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
+            rejectedTelemetry.Complete(error);
+            var rejection = ValueTask.FromException(error);
+            return inputDrain.IsEmpty ? rejection : CompleteDynamicOneWayInputAsync(rejection, default, inputDrain);
+        }
     }
 
     private static async ValueTask CompleteDynamicSingletonInvocationAsync(
