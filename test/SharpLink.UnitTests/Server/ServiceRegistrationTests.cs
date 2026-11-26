@@ -260,6 +260,43 @@ public partial class ServiceRegistrationTests
     }
 
     [Test]
+    public async Task FailedDynamicCallActivationHoldsLeaseThroughAsyncScopeCleanup()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecs = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(typeof(ServiceRegistrationTests).Assembly, manifest, codecs);
+        var scopeFactory = new GatedFailingScopeFactory();
+        await using var registration = ServiceRegistration.CreatePerCall(
+            typeof(object), new StubMarker(), scopeFactory,
+            static _ => throw new InvalidOperationException("activation failed"), disposeService: true, module);
+        var bindings = new NStudyServerBindings();
+        Ensure(bindings.TryInstall(registration, out var id), "the module is published on this binding");
+        Ensure(bindings.TryBorrow(id, out _, out var binding), "the request borrows its exact binding");
+        using var bindingUse = binding;
+        Ensure(binding.TryEnterExecution(registration, isStream: false, out var lease), "execution obtains the module lease");
+        var failing = CaptureAsync(() => registration.AcquireAdmittedServiceAsync(null!, null, 102, lease));
+        Exception? result = null;
+        try
+        {
+            await scopeFactory.Disposing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(module.TryBeginDraining() && bindings.Seal(registration.NStudyTarget),
+                "the normal module cut prevents later execution");
+            Ensure(module.RemainingCalls == 1 && !module.WaitForDrainAsync().IsCompleted && !failing.IsCompleted,
+                "the failed activation's async scope cleanup still owns the old module");
+        }
+        finally
+        {
+            scopeFactory.Release.TrySetResult();
+            result = await failing.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Ensure(result is AggregateException && ContainsMessage(result, "activation failed") &&
+               ContainsMessage(result, "scope cleanup failed"), "both original failures propagate");
+        Ensure(module.RemainingCalls == 0 && module.WaitForDrainAsync().IsCompletedSuccessfully,
+            "physical scope exit allows module retirement to finish");
+    }
+
+    [Test]
     public async Task ScopeCreationFailureShouldReleaseDynamicPerCallLease()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
@@ -618,6 +655,28 @@ public partial class ServiceRegistrationTests
     private sealed class ThrowingScopeFactory(string message) : IServiceScopeFactory
     {
         public IServiceScope CreateScope() => new ThrowingScope(message);
+    }
+
+    private sealed class GatedFailingScopeFactory : IServiceScopeFactory
+    {
+        internal TaskCompletionSource Disposing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IServiceScope CreateScope() => new Scope(this);
+
+        private sealed class Scope(GatedFailingScopeFactory owner) : IServiceScope, IAsyncDisposable
+        {
+            public IServiceProvider ServiceProvider { get; } = new EmptyServiceProvider();
+
+            public void Dispose() => throw new InvalidOperationException("use asynchronous scope disposal");
+
+            public async ValueTask DisposeAsync()
+            {
+                owner.Disposing.TrySetResult();
+                await owner.Release.Task.ConfigureAwait(false);
+                throw new InvalidOperationException("scope cleanup failed");
+            }
+        }
     }
 
     private sealed class ScopeCreationThrowingFactory : IServiceScopeFactory

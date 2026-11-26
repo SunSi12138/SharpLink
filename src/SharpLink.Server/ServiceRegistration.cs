@@ -368,7 +368,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
         catch (Exception activationException)
         {
-            moduleLease.Dispose();
             try
             {
                 if (scope is not null)
@@ -377,6 +376,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             catch (Exception cleanupException)
             {
                 throw new AggregateException(activationException, cleanupException);
+            }
+            finally
+            {
+                moduleLease.Dispose();
             }
             throw;
         }
