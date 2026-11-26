@@ -18,7 +18,7 @@ internal sealed class PreparedServerDispatchFixture
         SharpLinkServer server, ServerConnectionState connection, long requestId,
         ProtocolV2FrameFlags flags, ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> calls, CancellationToken serverLoopToken,
-        AdmissionProgram? program, ServerRequestEnvelope request, ServiceRegistration? registration,
+        AdmissionProgram? program, ServerRequestEnvelope request, in SharpLinkServer.DispatchPreparation preparation,
         NStudyServerBindings.Use binding, int declaredClientStreamCount,
         ServerCallCancellationState? admittedCallState, bool admissionGranted, int admittedClientStreamCount,
         ServerRetainedAdmissionPayload? retainedPayload);
@@ -74,14 +74,16 @@ internal sealed class PreparedServerDispatchFixture
     // real binding for that test and retains it through completion, as the request entry does.
     internal async ValueTask DispatchOneWayInsideCallerScope(long requestId)
     {
-        if (!_connection.NStudyBindings.TryBorrow(_binding, out var registration, out var use))
-            throw new InvalidOperationException("The fixture lost the prepared binding.");
+        var preparation = _connection.NStudyBindings.BorrowDispatch(_binding, _methodId, out var use);
         using (use)
         {
+            if (!preparation.IsBound || !preparation.HasMethod)
+                throw new InvalidOperationException("The fixture lost the prepared binding or method.");
+
             var request = new ServerRequestEnvelope(_binding, _methodId, default, default, null);
             await SDispatchOneWay(_server, _connection, requestId, ProtocolV2FrameFlags.OneWay,
                 ReadOnlySequence<byte>.Empty, _connection.CallCancellations, default,
-                null, request, registration, use, 0, null, false, 0, null).ConfigureAwait(false);
+                null, request, in preparation, use, 0, null, false, 0, null).ConfigureAwait(false);
         }
     }
 
