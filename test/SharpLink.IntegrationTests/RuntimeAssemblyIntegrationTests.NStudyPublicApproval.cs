@@ -18,6 +18,113 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: false,
             VerifyNStudyPublicApprovalReentryAsync);
 
+    [Test]
+    [NotInParallel]
+    [Arguments("tcp", true, true)]
+    [Arguments("tcp", false, true)]
+    [Arguments("shared-memory", true, true)]
+    [Arguments("shared-memory", false, true)]
+    [Arguments("tcp", true, false)]
+    [Arguments("tcp", false, false)]
+    [Arguments("shared-memory", true, false)]
+    [Arguments("shared-memory", false, false)]
+    public Task NStudyPublicApprovalFailureDoesNotRetireTheOriginalRoute(
+        string transport, bool approvalOnClient, bool waitForTimeout)
+        => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: false,
+            (fixture, trace, ct) =>
+                VerifyPublicApprovalFailureAsync(fixture, trace, approvalOnClient, waitForTimeout, ct));
+
+    private static async Task VerifyPublicApprovalFailureAsync(
+        NStudyCoordinationFixture fixture, NStudyTrace trace, bool approvalOnClient, bool waitForTimeout,
+        CancellationToken ct)
+    {
+        var (server, contracts, oldAssembly, newAssembly, _, newType, first, _, _) = fixture;
+        var (client, session, serverConnection, a, b, receiver, sibling) = first;
+        ISharpLinkClient publicClient = client;
+        ISharpLinkServer publicServer = server;
+        var participant = new SharpLinkVersionParticipant(
+            publicServer.GetVersionPeers().Single(), SharpLinkVersionInitiator.Server);
+        var contract = publicClient.GetLocalContract(contracts.ContractAssembly, a.Contract);
+        var published = publicServer.GetLocalVersionInventory();
+        var binds = session.NStudyBindOperationForDiagnostics;
+        var approvals = (approvalOnClient ? session : serverConnection.Session).RuntimeContext.NStudyApprovals;
+        var entered = new TaskCompletionSource<(SharpLinkVersionChange Change, CancellationToken Token)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        static ValueTask<SharpLinkVersionDecision> Approve(SharpLinkVersionChange _, CancellationToken __)
+            => ValueTask.FromResult(SharpLinkVersionDecision.Approve);
+
+        async ValueTask<SharpLinkVersionDecision> CheckAsync(SharpLinkVersionChange change, CancellationToken token)
+        {
+            entered.SetResult((change, token));
+            try
+            {
+                await finishCheck.Task.WaitAsync(token);
+                throw new InvalidOperationException("The application's approval check did not complete successfully.");
+            }
+            finally
+            {
+                exited.TrySetResult();
+            }
+        }
+
+        Ensure(await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 1, ct) == 2,
+            "the original route is ready before the application checks the proposed deployment");
+        var joining = publicClient.JoinVersionChangeAsync(contract, participant,
+            approvalOnClient ? CheckAsync : Approve, ct).AsTask();
+        var replacing = publicServer.ReplaceAssemblyCoordinatedAsync(oldAssembly, newAssembly, a.Contract,
+            [participant], TimeSpan.FromSeconds(5), approvalOnClient ? Approve : CheckAsync, ct).AsTask();
+        try
+        {
+            var (proposal, token) = await entered.Task.WaitAsync(ct);
+            Ensure(proposal.Session == participant.Session && !token.IsCancellationRequested &&
+                   !joining.IsCompleted && !replacing.IsCompleted && await sibling.TouchAsync(1, ct) == 101,
+                "the application is checking the expected Session while unrelated business continues");
+            if (!waitForTimeout)
+                finishCheck.TrySetResult();
+
+            await Task.WhenAll(joining, replacing).WaitAsync(ct);
+            await exited.Task.WaitAsync(ct);
+            await WaitForNStudyAsync(() => approvals.ActiveCount == 0, ct);
+            var declined = await joining;
+            var rejected = await replacing;
+            Ensure(token.IsCancellationRequested == waitForTimeout &&
+                   !declined.Resumed && declined.DeclineReason == SharpLinkVersionDeclineReason.Policy &&
+                   declined.Change == proposal && !rejected.Replacement.Succeeded &&
+                   rejected.Peers.Single() is { ActivationSent: false, DeclineReason: SharpLinkVersionDeclineReason.Policy } peer &&
+                   peer.Change == proposal && SamePrecommitInventory(published, publicServer.GetLocalVersionInventory()) &&
+                   NStudyCount(newType, "Created") == 0 && ReferenceEquals(session, NStudyClientSession(client)) &&
+                   session.CaptureNStudyBinding(a.Contract) == a.BindingId &&
+                   session.CaptureNStudyBinding(b.Contract) == b.BindingId &&
+                   session.NStudyBindOperationForDiagnostics == binds &&
+                   await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 2, ct) == 3,
+                "an expired or failed public approval settles without publishing or retiring either original route");
+            trace.Record(waitForTimeout ? "PublicApprovalTimedOutWithoutRetiringR1" : "PublicApprovalFaultRetainsR1", a, b);
+
+            var retryJoin = publicClient.JoinVersionChangeAsync(contract, participant, Approve, ct).AsTask();
+            var retryReplace = publicServer.ReplaceAssemblyCoordinatedAsync(oldAssembly, newAssembly, a.Contract,
+                [participant], TimeSpan.FromSeconds(5), Approve, ct).AsTask();
+            await Task.WhenAll(retryJoin, retryReplace).WaitAsync(ct);
+            var resumed = await retryJoin;
+            var replacement = await retryReplace;
+            EnsureReplacementReleased(replacement.Replacement, "a fresh approval succeeds after the prior attempt");
+            Ensure(resumed.Resumed && resumed.Change.TransitionId > proposal.TransitionId &&
+                   ReferenceEquals(session, NStudyClientSession(client)) &&
+                   session.CaptureNStudyBinding(b.Contract) == b.BindingId &&
+                   await InvokeValueTaskAsync<int>(receiver.Service, contracts.ContractType, "UnaryAsync", 3, ct) == 4 &&
+                   await sibling.TouchAsync(2, ct) == 102,
+                "a new transition resumes the original proxy and preserves the unrelated binding");
+            trace.Record("PublicApprovalRetryResumesOnlyTheChangedRoute",
+                session.CaptureNStudyRoute(a.Contract).Acknowledgement, b);
+        }
+        finally
+        {
+            finishCheck.TrySetResult();
+        }
+    }
+
     private static async Task VerifyNStudyPublicApprovalReentryAsync(
         NStudyCoordinationFixture fixture, NStudyTrace trace, CancellationToken ct)
     {
