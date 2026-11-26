@@ -501,7 +501,7 @@ public class ServerInterceptorChainLoweringBenchmarks
         {
             method = methodId == MethodId
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, true, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == MethodId;
         }
@@ -519,7 +519,7 @@ public class ServerInterceptorChainLoweringBenchmarks
         {
             method = methodId == MethodId
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, true, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == MethodId;
         }

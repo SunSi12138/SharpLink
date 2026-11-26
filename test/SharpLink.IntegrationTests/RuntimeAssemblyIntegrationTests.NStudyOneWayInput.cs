@@ -56,7 +56,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .UseRuntime(options => ConfigureWindows(options, senderCompression))
             .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
             {
-                MinimumPayloadBytes = 32, MinimumSavingsBytes = 1, MinimumSavingsRatio = 0
+                MinimumPayloadBytes = 32,
+                MinimumSavingsBytes = 1,
+                MinimumSavingsRatio = 0
             }));
         var path = Path.Combine(Path.GetDirectoryName(contracts.ContractAssembly.Location)!,
             "SharpLink.DynamicPlugin.Services.dll");

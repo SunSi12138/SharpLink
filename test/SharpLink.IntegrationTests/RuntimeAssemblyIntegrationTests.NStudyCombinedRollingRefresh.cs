@@ -67,10 +67,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var bind = session.NStudyBindOperationForDiagnostics;
             var (serverRev, localRev) = (server.GetLocalVersionInventory().Revision, client.GetLocalVersionInventory().Revision);
             await CombinedCountersAsync("start", client, conn, sc, 2, 0, ct);
-            CombinedEvent(new { edge = "Start", transport, session = authority.PhysicalSessionId,
-                serverInstance = authority.ServerInstanceId, registryEpoch = authority.ServerRegistryEpoch,
-                binding = aToken, bToken, bind, frameLimit = session.NegotiatedMaxFramePayloadBytes,
-                server = serverReg.RegistrationId, local = clientReg.RegistrationId, serverRev, localRev });
+            CombinedEvent(new
+            {
+                edge = "Start",
+                transport,
+                session = authority.PhysicalSessionId,
+                serverInstance = authority.ServerInstanceId,
+                registryEpoch = authority.ServerRegistryEpoch,
+                binding = aToken,
+                bToken,
+                bind,
+                frameLimit = session.NegotiatedMaxFramePayloadBytes,
+                server = serverReg.RegistrationId,
+                local = clientReg.RegistrationId,
+                serverRev,
+                localRev
+            });
             int[] frameLimits = [128 * 1024, 192 * 1024, 256 * 1024];
             for (int step = 1; step <= rounds; step++)
             {
@@ -79,7 +91,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 try
                 {
                     var result = await CombinedStepAsync(server, client, conn, sc, b, sl, cl, nextService, nextClient,
-                        participant, aId, bId, aToken, bToken, bind, serverReg, clientReg, bound, frameLimits[step-1], step, ct);
+                        participant, aId, bId, aToken, bToken, bind, serverReg, clientReg, bound, frameLimits[step - 1], step, ct);
                     var oldServer = serverReg.RegistrationId;
                     var oldLocal = clientReg.RegistrationId;
                     var oldSession = authority.PhysicalSessionId;
@@ -98,10 +110,23 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     sl = nextService;
                     cl = nextClient;
                     await RequireCombinedCollectionAsync(serverReleased, clientReleased, ct);
-                    CombinedEvent(new { edge = "Settled", step, originalSession = oldSession,
-                        session = authority.PhysicalSessionId, fromServer = oldServer, toServer = serverReg.RegistrationId,
-                        fromLocal = oldLocal, toLocal = clientReg.RegistrationId, binding = aToken, bToken, bind,
-                        counts = result.Settled, serverReleased = serverReleased.Count, clientReleased = clientReleased.Count });
+                    CombinedEvent(new
+                    {
+                        edge = "Settled",
+                        step,
+                        originalSession = oldSession,
+                        session = authority.PhysicalSessionId,
+                        fromServer = oldServer,
+                        toServer = serverReg.RegistrationId,
+                        fromLocal = oldLocal,
+                        toLocal = clientReg.RegistrationId,
+                        binding = aToken,
+                        bToken,
+                        bind,
+                        counts = result.Settled,
+                        serverReleased = serverReleased.Count,
+                        clientReleased = clientReleased.Count
+                    });
                 }
                 catch
                 {
@@ -121,16 +146,31 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(session.NStudyBindOperationForDiagnostics == bind && session.CaptureNStudyBinding(bId) == bToken &&
                    await b.Service.TouchAsync(990, ct) == 1090 && server.GetVersionPeers().Single() == authority,
                 "unregister clears A while original B and the same Session live");
-            CombinedEvent(new { edge = "LastRetired", counts = last, bind, bToken,
-                serverReleased = serverReleased.Count, clientReleased = clientReleased.Count, session = authority.PhysicalSessionId });
+            CombinedEvent(new
+            {
+                edge = "LastRetired",
+                counts = last,
+                bind,
+                bToken,
+                serverReleased = serverReleased.Count,
+                clientReleased = clientReleased.Count,
+                session = authority.PhysicalSessionId
+            });
             await client.StopAsync(ct);
             await server.StopAsync(bound, ct);
             Ensure(client.PendingCallCount == 0 && client.ActiveClientCallCount == 0 && client.ActiveClientStreamCount == 0 &&
                    ServerCallAdmissionDiagnostics.ActiveCallCount(server) == 0 && client.ReadyConnectionCount == 0 &&
                    server.GetVersionPeers().Count == 0, "normal final stop leaves no pending/active work or Ready endpoint");
-            CombinedEvent(new { edge = "Stopped", rounds, clientPending = client.PendingCallCount,
-                clientCalls = client.ActiveClientCallCount, clientStreams = client.ActiveClientStreamCount,
-                serverCalls = ServerCallAdmissionDiagnostics.ActiveCallCount(server), peers = server.GetVersionPeers().Count });
+            CombinedEvent(new
+            {
+                edge = "Stopped",
+                rounds,
+                clientPending = client.PendingCallCount,
+                clientCalls = client.ActiveClientCallCount,
+                clientStreams = client.ActiveClientStreamCount,
+                serverCalls = ServerCallAdmissionDiagnostics.ActiveCallCount(server),
+                peers = server.GetVersionPeers().Count
+            });
         }
         finally
         {
@@ -195,9 +235,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var held = await CombinedCountersAsync("both owners held", client, conn, sc, 2, 1, ct);
             Ensure(!active.IsCompleted && !serverDrain.IsCompleted && !clientDrain.IsCompleted && NStudyCount(oldServer.ServiceType, "Disposed") == 0,
                 $"round {step}: both original physical drains still wait");
-            CombinedEvent(new { edge = "Held", step, session = peer.Session.PhysicalSessionId, binding = token,
-                originalAToken, bToken, bind = conn.Session.NStudyBindOperationForDiagnostics,
-                server = change.Candidate.RegistrationId, local = targetClient.RegistrationId, counts = held });
+            CombinedEvent(new
+            {
+                edge = "Held",
+                step,
+                session = peer.Session.PhysicalSessionId,
+                binding = token,
+                originalAToken,
+                bToken,
+                bind = conn.Session.NStudyBindOperationForDiagnostics,
+                server = change.Candidate.RegistrationId,
+                local = targetClient.RegistrationId,
+                counts = held
+            });
             refreshed = await RefreshWhileOriginalOwnersAreLiveAsync(server, client, conn, sc, b, nextClient, peer.Session,
                 change.Candidate, targetClient, aId, bId, originalAToken, bToken, frameLimit, step, bound, ct);
             Ensure(!active.IsCompleted && !serverDrain.IsCompleted && !clientDrain.IsCompleted &&
@@ -226,10 +276,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                server.GetVersionPeers().Single() == refreshed.Authority, $"round {step}: source session physically retired");
         var settled = await CombinedCountersAsync("after original drained", client,
             refreshed.Connection, refreshed.ServerConnection, 2, 0, ct);
-        CombinedEvent(new { edge = "OriginalRetired", step, from = peer.Session.PhysicalSessionId,
-            current = refreshed.Authority.PhysicalSessionId, result = 42, disposed = 1,
-            oldConnected = conn.Session.IsConnected, oldPending = conn.PendingCalls.ActiveCount,
-            oldBindings = sc.NStudyBindings.Snapshot().Item1 });
+        CombinedEvent(new
+        {
+            edge = "OriginalRetired",
+            step,
+            from = peer.Session.PhysicalSessionId,
+            current = refreshed.Authority.PhysicalSessionId,
+            result = 42,
+            disposed = 1,
+            oldConnected = conn.Session.IsConnected,
+            oldPending = conn.PendingCalls.ActiveCount,
+            oldBindings = sc.NStudyBindings.Snapshot().Item1
+        });
         return (resumed.Change, targetClient, refreshed, settled);
     }
 
@@ -276,11 +334,24 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(current.Session.NStudyBindOperationForDiagnostics == 0 &&
                sourceHeads == oldPeer.LastAcceptedRequestId && freshHeads == newPeer.LastAcceptedRequestId,
             $"round {step}: inventory and old proxy calls did not prepare or enter business on either link");
-        CombinedEvent(new { edge = "FreshUnprepared", step, from = prior.PhysicalSessionId, session = authority.PhysicalSessionId,
-            serverInstance = authority.ServerInstanceId, registryEpoch = authority.ServerRegistryEpoch,
-            frame = frameBytes, configurationGeneration = desired.Generation,
-            server = serverReg.RegistrationId, local = localReg.RegistrationId, serverRev = queried.Revision,
-            localRev = reverse.Revision, sourcePending = original.PendingCalls.ActiveCount, freshBind = 0, counts = empty });
+        CombinedEvent(new
+        {
+            edge = "FreshUnprepared",
+            step,
+            from = prior.PhysicalSessionId,
+            session = authority.PhysicalSessionId,
+            serverInstance = authority.ServerInstanceId,
+            registryEpoch = authority.ServerRegistryEpoch,
+            frame = frameBytes,
+            configurationGeneration = desired.Generation,
+            server = serverReg.RegistrationId,
+            local = localReg.RegistrationId,
+            serverRev = queried.Revision,
+            localRev = reverse.Revision,
+            sourcePending = original.PendingCalls.ActiveCount,
+            freshBind = 0,
+            counts = empty
+        });
 
         // The same application handles are explicitly prepared on the new Session.
         await b.PrepareAsync(bound, ct);
@@ -294,9 +365,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                original.Session.IsConnected && original.PendingCalls.ActiveCount == 1,
             $"round {step}: repeated numeric tokens gained new authority only from explicit Prepare on fresh physical Session");
         var ready = await CombinedCountersAsync("fresh session after explicit Prepare", client, current, newPeer, 2, 0, ct);
-        CombinedEvent(new { edge = "FreshPrepared", step, session = authority.PhysicalSessionId,
-            binding = nowA, bToken = nowB, oldBinding = previousAToken, oldBToken = previousBToken, bind = 2,
-            sourcePending = original.PendingCalls.ActiveCount, counts = ready });
+        CombinedEvent(new
+        {
+            edge = "FreshPrepared",
+            step,
+            session = authority.PhysicalSessionId,
+            binding = nowA,
+            bToken = nowB,
+            oldBinding = previousAToken,
+            oldBToken = previousBToken,
+            bind = 2,
+            sourcePending = original.PendingCalls.ActiveCount,
+            counts = ready
+        });
         return new(current, newPeer, authority);
     }
 

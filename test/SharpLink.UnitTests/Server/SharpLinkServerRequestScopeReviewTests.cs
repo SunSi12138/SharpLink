@@ -403,7 +403,7 @@ public class SharpLinkServerRequestScopeReviewTests
         {
             method = methodId == MethodHash
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, kind, false, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == MethodHash;
         }

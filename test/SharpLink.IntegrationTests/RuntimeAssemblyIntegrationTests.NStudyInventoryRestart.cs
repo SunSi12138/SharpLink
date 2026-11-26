@@ -31,11 +31,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         void Record(string edge, NStudyInventorySnapshot snapshot, NStudyObservedTarget selection, NStudyAck? bound = null)
             => Console.WriteLine("NSTUDY " + JsonSerializer.Serialize(new
             {
-                seq = ++seq, transport, edge, revision = snapshot.Revision, entries = snapshot.Entries.Count,
-                server = snapshot.Authority.Server, epoch = snapshot.Authority.RegistryEpoch,
-                session = snapshot.Authority.PhysicalSession, publisher = snapshot.PublisherEpoch,
-                registration = selection.Target.Registration, publication = selection.Target.Publication,
-                binding = bound?.BindingId, hash = selection.Hash.ToString()
+                seq = ++seq,
+                transport,
+                edge,
+                revision = snapshot.Revision,
+                entries = snapshot.Entries.Count,
+                server = snapshot.Authority.Server,
+                epoch = snapshot.Authority.RegistryEpoch,
+                session = snapshot.Authority.PhysicalSession,
+                publisher = snapshot.PublisherEpoch,
+                registration = selection.Target.Registration,
+                publication = selection.Target.Publication,
+                binding = bound?.BindingId,
+                hash = selection.Hash.ToString()
             }));
 
         try

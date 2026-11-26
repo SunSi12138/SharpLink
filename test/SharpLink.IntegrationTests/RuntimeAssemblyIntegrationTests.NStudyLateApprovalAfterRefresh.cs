@@ -64,12 +64,13 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             }
             catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable &&
                                                    originalSession.LifetimeToken.IsCancellationRequested &&
-                                                   !ct.IsCancellationRequested) { }
+                                                   !ct.IsCancellationRequested)
+            { }
 
             var refused = await oldReplacement.WaitAsync(ct);
             await WaitForNStudyAsync(() => oldToken.IsCancellationRequested, ct);
             Ensure(!refused.Replacement.Succeeded && refused.Peers.Single() is
-                       { ActivationSent: false, PreparedClientRegistrationId: null } rejected &&
+            { ActivationSent: false, PreparedClientRegistrationId: null } rejected &&
                    rejected.Change == abandoned && approvals.ActiveCount == 1 &&
                    SamePrecommitInventory(originalInventory, server.GetLocalVersionInventory()),
                 "the old operation ends on the retired connection while the application still owns its callback");

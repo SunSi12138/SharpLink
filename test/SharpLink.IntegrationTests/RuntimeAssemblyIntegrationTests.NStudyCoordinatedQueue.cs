@@ -46,10 +46,18 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         NStudyAck? next = null;
         void Record(string step) => Console.WriteLine("NQUEUE " + JsonSerializer.Serialize(new
         {
-            step, seq = ++seq, transport, session = original.Authority.PhysicalSession,
-            request = queuedId, transaction, oldBinding = original.BindingId, newBinding = next?.BindingId,
-            oldRegistration = original.Target.Registration, newRegistration = next?.Target.Registration,
-            queued = kernel.QueuedCalls, unary = recorder.Visits(unaryId)
+            step,
+            seq = ++seq,
+            transport,
+            session = original.Authority.PhysicalSession,
+            request = queuedId,
+            transaction,
+            oldBinding = original.BindingId,
+            newBinding = next?.BindingId,
+            oldRegistration = original.Target.Registration,
+            newRegistration = next?.Target.Registration,
+            queued = kernel.QueuedCalls,
+            unary = recorder.Visits(unaryId)
         }));
 
         writer.StartRecording();

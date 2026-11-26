@@ -324,13 +324,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal void Record(string edge, NStudyAck? first = null, NStudyAck? second = null) =>
             Console.WriteLine("NSTUDY " + JsonSerializer.Serialize(new
             {
-                seq = ++_seq, transport, edge,
-                first = Route(first), second = Route(second)
+                seq = ++_seq,
+                transport,
+                edge,
+                first = Route(first),
+                second = Route(second)
             }));
 
         private static object? Route(NStudyAck? ack) => ack is { } value
-            ? new { session = value.Authority.PhysicalSession, value.BindingId,
-                value.Target.Registration, value.Target.Publication }
+            ? new
+            {
+                session = value.Authority.PhysicalSession,
+                value.BindingId,
+                value.Target.Registration,
+                value.Target.Publication
+            }
             : null;
     }
 }

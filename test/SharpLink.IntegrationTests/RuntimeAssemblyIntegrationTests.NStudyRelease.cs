@@ -224,10 +224,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var bindingCounts = peer.NStudyBindings.Snapshot();
         Console.WriteLine("NRELEASE " + JsonSerializer.Serialize(new
         {
-            transport, edge, session = ack.Authority.PhysicalSession, slot = SlotOf(ack.BindingId),
-            incarnation = IncarnationOf(ack.BindingId), registration = ack.Target.Registration,
-            publication = ack.Target.Publication, cycles,
-            open = bindingCounts.Open, retiring = bindingCounts.Retiring, uses = bindingCounts.Users
+            transport,
+            edge,
+            session = ack.Authority.PhysicalSession,
+            slot = SlotOf(ack.BindingId),
+            incarnation = IncarnationOf(ack.BindingId),
+            registration = ack.Target.Registration,
+            publication = ack.Target.Publication,
+            cycles,
+            open = bindingCounts.Open,
+            retiring = bindingCounts.Retiring,
+            uses = bindingCounts.Users
         }));
     }
 }

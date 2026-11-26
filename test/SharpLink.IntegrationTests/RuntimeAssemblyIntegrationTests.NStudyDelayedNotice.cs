@@ -119,7 +119,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             configureClient: builder => builder.UseRuntime(options => Configure(options, sender))
                 .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
                 {
-                    Enabled = compressed, MinimumPayloadBytes = 32, MinimumSavingsBytes = 1, MinimumSavingsRatio = 0,
+                    Enabled = compressed,
+                    MinimumPayloadBytes = 32,
+                    MinimumSavingsBytes = 1,
+                    MinimumSavingsRatio = 0,
                 }),
             configureServer: builder => builder.UseRuntime(options => Configure(options, receiver)),
             decorateServerTransport: inner => new NStudyHeldResponseListener(inner, flush));

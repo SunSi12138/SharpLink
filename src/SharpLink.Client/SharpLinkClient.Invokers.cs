@@ -12,7 +12,8 @@ internal sealed partial class SharpLinkClient
         RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: true, interceptors) with { PreparedSite = prepared };
+            method, metadata, includeClientDefault: true, interceptors) with
+        { PreparedSite = prepared };
         var telemetryEnabled = SharpLinkTelemetry.ClientCallsEnabled;
         Interlocked.Increment(ref _activeLogicalInvocations);
         // A bare one-attempt Unary has no logical work after its pending result. Keep that
@@ -48,7 +49,8 @@ internal sealed partial class SharpLinkClient
         RequireNStudyShape(method);
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { PreparedSite = prepared };
+            method, metadata, includeClientDefault: false, interceptors) with
+        { PreparedSite = prepared };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -81,7 +83,8 @@ internal sealed partial class SharpLinkClient
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors)
-            with { PreparedSite = prepared, InputLifetime = producerLifetime };
+            with
+        { PreparedSite = prepared, InputLifetime = producerLifetime };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {

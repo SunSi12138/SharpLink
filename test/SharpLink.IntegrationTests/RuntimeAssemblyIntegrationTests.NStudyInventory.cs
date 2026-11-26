@@ -23,10 +23,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         void Record(string edge, NStudyInventorySnapshot snapshot, NStudyObservedTarget? selected = null, NStudyAck? bound = null)
             => Console.WriteLine("NSTUDY " + JsonSerializer.Serialize(new
             {
-                seq = ++seq, transport, edge, revision = snapshot.Revision, entries = snapshot.Entries.Count,
-                server = snapshot.Authority.Server, epoch = snapshot.Authority.RegistryEpoch,
-                session = snapshot.Authority.PhysicalSession, registration = selected?.Target.Registration,
-                publication = selected?.Target.Publication, binding = bound?.BindingId
+                seq = ++seq,
+                transport,
+                edge,
+                revision = snapshot.Revision,
+                entries = snapshot.Entries.Count,
+                server = snapshot.Authority.Server,
+                epoch = snapshot.Authority.RegistryEpoch,
+                session = snapshot.Authority.PhysicalSession,
+                registration = selected?.Target.Registration,
+                publication = selected?.Target.Publication,
+                binding = bound?.BindingId
             }));
         try
         {

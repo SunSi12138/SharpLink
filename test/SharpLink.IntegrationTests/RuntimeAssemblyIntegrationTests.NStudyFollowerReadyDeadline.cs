@@ -104,7 +104,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             EnsureReplacementReleased(result.Replacement, "the follower deadline cannot roll back the leader's commit");
             Ensure(!ct.IsCancellationRequested && result.Peers[0] is { ActivationSent: true } leadResult &&
                    leadResult.Change == joined.Change && result.Peers[1] is
-                       { ActivationSent: false, PreparedClientRegistrationId: null } followerResult &&
+                   { ActivationSent: false, PreparedClientRegistrationId: null } followerResult &&
                    followerResult.Change == proposal && !follower.Session.IsConnected &&
                    writer.Flushed.All(frame => frame.Control is not { Phase: NStudyPhase.Ready }) &&
                    follower.Session.NStudyBindOperationForDiagnostics == followerBinds &&

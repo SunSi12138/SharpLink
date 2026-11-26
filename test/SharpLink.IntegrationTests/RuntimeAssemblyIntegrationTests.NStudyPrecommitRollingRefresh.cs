@@ -94,10 +94,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    old.Session.CaptureNStudyBinding(aId) == oldAToken && old.Session.CaptureNStudyBinding(bId) == oldBToken &&
                    await localLoad.Call("UnaryAsync", 7, ct) == 8 && await b.Service.TouchAsync(7, ct) == 107,
                 "admitted Manual callback, not committed; original published A and B still usable");
-            PrecommitEvent(new { edge = "ApprovalWaiting", transport, old = original.PhysicalSessionId, instance = original.ServerInstanceId,
-                epoch = original.ServerRegistryEpoch, current = originalA.RegistrationId, attempted = proposed.Candidate.RegistrationId,
-                client = localA.RegistrationId, serverRev = serverOriginal.Revision, clientRev = clientOriginal.Revision,
-                approvalActive = old.Session.RuntimeContext.NStudyApprovals.ActiveCount, counts = initial });
+            PrecommitEvent(new
+            {
+                edge = "ApprovalWaiting",
+                transport,
+                old = original.PhysicalSessionId,
+                instance = original.ServerInstanceId,
+                epoch = original.ServerRegistryEpoch,
+                current = originalA.RegistrationId,
+                attempted = proposed.Candidate.RegistrationId,
+                client = localA.RegistrationId,
+                serverRev = serverOriginal.Revision,
+                clientRev = clientOriginal.Revision,
+                approvalActive = old.Session.RuntimeContext.NStudyApprovals.ActiveCount,
+                counts = initial
+            });
             var desired = await server.PublishDesiredSessionAsync(new() { MaxFramePayloadBytes = 128 * 1024 },
                 SharpLinkSessionRolloutMode.RollingRefresh, ct);
             await WaitForNStudyAsync(() => client.ReadyConnectionCount == 1 &&
@@ -140,10 +151,20 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    SamePrecommitInventory(serverOriginal, server.GetLocalVersionInventory()) &&
                    SamePrecommitInventory(clientOriginal, client.GetLocalVersionInventory()),
                 "refresh and source retirement cancel the actual callback before its approval timeout, no publication or activation");
-            PrecommitEvent(new { edge = "OriginalAborted", old = original.PhysicalSessionId, session = freshSession.PhysicalSessionId,
-                clientOutcome, serverError = stopped.Replacement.Error!.Code.ToString(), serverDecline = report.DeclineReason.ToString(),
-                activation = report.ActivationSent, cancelled = decisionCancelled, elapsedWithinApproval = true,
-                sourceClosed = !old.Session.IsConnected, approvals = old.Session.RuntimeContext.NStudyApprovals.ActiveCount });
+            PrecommitEvent(new
+            {
+                edge = "OriginalAborted",
+                old = original.PhysicalSessionId,
+                session = freshSession.PhysicalSessionId,
+                clientOutcome,
+                serverError = stopped.Replacement.Error!.Code.ToString(),
+                serverDecline = report.DeclineReason.ToString(),
+                activation = report.ActivationSent,
+                cancelled = decisionCancelled,
+                elapsedWithinApproval = true,
+                sourceClosed = !old.Session.IsConnected,
+                approvals = old.Session.RuntimeContext.NStudyApprovals.ActiveCount
+            });
 
             ISharpLinkClient publicClient = client;
             ISharpLinkServer publicServer = server;
@@ -162,8 +183,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    fresh.Session.NStudyBindOperationForDiagnostics == 0 &&
                    SamePrecommitInventory(serverOriginal, server.GetLocalVersionInventory()),
                 "neither public operation moves the retired participant's decision onto the newer connection");
-            PrecommitEvent(new { edge = "RetiredParticipantRefusedByBothPublicOperations", old = original.PhysicalSessionId,
-                current = freshSession.PhysicalSessionId, votes = staleVotes, freshBinds = fresh.Session.NStudyBindOperationForDiagnostics });
+            PrecommitEvent(new
+            {
+                edge = "RetiredParticipantRefusedByBothPublicOperations",
+                old = original.PhysicalSessionId,
+                current = freshSession.PhysicalSessionId,
+                votes = staleVotes,
+                freshBinds = fresh.Session.NStudyBindOperationForDiagnostics
+            });
 
             var failedContext = abandoned.Retire();
             await RequireCombinedCollectionAsync([failedContext], [], ct);
@@ -173,18 +200,31 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var empty = await CombinedCountersAsync("fresh before Prepare", client, fresh, freshPeer, 0, 0, ct);
             Ensure(fresh.Session.NStudyBindOperationForDiagnostics == 0 && initialHeads == freshPeer.LastAcceptedRequestId,
                 "fresh peer does not get grants from a cancelled attempt or inventory");
-            PrecommitEvent(new { edge = "FreshUnprepared", session = freshSession.PhysicalSessionId,
-                server = originalA.RegistrationId, local = localA.RegistrationId,
-                serverRev = remote.Revision, clientRev = remoteLocal.Revision, failedCollected = !failedContext.IsAlive,
-                bind = fresh.Session.NStudyBindOperationForDiagnostics, counts = empty });
+            PrecommitEvent(new
+            {
+                edge = "FreshUnprepared",
+                session = freshSession.PhysicalSessionId,
+                server = originalA.RegistrationId,
+                local = localA.RegistrationId,
+                serverRev = remote.Revision,
+                clientRev = remoteLocal.Revision,
+                failedCollected = !failedContext.IsAlive,
+                bind = fresh.Session.NStudyBindOperationForDiagnostics,
+                counts = empty
+            });
 
             await b.PrepareAsync(bound, ct);
             await localLoad.Proxy.Prepare(bound, ct);
             Ensure(fresh.Session.NStudyBindOperationForDiagnostics == 2 && await localLoad.Call("UnaryAsync", 8, ct) == 9 &&
                    NStudyCount(sourceService.ServiceType, "Created") == 1 && await b.Service.TouchAsync(8, ct) == 108,
                 "explicit Prepare reaches R1 and B again, independently of abandoned vote");
-            PrecommitEvent(new { edge = "OriginalPreparedAgain", session = freshSession.PhysicalSessionId,
-                server = originalA.RegistrationId, bind = fresh.Session.NStudyBindOperationForDiagnostics });
+            PrecommitEvent(new
+            {
+                edge = "OriginalPreparedAgain",
+                session = freshSession.PhysicalSessionId,
+                server = originalA.RegistrationId,
+                bind = fresh.Session.NStudyBindOperationForDiagnostics
+            });
 
             var retryParticipant = new SharpLinkVersionParticipant(freshSession, SharpLinkVersionInitiator.Server);
             var retryClientVotes = 0;
@@ -217,11 +257,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var oldContext = sourceService.Retire();
             await RequireCombinedCollectionAsync([failedContext, oldContext], [], ct);
             var settled = await CombinedCountersAsync("on fresh R2 after retry", client, fresh, freshPeer, 2, 0, ct);
-            PrecommitEvent(new { edge = "FreshManualRetry", session = freshSession.PhysicalSessionId,
-                original = originalA.RegistrationId, abandoned = proposed.Candidate.RegistrationId,
-                current = resumed.Change.Candidate.RegistrationId, clientVote = retryClientVotes, serverVote = retryServerVotes,
-                transition = resumed.Change.TransitionId, originalTransition = proposed.TransitionId,
-                bind = fresh.Session.NStudyBindOperationForDiagnostics, counts = settled, inactiveAlcs = 2 });
+            PrecommitEvent(new
+            {
+                edge = "FreshManualRetry",
+                session = freshSession.PhysicalSessionId,
+                original = originalA.RegistrationId,
+                abandoned = proposed.Candidate.RegistrationId,
+                current = resumed.Change.Candidate.RegistrationId,
+                clientVote = retryClientVotes,
+                serverVote = retryServerVotes,
+                transition = resumed.Change.TransitionId,
+                originalTransition = proposed.TransitionId,
+                bind = fresh.Session.NStudyBindOperationForDiagnostics,
+                counts = settled,
+                inactiveAlcs = 2
+            });
 
             EnsureUnregisterReleased(await client.UnregisterAssemblyAsync(localLoad.Assembly, bound, ct), "final client contract");
             EnsureUnregisterReleased(await server.UnregisterAssemblyAsync(retry.Assembly, bound, ct), "final server service");
@@ -235,9 +285,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(client.PendingCallCount == 0 && client.ActiveClientCallCount == 0 && client.ActiveClientStreamCount == 0 &&
                    ServerCallAdmissionDiagnostics.ActiveCallCount(server) == 0 && server.GetVersionPeers().Count == 0,
                 "final clean Stop");
-            PrecommitEvent(new { edge = "Stopped", alcs = 4, pending = client.PendingCallCount, clientCalls = client.ActiveClientCallCount,
-                streams = client.ActiveClientStreamCount, serverCalls = ServerCallAdmissionDiagnostics.ActiveCallCount(server),
-                peers = server.GetVersionPeers().Count });
+            PrecommitEvent(new
+            {
+                edge = "Stopped",
+                alcs = 4,
+                pending = client.PendingCallCount,
+                clientCalls = client.ActiveClientCallCount,
+                streams = client.ActiveClientStreamCount,
+                serverCalls = ServerCallAdmissionDiagnostics.ActiveCallCount(server),
+                peers = server.GetVersionPeers().Count
+            });
         }
         finally { releaseDecision.TrySetResult(SharpLinkVersionDecision.Reject); }
     }

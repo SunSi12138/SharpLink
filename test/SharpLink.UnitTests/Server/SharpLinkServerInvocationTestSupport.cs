@@ -261,7 +261,7 @@ public partial class SharpLinkServerInvocationTests
         {
             method = methodId == 1
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, false, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == 1;
         }
@@ -282,7 +282,7 @@ public partial class SharpLinkServerInvocationTests
         {
             method = methodId == 1
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, false, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == 1;
         }
@@ -304,7 +304,7 @@ public partial class SharpLinkServerInvocationTests
         {
             method = methodId == 1
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, true, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == 1;
         }
@@ -332,7 +332,7 @@ public partial class SharpLinkServerInvocationTests
         {
             method = methodId == 1
                 ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, false, false, false, null)
-                    { SupportsCancellation = true }, Execute)
+                { SupportsCancellation = true }, Execute)
                 : default;
             return methodId == 1;
         }

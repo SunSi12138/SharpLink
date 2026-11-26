@@ -479,7 +479,7 @@ public partial class IntegrationBehaviorTests
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(3));
             var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
             await WaitUntilAsync(() => harness.Client.GetReadinessSnapshot() is
-                { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 });
+            { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 });
 
             await EnsureThrowsSharpLinkFast(
                 svc.AddAsync(1, 1).AsTask(),

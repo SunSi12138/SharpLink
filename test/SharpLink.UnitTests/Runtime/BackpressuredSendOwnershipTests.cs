@@ -421,9 +421,9 @@ public sealed class BackpressuredSendOwnershipTests
 
             await opening.WaitAsync(Timeout);
             Ensure(await FailureAsync(subsequentMarker) is SharpLinkException
-                {
-                    Code: SharpLinkErrorCode.ConnectionClosed
-                } terminal && ReferenceEquals(terminal.InnerException, failing.ReturnFailure),
+            {
+                Code: SharpLinkErrorCode.ConnectionClosed
+            } terminal && ReferenceEquals(terminal.InnerException, failing.ReturnFailure),
                 "the following waiter sees the session's original failure, not an unfinished flush");
         }
         finally

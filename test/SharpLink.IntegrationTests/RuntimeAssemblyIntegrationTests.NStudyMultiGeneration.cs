@@ -49,7 +49,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitForNStudyAsync(() => oldApprovalToken.IsCancellationRequested, ct);
             Ensure(!abandoned.Resumed && abandoned.DeclineReason == SharpLinkVersionDeclineReason.Policy &&
                    !refusal.Replacement.Succeeded && refusal.Peers.Single() is
-                       { ActivationSent: false, PreparedClientRegistrationId: null } &&
+                   { ActivationSent: false, PreparedClientRegistrationId: null } &&
                    refusal.Peers[0].Change == abandoned.Change &&
                    !callbackExited.Task.IsCompleted && approvals.ActiveCount == 1 &&
                    session.NStudyBindOperationForDiagnostics == initialBinds &&

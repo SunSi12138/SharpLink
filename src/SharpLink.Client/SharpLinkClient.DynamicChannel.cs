@@ -85,7 +85,8 @@ internal static class SharpLinkModuleRpcChannel
     {
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { PreparedSite = prepared };
+            method, metadata, includeClientDefault: false, interceptors) with
+        { PreparedSite = prepared };
         return EnumerateServerStream(inner, module,
             method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
@@ -98,7 +99,8 @@ internal static class SharpLinkModuleRpcChannel
     {
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { PreparedSite = prepared };
+            method, metadata, includeClientDefault: false, interceptors) with
+        { PreparedSite = prepared };
         return EnumerateDuplex(inner, module,
             method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
     }

@@ -600,7 +600,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
 
         await original.DisposeServerOnlyAsync();
         while (original.Client.GetReadinessSnapshot() is not
-               { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 })
+            { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 })
             await Task.Delay(10, ct);
         var readiness = original.Client.WaitForReadinessAsync(1, ct).AsTask();
         Ensure(!readiness.IsCompleted, "readiness remains pending while the server is down");

@@ -154,13 +154,15 @@ internal static partial class CoordinationSmoke
                 {
                     await voted.Task.WaitAsync(token);
                     return SharpLinkVersionDecision.Approve;
-                } : null, ct).AsTask();
+                }
+            : null, ct).AsTask();
             var followerChange = client.JoinVersionChangeAsync(pinned.Local, follower,
                 deferPinned ? (_, _) =>
                 {
                     voted.TrySetResult();
                     return ValueTask.FromResult(SharpLinkVersionDecision.Defer);
-                } : null, ct).AsTask();
+                }
+            : null, ct).AsTask();
             serverChange = server.ReplaceAssemblyCoordinatedAsync(original, replacement, contractId,
                 [primary, follower], timeout, deferPinned ? static (_, _) => ValueTask.FromResult(SharpLinkVersionDecision.Approve) : null,
                 ct).AsTask();
