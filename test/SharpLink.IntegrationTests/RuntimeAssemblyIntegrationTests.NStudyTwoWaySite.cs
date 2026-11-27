@@ -7,10 +7,164 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
+    [Arguments("tcp", true, true)]
+    [Arguments("tcp", false, false)]
+    [Arguments("shared-memory", true, false)]
+    [Arguments("shared-memory", false, true)]
+    public async Task EarlyInputReturnsCreditAfterOrdinaryCapacityRejection(
+        string transport, bool duplex, bool compressed)
+    {
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = guard.Token;
+        using var releaseRejection = new ManualResetEventSlim();
+        var inAdmission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstItemQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var builder = SharpLinkServerBuilder.Create()
+            .UseAdmissionControl(options =>
+            {
+                options.UsePartition(_ =>
+                {
+                    if (Interlocked.Increment(ref calls) == 2)
+                    {
+                        inAdmission.TrySetResult();
+                        releaseRejection.Wait(ct);
+                    }
+                    return "normal";
+                }, partition =>
+                {
+                    partition.MaxPartitions = 1;
+                    partition.UseConcurrency(1);
+                });
+            });
+        var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
+        var sender = new ObservedInputCompression();
+        var receiver = new ObservedInputCompression();
+        if (compressed)
+        {
+            builder.UseRuntime(options => options.Compression.Providers.Add(receiver));
+            clientBuilder.UseRuntime(options => options.Compression.Providers.Add(sender))
+                .UseRequestCompressionPolicy(new SharpLinkCompressionSendPolicy
+                {
+                    MinimumPayloadBytes = 256,
+                    MinimumSavingsBytes = 1
+                });
+        }
+        if (transport == "tcp")
+        {
+            builder.UseTcp(0, IPAddress.Loopback);
+            clientBuilder.UseTcp(IPAddress.Loopback.ToString(), ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port);
+        }
+        else
+        {
+            var name = $"sharplink-early-duplex-reject-{Guid.NewGuid():N}";
+            builder.UseSharedMemory(name);
+            clientBuilder.UseSharedMemory(name);
+        }
+        await using var server = (SharpLinkServer)builder.Build();
+        await using var client = (SharpLinkClient)clientBuilder.Build();
+        await server.StartAsync(ct);
+        await client.ConnectAsync(ct);
+        var unary = client.CreateProxy<ITestService>();
+        await unary.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        var streaming = client.CreateProxy<ICompressionService>();
+        await streaming.PrepareAsync(TimeSpan.FromSeconds(5), ct);
+        var connection = NStudyClientConnection(client);
+        var peer = NStudyServerConnection(server);
+        var flow = ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection.Session)!).FlowController!;
+        var initialCredit = flow.SendConnectionCredit;
+        var initialDropped = peer.Session.StreamManager.DroppedStreamFrames;
+        TestService.ResetBlockingAdd();
+        var active = unary.Service.BlockingAddAsync(1, 2, ct).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(ct);
+            var rejected = duplex
+                ? ReadAll(streaming.Service.DuplexBytesAsync(OneInput(ct)))
+                : streaming.Service.UploadBytesAsync(OneInput(ct)).AsTask();
+            await inAdmission.Task.WaitAsync(ct);
+            await firstItemQueued.Task.WaitAsync(ct);
+            var outstanding = initialCredit - flow.SendConnectionCredit;
+            Ensure(outstanding > 0 && (!compressed || sender.Encoded == 1),
+                "first input is published in the intended wire form and consumes credit");
+            releaseRejection.Set();
+            try
+            {
+                await rejected.WaitAsync(ct);
+                throw new InvalidOperationException("A full admission gate must reject the stream.");
+            }
+            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+            {
+            }
+            await WaitForNStudyAsync(() => connection.PendingCalls.NStudyProducerCount == 0 &&
+                peer.Session.StreamManager.DroppedStreamFrames > initialDropped, ct);
+            TestService.ReleaseBlockingAdd();
+            Ensure(await active.WaitAsync(ct) == 3 &&
+                await unary.Service.AddAsync(20, 22) == 42 &&
+                ReferenceEquals(NStudyClientConnection(client), connection),
+                "the same session remains usable after rejection");
+            Ensure(flow.SendConnectionCredit == initialCredit && flow.RetainedSendStreamCount == 0 &&
+                peer.Session.StreamManager.ActiveStreamCount == 0 && receiver.Decoded == 0,
+                $"rejection must refund the input: {initialCredit - flow.SendConnectionCredit} bytes, " +
+                $"{flow.RetainedSendStreamCount} retained send entries, " +
+                $"{peer.Session.StreamManager.DroppedStreamFrames - initialDropped} dropped frames");
+        }
+        finally
+        {
+            releaseRejection.Set();
+            TestService.ReleaseBlockingAdd();
+        }
+
+        async IAsyncEnumerable<byte[]> OneInput([EnumeratorCancellation] CancellationToken producerToken)
+        {
+            yield return new byte[compressed ? 4096 : 256];
+            firstItemQueued.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, producerToken);
+        }
+
+        async Task ReadAll(IAsyncEnumerable<byte[]> output)
+        {
+            await foreach (var _ in output.WithCancellation(ct)) { }
+        }
+    }
+
+    private sealed class ObservedInputCompression : ISharpLinkCompressionProvider
+    {
+        private readonly TestCompressionProvider _inner = new();
+        private int _encoded;
+        private int _decoded;
+        public string WireProfile => _inner.WireProfile;
+        internal int Encoded => Volatile.Read(ref _encoded);
+        internal int Decoded => Volatile.Read(ref _decoded);
+
+        public bool TryCompress(ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_inner.TryCompress(input, output, maxOutputBytes, cancellationToken))
+                return false;
+            Interlocked.Increment(ref _encoded);
+            return true;
+        }
+
+        public void Decompress(ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _decoded);
+            _inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     [Arguments("tcp", "client-stream")]
+    [Arguments("tcp", "client-stream-eof")]
     [Arguments("tcp", "duplex")]
+    [Arguments("tcp", "duplex-eof")]
     [Arguments("shared-memory", "client-stream")]
+    [Arguments("shared-memory", "client-stream-eof")]
     [Arguments("shared-memory", "duplex")]
+    [Arguments("shared-memory", "duplex-eof")]
     public async Task NStudyPreparedTwoWayInputUsesAcceptedRouteAndOriginalOwners(string transport, string shape)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
@@ -90,7 +244,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            var duplex = shape == "duplex";
+            var duplex = shape.StartsWith("duplex", StringComparison.Ordinal);
+            var earlyEof = shape.EndsWith("-eof", StringComparison.Ordinal);
             Ensure(client.RegisterAssembly(oldAssembly).Succeeded, "real dynamic client generation registers");
             var oldModule = GetDynamicModule(client, oldAssembly);
             var serverModule = GetDynamicModule(server, service.Assembly);
@@ -113,24 +268,43 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await ReadNStudyTask(service, "WaitingForApproval").WaitAsync(ct);
             var queued = original.Generated(queuedInput, ct);
             await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 && connection.PendingCalls.NStudyProducerCount == 1, ct);
-            Ensure(queuedInput.Enumerators == 0 && FeedCount(oldCodec, "Serialized") == 0 &&
-                   FeedCount(serverCodec, "Deserialized") == 0 && !queued.IsCompleted && serverModule.RemainingStreams == 0 &&
-                   await b.TouchAsync(1, ct) == 101, "the real queued head has no assembled producer or item before acceptance");
-            trace.Record("PreparedTwoWayDoesNotOpenQueuedProducer", a1, bBinding);
+            await WaitForNStudyAsync(() => server.PreAdmissionStreamBytesForDiagnostics > 0, ct);
+            Ensure(queuedInput.Enumerators == 1 && FeedCount(oldCodec, "Serialized") == 1,
+                "the input is sent while the ordinary admission queue is occupied");
+            Ensure(FeedCount(serverCodec, "Deserialized") == 0 && !queued.IsCompleted &&
+                   serverModule.RemainingStreams == 0 && await b.TouchAsync(1, ct) == 101,
+                "queued input is not decoded or dispatched while admission is held");
+            trace.Record("PreparedTwoWayPreservesQueuedServerAdmission", a1, bBinding);
+
+            if (earlyEof)
+            {
+                queuedInput.ReleaseItems();
+                queuedInput.ReleaseDisposal();
+                await WaitForNStudyAsync(() => connection.PendingCalls.NStudyProducerCount == 0, ct);
+                Ensure(await b.TouchAsync(5, ct) == 105 &&
+                    FeedCount(oldCodec, "Serialized") == 2 &&
+                    FeedCount(serverCodec, "Deserialized") == 0 &&
+                    server.PreAdmissionStreamBytesForDiagnostics > 0,
+                    "the queued request retains its raw input after the producer sends EOF");
+            }
 
             service.GetMethod("Approve")!.Invoke(null, null);
             Ensure(await occupying.WaitAsync(ct) == 42, "the ordinary approval releases one server permit");
             await queuedInput.Started.WaitAsync(ct);
-            await WaitForNStudyAsync(() => FeedCount(service, "Reconciled") == 3, ct);
-            Ensure(queuedInput.Enumerators == 1 && oldModule.RemainingStreams == 2 &&
-                   serverModule.RemainingStreams == 1 && FeedCount(oldCodec, "Serialized") == 1,
-                "the single accepted generated producer uses the exact typed Codec and independent local ownership");
-            trace.Record("RequestAcceptedStartsGeneratedTypedProducer", a1);
+            if (!earlyEof)
+            {
+                await WaitForNStudyAsync(() => FeedCount(service, "Reconciled") == 3, ct);
+                Ensure(queuedInput.Enumerators == 1 && oldModule.RemainingStreams == 2 &&
+                       serverModule.RemainingStreams == 1 && FeedCount(oldCodec, "Serialized") == 1,
+                    "the single accepted generated producer uses the exact typed Codec and independent local ownership");
+            }
+            trace.Record("PreparedTwoWayUsesExactTypedProducer", a1);
             queuedInput.ReleaseItems();
             queuedInput.ReleaseDisposal();
             Ensure((await queued.WaitAsync(ct)).SequenceEqual(duplex ? [6, 14] : [10]),
                 "normal generated typed output contains exactly the accepted inputs");
-            await WaitForNStudyAsync(() => kernel.ActivePermits == 0 && serverModule.RemainingStreams == 0 &&
+            await WaitForNStudyAsync(() => server.PreAdmissionStreamBytesForDiagnostics == 0 &&
+                kernel.ActivePermits == 0 && serverModule.RemainingStreams == 0 &&
                 oldModule.RemainingStreams == 0 && connection.ActiveCallCount == 0, ct);
             server.DisableAdmissionControl();
 

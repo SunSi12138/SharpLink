@@ -66,7 +66,7 @@ using SharpLink.Sdk;
 using SharpLink.Abstractions;
 using System.Threading.Tasks;
 [assembly: SharpLinkGeneratedAssemblyManifest(typeof(SharpLink.Generated.ServiceManifest),
-    5, 2, "3.0.0", "sharplink-3.0-api5-prepared-contract-v1")]
+    5, 2, "3.0.0", "sharplink-3.0-api5-prepared-contract-v2")]
 namespace SharpLink.Generated
 {
     public sealed class ServiceManifest

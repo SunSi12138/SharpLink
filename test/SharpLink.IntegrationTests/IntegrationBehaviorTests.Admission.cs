@@ -314,7 +314,7 @@ public partial class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task QueuedTwoWayInputShouldWaitForAcceptanceWithoutUsingSpoolBudget()
+    public async Task QueuedTwoWayInputShouldUseBoundedSpoolBeforeInvoking()
     {
         TestService.ResetBlockingAdd();
         using var metrics = new LifecycleMetricProbe(LifecycleMetricProbe.AdmissionQueuedCalls);
@@ -329,11 +329,12 @@ public partial class IntegrationBehaviorTests
             }));
         var service = await harness.PrepareServiceAsync<ITestService>();
         var server = (SharpLinkServer)harness.Server;
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async IAsyncEnumerable<int> Input()
+        var releaseRest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async IAsyncEnumerable<int> Input([EnumeratorCancellation] CancellationToken ct = default)
         {
-            started.TrySetResult();
-            await foreach (var item in ToAsyncEnumerable(Enumerable.Range(1, 100), CancellationToken.None))
+            yield return 1;
+            await releaseRest.Task.WaitAsync(ct);
+            for (var item = 2; item <= 100; item++)
                 yield return item;
         }
 
@@ -343,19 +344,23 @@ public partial class IntegrationBehaviorTests
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
             var queued = service.UploadAsync(Input()).AsTask();
             await metrics.WaitForValueAsync(LifecycleMetricProbe.AdmissionQueuedCalls, 1, "two-way head queues");
-            Ensure(!started.Task.IsCompleted && !queued.IsCompleted && TestService.ActiveUploads == 0 &&
-                   server.PreAdmissionStreamBytesForDiagnostics == 0,
-                "the queued head cannot start the producer or charge the stream spool before RequestAccepted");
+            await WaitUntilAsync(() => server.PreAdmissionStreamBytesForDiagnostics > 0);
+            Ensure(!queued.IsCompleted && TestService.ActiveUploads == 0 &&
+                   server.PreAdmissionStreamBytesForDiagnostics <= 128,
+                "the queued head retains the first item within the spool budget without invoking the handler");
 
             TestService.ReleaseBlockingAdd();
             Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 11, "permit owner completes normally");
-            Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(2)) == 5050 && started.Task.IsCompleted,
+            await WaitUntilAsync(() => TestService.ActiveUploads == 1);
+            releaseRest.TrySetResult();
+            Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(2)) == 5050,
                 "the 100-item upload succeeds after acceptance with a 128-byte pre-admission limit");
             Ensure(server.PreAdmissionStreamBytesForDiagnostics == 0 && await service.AddAsync(20, 22) == 42,
                 "two-way completion leaves no spooled bytes and the connection stays healthy");
         }
         finally
         {
+            releaseRest.TrySetResult();
             TestService.ReleaseBlockingAdd();
         }
     }

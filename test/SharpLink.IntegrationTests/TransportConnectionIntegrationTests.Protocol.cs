@@ -97,7 +97,8 @@ public partial class TransportConnectionIntegrationTests
     [NotInParallel]
     [Arguments((ushort)3)]
     [Arguments((ushort)4)]
-    public async Task TcpShouldRejectPublishedOlderMinorAndDispatchOnlyAfterPrepare(ushort legacyMinor)
+    [Arguments((ushort)5)]
+    public async Task TcpShouldRejectOlderMinorAndDispatchOnlyAfterPrepare(ushort legacyMinor)
     {
         const string authToken = "prepared-test-client";
         var authCalls = 0;

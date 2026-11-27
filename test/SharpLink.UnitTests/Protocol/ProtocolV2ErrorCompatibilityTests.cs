@@ -5,10 +5,11 @@ public class ProtocolV2ErrorCompatibilityTests
     [Test]
     [Arguments((ushort)3)]
     [Arguments((ushort)4)]
-    public async Task PreparedProfileShouldRejectPreviouslyPublishedWireMinors(ushort legacyMinor)
+    [Arguments((ushort)5)]
+    public async Task PreparedProfileShouldRejectEarlierWireMinors(ushort legacyMinor)
     {
-        // The published wire generation ends at minor 4; this rehearsal sets a new floor.
-        const ushort preparedProfileMinor = 5;
+        // Development minor 5 required an input receipt and cannot interoperate.
+        const ushort preparedProfileMinor = 6;
         Ensure(ProtocolV2Constants.MinorVersion == preparedProfileMinor,
             "this test must run on the exact prepared wire generation under rehearsal");
         Ensure(

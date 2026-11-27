@@ -7,11 +7,11 @@ it for all five shapes. The historical directory, project and script names are r
 this is not a cross-version matrix and does not establish 2.0.3 ↔ 3.0 compatibility.
 
 SharpLink 3.0 uses Generated API 5 with the exact ABI identity
-`sharplink-3.0-api5-prepared-contract-v1`, independently of Protocol v2 minor and floor 5.
+`sharplink-3.0-api5-prepared-contract-v2`, independently of Protocol v2 minor and floor 6.
 The release boundary requires current-package interoperability
 and correct rejection of incompatible inputs, not successful cross-major interoperability.
 Protocol negotiation, ABI admission and contract-hash rejection have separate focused tests.
-The TCP legacy-minor test sends normal minor 3 and 4 handshake offers and checks for
+The TCP legacy-minor test sends normal minor 3, 4, and 5 handshake offers and checks for
 `Unimplemented` and connection termination without authentication. Its current-minor control uses
 a generated proxy and checks that only explicit preparation allows the business call.
 

@@ -11,7 +11,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [Arguments("tcp", "duplex")]
     [Arguments("shared-memory", "client-stream")]
     [Arguments("shared-memory", "duplex")]
-    public async Task NStudyInputStreamsWaitForAcceptanceAndKeepExactBinding(string transport, string shape)
+    public async Task NStudyEarlyInputStreamsKeepExactBindingAndPhysicalOwners(string transport, string shape)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = guard.Token;
@@ -84,30 +84,34 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             using (var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
                 var ordinaryCancelled = CallNStudyInput(proxy, contracts.ContractType, shape, cancelledInput, cancel.Token);
-                await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 && table.NStudyProducerCount == 1, ct);
-                Ensure(cancelledInput.Enumerators == 0 && !ordinaryCancelled.IsCompleted,
-                    "the queued request has been sent, but its producer was not opened");
+                await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 &&
+                    server.PreAdmissionStreamBytesForDiagnostics > 0, ct);
+                Ensure(cancelledInput.Enumerators == 1 && !ordinaryCancelled.IsCompleted &&
+                    oldModule.RemainingStreams == 0, "the queued producer runs without a server invocation");
                 cancel.Cancel();
                 await ExpectNStudyCallerCancellation(ordinaryCancelled, cancel.Token, ct);
-                await WaitForNStudyAsync(() => kernel.QueuedCalls == 0 && table.NStudyProducerCount == 0, ct);
-                Ensure(cancelledInput.Enumerators == 0 && NStudyCount(oldType, "InputStreamExits") == 0 &&
+                await cancelledInput.Disposing.WaitAsync(ct);
+                cancelledInput.ReleaseDisposal();
+                await WaitForNStudyAsync(() => kernel.QueuedCalls == 0 && table.NStudyProducerCount == 0 &&
+                    server.PreAdmissionStreamBytesForDiagnostics == 0, ct);
+                Ensure(cancelledInput.ExitCount == 1 && NStudyCount(oldType, "InputStreamExits") == 0 &&
                        !busy.IsCompleted && await unrelated.TouchAsync(1, ct) == 101,
-                    "queued caller cancellation opens no producer or handler and leaves unrelated B usable");
-                trace.Record("QueuedCallerCancellationDoesNotOpenProducer", a1);
+                    "queued cancellation closes the producer without invoking the handler or affecting unrelated B");
+                trace.Record("QueuedCancellationDrainsEarlyInput", a1);
             }
 
             var call = CallNStudyInput(proxy, contracts.ContractType, shape, input, ct);
-            await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 && table.NStudyProducerCount == 1, ct);
-            Ensure(input.Enumerators == 0 && !call.IsCompleted && oldModule.RemainingStreams == 0 &&
+            await WaitForNStudyAsync(() => kernel.QueuedCalls == 1 && server.PreAdmissionStreamBytesForDiagnostics > 0, ct);
+            Ensure(input.Enumerators == 1 && !call.IsCompleted && oldModule.RemainingStreams == 0 &&
                    await unrelated.TouchAsync(2, ct) == 102, "B completes while the input stream awaits actual admission");
-            trace.Record("QueuedInputDoesNotOpenProducerWhileBContinues", a1);
+            trace.Record("QueuedInputBuffersWhileBContinues", a1);
 
             oldType.GetMethod("ReleaseBlock")!.Invoke(null, null);
             Ensure(await busy.WaitAsync(ct) == 42, "the ordinary blocking call returns and grants the queued stream");
-            await input.Started.WaitAsync(ct);
+            await WaitForNStudyAsync(() => NStudyCount(oldType, "InputItemsConsumed") == 1, ct);
             Ensure(input.Enumerators == 1 && oldModule.RemainingCalls == 1 && oldModule.RemainingStreams == 1,
-                "one producer starts only after the dispatch has leased and started the actual R1 reader");
-            trace.Record("AdmittedR1StartsOneProducer", a1);
+                "the exact admitted R1 reader consumes buffered input from the original producer");
+            trace.Record("AdmittedR1ConsumesEarlyInput", a1);
 
             var replacing = server.ReplaceAssemblyAsync(oldAssembly, newAssembly, TimeSpan.FromSeconds(15), ct).AsTask();
             await WaitForNStudyAsync(() => connection.Session.NStudyPreparedCount == 1, ct);

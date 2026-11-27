@@ -86,6 +86,8 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap) ?? throw new InvalidOperationException(
                     "Persistent decode requires a pre-activation cancellation state.");
 
+            ReservePreAdmissionRequestStreams(connection, requestId, facts.Descriptor.ClientStreamCount, callState);
+
             var result = new PersistentDecodeResult();
             var workItem = new ServerDecodeWorkItem(cancellationToken =>
             {
@@ -161,11 +163,13 @@ internal sealed partial class SharpLinkServer
                 callState,
                 requestOwner);
         }
-        catch
+        catch (Exception exception)
         {
             queuePermit?.Dispose();
             if (retainedPayload is not null)
                 ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            if (facts.Descriptor.HasClientStreams)
+                CompleteFailedRequestStreams(session, requestId, exception);
             ReleaseDispatchResources(
                 callState,
                 requestId,

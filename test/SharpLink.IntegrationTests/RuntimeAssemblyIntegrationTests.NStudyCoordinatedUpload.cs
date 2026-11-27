@@ -12,14 +12,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [Arguments("tcp")]
     [Arguments("shared-memory")]
     public Task NStudyCoordinatedReplacementPreservesAdmittedUploadThroughPhysicalExit(string transport)
-    {
-        var flush = new NStudyHeldResponseFlush();
-        return WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: false,
-            (fixture, trace, ct) => VerifyCoordinatedUploadAsync(fixture, trace, flush, ct),
+        => WithNStudyCoordinationPeersAsync(transport, NStudyCoordinationMode.Manual, twoPeers: false,
+            VerifyCoordinatedUploadAsync,
             configureClient: builder => builder.UseRuntime(ConfigureCoordinatedUploadWindows),
-            configureServer: builder => builder.UseRuntime(ConfigureCoordinatedUploadWindows),
-            decorateServerTransport: inner => new NStudyHeldResponseListener(inner, flush));
-    }
+            configureServer: builder => builder.UseRuntime(ConfigureCoordinatedUploadWindows));
 
     private static void ConfigureCoordinatedUploadWindows(SharpLinkRuntimeOptions options)
     {
@@ -28,7 +24,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     private static async Task VerifyCoordinatedUploadAsync(NStudyCoordinationFixture fixture,
-        NStudyTrace trace, NStudyHeldResponseFlush flush, CancellationToken ct)
+        NStudyTrace trace, CancellationToken ct)
     {
         var (server, contracts, oldAssembly, newAssembly, oldType, newType, first, _, _) = fixture;
         var (client, session, peer, a, b, receiver, sibling) = first;
@@ -51,18 +47,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         try
         {
-            flush.Arm();
             var oldCall = CallNStudyInput(receiver.Service, contracts.ContractType, "client-stream", input, ct);
-            await flush.Entered.Task.WaitAsync(ct);
+            await WaitForNStudyAsync(() => NStudyCount(oldType, "InputItemsConsumed") == 1, ct);
             Ensure(module.RemainingCalls == 1 && module.RemainingStreams == 1 &&
                    peer.NStudyBindings.Snapshot() == (2, 0, 1) &&
-                   connection.PendingCalls.NStudyProducerCount == 1 && input.Enumerators == 0 && !oldCall.IsCompleted,
-                "the real admitted R1 upload cannot start its producer while acceptance delivery is held");
-            trace.Record("HeldAcceptanceDoesNotOpenTheR1Uploader", a, b);
-
-            flush.Release.TrySetResult();
-            await input.Started.WaitAsync(ct);
-            await WaitForNStudyAsync(() => NStudyCount(oldType, "InputItemsConsumed") == 1, ct);
+                   connection.PendingCalls.NStudyProducerCount == 1 && input.Enumerators == 1 && !oldCall.IsCompleted,
+                "the original R1 upload owns both ends before coordinated replacement");
             var joining = publicClient.JoinVersionChangeAsync(local, participant, Approve, ct).AsTask();
             var replacing = publicServer.ReplaceAssemblyCoordinatedAsync(oldAssembly, newAssembly, a.Contract,
                 [participant], TimeSpan.FromSeconds(10), Approve, ct).AsTask();
@@ -99,7 +89,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         }
         finally
         {
-            flush.Release.TrySetResult();
             input.ReleaseItems();
             input.ReleaseDisposal();
         }

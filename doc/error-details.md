@@ -46,7 +46,7 @@ The public constants live under `SharpLinkErrorDetails.ResourceExhausted`.
 
 ## Wire format and compatibility
 
-SharpLink 3.0 uses Protocol v2 minor 5, with a minimum compatible minor of 5. It retains the binary error payload layout introduced in minor 4:
+SharpLink 3.0 uses Protocol v2 minor 6, with a minimum compatible minor of 6. It retains the binary error payload layout introduced in minor 4:
 
 ```text
 SharpLinkErrorCode : uint16 little-endian

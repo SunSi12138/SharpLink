@@ -257,7 +257,7 @@ internal sealed partial class SharpLinkServer
                         connection, callState, requestId, request.RpcDeadline,
                         serverLoopToken, moduleCancellation, requestCancellationMap);
                     ReservePreInvocationRequestStreams(
-                        session, descriptor.ClientStreamCount, requestId, invokeToken,
+                        connection, descriptor.ClientStreamCount, requestId, invokeToken,
                         callState.CaptureLease(requestId).TerminalOwner);
                 }
 

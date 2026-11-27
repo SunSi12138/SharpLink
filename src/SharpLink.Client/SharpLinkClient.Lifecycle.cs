@@ -491,13 +491,6 @@ internal sealed partial class SharpLinkClient
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();
                     session.EnsureInboundFrameAllowed(header.Type);
-                    // Uncompressed responses validate producer admission while claiming the
-                    // pending slot, before the result Codec or completion observer can run.
-                    if (header.Type == ProtocolV2FrameType.StreamData ||
-                        header.Type == ProtocolV2FrameType.Response &&
-                        (header.Flags & (ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Error)) ==
-                        ProtocolV2FrameFlags.Compressed)
-                        connection.PendingCalls.RequireNStudyAcceptance(unchecked((long)header.RequestId));
                     IRpcByteBufferWriter? decodedOwner = null;
                     try
                     {
@@ -556,9 +549,6 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case NStudyWire.Invalidated:
                                 session.OnNStudyInvalidated(payload);
-                                break;
-                            case NStudyWire.RequestAccepted:
-                                connection.PendingCalls.AcceptNStudyRequest(unchecked((long)header.RequestId));
                                 break;
                             case NStudyWire.Coordination:
                                 if (session.OnNStudyCoordination(header.RequestId, payload, () => NStudyVersionCoordinationMode) is { } offer)
@@ -729,7 +719,7 @@ internal sealed partial class SharpLinkClient
         }
         else
         {
-            if (connection.PendingCalls.Dispatch(requestId, ref payload, requireProducerAcceptance: true))
+            if (connection.PendingCalls.Dispatch(requestId, ref payload))
                 return;
         }
 

@@ -107,6 +107,9 @@ internal sealed partial class SharpLinkServer
 
         if (!acquisition.IsCompletedSuccessfully)
         {
+            if (!acquisition.IsCompleted && methodDescriptor.HasClientStreams && !oneWayInput)
+                ReservePreInvocationRequestStreams(connection, methodDescriptor.ClientStreamCount,
+                    requestId, cancellationToken);
             return InvokeServiceAfterAcquisitionAsync(
                 acquisition,
                 execute,

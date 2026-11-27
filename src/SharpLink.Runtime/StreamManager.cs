@@ -174,6 +174,13 @@ internal sealed partial class StreamManager
     /// <inheritdoc />
     internal ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
+        TryDispatchChunk(requestId, streamId, payload, out var dispatch);
+        return dispatch;
+    }
+
+    internal bool TryDispatchChunk(
+        long requestId, ushort streamId, ReadOnlySequence<byte> payload, out ValueTask dispatch)
+    {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
         if (dispatchersByRequestId is not null &&
             dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
@@ -187,18 +194,20 @@ internal sealed partial class StreamManager
                 if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 {
                     _acceptBytes(requestId, streamId, encodedByteCount);
-                    return CompleteDispatch(
+                    dispatch = CompleteDispatch(
                         entry,
                         dispatcher is IStreamDispatchLease leased
                             ? leased.DispatchAcquiredAsync(payload, encodedByteCount)
                             : consumptionAware.DispatchAsync(payload, encodedByteCount));
+                    return true;
                 }
 
-                return CompleteDispatch(
+                dispatch = CompleteDispatch(
                     entry,
                     dispatcher is IStreamDispatchLease dispatchLease
                         ? dispatchLease.DispatchAcquiredAsync(payload, encodedByteCount)
                         : dispatcher.DispatchAsync(payload));
+                return true;
             }
             catch
             {
@@ -207,8 +216,9 @@ internal sealed partial class StreamManager
             }
         }
 
-        Interlocked.Increment(ref _droppedStreamFrames);
-        return ValueTask.CompletedTask;
+        RecordUnroutedStreamData();
+        dispatch = ValueTask.CompletedTask;
+        return false;
     }
 
     private static void ThrowIfPeerTerminal(DispatcherEntry entry)
@@ -587,6 +597,16 @@ internal sealed partial class StreamManager
         ReadOnlySequence<byte> wirePayload,
         int originalByteCount,
         out ValueTask dispatch)
+        => TryDispatchPreAdmissionCompressed(
+            requestId, streamId, wirePayload, originalByteCount, out dispatch, out _);
+
+    internal bool TryDispatchPreAdmissionCompressed(
+        long requestId,
+        ushort streamId,
+        ReadOnlySequence<byte> wirePayload,
+        int originalByteCount,
+        out ValueTask dispatch,
+        out bool hasRoute)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
         if (dispatchersByRequestId is null ||
@@ -594,18 +614,32 @@ internal sealed partial class StreamManager
             !requestDispatchers.TryAcquire(streamId, out var entry))
         {
             dispatch = default;
+            hasRoute = false;
             return false;
         }
 
+        hasRoute = true;
         try
         {
             ThrowIfPeerTerminal(entry);
             if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
             {
                 _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-                dispatch = CompleteDispatch(
-                    entry,
-                    preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount));
+                ValueTask received;
+                try
+                {
+                    received = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
+                }
+                catch (SharpLinkException exception) when (
+                    exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
+                {
+                    // Report a provider failure after handing the accounted frame back to the
+                    // caller. Its mailbox already returned the bytes; do not drain it twice.
+                    entry.Release();
+                    dispatch = ValueTask.FromException(exception);
+                    return true;
+                }
+                dispatch = CompleteDispatch(entry, received);
                 return true;
             }
             if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
@@ -677,6 +711,7 @@ internal sealed partial class StreamManager
     }
 
     internal long DroppedStreamFrames => Volatile.Read(ref _droppedStreamFrames);
+    internal void RecordUnroutedStreamData() => Interlocked.Increment(ref _droppedStreamFrames);
     internal int ActiveStreamCount => Volatile.Read(ref _activeStreamCount);
     internal bool IsTerminated => Volatile.Read(ref _termination) is not null;
     internal bool HasMaterializedRoutingState => Volatile.Read(ref _dispatchersByRequestId) is not null;

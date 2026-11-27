@@ -34,13 +34,15 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 ## ClientStreaming 与 Duplex
 
-ClientStreaming 和 Duplex 不会在初始 Request 入队后立即开始枚举输入。若调用有 deadline，先在原预算内等待本地发出 Request；随后须收到服务端准入后的 `RequestAccepted`，并且原待完成请求仍允许启动生产者。取消或 deadline 先结束调用时，迟到的确认不会启动生产者。收到确认只表示可以开始发送输入，不代表业务完成。
+发送初始 Request 后，ClientStreaming 和 Duplex 可以在流控额度内开始发送输入，不等服务端确认。服务端仍然独立执行准入；如果拒绝调用，客户端会停止生产，服务端会丢弃未交付的输入并归还额度。
+
+原待完成请求决定能否启动生产者；取消或 deadline 已结束的请求不会启动。带 deadline 时，本地等待 Request 发出也使用原预算。
 
 请求和流使用同一物理连接。重连不会迁移已开始的流，Streaming 和 OneWay 也不自动重试。
 
 ## OneWay
 
-普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还在原预算内等待本地 emission/flush。带输入流的 OneWay 没有逐请求的 `RequestAccepted`，在达到同样的本地发送边界且未取消时即可开始生产，成功还需完成本地生产者生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
+普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还在原预算内等待本地 emission/flush。带输入流的 OneWay 在达到同样的本地发送边界且未取消时即可开始生产，成功还需完成本地生产者生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
 
 服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察；需要远端结果确认时使用有响应的 RPC。
 
@@ -56,4 +58,4 @@ ClientStreaming 和 Duplex 不会在初始 Request 入队后立即开始枚举�
 用准备过的 `IRpcContractChannel` 与生成的 client-stream writer / server bridge 连接调用生命周期；
 bridge 不公开 Session、dispatcher 或 flow-control mutator。所有框架后台发送/排空仍由 owner
 监督并在停止时等待；应用提前停止枚举必须释放 enumerator。调用时间只传播剩余 TimeBudget
-（Protocol v2 minor 5），不读取跨机器绝对 deadline。3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。
+（Protocol v2 minor 6），不读取跨机器绝对 deadline。3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。

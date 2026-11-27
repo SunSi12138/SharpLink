@@ -161,7 +161,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 5;
 
     /// <summary>Exact discriminator for the #999 study generated receiver ABI.</summary>
-    public const string AbiIdentity = "sharplink-3.0-api5-prepared-contract-v1";
+    public const string AbiIdentity = "sharplink-3.0-api5-prepared-contract-v2";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

@@ -209,8 +209,8 @@ public class SharpLinkClientTimeBudgetTests
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
-        // Emission does not re-sample the TimeBudget, and emission alone does not admit
-        // the producer: its own RequestAccepted is required.
+        // Emission does not re-sample the TimeBudget. Starting the producer still checks
+        // the original pending deadline after publication.
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(
@@ -229,8 +229,8 @@ public class SharpLinkClientTimeBudgetTests
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
             "the wire TimeBudget must be the remaining sampled once when the frame is created");
-        Ensure(!probe.Started.Task.IsCompleted && !invocation.IsCompleted,
-            "emitting the unaccepted request must neither start its producer nor complete the call");
+        Ensure(!probe.Started.Task.IsCompleted,
+            "emitting the request after its deadline must not start the producer");
 
         // The pending deadline owns the terminal decision now that the send pump publishes
         // frames verbatim, so the elapsed budget fails the call and cancels the remote stream.
@@ -238,7 +238,7 @@ public class SharpLinkClientTimeBudgetTests
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "an emitted client-stream Request whose budget elapsed must fail through its pending deadline");
-        Ensure(!probe.Started.Task.IsCompleted, "the pending deadline must discard the unaccepted producer");
+        Ensure(!probe.Started.Task.IsCompleted, "the pending deadline must prevent producer start");
     }
 
     [Test]

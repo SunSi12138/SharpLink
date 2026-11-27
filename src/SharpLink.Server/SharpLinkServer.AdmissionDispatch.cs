@@ -146,7 +146,7 @@ internal sealed partial class SharpLinkServer
                     try
                     {
                         ReservePreAdmissionRequestStreams(
-                            session, requestId, descriptor.ClientStreamCount, admittedCallState,
+                            connection, requestId, descriptor.ClientStreamCount, admittedCallState,
                             retainUntilLocalCompletion: true);
                     }
                     catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
@@ -405,7 +405,7 @@ internal sealed partial class SharpLinkServer
                         connection, callState, requestId, request.RpcDeadline,
                         serverLoopToken, moduleCancellation, requestCancellationMap);
                     ReservePreInvocationRequestStreams(
-                        session, descriptor.ClientStreamCount, requestId, invokeToken,
+                        connection, descriptor.ClientStreamCount, requestId, invokeToken,
                         callState.CaptureLease(requestId).TerminalOwner);
                 }
 

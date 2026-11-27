@@ -943,8 +943,14 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         }
         catch
         {
-            ReleaseChildDispatch();
+            DiscardUndeliveredCompressedItem(encodedByteCount);
             throw;
+        }
+
+        if (decoded.Owner is null)
+        {
+            DiscardUndeliveredCompressedItem(encodedByteCount);
+            return ValueTask.CompletedTask;
         }
 
         try
@@ -962,6 +968,12 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             decoded.Dispose();
             throw;
         }
+    }
+
+    private void DiscardUndeliveredCompressedItem(int encodedByteCount)
+    {
+        try { NotifyBytesConsumed(encodedByteCount); }
+        finally { ReleaseChildDispatch(); }
     }
 
     private static async ValueTask AwaitDecodedDispatchAsync(

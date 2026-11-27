@@ -22,6 +22,8 @@ internal sealed partial class SharpLinkServer
             if (session.StreamManager.TryDiscardTerminalStreamData(
                     requestId, streamId, payload, encodedBytes, out var dispatch, terminalOwner))
                 await dispatch.ConfigureAwait(false);
+            else if (streamId != 0)
+                session.RefundDiscardedStreamData(requestId, streamId, encodedBytes);
             return;
         }
 

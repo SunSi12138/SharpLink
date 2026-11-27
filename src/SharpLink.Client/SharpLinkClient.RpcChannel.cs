@@ -25,7 +25,6 @@ internal sealed partial class SharpLinkClient
         {
             if (streamId == 0)
             {
-                connection.PendingCalls.RequireNStudyAcceptance(requestId);
                 connection.PendingCalls.TryComplete(
                     requestId,
                     PendingCallCompletionReason.RemoteStreamComplete);

@@ -314,7 +314,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         throw CreateResourceExhaustedException();
     }
 
-    public bool Dispatch(long id, ref ReadOnlySequence<byte> payload, bool requireProducerAcceptance = false)
+    public bool Dispatch(long id, ref ReadOnlySequence<byte> payload)
     {
         ref var slot = ref ReadSlot(id);
         while (true)
@@ -328,11 +328,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             {
                 if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id)
                     continue;
-
-                // Inspect the receipt on the exact pending call before observing or decoding
-                // business success. Compressed frames are also checked before decompression.
-                if (requireProducerAcceptance)
-                    RequireNStudyAcceptance(current);
 
                 deadlineExpired = current.Deadline.IsExpired(_timeProvider);
                 // Response acknowledges server/duplex streams; StreamComplete owns their end.
@@ -1106,7 +1101,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         public CancellationToken CancellationToken { get; private set; }
         public CancellationToken ProducerCancellationToken
             => NStudyAdmission?.Token ?? CancellationToken.None;
-        public NStudyProducerAdmission? NStudyAdmission { get; private set; }
+        public PendingInputProducer? NStudyAdmission { get; private set; }
         public IPendingCallCompletionObserver? CompletionObserver => _completionObserver;
 
         /// <summary>
@@ -1154,8 +1149,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             call._completionObserver = completionObserver;
             call.NStudyAdmission = kind switch
             {
-                PendingCallKind.ClientStreaming or PendingCallKind.DuplexStreaming => new(requiresAcceptance: true),
-                PendingCallKind.OneWayClientStreaming => new(requiresAcceptance: false),
+                PendingCallKind.ClientStreaming or PendingCallKind.DuplexStreaming or
+                    PendingCallKind.OneWayClientStreaming => new(),
                 _ => null
             };
             call._cancellationRegistration = cancellationToken.CanBeCanceled

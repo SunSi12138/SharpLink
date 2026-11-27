@@ -597,7 +597,7 @@ internal sealed partial class SharpLinkClient
         }
 
         var table = connection!.PendingCalls;
-        NStudyProducerAdmission? admission = null;
+        PendingInputProducer? admission = null;
         var sentEof = false;
         try
         {
@@ -721,7 +721,7 @@ internal sealed partial class SharpLinkClient
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
             : ProtocolV2FrameFlags.Cancellable;
         var table = connection!.PendingCalls;
-        NStudyProducerAdmission? admission = null;
+        PendingInputProducer? admission = null;
         SharpLinkDynamicModuleLease producerLease = default;
         try
         {
@@ -746,7 +746,7 @@ internal sealed partial class SharpLinkClient
                     // cancels when it reaches a terminal reason.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
-                if (await admission.Acceptance.ConfigureAwait(false) && table.TryStartNStudyProducer(requestId, admission))
+                if (table.TryStartNStudyProducer(requestId, admission))
                 {
                     var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, admission, producerLease);
                     producerLease = default;
@@ -776,7 +776,7 @@ internal sealed partial class SharpLinkClient
         ClientConnection connection,
         TStreams streams,
         long requestId,
-        NStudyProducerAdmission admission,
+        PendingInputProducer admission,
         SharpLinkDynamicModuleLease producerLease)
         where TStreams : struct, IRpcClientStreamWriter
     {
@@ -860,7 +860,7 @@ internal sealed partial class SharpLinkClient
     {
         var moduleProducerLifetime = control.InputLifetime;
         SharpLinkDynamicModuleLease producerLease = default;
-        NStudyProducerAdmission? admission = null;
+        PendingInputProducer? admission = null;
         var registrationLease = dispatcher.RetainForRegistration();
         ClientConnection? connection = null;
         var requestId = 0L;
@@ -895,8 +895,7 @@ internal sealed partial class SharpLinkClient
                 // to release the producer side from a stalled transport write.
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
-            if (await admission.Acceptance.ConfigureAwait(false) &&
-                connection.PendingCalls.TryStartNStudyProducer(requestId, admission))
+            if (connection.PendingCalls.TryStartNStudyProducer(requestId, admission))
             {
                 await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
             }

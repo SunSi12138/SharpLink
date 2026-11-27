@@ -139,6 +139,14 @@ internal sealed partial class RpcSession
     private void AcceptReceivedStreamBytes(long requestId, ushort streamId, int encodedBytes)
         => Volatile.Read(ref _protocolState).FlowController?.AcceptReceived(requestId, streamId, encodedBytes);
 
+    internal void RefundDiscardedStreamData(long requestId, ushort streamId, int encodedBytes)
+    {
+        if (Volatile.Read(ref _protocolState).FlowController is not { } controller)
+            return;
+        controller.ValidateDiscardedReceive(requestId, streamId, encodedBytes);
+        TrySendWindowUpdate(requestId, streamId, encodedBytes);
+    }
+
     private void OnStreamBytesConsumed(long requestId, ushort streamId, int encodedBytes)
     {
         var controller = Volatile.Read(ref _protocolState).FlowController;

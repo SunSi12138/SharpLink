@@ -41,7 +41,7 @@ internal sealed partial class SharpLinkServer
     }
 
     private void ReservePreAdmissionRequestStreams(
-        RpcSession session,
+        ServerConnectionState connection,
         long requestId,
         int clientStreamCount,
         ServerCallCancellationState callState,
@@ -50,18 +50,19 @@ internal sealed partial class SharpLinkServer
         if (clientStreamCount == 0)
             return;
 
-        ReservePreAdmissionRequestStreamsCore(session, requestId, clientStreamCount, callState, retainUntilLocalCompletion);
+        ReservePreAdmissionRequestStreamsCore(connection, requestId, clientStreamCount, callState, retainUntilLocalCompletion);
     }
 
     private void ReservePreAdmissionRequestStreamsCore(
-        RpcSession session,
+        ServerConnectionState connection,
         long requestId,
         int clientStreamCount,
         ServerCallCancellationState callState,
         bool retainUntilLocalCompletion)
     {
-        var streamManager = session.StreamManager;
+        var streamManager = connection.Session.StreamManager;
         var resourceGovernor = ResourceGovernor;
+        var cancellationToken = callState.InvocationToken;
         streamManager.ReservePreAdmissionStreams(
             requestId,
             clientStreamCount,
@@ -70,26 +71,13 @@ internal sealed partial class SharpLinkServer
             retainedBytes => resourceGovernor.ReleasePreAdmissionStreamBytes(retainedBytes),
             () => callState.TryCancel(
                 ServerCallCancellationReason.PreAdmissionStreamResourceExhausted),
-            compressedPayload =>
-            {
-                var decodedPayload = session.DecodeInboundPayload(
-                    ProtocolV2FrameType.StreamData,
-                    ProtocolV2FrameFlags.Compressed,
-                    compressedPayload,
-                    callState.InvocationToken,
-                    out var decodedOwner);
-                return new PreAdmissionDecodedPayload(
-                    decodedPayload.Slice(sizeof(ushort)),
-                    decodedOwner ?? throw new InvalidOperationException(
-                        "Compressed stream decoding did not return an owner."),
-                    _runtimeContext.Buffers);
-            },
+            payload => DecodeDeferredInput(connection, requestId, payload, cancellationToken),
             retainUntilLocalCompletion,
             retainUntilLocalCompletion ? callState.CaptureLease(requestId).TerminalOwner : default);
     }
 
     private void ReservePreInvocationRequestStreams(
-        RpcSession session,
+        ServerConnectionState connection,
         int clientStreamCount,
         long requestId,
         CancellationToken cancellationToken,
@@ -101,31 +89,20 @@ internal sealed partial class SharpLinkServer
         // Keep captured callback state inside the streaming-only method. A lambda in
         // this scope would allocate its display class before the no-stream return.
         ReservePreInvocationRequestStreamsCore(
-            session, clientStreamCount, requestId, cancellationToken, retainedInputOwner);
+            connection, clientStreamCount, requestId, cancellationToken, retainedInputOwner);
     }
 
     private void ReservePreInvocationRequestStreamsCore(
-        RpcSession session,
+        ServerConnectionState connection,
         int clientStreamCount,
         long requestId,
         CancellationToken cancellationToken,
         StreamTerminalOwner retainedInputOwner)
     {
+        var session = connection.Session;
         var streamManager = session.StreamManager;
-        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload> decodeCompressed = compressedPayload =>
-        {
-            var decodedPayload = session.DecodeInboundPayload(
-                ProtocolV2FrameType.StreamData,
-                ProtocolV2FrameFlags.Compressed,
-                compressedPayload,
-                cancellationToken,
-                out var decodedOwner);
-            return new PreAdmissionDecodedPayload(
-                decodedPayload.Slice(sizeof(ushort)),
-                decodedOwner ?? throw new InvalidOperationException(
-                    "Compressed stream decoding did not return an owner."),
-                _runtimeContext.Buffers);
-        };
+        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload> decodeCompressed =
+            payload => DecodeDeferredInput(connection, requestId, payload, cancellationToken);
 
         if (session.HasStreamFlowControl)
         {
@@ -172,6 +149,40 @@ internal sealed partial class SharpLinkServer
                     retainUntilLocalCompletion: retainedInputOwner.IsPresent,
                     maxRetainedBytes: maxRetainedBytes,
                     retainedInputOwner: retainedInputOwner));
+        }
+    }
+
+    // Raw items in a stable mailbox cannot reach this decoder until the typed
+    // invocation attaches. Provider execution can race the original terminal.
+    private static PreAdmissionDecodedPayload DecodeDeferredInput(
+        ServerConnectionState connection, long requestId, ReadOnlySequence<byte> payload, CancellationToken token)
+    {
+        var calls = connection.CallCancellations;
+        if (!TryAcceptInboundStreamProgress(calls, requestId, out var owned, out _) || !owned)
+            return default;
+
+        var session = connection.Session;
+        IRpcByteBufferWriter? owner = null;
+        try
+        {
+            var decoded = session.DecodeInboundPayload(
+                ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.Compressed, payload, token, out owner);
+            if (!TryAcceptInboundStreamProgress(calls, requestId, out owned, out _) || !owned)
+                return default;
+            var result = new PreAdmissionDecodedPayload(decoded.Slice(sizeof(ushort)),
+                owner ?? throw new InvalidOperationException("Compressed stream decode returned no owner."),
+                session.RuntimeContext.Buffers);
+            owner = null;
+            return result;
+        }
+        catch (OperationCanceledException) when (
+            !TryAcceptInboundStreamProgress(calls, requestId, out var stillOwned, out _) || !stillOwned)
+        {
+            return default;
+        }
+        finally
+        {
+            session.ReturnDecodedPayload(owner);
         }
     }
 

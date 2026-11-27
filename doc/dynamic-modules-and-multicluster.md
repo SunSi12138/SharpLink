@@ -187,7 +187,7 @@ NativeAOT 不支持运行时加载未知插件，动态模块只适用于 JIT �
 
 ## 3.0 Generated ABI 和发布门禁
 
-所有契约、服务和插件须用同一套 3.0 SDK 重新生成 API 5，并携带精确 identity `sharplink-3.0-api5-prepared-contract-v1`。
+所有契约、服务和插件须用同一套 3.0 SDK 重新生成 API 5，并携带精确 identity `sharplink-3.0-api5-prepared-contract-v2`。
 locator 在 manifest materialization 之前 fail fast；Catalog 是 generated bootstrap，
 应用只通过 `ISharpLinkAssemblyRegistry` 注册、替换和注销。
 `ReferencesReleased` 描述框架引用释放，不保证应用自身 Assembly/Type/proxy 引用已清空，

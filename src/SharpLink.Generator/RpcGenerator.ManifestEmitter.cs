@@ -4,7 +4,7 @@ public partial class RpcGenerator
 {
     private const int GeneratedManifestApi = 5;
     private const int GeneratedProtocolVersion = 2;
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-prepared-contract-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-prepared-contract-v2";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,

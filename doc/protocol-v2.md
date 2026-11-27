@@ -2,7 +2,7 @@
 
 Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-3.0 的 protocol minor 与最低可接受 minor 均为 5。旧 minor 在握手阶段以 `Unimplemented` 拒绝。minor 5 使用 Session-local BindingId 作为 RPC 路由键；保留 minor 4 引入的相对 TimeBudget，不读取跨机器绝对 deadline。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+3.0 的 protocol minor 与最低可接受 minor 均为 6。旧 minor 在握手阶段以 `Unimplemented` 拒绝。当前版本使用 Session-local BindingId 作为 RPC 路由键，输入流不需要逐请求确认，保留 minor 4 引入的相对 TimeBudget。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 3.0 的进程内 Generated ABI 为 API 5，与此处 wire minor 是独立版本轴；不因 API 号变化而自动改变 wire grammar。当前包双进程门禁不是 2.0.3 ↔ 3.0 兼容矩阵，跨 major 成功互操作不属于 3.0 的发布承诺；不兼容输入仍必须在握手或契约绑定边界拒绝，不能误解释后执行业务。
 
@@ -30,8 +30,7 @@ Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼�
 | `Request` | 非 0 | `bindingId:uint64 + methodId:uint64`，随后是可选 TimeBudget、metadata 和业务 payload |
 | `Bind` / `BindAck` | 非 0 | 在当前物理 Session 协商确切契约、hash 和注册代次，返回该 Session 的 binding |
 | `Release` / `Invalidated` | 0 | 释放或撤销 Session-local binding；资源仍保留到已准入的调用物理退出 |
-| `RequestAccepted` | 非 0 | 空；服务端准入后确认有响应的输入流，收到确认后客户端才开始生产 |
-| `OneWayInputRequest` | 非 0 | 先编码一个 `inputCount:uint8`（1–127），再使用同一 `bindingId + methodId` 路由前缀；不发送逐请求 `RequestAccepted` |
+| `OneWayInputRequest` | 非 0 | 先编码一个 `inputCount:uint8`（1–127），再使用同一 `bindingId + methodId` 路由前缀 |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
 | `Cancel` | 非 0 | 未协商 `CancellationReason` 时为空；协商后固定一个有效 reason byte |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
@@ -42,6 +41,8 @@ Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼�
 | `HealthResponse` | 非 0 | 单字节 `Unhealthy/Ready/Draining` 状态 |
 
 Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID 0 仅用于连接控制帧；溢出分配时必须跳过 0。
+
+客户端可以在 Request 后按现有窗口发送输入流帧，不等待逐请求确认。服务端准入前不向业务交付输入；拒绝调用时丢弃未交付的输入并归还额度。
 
 ## 标志
 
@@ -70,7 +71,7 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 5: contract manifest
 - bit 6: session refresh
 
-当前 wire generation 使用 `minor 5`（`MinimumCompatibleMinorVersion == MinorVersion == 5`），相对已发布的 2.0.3/minor 4 升级一次。开发期使用过的中间编号不构成发布兼容性边界。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+当前 wire generation 使用 `minor 6`（`MinimumCompatibleMinorVersion == MinorVersion == 6`）。开发期 minor 5 仍要求逐请求输入确认，不能与当前版本混用。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
 
 3.0 的 `HandshakeRequest` 在三个固定限制字段后编码：
 

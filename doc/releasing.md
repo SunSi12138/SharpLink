@@ -8,7 +8,7 @@
 - `AssemblyVersion` 与 `FileVersion` 始终使用四段纯数字；预发布后缀只进入包版本和 `InformationalVersion`。
 - 冻结前更新 `CHANGELOG.md`、包引用示例和迁移说明。公开 API、Protocol v2、生成代码、契约 Manifest 或默认行为的变化必须明确标注兼容性。
 - `2.0.0` 公开 API 基线是 2.x 历史基线；3.0 是破坏性 major 升级，不以保持 2.0.3 API/二进制兼容为门禁。发布包 API 对照用于审阅和迁移证据，不代表无破坏变更承诺。补丁版本仍不得进行破坏性 API 或 wire 变更。
-- 3.0 的 Generated ABI 为 API 5 / 精确 identity `sharplink-3.0-api5-prepared-contract-v1`，网络为 Protocol v2 minor/floor 5；两条版本轴分别验收。部署时重新生成并一并更换客户端、服务端和插件。
+- 3.0 的 Generated ABI 为 API 5 / 精确 identity `sharplink-3.0-api5-prepared-contract-v2`，网络为 Protocol v2 minor/floor 6；两条版本轴分别验收。部署时重新生成并一并更换客户端、服务端和插件。
 - `eng/verify-protocol-v2-cross-version.sh` 保留历史路径，但实际验收同一批当前 NuGet 包的双进程互操作，不是真实 2.0.3 ↔ 3.0 矩阵。必须保留当前包成功路径及不兼容 minor、required capability、ABI identity、契约 hash 的拒绝测试；不自行扩大跨 major 成功互操作承诺。测试存在或文档列出范围不等于最终候选已经通过。
 - Release Gate 的 `pack` 任务还使用同批 NuGet 包，在 Linux JIT 的两个独立进程之间执行一次真实热换代。新旧服务实现分开构建；同一物理连接上，原代理恢复后调用新实现，已开始的请求由旧实现完成。应用释放 R1 后，检查其程序集及可收集加载上下文已经回收，新实现和无关 RPC 仍可调用。运行证据在 `packaged-coordination` 工件中；此项是功能门禁，不计入换代延迟或 NativeAOT 动态加载验收。
 

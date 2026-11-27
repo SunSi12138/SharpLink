@@ -142,16 +142,12 @@ internal sealed partial class SharpLinkServer
                         }
 
                         IRpcByteBufferWriter? decodedOwner = null;
+                        var compressedMailboxOwnedFrame = false;
                         try
                         {
                             if (header.Type == ProtocolV2FrameType.StreamData &&
-                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
-                                !hasOwningStreamCallState)
+                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0)
                             {
-                                // Only a genuinely pre-admission stream may use the manager's
-                                // compressed buffering path. Once an owning call state exists,
-                                // decode stays in this loop so we can re-arbitrate immediately
-                                // after the potentially user-supplied decompressor returns.
                                 var preAdmissionStreams = session.StreamManager;
                                 session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
@@ -163,9 +159,19 @@ internal sealed partial class SharpLinkServer
                                         streamId,
                                         payload,
                                         originalLength,
-                                        out var preAdmissionDispatch))
+                                        out var preAdmissionDispatch,
+                                        out var hasRoute))
                                 {
+                                    compressedMailboxOwnedFrame = true;
                                     await preAdmissionDispatch.ConfigureAwait(false);
+                                    continue;
+                                }
+                                if (!hasRoute)
+                                {
+                                    // Rejected input needs neither a route nor a decompressor.
+                                    preAdmissionStreams.RecordUnroutedStreamData();
+                                    if (streamId != 0)
+                                        session.RefundDiscardedStreamData(streamRequestId, streamId, originalLength);
                                     continue;
                                 }
                             }
@@ -223,9 +229,10 @@ internal sealed partial class SharpLinkServer
                                             out _,
                                             out var failedTerminalOwner))
                                     {
-                                        await DrainTerminalStreamProgressAsync(
-                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false, failedTerminalOwner)
-                                            .ConfigureAwait(false);
+                                        if (!compressedMailboxOwnedFrame)
+                                            await DrainTerminalStreamProgressAsync(
+                                                session, header.Type, header.Flags, failedRequestId, payload, decoded: false, failedTerminalOwner)
+                                                .ConfigureAwait(false);
                                         continue;
                                     }
 
@@ -564,14 +571,20 @@ internal sealed partial class SharpLinkServer
         await AwaitDispatchAsync(dispatchTask, requestId).ConfigureAwait(false);
     }
 
-    private static async Task DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
             throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "StreamData stream ID is truncated.");
         var streamId = unchecked((ushort)streamIdBits);
         var streamPayload = payload.Slice(sizeof(ushort));
-        await session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
+        if (session.StreamManager.TryDispatchChunk(requestId, streamId, streamPayload, out var dispatch))
+            return dispatch;
+        // A rejected request may have no input route at all. Its sender already
+        // debited the frame, and the receiver retains nothing.
+        if (streamId != 0)
+            session.RefundDiscardedStreamData(requestId, streamId, Math.Max(1, checked((int)streamPayload.Length)));
+        return ValueTask.CompletedTask;
     }
 
     private static void DispatchStreamComplete(

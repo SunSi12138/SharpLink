@@ -113,8 +113,6 @@ internal sealed partial class SharpLinkServer
             callState = EnsureTrackedCallState(
                 connection, callState, requestId, request.RpcDeadline,
                 serverLoopToken, moduleCancellation, requestCancellationMap);
-            if (method.HasClientStreams)
-                callState.RequireNStudyStreamAcceptance();
         }
         if (decodedRequestOwner is not null)
         {

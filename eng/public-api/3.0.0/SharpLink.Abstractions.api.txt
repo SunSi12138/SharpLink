@@ -78,7 +78,6 @@ namespace SharpLink.Abstractions
     public interface IRpcGeneratedServerBridge
     {
         System.Collections.Generic.IAsyncEnumerable<T> CreateInboundStream<T>(long requestId, ushort streamId, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, System.Threading.CancellationToken cancellationToken);
-        void EnsureInputRoutesReady(long requestId);
         void EnsureUserCodeEntry(long requestId);
         System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, SharpLink.Abstractions.RpcMethodDescriptor method, System.Threading.CancellationToken cancellationToken);
     }
@@ -359,8 +358,8 @@ namespace SharpLink.Abstractions
     {
         public const int HeaderBytes = 15;
         public const byte Magic = 137;
-        public const ushort MinimumCompatibleMinorVersion = 5;
-        public const ushort MinorVersion = 5;
+        public const ushort MinimumCompatibleMinorVersion = 6;
+        public const ushort MinorVersion = 6;
         public const int RequestPrefixBytes = 16;
     }
     public readonly struct ProtocolV2Error : System.IEquatable<SharpLink.Abstractions.ProtocolV2Error>
@@ -980,7 +979,7 @@ namespace SharpLink.Abstractions
     }
     public static class SharpLinkGeneratedManifestVersions
     {
-        public const string AbiIdentity = "sharplink-3.0-api5-prepared-contract-v1";
+        public const string AbiIdentity = "sharplink-3.0-api5-prepared-contract-v2";
         public const int Api = 5;
         public const int Protocol = 2;
     }

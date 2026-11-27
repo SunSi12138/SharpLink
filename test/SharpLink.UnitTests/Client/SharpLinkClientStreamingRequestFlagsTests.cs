@@ -55,8 +55,6 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
                 sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
                     .WaitAsync(TimeSpan.FromSeconds(5));
                 EnsureRequestFlags(sent.Header.Flags, expectedCancellable, hasMethodTimeout, hasReturn: false);
-                if (kind == RpcMethodKind.DuplexStreaming)
-                    await AcceptInputAsync(transport.Connection, sent.Header.RequestId);
                 await transport.Connection.InjectInt32ServerStreamItemAsync(sent.Header.RequestId, 42);
                 Ensure(await first.WaitAsync(TimeSpan.FromSeconds(5)) && enumerator.Current == 42,
                     "the original stream must start before testing normal consumer abandonment");
@@ -80,17 +78,12 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
                     method, in request, RpcEmptyRequestCodec.Instance, codec, null, token, prepared);
             var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(5));
-            if (kind == RpcMethodKind.ClientStreaming)
-                await AcceptInputAsync(transport.Connection, sent.Header.RequestId);
             await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId), 42);
             Ensure(await response.AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42,
                 "the request must still complete with its response");
             EnsureRequestFlags(sent.Header.Flags, expectedCancellable, hasMethodTimeout, hasReturn: true);
         }
     }
-
-    private static Task AcceptInputAsync(TestTransportConnection transport, ulong id)
-        => transport.InjectFrameAsync(NStudyWire.RequestAccepted, ProtocolV2FrameFlags.None, id, ReadOnlyMemory<byte>.Empty);
 
     private static void EnsureRequestFlags(
         ProtocolV2FrameFlags flags, bool expectedCancellable, bool hasMethodTimeout, bool hasReturn)

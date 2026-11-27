@@ -191,7 +191,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         if (method.Kind != RpcMethodKind.OneWay)
         {
             ReservePreInvocationRequestStreams(
-                session,
+                connection,
                 method.ClientStreamCount,
                 requestId,
                 cancellationToken);

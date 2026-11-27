@@ -76,7 +76,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task TwoWayProducerShouldWaitForActivationAndRequestAccepted()
+    public async Task TwoWayInputMustNotInvokeBeforeActivation()
     {
         PreAdmissionStreamActivationRaceService.Reset();
         TestService.ResetBlockingAdd();
@@ -85,6 +85,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         var recovery = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
         var stream = await harness.ClientB.PrepareTestServiceAsync<IPreAdmissionStreamActivationRaceService>();
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var activationEntered = new TaskCompletionSource<ServerCallCancellationState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var activationRelease = new ManualResetEventSlim();
@@ -94,10 +95,11 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = stream.UploadAsync(TwoItemsAsync(Task.CompletedTask, () => producerStarted.TrySetResult())).AsTask();
-            await WaitUntilAsync(() => harness.QueuedCalls == 1, "the two-way head is actually queued");
-            Ensure(!producerStarted.Task.IsCompleted && harness.PreAdmissionStreamBytes == 0,
-                "waiting for admission does not start the producer or buffer data");
+            target = stream.UploadAsync(TwoItemsAsync(releaseSecond.Task, () => producerStarted.TrySetResult())).AsTask();
+            await WaitUntilAsync(() => harness.QueuedCalls == 1 && harness.PreAdmissionStreamBytes > 0,
+                "the two-way head and first item are queued");
+            Ensure(producerStarted.Task.IsCompleted && PreAdmissionStreamActivationRaceService.TwoWayInvocations == 0,
+                "the producer can start while its service is still waiting for admission");
 
             ServerCallCancellationState.BeforeRequestActivationForTests = state =>
             {
@@ -110,11 +112,14 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
                 "active admission owner completes before target activation");
             var callState = await activationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(callState.Reason == ServerCallCancellationReason.None && !target.IsCompleted &&
-                   !producerStarted.Task.IsCompleted && harness.PreAdmissionStreamBytes == 0 &&
+                   harness.PreAdmissionStreamBytes > 0 &&
                    PreAdmissionStreamActivationRaceService.TwoWayInvocations == 0,
-                "a permit alone cannot start a producer while activation has not installed the routes");
+                "a permit alone cannot deliver buffered input before activation");
 
             activationRelease.Set();
+            await WaitUntilAsync(() => PreAdmissionStreamActivationRaceService.TwoWayInvocations == 1 &&
+                harness.PreAdmissionStreamBytes == 0, "the active service consumes the first buffered item");
+            releaseSecond.TrySetResult();
             Ensure(await target.WaitAsync(TimeSpan.FromSeconds(5)) == FirstItemBytes + OverflowItemBytes &&
                    producerStarted.Task.IsCompleted && PreAdmissionStreamActivationRaceService.TwoWayInvocations == 1,
                 "the accepted two-way upload receives both items, including one larger than the pre-admission cap");
@@ -123,6 +128,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         }
         finally
         {
+            releaseSecond.TrySetResult();
             ServerCallCancellationState.BeforeRequestActivationForTests = null;
             activationRelease.Set();
             TestService.ReleaseBlockingAdd();

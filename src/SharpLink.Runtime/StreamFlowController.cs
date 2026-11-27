@@ -406,6 +406,22 @@ internal sealed class StreamFlowController
         }
     }
 
+    // A frame that never enters a receiver route has no retained bytes. Check the
+    // same window admission, but do not create or change a receive stream to refund it.
+    internal void ValidateDiscardedReceive(long requestId, ushort streamId, int encodedBytes)
+    {
+        ValidateEncodedBytes(encodedBytes);
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            var credit = _receiveStates.TryGetValue(new StreamKey(requestId, streamId), out var state)
+                ? state.Credit
+                : _streamWindow;
+            if (!CanReserve(credit, _receiveConnectionCredit, encodedBytes))
+                throw Violation("Discarded StreamData exceeds the negotiated receive window.");
+        }
+    }
+
     /// <summary>Returns a non-zero credit delta when a WindowUpdate should be emitted.</summary>
     public int RecordConsumed(long requestId, ushort streamId, int encodedBytes)
     {

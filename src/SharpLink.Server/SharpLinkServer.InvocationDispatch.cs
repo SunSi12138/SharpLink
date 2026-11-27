@@ -152,7 +152,7 @@ internal sealed partial class SharpLinkServer
                     }
 
                     ReservePreAdmissionRequestStreams(
-                        session,
+                        connection,
                         requestId,
                         descriptor.ClientStreamCount,
                         admittedCallState);

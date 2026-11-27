@@ -184,7 +184,7 @@ OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 都不 retry。自�
 
 Streaming 不自动获得 Unary 的 client fallback timeout；但一旦它有方法 deadline 或继承的 ambient deadline，这个 deadline 属于**整个 logical stream call**，不会在 request startup 完成、第一次 `MoveNextAsync` 或 producer 启动后重置。已开始的 stream 也不会因为 reconnect/retry 跨连接迁移。
 
-ClientStreaming 和 Duplex 的输入端必须收到服务端准入后的 `RequestAccepted`，并由原待完成请求取得启动许可后，才能开始生产。取消或 deadline 终结了原请求时，迟到的确认不会启动生产者。带输入的 OneWay 没有逐请求确认。
+ClientStreaming、Duplex 和带输入的 OneWay 在 Request 达到本地发送边界后就可以开始生产，不等逐请求确认。原待完成请求拥有启动决定；取消或 deadline 先终结请求时，不再启动生产者。服务端仍独立准入，准入前不向业务交付输入。
 
 对 ServerStreaming / Duplex，输出端的初始 `Response` 不是整个 stream 的成功终态；正常终止由 `StreamComplete` 驱动。不要把输入获准或输出已开始理解为所有数据已处理完毕。
 

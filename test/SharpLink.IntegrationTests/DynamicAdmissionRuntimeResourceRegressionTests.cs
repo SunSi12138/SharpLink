@@ -156,7 +156,6 @@ public sealed class DynamicAdmissionRuntimeResourceRegressionTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            // OneWay still sends input before admission. Two-way uploads wait for RequestAccepted.
             queued = oneWay.NotifyStreamBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2 &&
