@@ -62,17 +62,7 @@ internal sealed partial class SharpLinkServer
                 // until the best-effort notification completes so the pooled state cannot be
                 // recycled underneath the queued work.
                 releaseLease = false;
-                _ = Task.Run(() =>
-                {
-                    try
-                    {
-                        callLease.State.NotifyInvocationCancellation();
-                    }
-                    finally
-                    {
-                        callLease.ReleaseUse();
-                    }
-                });
+                QueueInboundCancellation(callLease);
             }
             return accepted;
         }
@@ -81,6 +71,22 @@ internal sealed partial class SharpLinkServer
             if (releaseLease)
                 callLease.ReleaseUse();
         }
+    }
+
+    private static void QueueInboundCancellation(ServerCallCancellationLease callLease)
+    {
+        // Keep the captured lease in the notification path, not in every frame check.
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                callLease.State.NotifyInvocationCancellation();
+            }
+            finally
+            {
+                callLease.ReleaseUse();
+            }
+        });
     }
 
     private async Task ProcessRequestLoop(ServerConnectionState connection)
