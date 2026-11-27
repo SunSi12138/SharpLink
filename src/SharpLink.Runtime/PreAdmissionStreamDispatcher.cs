@@ -27,6 +27,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         capacityExceeded,
         maxRetainedBytes);
     private Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? _decodeCompressed = decodeCompressed;
+    internal bool HasCompressedDecoder => Volatile.Read(ref _decodeCompressed) is not null;
     private IStreamDispatcher? _dispatcher;
     private IStreamDispatchLease? _childLease;
     private Action<long, ushort, int>? _bytesConsumed;
@@ -640,7 +641,9 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         lock (_gate)
         {
             _retentionPolicy = replacementPolicy;
-            _decodeCompressed = replacementDecoder;
+            // Policy-only reconfiguration must leave already buffered raw frames decodable.
+            if (replacementDecoder is not null)
+                Volatile.Write(ref _decodeCompressed, replacementDecoder);
             _retainUntilLocalCompletion |= replacementRetainUntilLocalCompletion;
             _configurationVersion++;
             if (!_completed && _retainedBytes > replacementPolicy.MaxRetainedBytes)

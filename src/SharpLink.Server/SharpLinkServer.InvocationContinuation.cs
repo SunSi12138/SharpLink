@@ -114,7 +114,7 @@ internal sealed partial class SharpLinkServer
                 connection, callState, requestId, request.RpcDeadline,
                 serverLoopToken, moduleCancellation, requestCancellationMap);
             if (method.HasClientStreams)
-                callState.EnableGeneratedInputOwnership();
+                callState.SetEarlyInputStreamCount(method.ClientStreamCount);
         }
         if (decodedRequestOwner is not null)
         {

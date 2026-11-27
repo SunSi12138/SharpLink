@@ -103,6 +103,8 @@ internal sealed partial class SharpLinkServer
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
                 var descriptor = facts.Descriptor;
+                if (descriptor.HasClientStreams)
+                    admittedCallState.SetEarlyInputStreamCount(descriptor.ClientStreamCount);
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
@@ -259,6 +261,8 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         moduleCancellation,
                         requestCancellationMap);
+                    if (facts.Descriptor.HasClientStreams)
+                        admittedCallState.SetEarlyInputStreamCount(facts.Descriptor.ClientStreamCount);
                     if (!TryPrepareCompressedRequestDecode(
                             requestOwner,
                             retainedAdmissionPayload?.RetainedPermit,

@@ -77,7 +77,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private IRpcByteBufferWriter? _payloadOwner;
     private ServerDecodedBytesPermit? _decodedBytesPermit;
     private ServerGeneratedInputOwner? _generatedInputs;
-    private bool _ownsGeneratedInputs;
+    private int _earlyInputStreamCount;
     private TimeProvider? _timeProvider;
 
     private ServerCallCancellationState()
@@ -192,11 +192,14 @@ internal sealed class ServerCallCancellationState : IDisposable
             throw new InvalidOperationException("An admission program use is already attached to this call.");
     }
 
-    internal void EnableGeneratedInputOwnership() => _ownsGeneratedInputs = true;
+    internal int EarlyInputStreamCount => Volatile.Read(ref _earlyInputStreamCount);
+
+    internal void SetEarlyInputStreamCount(int streamCount)
+        => Volatile.Write(ref _earlyInputStreamCount, streamCount);
 
     internal void TrackGeneratedInput(ServerGeneratedInputOwner input)
     {
-        if (!_ownsGeneratedInputs)
+        if (EarlyInputStreamCount == 0)
             return;
         input.Next = _generatedInputs;
         _generatedInputs = input;
@@ -496,6 +499,6 @@ internal sealed class ServerCallCancellationState : IDisposable
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;
-        _ownsGeneratedInputs = false;
+        _earlyInputStreamCount = 0;
     }
 }

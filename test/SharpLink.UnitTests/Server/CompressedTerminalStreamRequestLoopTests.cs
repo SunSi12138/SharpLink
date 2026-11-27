@@ -20,8 +20,11 @@ public partial class SharpLinkServerInvocationTests
             originalLength: 37, failDecode: true);
 
     [Test]
-    public Task CompressedTerminalStreamWithoutRouteShouldNotDecodeOrCreateCredit()
-        => RunCompressedTerminalLoopAsync(terminalDuringDecode: false, existingRoute: false, originalLength: 37);
+    [Arguments(true)]
+    [Arguments(false)]
+    public Task CompressedTerminalStreamWithoutRouteShouldOnlyRefundKnownEarlyInput(bool expectedInput)
+        => RunCompressedTerminalLoopAsync(terminalDuringDecode: false, existingRoute: false,
+            originalLength: 37, expectedInput: expectedInput);
 
     [Test]
     [Arguments(0u)]
@@ -30,7 +33,7 @@ public partial class SharpLinkServerInvocationTests
         => RunCompressedTerminalLoopAsync(terminalDuringDecode: false, existingRoute: true, originalLength);
 
     private static async Task RunCompressedTerminalLoopAsync(bool terminalDuringDecode, bool existingRoute,
-        uint originalLength, bool failDecode = false)
+        uint originalLength, bool failDecode = false, bool expectedInput = false)
     {
         const long requestId = 9017;
         var provider = new TerminalLoopCompressionProvider { FailDecode = failDecode };
@@ -56,6 +59,8 @@ public partial class SharpLinkServerInvocationTests
         Ensure(connection.MarkReady(null), "compressed terminal test connection must be ready");
         var state = ServerCallCancellationState.Rent(requestId, default, runtime.TimeProvider,
             CancellationToken.None, CancellationToken.None, supportsCooperativeCancellation: true);
+        if (expectedInput)
+            state.SetEarlyInputStreamCount(1);
         calls.Set(requestId, state);
         var child = new TerminalLoopRecordingDispatcher();
         if (existingRoute)
@@ -97,7 +102,7 @@ public partial class SharpLinkServerInvocationTests
 
             await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             var (updates, credit) = ReadTerminalWindowUpdates(output.Reader, runtime.Protocol, requestId);
-            var shouldRefund = existingRoute && !malformed;
+            var shouldRefund = (existingRoute || expectedInput) && !malformed;
             await Assert.That(updates).IsEqualTo(shouldRefund ? 1 : 0);
             await Assert.That(credit).IsEqualTo(shouldRefund ? 37L : 0L);
             await Assert.That(provider.DecompressCount).IsEqualTo(terminalDuringDecode ? 1 : 0);

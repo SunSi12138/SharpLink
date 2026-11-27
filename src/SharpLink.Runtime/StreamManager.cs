@@ -637,7 +637,8 @@ internal sealed partial class StreamManager
         try
         {
             ThrowIfPeerTerminal(entry);
-            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
+            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+                (preAdmission.HasCompressedDecoder || preAdmission.IsDiscarding))
             {
                 _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
                 ValueTask received;

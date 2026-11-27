@@ -6,7 +6,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         long requestId,
         out bool hasOwningCallState,
-        out StreamTerminalOwner terminalOwner)
+        out TerminalInputProgress terminalOwner)
     {
         if (!requestCancellationMap.TryCapture(
                 requestId,
@@ -28,7 +28,7 @@ internal sealed partial class SharpLinkServer
         long requestId,
         ServerCallCancellationLease callLease,
         out bool hasOwningCallState,
-        out StreamTerminalOwner terminalOwner)
+        out TerminalInputProgress terminalOwner)
     {
         // Losing a pooled generation is not a terminal decision. Retry current ownership;
         // removal falls back to ordinary existing-route handling, never terminal abandonment.
@@ -53,7 +53,8 @@ internal sealed partial class SharpLinkServer
         {
             var accepted = callLease.State.TryAcceptStreamDataDeferredCancellation(
                 out var notifyCancellation);
-            terminalOwner = accepted ? default : callLease.TerminalOwner;
+            terminalOwner = accepted ? default : new TerminalInputProgress(
+                callLease.TerminalOwner, callLease.State.EarlyInputStreamCount);
             if (notifyCancellation)
             {
                 // The connection read loop owns frame parsing for every call on this transport.
