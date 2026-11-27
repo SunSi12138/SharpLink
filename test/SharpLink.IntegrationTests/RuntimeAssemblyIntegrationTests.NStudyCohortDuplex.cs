@@ -22,6 +22,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var cancelLead = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var leadClient = NStudyClientConnection(lead.Client);
         var followerClient = NStudyClientConnection(follower.Client);
+        var leadCalls = (ISharpLinkClientDrainInspector)lead.Client;
+        var followerCalls = (ISharpLinkClientDrainInspector)follower.Client;
         var original = GetDynamicModule(server, oldAssembly);
 
         var leadR1 = CallNStudyInput(lead.Receiver.Service, contract, "duplex", leadInput, cancelLead.Token);
@@ -33,6 +35,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(lead.A.Authority.PhysicalSession != follower.A.Authority.PhysicalSession &&
                    lead.A.Target == follower.A.Target && lead.A.BindingId == follower.A.BindingId &&
                    original.RemainingStreams == 2 && leadInput.Enumerators == 1 && followerInput.Enumerators == 1 &&
+                   leadCalls.ActiveCallCount == 1 && followerCalls.ActiveCallCount == 1 &&
                    lead.ServerConnection.NStudyBindings.Snapshot() == (2, 0, 1) &&
                    follower.ServerConnection.NStudyBindings.Snapshot() == (2, 0, 1),
                 "two actual Sessions own independent admitted duplexes even with equal binding numbers");
@@ -77,6 +80,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await WaitForNStudyAsync(() => lead.ServerConnection.NStudyBindings.Snapshot() == (2, 0, 0) &&
                                            original.RemainingStreams == 1, ct);
             Ensure(producerToken.IsCancellationRequested && !handle.IsClosed && leadInput.ExitCount == 0 &&
+                   leadCalls.ActiveCallCount == 0 && followerCalls.ActiveCallCount == 1 &&
                    leadClient.PendingCalls.NStudyProducerCount == 1 && followerClient.PendingCalls.NStudyProducerCount == 1 &&
                    follower.ServerConnection.NStudyBindings.Snapshot() == (1, 1, 1) &&
                    !followerR1.IsCompleted && !replace.IsCompleted && NStudyCount(oldType, "InputStreamExits") == 1 &&
@@ -96,7 +100,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             trace.Record("FollowerStillOwnsR1AfterLeadProducerExits", r2, follower.A);
 
             followerInput.ReleaseDisposal();
-            Ensure((await followerR1.WaitAsync(ct)).SequenceEqual([6, 14]), "follower finishes both original R1 results");
+            Ensure((await followerR1.WaitAsync(ct)).SequenceEqual([6, 14]) &&
+                   leadCalls.ActiveCallCount == 0 && followerCalls.ActiveCallCount == 0,
+                "follower finishes both original R1 results; neither client retains logical ownership");
             var result = await replace.WaitAsync(ct);
             EnsureReplacementReleased(result.Replacement, "old cohort group exits physically");
             Ensure(result.Peers.Count == 2 && result.Peers[0].ActivationSent && !result.Peers[1].ActivationSent &&

@@ -223,11 +223,37 @@ internal static class SharpLinkModuleRpcChannel
             try
             {
                 SharpLinkClient.EnsureLogicalCallProgress(control);
-                var stream = inner.InvokeDuplexStreamingResolved(
+                var stream = inner.BeginDuplexStreamingResolved(
                     method, request, requestCodec, responseCodec, streams, interceptors,
                     control with { InputLifetime = producerLifetime, OutputLifetime = outputLifetime }, combined.Token);
-                await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
-                    yield return item;
+                var ownsLogicalCall = true;
+                IAsyncEnumerator<TResponse>? enumerator = null;
+                try
+                {
+                    enumerator = stream.GetAsyncEnumerator(enumerationCancellation);
+                    while (true)
+                    {
+                        bool hasNext;
+                        try { hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false); }
+                        catch { ReleaseLogicalCall(ref ownsLogicalCall); throw; }
+                        if (!hasNext)
+                        {
+                            // Logical completion precedes any physical wait in DisposeAsync.
+                            ReleaseLogicalCall(ref ownsLogicalCall);
+                            break;
+                        }
+                        yield return enumerator.Current;
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        if (enumerator is not null)
+                            await enumerator.DisposeAsync().ConfigureAwait(false);
+                    }
+                    finally { ReleaseLogicalCall(ref ownsLogicalCall); }
+                }
             }
             finally
             {
@@ -243,6 +269,14 @@ internal static class SharpLinkModuleRpcChannel
                     combined.Dispose();
                 }
             }
+        }
+
+        private void ReleaseLogicalCall(ref bool owned)
+        {
+            if (!owned)
+                return;
+            owned = false;
+            inner.ReleaseDirectLogicalInvocation();
         }
     }
 

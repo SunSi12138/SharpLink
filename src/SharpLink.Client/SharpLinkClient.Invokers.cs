@@ -175,7 +175,8 @@ internal sealed partial class SharpLinkClient
         catch { owner?.Dispose(); throw; }
     }
 
-    internal IAsyncEnumerable<TResponse> InvokeDuplexStreamingResolved<TRequest, TResponse, TStreams>(
+    // The deferred enumerator owns logical-call completion after a successful return.
+    internal IAsyncEnumerable<TResponse> BeginDuplexStreamingResolved<TRequest, TResponse, TStreams>(
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -194,14 +195,11 @@ internal sealed partial class SharpLinkClient
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
-            IAsyncEnumerable<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
-                invocation = InvokeDuplexStreamingWithTelemetry(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
-            else if (interceptors.Count != 0)
-                invocation = InvokeDuplexStreamingIntercepted(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
-            else
-                invocation = InvokeDuplexStreamingCore(method, request, requestCodec, responseCodec, streams, control, cancellationToken);
-            return CompleteLogicalInvocation(invocation);
+                return InvokeDuplexStreamingWithTelemetry(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
+            if (interceptors.Count != 0)
+                return InvokeDuplexStreamingIntercepted(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
+            return InvokeDuplexStreamingCore(method, request, requestCodec, responseCodec, streams, control, cancellationToken);
         }
         catch
         {
