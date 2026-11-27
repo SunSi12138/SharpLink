@@ -101,8 +101,8 @@ internal static class SharpLinkModuleRpcChannel
         var control = inner.ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors) with
         { PreparedSite = prepared };
-        return EnumerateDuplex(inner, module,
-            method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
+        return new DuplexInvocation<TRequest, TResponse, TStreams>(inner, module,
+            method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken).EnumerateAsync();
     }
 
     private static async ValueTask<T> AwaitAsync<T>(ValueTask<T> call, SharpLinkDynamicModuleLease lease,
@@ -172,69 +172,76 @@ internal static class SharpLinkModuleRpcChannel
         }
     }
 
-    private static async IAsyncEnumerable<TResponse> EnumerateDuplex<TRequest, TResponse, TStreams>(
-        SharpLinkClient inner, SharpLinkDynamicModule? module, RpcMethodDescriptor method,
+    // Capture call-time arguments once instead of copying them into the
+    // iterator's initial and per-enumeration fields.
+    private sealed class DuplexInvocation<TRequest, TResponse, TStreams>(
+        SharpLinkClient inner,
+        SharpLinkDynamicModule? module,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
         SharpLinkClient.ClientInterceptorGeneration interceptors,
         SharpLinkClient.ResolvedCallControl control,
-        CancellationToken callCancellation,
-        [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
+        CancellationToken callCancellation)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        SharpLinkClient.EnsureLogicalCallProgress(control);
-        SharpLinkDynamicModuleLease lease = default;
-        if (module is not null && !module.TryAcquire(true, out lease))
+        internal async IAsyncEnumerable<TResponse> EnumerateAsync(
+            [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
         {
             SharpLinkClient.EnsureLogicalCallProgress(control);
-            throw Draining();
-        }
-
-        SharpLinkDynamicModuleLease producerLease = default;
-        try
-        {
-            SharpLinkClient.EnsureLogicalCallProgress(control);
-            if (module is not null && !module.TryAcquire(true, out producerLease))
+            SharpLinkDynamicModuleLease lease = default;
+            if (module is not null && !module.TryAcquire(true, out lease))
             {
                 SharpLinkClient.EnsureLogicalCallProgress(control);
                 throw Draining();
             }
-        }
-        catch
-        {
-            lease.Dispose();
-            throw;
-        }
 
-        var producerLifetime = module is null ? null : new SharpLinkClientStreamModuleLeaseOwner(producerLease);
-        var combined = module is null ? new CombinedCancellation(callCancellation, null) :
-            Combine(callCancellation, module.ForcedCancellation);
-        var outputLifetime = module is not null
-            ? new NStudyServerOutputLifetime(lease, combined.Source)
-            : null;
-        try
-        {
-            SharpLinkClient.EnsureLogicalCallProgress(control);
-            var stream = inner.InvokeDuplexStreamingResolved(
-                method, request, requestCodec, responseCodec, streams, interceptors,
-                control with { InputLifetime = producerLifetime, OutputLifetime = outputLifetime }, combined.Token);
-            await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
-                yield return item;
-        }
-        finally
-        {
-            if (outputLifetime is not null)
+            SharpLinkDynamicModuleLease producerLease = default;
+            try
             {
-                try { outputLifetime.CloseConsumer(); }
-                finally { producerLifetime?.Dispose(); }
+                SharpLinkClient.EnsureLogicalCallProgress(control);
+                if (module is not null && !module.TryAcquire(true, out producerLease))
+                {
+                    SharpLinkClient.EnsureLogicalCallProgress(control);
+                    throw Draining();
+                }
             }
-            else
+            catch
             {
                 lease.Dispose();
-                producerLifetime?.Dispose();
-                combined.Dispose();
+                throw;
+            }
+
+            var producerLifetime = module is null ? null : new SharpLinkClientStreamModuleLeaseOwner(producerLease);
+            var combined = module is null ? new CombinedCancellation(callCancellation, null) :
+                Combine(callCancellation, module.ForcedCancellation);
+            var outputLifetime = module is not null
+                ? new NStudyServerOutputLifetime(lease, combined.Source)
+                : null;
+            try
+            {
+                SharpLinkClient.EnsureLogicalCallProgress(control);
+                var stream = inner.InvokeDuplexStreamingResolved(
+                    method, request, requestCodec, responseCodec, streams, interceptors,
+                    control with { InputLifetime = producerLifetime, OutputLifetime = outputLifetime }, combined.Token);
+                await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
+                    yield return item;
+            }
+            finally
+            {
+                if (outputLifetime is not null)
+                {
+                    try { outputLifetime.CloseConsumer(); }
+                    finally { producerLifetime?.Dispose(); }
+                }
+                else
+                {
+                    lease.Dispose();
+                    producerLifetime?.Dispose();
+                    combined.Dispose();
+                }
             }
         }
     }
