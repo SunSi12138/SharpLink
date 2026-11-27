@@ -213,19 +213,26 @@ internal sealed partial class RpcSession
             return _nStudyCandidate == change ? _nStudyCandidateSource : null;
     }
 
-    internal Task FreezeNStudySource(NStudyChange change)
+    internal bool TryFreezeNStudySource(NStudyChange change, out Task drained)
     {
         lock (_nStudyGate)
         {
             if (_nStudyCandidate != change || _nStudyCandidateSource is not { } route ||
                 (_nStudyBindings.TryGetValue(change.Contract, out var current)
-                    ? !ReferenceEquals(current, route) : !IsNStudyRetired(route.Token)))
+                    ? !ReferenceEquals(current, route) : !IsNStudyRetired(route.Token)) ||
+                _nStudySourceFrozen)
                 throw InvalidNStudy("Preparation lost its captured original binding on this Session.");
             if (_pendingNStudyBind is not null || _nStudyReleasePending)
-                throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "A local Bind or Release still owns the Session.");
+            {
+                drained = Task.CompletedTask;
+                return false;
+            }
+            // From here through resume or decline, the transition owns the Session's
+            // binding control. Already-prepared RPCs use their existing routes.
             _nStudySourceFrozen = true;
             _nStudyBindings.Remove(change.Contract);
-            return route.Retire();
+            drained = route.Retire();
+            return true;
         }
     }
 
@@ -302,7 +309,11 @@ internal sealed partial class RpcSession
                 {
                     session._nStudyCandidate = null;
                     session._nStudyCandidateSource = null;
-                    session._nStudySourceFrozen = false;
+                    if (session._nStudySourceFrozen)
+                    {
+                        session._nStudySourceFrozen = false;
+                        session.SignalNStudyBindingControlSettled();
+                    }
                 }
                 if (!session._nStudyKeepTargetBlock)
                     session._nStudyActivationNotSent = null;

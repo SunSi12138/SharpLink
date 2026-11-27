@@ -8,6 +8,7 @@ internal sealed partial class RpcSession
     private uint[]? _nStudyRetiredThrough;
     private bool _nStudyReleasePending;
     private PendingNStudyBind? _pendingNStudyBind;
+    private TaskCompletionSource? _nStudyBindingControlSettled;
     private ulong _lastNStudyOperation;
     private NStudyAuthority _nStudyAuthority;
 
@@ -46,9 +47,21 @@ internal sealed partial class RpcSession
         ulong operation;
         lock (_nStudyGate)
         {
-            if (_nStudyCandidate is { } candidate && candidate.Contract == bind.Contract &&
-                (!_nStudySourceFrozen || resuming != candidate || bind.Expected != candidate.Target || bind.Hash != candidate.Hash))
+            if (resuming is { } change)
+            {
+                if (!_nStudySourceFrozen || _nStudyCandidate != change || bind.Contract != change.Contract ||
+                    bind.Expected != change.Target || bind.Hash != change.Hash)
+                    throw InvalidNStudy("A coordinated Bind requires the exact frozen transition.");
+            }
+            else if (_nStudyCandidate is { } candidate && candidate.Contract == bind.Contract)
+            {
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The contract is awaiting its coordinated activation.");
+            }
+            else if (_nStudySourceFrozen)
+            {
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                    "Version activation owns the Session's binding control.");
+            }
             if (_pendingNStudyBind is not null || _nStudyReleasePending)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private Bind is already pending.");
             operation = checked(++_lastNStudyOperation);
@@ -106,7 +119,10 @@ internal sealed partial class RpcSession
         finally
         {
             lock (_nStudyGate)
+            {
                 _pendingNStudyBind = null;
+                SignalNStudyBindingControlSettled();
+            }
         }
     }
 
@@ -115,24 +131,41 @@ internal sealed partial class RpcSession
     {
         EnsureNStudyReady(RpcSessionRole.Client);
         cancellationToken.ThrowIfCancellationRequested();
+        // An owned rollback also allows one bounded activation to settle. An
+        // ordinary Release still never waits behind another local control.
+        var timeout = exactBindingId.HasValue ? NStudyApprovalScheduler.ControlTimeout + NStudyTimeout : NStudyTimeout;
+        using var timer = new CancellationTokenSource(timeout, RuntimeContext.TimeProvider);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(LifetimeToken, timer.Token, cancellationToken);
         NStudyClientRoute route;
         Task drained;
-        lock (_nStudyGate)
+        while (true)
         {
-            // Reconciliation may only detach the route installed by its own operation.
-            if (exactBindingId is { } expected &&
-                (!_nStudyBindings.TryGetValue(contract, out var current) || current.Token != expected))
-                return false;
-            if (_pendingNStudyBind is not null || _nStudyReleasePending)
-                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "A private binding control is already pending.");
-            if (!_nStudyBindings.Remove(contract, out route!))
-                return false;
-            drained = route.Retire();
-            _nStudyReleasePending = true;
+            Task settled;
+            lock (_nStudyGate)
+            {
+                budget.Token.ThrowIfCancellationRequested();
+                // Reconciliation may only detach the route installed by its own operation.
+                if (exactBindingId is { } expected &&
+                    (!_nStudyBindings.TryGetValue(contract, out var current) || current.Token != expected))
+                    return false;
+                if (!_nStudySourceFrozen && _pendingNStudyBind is null && !_nStudyReleasePending)
+                {
+                    if (!_nStudyBindings.Remove(contract, out route!))
+                        return false;
+                    drained = route.Retire();
+                    _nStudyReleasePending = true;
+                    break;
+                }
+                if (!exactBindingId.HasValue)
+                    throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                        "A private binding control is already pending.");
+                settled = (_nStudyBindingControlSettled ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+            }
+            // Recheck the exact grant and the current control owner after wake-up:
+            // another ordinary Bind may have started when activation finished.
+            await settled.WaitAsync(budget.Token).ConfigureAwait(false);
         }
 
-        using var timer = new CancellationTokenSource(NStudyTimeout, RuntimeContext.TimeProvider);
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(LifetimeToken, timer.Token, cancellationToken);
         try
         {
             await drained.WaitAsync(budget.Token).ConfigureAwait(false);
@@ -147,8 +180,19 @@ internal sealed partial class RpcSession
         finally
         {
             lock (_nStudyGate)
+            {
                 _nStudyReleasePending = false;
+                SignalNStudyBindingControlSettled();
+            }
         }
+    }
+
+    // Caller owns _nStudyGate; continuations must never run inside it.
+    private void SignalNStudyBindingControlSettled()
+    {
+        var settled = _nStudyBindingControlSettled;
+        _nStudyBindingControlSettled = null;
+        settled?.TrySetResult();
     }
 
     internal bool TryEnqueueNStudyRequest(NStudyClientRoute route, IRpcByteBufferWriter writer,

@@ -130,7 +130,9 @@ internal sealed partial class SharpLinkClient
                 }
                 if (reserved is null)
                     return await RefuseAsync(change, NStudyDeclineReason.SourceUnavailable).ConfigureAwait(false);
-                await session.FreezeNStudySource(change).WaitAsync(ct).ConfigureAwait(false);
+                if (!session.TryFreezeNStudySource(change, out var drained))
+                    return await RefuseAsync(change, NStudyDeclineReason.SourceUnavailable).ConfigureAwait(false);
+                await drained.WaitAsync(ct).ConfigureAwait(false);
                 await session.SendNStudyCoordinationAsync(new(NStudyPhase.Ready, change, module.NStudyRegistration),
                     ct).ConfigureAwait(false);
                 var activated = await session.ReadNStudyCoordinationAsync(change, NStudyPhase.Activated,

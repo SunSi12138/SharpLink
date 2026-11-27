@@ -570,7 +570,7 @@ internal sealed partial class SharpLinkClient
                 // Do not replace the published cohort with a partial one or release a route
                 // reused from a previously published pinned/cohort preparation.
                 foreach (var (peer, route) in installed)
-                    await ReleaseFailedPreparationAsync(peer.Session, route.Ack, ct).ConfigureAwait(false);
+                    await ReleaseFailedPreparationAsync(peer.Session, route.Ack).ConfigureAwait(false);
                 throw;
             }
         }
@@ -613,17 +613,19 @@ internal sealed partial class SharpLinkClient
             }
             catch
             {
-                await ReleaseFailedPreparationAsync(session, bound, ct).ConfigureAwait(false);
+                await ReleaseFailedPreparationAsync(session, bound).ConfigureAwait(false);
                 throw;
             }
         }
 
-        private async ValueTask ReleaseFailedPreparationAsync(RpcSession session, NStudyAck bound, CancellationToken ct)
+        private async ValueTask ReleaseFailedPreparationAsync(RpcSession session, NStudyAck bound)
         {
             var contract = _registration.Descriptor.ContractId;
             if (bound.BindingId == 0 || !session.HasNStudyBinding(contract, bound.BindingId))
                 return;
-            try { await session.ReleaseNStudyBindingAsync(contract, ct, bound.BindingId).ConfigureAwait(false); }
+            // Once a grant is installed its cleanup belongs to the Session, not to the
+            // already-failed caller. Release has its own send deadline.
+            try { await session.ReleaseNStudyBindingAsync(contract, session.LifetimeToken, bound.BindingId).ConfigureAwait(false); }
             catch (Exception cleanup) when (cleanup is not OutOfMemoryException and not StackOverflowException)
             {
                 if (session.HasNStudyBinding(contract, bound.BindingId))
