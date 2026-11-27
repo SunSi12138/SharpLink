@@ -10,7 +10,7 @@
 
 - Fixed a deadline wait that could remain pending when the clock crossed its absolute deadline between sampling the remaining time and installing the relative timer delay. Task waits and deadline-limited retry backoff now claim an expiry observed immediately after arming, without requiring another timer tick.
 
-- Preserve receive-credit accounting for late client-stream frames while a completed server call still owns its request entry. Terminal processing drains only an existing already-discarding route, validates compressed original-byte lengths, and keeps route completion bound to the exact captured stream owner.
+- Return credit for client-stream input that the server discards, including input arriving after admission rejects a call. Discarded compressed frames use the declared original length without running the decompressor.
 
 ### Added
 
@@ -20,7 +20,9 @@
 
 ### Changed
 
-- **3.0 breaking change:** Create a contract-bound proxy with `CreateProxy` and call `PrepareAsync` before RPCs; this replaces `Get`, `GetWithMetadata` and the unbound channel. Rebuild both peers and generated assemblies together for wire minor 5 and generated API 5. See the [3.0 migration guide](doc/rpc-channel-3.0-migration.md).
+- **3.0 breaking change:** Create a contract-bound proxy with `CreateProxy` and call `PrepareAsync` before RPCs; this replaces `Get`, `GetWithMetadata` and the unbound channel. Rebuild both peers and generated assemblies together for wire minor 6 and generated API 5. See the [3.0 migration guide](doc/rpc-channel-3.0-migration.md).
+
+- Client-streaming and duplex calls start producing input after publishing the request, without waiting for a per-call acknowledgement. Input remains flow-controlled and the server still must admit the call before delivering input to the service.
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 

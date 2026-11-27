@@ -575,6 +575,15 @@ internal sealed class StreamFlowController
         }
     }
 
+    internal int RetainedReceiveStreamCount
+    {
+        get
+        {
+            lock (_gate)
+                return _receiveStates.Count;
+        }
+    }
+
     private SendState AddSendState(StreamKey key)
     {
         var state = RentSendState();

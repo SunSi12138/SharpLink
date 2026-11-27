@@ -7,12 +7,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
-    [Arguments("tcp", true, true)]
-    [Arguments("tcp", false, false)]
-    [Arguments("shared-memory", true, false)]
-    [Arguments("shared-memory", false, true)]
+    [Arguments("tcp", true, true, false)]
+    [Arguments("tcp", false, false, false)]
+    [Arguments("shared-memory", true, false, false)]
+    [Arguments("shared-memory", false, true, false)]
+    [Arguments("tcp", false, false, true)]
+    [Arguments("shared-memory", true, true, true)]
     public async Task EarlyInputReturnsCreditAfterOrdinaryCapacityRejection(
-        string transport, bool duplex, bool compressed)
+        string transport, bool duplex, bool compressed, bool queued)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ct = guard.Token;
@@ -25,7 +27,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             {
                 options.UsePartition(_ =>
                 {
-                    if (Interlocked.Increment(ref calls) == 2)
+                    if (!queued && Interlocked.Increment(ref calls) == 2)
                     {
                         inAdmission.TrySetResult();
                         releaseRejection.Wait(ct);
@@ -36,6 +38,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     partition.MaxPartitions = 1;
                     partition.UseConcurrency(1);
                 });
+                if (queued)
+                {
+                    options.MaxQueuedCalls = 1;
+                    options.MaxQueuedBytes = 4096;
+                    options.MaxQueueDelay = TimeSpan.FromSeconds(1);
+                }
             });
         var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout();
         var sender = new ObservedInputCompression();
@@ -71,8 +79,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await streaming.PrepareAsync(TimeSpan.FromSeconds(5), ct);
         var connection = NStudyClientConnection(client);
         var peer = NStudyServerConnection(server);
-        var flow = ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection.Session)!).FlowController!;
+        var flow = ReadInputFlow(connection.Session);
+        var peerFlow = ReadInputFlow(peer.Session);
         var initialCredit = flow.SendConnectionCredit;
         var initialDropped = peer.Session.StreamManager.DroppedStreamFrames;
         TestService.ResetBlockingAdd();
@@ -83,11 +91,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var rejected = duplex
                 ? ReadAll(streaming.Service.DuplexBytesAsync(OneInput(ct)))
                 : streaming.Service.UploadBytesAsync(OneInput(ct)).AsTask();
-            await inAdmission.Task.WaitAsync(ct);
+            if (!queued)
+                await inAdmission.Task.WaitAsync(ct);
             await firstItemQueued.Task.WaitAsync(ct);
             var outstanding = initialCredit - flow.SendConnectionCredit;
             Ensure(outstanding > 0 && (!compressed || sender.Encoded == 1),
                 "first input is published in the intended wire form and consumes credit");
+            if (queued)
+                await WaitForNStudyAsync(() => server.PreAdmissionStreamBytesForDiagnostics > 0 &&
+                    peerFlow.RetainedReceiveStreamCount == 1, ct);
             releaseRejection.Set();
             try
             {
@@ -98,7 +110,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             {
             }
             await WaitForNStudyAsync(() => connection.PendingCalls.NStudyProducerCount == 0 &&
-                peer.Session.StreamManager.DroppedStreamFrames > initialDropped, ct);
+                flow.SendConnectionCredit == initialCredit && flow.RetainedSendStreamCount == 0 &&
+                peerFlow.RetainedReceiveStreamCount == 0 &&
+                (queued || peer.Session.StreamManager.DroppedStreamFrames > initialDropped), ct);
             TestService.ReleaseBlockingAdd();
             Ensure(await active.WaitAsync(ct) == 3 &&
                 await unary.Service.AddAsync(20, 22) == 42 &&
@@ -128,6 +142,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             await foreach (var _ in output.WithCancellation(ct)) { }
         }
     }
+
+    private static StreamFlowController ReadInputFlow(RpcSession session)
+        => ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(session)!).FlowController!;
 
     private sealed class ObservedInputCompression : ISharpLinkCompressionProvider
     {
@@ -357,6 +375,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                    session.CaptureNStudyBinding(aCid) == a2.BindingId && session.CaptureNStudyBinding(bCid) == bBinding.BindingId,
                 "the original physical producer exits once; CTS, codec, pending and route accounting recover");
             trace.Record("OriginalPhysicalExitReleasesBothRoutesAndCodec", a1, a2);
+            if (!earlyEof)
+                await VerifyEarlyInputInterceptorRejectionAsync(server, connection, peer, current,
+                    serverCodec, b, ct);
             return (retired, a2);
         }
         finally
@@ -367,6 +388,65 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             activeInput.ReleaseDisposal();
             service.GetMethod("Approve")!.Invoke(null, null);
             loader.Unload();
+        }
+    }
+
+    private static async Task VerifyEarlyInputInterceptorRejectionAsync(
+        SharpLinkServer server, ClientConnection connection, ServerConnectionState peer,
+        NStudyPreparedTwoWay current, Type serverCodec, IShutdownCleanupProbe sibling, CancellationToken ct)
+    {
+        var gate = new GatedInputRejection();
+        var source = new NStudyInput();
+        var buffered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flow = ReadInputFlow(connection.Session);
+        var peerFlow = ReadInputFlow(peer.Session);
+        var credit = flow.SendConnectionCredit;
+        var decodes = FeedCount(serverCodec, "Deserialized");
+        server.ReplaceInterceptors([gate]);
+        PreAdmissionStreamDispatcher.BufferedItemObserverForTests = (_, _, _) => buffered.TrySetResult();
+        try
+        {
+            var rejected = current.Generated(source, ct);
+            await gate.Entered.Task.WaitAsync(ct);
+            await buffered.Task.WaitAsync(ct);
+            Ensure(flow.SendConnectionCredit < credit && peerFlow.RetainedReceiveStreamCount == 1,
+                "the dynamic invocation owns one buffered input while the interceptor is held");
+            gate.Release.TrySetResult();
+            await source.Disposing.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            source.ReleaseDisposal();
+            try
+            {
+                await rejected.WaitAsync(ct);
+                throw new InvalidOperationException("The interceptor should reject this input.");
+            }
+            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.PermissionDenied) { }
+            await WaitForNStudyAsync(() => flow.SendConnectionCredit == credit &&
+                flow.RetainedSendStreamCount == 0 && peerFlow.RetainedReceiveStreamCount == 0 &&
+                peer.Session.StreamManager.ActiveStreamCount == 0 && connection.ActiveCallCount == 0, ct);
+            Ensure(source.ExitCount == 1 && FeedCount(serverCodec, "Deserialized") == decodes,
+                "dynamic rejection drains an open producer and its retained credit without business decoding");
+        }
+        finally
+        {
+            PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
+            server.ReplaceInterceptors([]);
+            gate.Release.TrySetResult();
+            source.ReleaseItems();
+            source.ReleaseDisposal();
+        }
+        Ensure(await sibling.TouchAsync(6, ct) == 106, "the same Session continues after interceptor rejection");
+    }
+
+    private sealed class GatedInputRejection : ISharpLinkServerInterceptor
+    {
+        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask InvokeAsync(SharpLinkServerInvocationContext context, SharpLinkServerInvocationDelegate next)
+        {
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+            throw new SharpLinkException(SharpLinkErrorCode.PermissionDenied, "Input rejected by policy.");
         }
     }
 

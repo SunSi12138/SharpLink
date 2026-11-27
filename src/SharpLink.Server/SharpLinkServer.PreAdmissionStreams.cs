@@ -63,17 +63,23 @@ internal sealed partial class SharpLinkServer
         var streamManager = connection.Session.StreamManager;
         var resourceGovernor = ResourceGovernor;
         var cancellationToken = callState.InvocationToken;
+        var callLease = callState.CaptureLease(requestId);
         streamManager.ReservePreAdmissionStreams(
             requestId,
             clientStreamCount,
             _runtimeContext.Buffers,
             retainedBytes => resourceGovernor.TryReservePreAdmissionStreamBytes(retainedBytes),
             retainedBytes => resourceGovernor.ReleasePreAdmissionStreamBytes(retainedBytes),
-            () => callState.TryCancel(
-                ServerCallCancellationReason.PreAdmissionStreamResourceExhausted),
+            () =>
+            {
+                if (!callLease.TryAcquire())
+                    return;
+                try { callLease.State.TryCancel(ServerCallCancellationReason.PreAdmissionStreamResourceExhausted); }
+                finally { callLease.ReleaseUse(); }
+            },
             payload => DecodeDeferredInput(connection, requestId, payload, cancellationToken),
             retainUntilLocalCompletion,
-            retainUntilLocalCompletion ? callState.CaptureLease(requestId).TerminalOwner : default);
+            retainUntilLocalCompletion ? callLease.TerminalOwner : default);
     }
 
     private void ReservePreInvocationRequestStreams(

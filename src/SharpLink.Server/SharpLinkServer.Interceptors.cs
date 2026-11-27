@@ -108,8 +108,19 @@ internal sealed partial class SharpLinkServer
         if (!acquisition.IsCompletedSuccessfully)
         {
             if (!acquisition.IsCompleted && methodDescriptor.HasClientStreams && !oneWayInput)
-                ReservePreInvocationRequestStreams(connection, methodDescriptor.ClientStreamCount,
-                    requestId, cancellationToken);
+            {
+                try
+                {
+                    ReservePreInvocationRequestStreams(connection, methodDescriptor.ClientStreamCount,
+                        requestId, cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    // Acquisition is already live. Keep the original execution owner until
+                    // it has either failed or handed back the unused service lease.
+                    return DisposeUnusedAcquisitionAsync(acquisition, exception);
+                }
+            }
             return InvokeServiceAfterAcquisitionAsync(
                 acquisition,
                 execute,
@@ -139,6 +150,21 @@ internal sealed partial class SharpLinkServer
             methodDescriptor,
             inputDrain);
 
+    }
+
+    private static async ValueTask DisposeUnusedAcquisitionAsync(
+        ValueTask<ServiceLease> acquisition, Exception failure)
+    {
+        try
+        {
+            var lease = await acquisition.ConfigureAwait(false);
+            await lease.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            throw new AggregateException(failure, exception);
+        }
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static async ValueTask CompleteDynamicInputAsync(

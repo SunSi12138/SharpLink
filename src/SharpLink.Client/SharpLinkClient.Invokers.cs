@@ -746,13 +746,10 @@ internal sealed partial class SharpLinkClient
                     // cancels when it reaches a terminal reason.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
-                if (table.TryStartNStudyProducer(requestId, admission))
-                {
-                    var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, admission, producerLease);
-                    producerLease = default;
-                    admission = null;
-                    TrackFrameworkTask(producerTask, "ClientStreamingProducer");
-                }
+                var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, admission, producerLease);
+                producerLease = default;
+                admission = null;
+                TrackFrameworkTask(producerTask, "ClientStreamingProducer");
             }
         }
         catch (Exception exception)
@@ -782,7 +779,11 @@ internal sealed partial class SharpLinkClient
     {
         try
         {
-            await streams.WriteAsync(connection, requestId, admission.Token).ConfigureAwait(false);
+            // The caller must get its result handle without running the synchronously
+            // executing prefix of the application's input iterator.
+            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+            if (connection.PendingCalls.TryStartNStudyProducer(requestId, admission))
+                await streams.WriteAsync(connection, requestId, admission.Token).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -895,6 +896,9 @@ internal sealed partial class SharpLinkClient
                 // to release the producer side from a stalled transport write.
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
+            // A duplex handler may respond before reading any input. Keep that
+            // output observable even when the producer has a synchronous prefix.
+            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             if (connection.PendingCalls.TryStartNStudyProducer(requestId, admission))
             {
                 await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);

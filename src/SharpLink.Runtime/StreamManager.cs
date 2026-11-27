@@ -417,17 +417,9 @@ internal sealed partial class StreamManager
 
     internal void CompleteRequestStreams(long requestId, Exception? exception)
     {
-        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
-        if (dispatchersByRequestId is null ||
-            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
-        {
-            return;
-        }
-
         List<Exception>? failures = null;
-        var completed = requestDispatchers.CompleteAll(exception, ref failures);
-        SharpLinkTelemetry.AddActiveStreams(-completed);
-        Interlocked.Add(ref _activeStreamCount, -completed);
+        var entries = BeginRequestDrain(requestId, exception, ref failures);
+        FinalizeRequestDrain(requestId, entries, ref failures);
         ThrowCompletionFailures(failures);
     }
 
@@ -438,18 +430,34 @@ internal sealed partial class StreamManager
     /// </summary>
     internal ValueTask CompleteRequestStreamsAfterDispatchesAsync(long requestId, Exception? exception)
     {
-        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
-        if (dispatchersByRequestId is null ||
-            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
-            return ValueTask.CompletedTask;
-
-        var entries = requestDispatchers.TakeAllForDrain();
+        List<Exception>? failures = null;
+        var entries = BeginRequestDrain(requestId, exception, ref failures);
         if (entries.Length == 0)
             return ValueTask.CompletedTask;
 
+        if (entries.All(static item => !item.Entry.HasActiveDispatches))
+        {
+            FinalizeRequestDrain(requestId, entries, ref failures);
+            ThrowCompletionFailures(failures);
+            return ValueTask.CompletedTask;
+        }
+
+        return AwaitRequestDispatchesAndFinalizeAsync(requestId, entries, failures);
+    }
+
+    private RequestDrainEntry[] BeginRequestDrain(long requestId, Exception? exception, ref List<Exception>? failures)
+    {
+        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+        if (dispatchersByRequestId is null ||
+            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
+            return [];
+
+        var entries = requestDispatchers.TakeAllForDrain();
+        if (entries.Length == 0)
+            return entries;
+
         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
         Interlocked.Add(ref _activeStreamCount, -entries.Length);
-        List<Exception>? failures = null;
         for (var index = 0; index < entries.Length; index++)
         {
             try
@@ -462,14 +470,7 @@ internal sealed partial class StreamManager
             }
         }
 
-        if (entries.All(static item => !item.Entry.HasActiveDispatches))
-        {
-            FinalizeRequestDrain(requestId, entries, ref failures);
-            ThrowCompletionFailures(failures);
-            return ValueTask.CompletedTask;
-        }
-
-        return AwaitRequestDispatchesAndFinalizeAsync(requestId, entries, failures);
+        return entries;
     }
 
     private async ValueTask AwaitRequestDispatchesAndFinalizeAsync(
@@ -494,21 +495,21 @@ internal sealed partial class StreamManager
             var item = entries[index];
             try
             {
-                if (item.Entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-                    consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-                _streamCompleted?.Invoke(requestId, item.StreamId);
-            }
-            catch (Exception completionException)
-            {
-                (failures ??= []).Add(completionException);
-            }
-            try
-            {
+                // Leave the callback installed through Detach: a mailbox can still own raw
+                // input or a child with buffered bytes, even if no peer EOF ever arrived.
                 item.Entry.Detach();
             }
             catch (Exception detachException)
             {
                 (failures ??= []).Add(detachException);
+            }
+            try
+            {
+                PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
             }
         }
     }

@@ -85,6 +85,66 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ResponseRemainsObservableWhileInputHasASynchronousPrefix(bool duplex)
+    {
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.DisableRequestTimeout());
+        await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var channel = (SharpLinkClient)client;
+        var request = default(RpcEmptyRequest);
+        var codec = channel.RuntimeContext.Codecs.GetCodec<int>();
+        var method = new RpcMethodDescriptor(ContractId: 1, MethodId: 934,
+            Kind: duplex ? RpcMethodKind.DuplexStreaming : RpcMethodKind.ClientStreaming,
+            HasResponsePayload: true, HasClientStreams: true, HasMethodTimeout: false,
+            MethodTimeout: null, ClientStreamCount: 1);
+        var releasePrefix = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = new SynchronousPrefixWriter(entered, releasePrefix.Task);
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var observer = Task.Run(async () =>
+        {
+            if (!duplex)
+                return await channel.InvokeClientStreaming(method, in request, RpcEmptyRequestCodec.Instance,
+                    codec, in writer, null, bound.Token, prepared, null);
+
+            var result = SharpLinkModuleRpcChannel.InvokeDuplexStreamingDeferred(channel, null, method,
+                in request, RpcEmptyRequestCodec.Instance, codec, in writer, null, bound.Token, prepared);
+            await using var items = result.GetAsyncEnumerator();
+            return await items.MoveNextAsync() ? items.Current : -1;
+        });
+        try
+        {
+            var head = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request).WaitAsync(bound.Token);
+            await entered.Task.WaitAsync(bound.Token);
+            if (duplex)
+                await transport.Connection.InjectInt32ServerStreamItemAsync(head.Header.RequestId, 42);
+            else
+                await transport.Connection.InjectInt32ResponseAsync(unchecked((long)head.Header.RequestId), 42);
+            Ensure(await observer.WaitAsync(bound.Token) == 42 && !releasePrefix.Task.IsCompleted,
+                "a response can be observed while the application producer is still inside its synchronous prefix");
+        }
+        finally
+        {
+            releasePrefix.TrySetResult();
+            await observer.ConfigureAwait(false);
+        }
+    }
+
+    private readonly struct SynchronousPrefixWriter(
+        TaskCompletionSource entered, Task release) : IRpcClientStreamWriter
+    {
+        public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)
+        {
+            entered.TrySetResult();
+            release.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private static void EnsureRequestFlags(
         ProtocolV2FrameFlags flags, bool expectedCancellable, bool hasMethodTimeout, bool hasReturn)
     {
