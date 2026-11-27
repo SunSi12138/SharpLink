@@ -47,18 +47,20 @@
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinorVersion = (\\d+);",
       "published": 4,
-      "current": 5,
+      "current": 6,
       "policy": "increment",
-      "reason": "One incompatible wire revision from published v2 minor 4; both peers must support prepared binding routing and this format, with no pre-v5 fallback."
+      "reservedDraftVersions": [5],
+      "reason": "Minor 5 was the unpublished prepared-binding draft with RequestAccepted. Released 3.0 uses minor 6 without per-request acceptance and must not reuse minor 5."
     },
     {
       "name": "Minimum compatible minor",
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinimumCompatibleMinorVersion = (\\d+);",
       "published": 4,
-      "current": 5,
+      "current": 6,
       "policy": "increment",
-      "reason": "One incompatible wire revision from published v2 minor 4; both peers must support prepared binding routing and this format, with no pre-v5 fallback."
+      "reservedDraftVersions": [5],
+      "reason": "Both peers require the same minor 6 grammar. Published minor 4 and the unpublished minor 5 grammar are rejected."
     },
     {
       "name": "Contract Manifest JSON",
@@ -73,19 +75,21 @@
       "name": "Runtime ABI identity",
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
       "pattern": "AbiIdentity = \"sharplink\\-3\\.0\\-api5\\-prepared\\-contract\\-v(\\d+)\"",
-      "published": 1,
-      "current": 1,
-      "policy": "unchanged",
-      "reason": "Exact new family in this draft; numeric suffix v1 is local to the family. Equal API version alone does not match earlier development artifacts."
+      "published": null,
+      "current": 2,
+      "policy": "initial",
+      "reservedDraftVersions": [1],
+      "reason": "First release of the 3.0 prepared-contract ABI family. Reserve its incompatible unpublished suffix v1; release suffix v2 requires rebuilding the generated assemblies."
     },
     {
       "name": "Generator ABI identity",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
       "pattern": "GeneratedAbiIdentity = \"sharplink\\-3\\.0\\-api5\\-prepared\\-contract\\-v(\\d+)\"",
-      "published": 1,
-      "current": 1,
-      "policy": "unchanged",
-      "reason": "Exact new family in this draft; numeric suffix v1 is local to the family. Equal API version alone does not match earlier development artifacts."
+      "published": null,
+      "current": 2,
+      "policy": "initial",
+      "reservedDraftVersions": [1],
+      "reason": "Emit the runtime's initial published identity v2, keeping the incompatible unpublished identity v1 reserved."
     },
     {
       "name": "Diagnostic snapshot",
