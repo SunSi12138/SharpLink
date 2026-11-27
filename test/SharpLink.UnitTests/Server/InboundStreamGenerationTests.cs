@@ -39,11 +39,12 @@ public partial class SharpLinkServerInvocationTests
         {
             var method = typeof(SharpLinkServer).GetMethod("TryAcceptCapturedInboundStreamProgress",
                 BindingFlags.Static | BindingFlags.NonPublic)!;
-            object?[] arguments = [calls, requestId, stale, false, default(StreamTerminalOwner)];
+            object?[] arguments = [calls, requestId, stale, false, null];
             var accepted = (bool)method.Invoke(null, arguments)!;
             Ensure(accepted && (bool)arguments[3]! == replaceState,
                 "stale capture must inspect the current generation or use ordinary routing when absent");
-            Ensure(!((StreamTerminalOwner)arguments[4]!).IsPresent,
+            var terminal = arguments[4]!;
+            Ensure(terminal.Equals(Activator.CreateInstance(terminal.GetType())),
                 "ordinary progress must not carry terminal authority");
             if (current is not null)
                 Ensure(current.Reason == ServerCallCancellationReason.None,
@@ -80,7 +81,7 @@ public partial class SharpLinkServerInvocationTests
                 BindingFlags.Static | BindingFlags.NonPublic)!;
             try
             {
-                method.Invoke(null, [calls, requestId, stale, false, default(StreamTerminalOwner)]);
+                method.Invoke(null, [calls, requestId, stale, false, null]);
                 throw new Exception("persistently retired ownership must fail closed");
             }
             catch (TargetInvocationException exception) when (
