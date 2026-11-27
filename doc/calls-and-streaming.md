@@ -38,6 +38,8 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 原待完成请求决定能否启动生产者；取消或 deadline 已结束的请求不会启动。带 deadline 时，本地等待 Request 发出也使用原预算。
 
+处理器可以不读完输入就返回。调用结束时框架会释放剩余输入并归还额度；不要在处理器返回后继续读它的输入流。
+
 请求和流使用同一物理连接。重连不会迁移已开始的流，Streaming 和 OneWay 也不自动重试。
 
 ## OneWay

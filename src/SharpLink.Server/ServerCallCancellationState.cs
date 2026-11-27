@@ -76,6 +76,8 @@ internal sealed class ServerCallCancellationState : IDisposable
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
     private ServerDecodedBytesPermit? _decodedBytesPermit;
+    private ServerGeneratedInputOwner? _generatedInputs;
+    private bool _ownsGeneratedInputs;
     private TimeProvider? _timeProvider;
 
     private ServerCallCancellationState()
@@ -189,6 +191,18 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (Interlocked.CompareExchange(ref _admissionProgramUse, admissionProgram, null) is not null)
             throw new InvalidOperationException("An admission program use is already attached to this call.");
     }
+
+    internal void EnableGeneratedInputOwnership() => _ownsGeneratedInputs = true;
+
+    internal void TrackGeneratedInput(ServerGeneratedInputOwner input)
+    {
+        if (!_ownsGeneratedInputs)
+            return;
+        input.Next = _generatedInputs;
+        _generatedInputs = input;
+    }
+
+    internal ServerGeneratedInputOwner? TakeGeneratedInputs() => Interlocked.Exchange(ref _generatedInputs, null);
 
     internal void AttachAdmissionLease(AdmissionLease lease)
     {
@@ -482,5 +496,6 @@ internal sealed class ServerCallCancellationState : IDisposable
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;
+        _ownsGeneratedInputs = false;
     }
 }

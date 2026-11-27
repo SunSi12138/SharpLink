@@ -875,14 +875,18 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
 
     internal Func<ValueTask> CapturePhysicalLeaseClose()
     {
-        var captured = Volatile.Read(ref _leaseState);
-        return () =>
-        {
-            var observed = Volatile.Read(ref _leaseState);
-            return IsSameLeaseGeneration(captured, observed)
-                ? DisposeObservedLeaseAsync(observed)
-                : ValueTask.CompletedTask;
-        };
+        var captured = CapturePhysicalLeaseGeneration();
+        return () => DisposeCapturedLeaseAsync(captured);
+    }
+
+    internal long CapturePhysicalLeaseGeneration() => Volatile.Read(ref _leaseState);
+
+    internal ValueTask DisposeCapturedLeaseAsync(long captured)
+    {
+        var observed = Volatile.Read(ref _leaseState);
+        return IsSameLeaseGeneration(captured, observed)
+            ? DisposeObservedLeaseAsync(observed)
+            : ValueTask.CompletedTask;
     }
 
     private ValueTask DisposeObservedLeaseAsync(long activeLeaseState)

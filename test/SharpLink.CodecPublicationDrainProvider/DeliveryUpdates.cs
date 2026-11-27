@@ -16,6 +16,8 @@ public interface IDeliveryUpdates : IService
 
     ValueTask<int> ReconcileAsync(IAsyncEnumerable<FeedReading> readings, CancellationToken cancellationToken);
 
+    ValueTask<int> ReconcileWithoutReadingAsync(IAsyncEnumerable<FeedReading> readings, CancellationToken cancellationToken);
+
     IAsyncEnumerable<FeedReading> MirrorAsync(IAsyncEnumerable<FeedReading> readings, CancellationToken cancellationToken);
 }
 
@@ -78,4 +80,8 @@ public sealed class DeliveryUpdates : IDeliveryUpdates
         }
         finally { Interlocked.Increment(ref TwoWayInputExits); }
     }
+
+    public ValueTask<int> ReconcileWithoutReadingAsync(
+        IAsyncEnumerable<FeedReading> readings, CancellationToken cancellationToken)
+        => ValueTask.FromResult(42);
 }

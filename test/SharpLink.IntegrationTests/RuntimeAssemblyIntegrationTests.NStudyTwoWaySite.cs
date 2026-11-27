@@ -378,6 +378,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             if (!earlyEof)
                 await VerifyEarlyInputInterceptorRejectionAsync(server, connection, peer, current,
                     serverCodec, b, ct);
+            if (!duplex)
+                await VerifyEarlyInputUnusedByHandlerAsync(server, connection, peer, current,
+                    b, earlyEof, ct);
             return (retired, a2);
         }
         finally
@@ -437,16 +440,70 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(await sibling.TouchAsync(6, ct) == 106, "the same Session continues after interceptor rejection");
     }
 
-    private sealed class GatedInputRejection : ISharpLinkServerInterceptor
+    private static async Task VerifyEarlyInputUnusedByHandlerAsync(
+        SharpLinkServer server, ClientConnection connection, ServerConnectionState peer,
+        NStudyPreparedTwoWay current, IShutdownCleanupProbe sibling, bool earlyEof, CancellationToken ct)
+    {
+        var gate = new GatedInputRejection(reject: false);
+        var source = new NStudyInput();
+        var buffered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flow = ReadInputFlow(connection.Session);
+        var peerFlow = ReadInputFlow(peer.Session);
+        var credit = flow.SendConnectionCredit;
+        server.ReplaceInterceptors([gate]);
+        PreAdmissionStreamDispatcher.BufferedItemObserverForTests = (_, _, _) => buffered.TrySetResult();
+        try
+        {
+            var result = current.IgnoreInput(source, ct);
+            await gate.Entered.Task.WaitAsync(ct);
+            await buffered.Task.WaitAsync(ct);
+            if (earlyEof)
+            {
+                source.ReleaseItems();
+                source.ReleaseDisposal();
+                await WaitForNStudyAsync(() => connection.PendingCalls.NStudyProducerCount == 0, ct);
+                Ensure(await sibling.TouchAsync(7, ct) == 107, "the peer observes the published input EOF");
+            }
+            Ensure(flow.SendConnectionCredit < credit && peerFlow.RetainedReceiveStreamCount == 1,
+                "the handler has early input it may choose not to read");
+            gate.Release.TrySetResult();
+            if (!earlyEof)
+            {
+                await source.Disposing.WaitAsync(TimeSpan.FromSeconds(5), ct);
+                source.ReleaseDisposal();
+            }
+            Ensure(await result.WaitAsync(ct) == 42, "the real handler returns without enumerating input");
+            await WaitForNStudyAsync(() => flow.SendConnectionCredit == credit &&
+                flow.RetainedSendStreamCount == 0 && peerFlow.RetainedReceiveStreamCount == 0 &&
+                peer.Session.StreamManager.ActiveStreamCount == 0 && connection.ActiveCallCount == 0, ct);
+            Ensure(source.ExitCount == 1 && await sibling.TouchAsync(8, ct) == 108,
+                "the original typed input and both credit ledgers finish even when the handler never enumerates");
+        }
+        finally
+        {
+            PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
+            server.ReplaceInterceptors([]);
+            gate.Release.TrySetResult();
+            source.ReleaseItems();
+            source.ReleaseDisposal();
+        }
+    }
+
+    private sealed class GatedInputRejection(bool reject = true) : ISharpLinkServerInterceptor
     {
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async ValueTask InvokeAsync(SharpLinkServerInvocationContext context, SharpLinkServerInvocationDelegate next)
         {
-            Entered.TrySetResult();
-            await Release.Task.WaitAsync(context.CancellationToken).ConfigureAwait(false);
-            throw new SharpLinkException(SharpLinkErrorCode.PermissionDenied, "Input rejected by policy.");
+            if (context.Method.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming)
+            {
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+                if (reject)
+                    throw new SharpLinkException(SharpLinkErrorCode.PermissionDenied, "Input rejected by policy.");
+            }
+            await next(context).ConfigureAwait(false);
         }
     }
 
@@ -483,12 +540,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     responseCodec, writer, metadata, ct)];
         }
         return new(site.Prepare, ct => InvokeValueTaskAsync<int>(site.Service, typeof(TContract), "WaitForApprovalAsync", ct),
-            Generated, Manual);
+            Generated, Manual, (readings, ct) => InvokeValueTaskAsync<int>(site.Service,
+                typeof(TContract), "ReconcileWithoutReadingAsync", AsDeliveryReading<TReading>(readings), ct).AsTask());
     }
 
     private sealed record NStudyPreparedTwoWay(
         Func<TimeSpan, CancellationToken, ValueTask<NStudyAck>> Prepare,
         Func<CancellationToken, ValueTask<int>> Occupy,
         Func<IAsyncEnumerable<int>, CancellationToken, Task<int[]>> Generated,
-        Func<IAsyncEnumerable<int>, SharpLinkMetadata, CancellationToken, Task<int[]>> Manual);
+        Func<IAsyncEnumerable<int>, SharpLinkMetadata, CancellationToken, Task<int[]>> Manual,
+        Func<IAsyncEnumerable<int>, CancellationToken, Task<int>> IgnoreInput);
 }

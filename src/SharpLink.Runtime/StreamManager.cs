@@ -419,7 +419,7 @@ internal sealed partial class StreamManager
     {
         List<Exception>? failures = null;
         var entries = BeginRequestDrain(requestId, exception, ref failures);
-        FinalizeRequestDrain(requestId, entries, ref failures);
+        FinalizeRequestDrain(requestId, entries, ref failures, mayHaveActiveDispatches: true);
         ThrowCompletionFailures(failures);
     }
 
@@ -488,7 +488,8 @@ internal sealed partial class StreamManager
     private void FinalizeRequestDrain(
         long requestId,
         RequestDrainEntry[] entries,
-        ref List<Exception>? failures)
+        ref List<Exception>? failures,
+        bool mayHaveActiveDispatches = false)
     {
         for (var index = 0; index < entries.Length; index++)
         {
@@ -505,13 +506,26 @@ internal sealed partial class StreamManager
             }
             try
             {
-                PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
+                if (mayHaveActiveDispatches && item.Entry.HasActiveDispatches)
+                {
+                    // An already-acquired frame may be about to debit its first bytes.
+                    // Its route owns the final WindowUpdate until the last lease releases.
+                    item.Entry.AfterDispatchesDrained(() => PublishDeferredReceiveTerminal(requestId, item));
+                }
+                else
+                    PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
             }
             catch (Exception completionException)
             {
                 (failures ??= []).Add(completionException);
             }
         }
+    }
+
+    private void PublishDeferredReceiveTerminal(long requestId, RequestDrainEntry entry)
+    {
+        try { PublishReceiveTerminal(requestId, entry.StreamId, entry.Entry); }
+        catch (Exception exception) { _activeStreamCapacityExceeded?.Invoke(exception); }
     }
 
     private static void ThrowCompletionFailures(List<Exception>? failures)
@@ -1194,6 +1208,14 @@ internal sealed partial class StreamManager
             return completions.WaitForDispatchesDrainedAsync();
         }
 
+        public void AfterDispatchesDrained(Action action)
+        {
+            var completions = GetOrCreateCompletions();
+            completions.SetAfterDispatchesDrained(action);
+            if (!HasActiveDispatches)
+                completions.SignalDispatchesDrained();
+        }
+
         public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
         {
             if (IsDetached)
@@ -1245,6 +1267,7 @@ internal sealed partial class StreamManager
         {
             private int _dispatchesDrainedSignaled;
             private int _detachedSignaled;
+            private Action? _afterDispatchesDrained;
             private TaskCompletionSource? _dispatchesDrainedCompletion;
             private TaskCompletionSource? _detachedCompletion;
 
@@ -1252,6 +1275,14 @@ internal sealed partial class StreamManager
             {
                 if (Interlocked.Exchange(ref _dispatchesDrainedSignaled, 1) == 0)
                     Volatile.Read(ref _dispatchesDrainedCompletion)?.TrySetResult();
+                Interlocked.Exchange(ref _afterDispatchesDrained, null)?.Invoke();
+            }
+
+            internal void SetAfterDispatchesDrained(Action action)
+            {
+                Volatile.Write(ref _afterDispatchesDrained, action);
+                if (Volatile.Read(ref _dispatchesDrainedSignaled) != 0)
+                    Interlocked.Exchange(ref _afterDispatchesDrained, null)?.Invoke();
             }
 
             internal void SignalDetached()

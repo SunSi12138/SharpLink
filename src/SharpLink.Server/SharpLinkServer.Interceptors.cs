@@ -50,8 +50,9 @@ internal sealed partial class SharpLinkServer
             return InvokeServiceTrackedAsync(execute, singleton, session, connection.GeneratedBridge,
                 requestId, arguments, output, cancellationToken, context, methodDescriptor);
 
-        var hasRequestStreams = registration.HasModule && (oneWayInput ||
-            methodDescriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming);
+        // Two-way typed inputs are finished at the invocation boundary for both
+        // static and dynamic services. OneWay retains its existing physical join.
+        var hasRequestStreams = registration.HasModule && oneWayInput;
         var inputDrain = registration.HasModule && oneWayInput
             ? session.StreamManager.CaptureInputStreamDrain(requestId, methodDescriptor.ClientStreamCount)
             : default;
@@ -309,17 +310,21 @@ internal sealed partial class SharpLinkServer
         var telemetry = StartServerTelemetryCall(methodDescriptor, requestId);
         try
         {
-            var invocation = InvokeServiceCoreAsync(
-                execute,
-                service,
-                session,
-                generatedBridge,
-                requestId,
-                arguments,
-                output,
-                cancellationToken,
-                context,
-                methodDescriptor);
+            var inputOwner = methodDescriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming
+                ? (ServerGeneratedBridge)generatedBridge
+                : null;
+            ValueTask invocation;
+            try
+            {
+                invocation = InvokeServiceCoreAsync(execute, service, session, generatedBridge,
+                    requestId, arguments, output, cancellationToken, context, methodDescriptor);
+            }
+            catch (Exception exception) when (inputOwner is not null)
+            {
+                invocation = ValueTask.FromException(exception);
+            }
+            if (inputOwner is not null)
+                invocation = FinishGeneratedInputInvocationAsync(invocation, inputOwner, requestId);
             if (!telemetry.IsEnabled)
                 return invocation;
             if (invocation.IsCompletedSuccessfully)
@@ -334,6 +339,18 @@ internal sealed partial class SharpLinkServer
             telemetry.Complete(exception);
             throw;
         }
+    }
+
+    private static async ValueTask FinishGeneratedInputInvocationAsync(
+        ValueTask invocation, ServerGeneratedBridge inputOwner, long requestId)
+    {
+        Exception? failure = null;
+        try { await invocation.ConfigureAwait(false); }
+        catch (Exception exception) { failure = exception; }
+        try { await inputOwner.FinishGeneratedInputsAsync(requestId).ConfigureAwait(false); }
+        catch (Exception exception) { failure = CombineTerminalExceptions(failure, exception); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private async ValueTask InvokeServiceWithLeaseAsync(

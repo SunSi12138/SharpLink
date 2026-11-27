@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    internal IAsyncEnumerable<T> CreateGeneratedInboundStream<T>(
+    internal PooledAsyncStreamDispatcher<T> CreateGeneratedInboundStream<T>(
         long requestId,
         ushort streamId,
         IRpcCodec<T> codec,
