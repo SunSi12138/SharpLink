@@ -27,7 +27,7 @@ internal sealed partial class SharpLinkClient
         cancellationToken.ThrowIfCancellationRequested();
         var connection = RequireSingleNStudyConnection();
         var snapshot = await QueryNStudyRemoteInventoryOnAsync(connection, cancellationToken).ConfigureAwait(false);
-        if (!connection.CanAcceptCalls || !ReferenceEquals(RequireSingleNStudyConnection(), connection))
+        if (!ReferenceEquals(RequireSingleNStudyConnection(), connection))
             throw NStudyPreparedSite.Unavailable();
         return snapshot;
     }
@@ -112,10 +112,10 @@ internal sealed partial class SharpLinkClient
 
     private ClientConnection RequireSingleNStudyConnection()
     {
-        var ready = Volatile.Read(ref _readyConnections);
-        if (ready.Length != 1)
+        var ready = CaptureNStudyReadyConnections();
+        if (ready.Length != 1 || !IsNStudyPreparationConnectionCurrent(ready[0]))
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
-                "The private binding study requires exactly one ready connection.");
+                "This operation requires exactly one ready connection.");
         return ready[0];
     }
 

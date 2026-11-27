@@ -6,6 +6,97 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
+    [Arguments(false, 1)]
+    [Arguments(false, 2)]
+    [Arguments(true, 1)]
+    [Arguments(true, 2)]
+    public async Task NStudyDefaultVersionOperationsSelectOnlyTheSoleReadyClusterConnection(bool useResolver, int ready)
+    {
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = guard.Token;
+        using var target = PluginBundle.Load($"n-cluster-sole-{useResolver}-{ready}", loadService: false);
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (request, _) => ValueTask.FromResult(
+                request.Payload.Span.SequenceEqual(NStudyAuthenticationPayload)
+                    ? SharpLinkAuthenticationResult.Authenticate(new SharpLinkAuthenticationContext("n-validation"))
+                    : SharpLinkAuthenticationResult.Reject())))
+            .RequireAuthentication().UseTcp(0, IPAddress.Loopback);
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        await using var server = serverBuilder.Build();
+        server.SetVersionCoordinationMode(SharpLinkVersionCoordinationMode.Automatic);
+
+        var endpoints = Enumerable.Range(0, useResolver ? ready : 2).Select(index => new SharpLinkEndpoint
+        {
+            Id = $"peer-{index}",
+            Address = new SharpLinkTcpAddress("127.0.0.1", port)
+        }).ToArray();
+        var builder = SharpClientBuilder.Create().UseRequestTimeout(TimeSpan.FromSeconds(5))
+            .UseAuthenticator(SharpLinkAuthenticator.CreateClient(static _ =>
+                ValueTask.FromResult<ReadOnlyMemory<byte>>(NStudyAuthenticationPayload)));
+        if (useResolver)
+        {
+            var snapshot = new SharpLinkEndpointSnapshot(1, endpoints);
+            builder.UseEndpointResolver(new DelegateSharpLinkEndpointResolver(_ => ValueTask.FromResult(snapshot)),
+                SharpLinkTransportFactories.Sockets());
+        }
+        else
+        {
+            builder.UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets()).UseCluster(options =>
+            {
+                options.MinReadyEndpoints = ready;
+                options.MaxConnections = ready;
+                options.MaxConnectionsPerEndpoint = 1;
+            });
+        }
+        await using var client = builder.Build();
+        client.SetVersionCoordinationMode(SharpLinkVersionCoordinationMode.Automatic);
+        Ensure(client.RegisterAssembly(target.ContractAssembly).Succeeded, "the application installs the declaration locally");
+        Ensure(SharpLinkAssemblyManifestLoader.TryLoad(target.ContractAssembly, out var manifest).Succeeded,
+            "read the generated local contract");
+        var cid = manifest!.Contracts.Single(contract => contract.ContractType == target.ContractType).ContractId;
+        var local = client.GetLocalContract(target.ContractAssembly, cid);
+
+        await ExpectUnavailable(client.QueryPeerVersionInventoryAsync(ct).AsTask());
+        await ExpectUnavailable(client.DeclareVersionTargetAsync(local, ct).AsTask());
+        await server.StartAsync(ct);
+        await client.ConnectAsync(ct);
+        await client.WaitForReadinessAsync(ready, ct);
+        var selectors = client.GetVersionConnections();
+        Ensure(selectors.Count == ready, "the cluster publishes its actual Ready connections");
+        if (ready == 1)
+        {
+            var inventory = await client.QueryPeerVersionInventoryAsync(ct);
+            var declaration = await client.DeclareVersionTargetAsync(local, ct);
+            var selected = await client.QueryPeerVersionInventoryAsync(selectors[0], ct);
+            Ensure(inventory.Session == selected.Session && inventory.Session == declaration.Session &&
+                   declaration.Status == SharpLinkVersionDeclarationStatus.Missing,
+                "both unspecific operations use the unique physical connection without installing the target");
+        }
+        else
+        {
+            await ExpectUnavailable(client.QueryPeerVersionInventoryAsync(ct).AsTask());
+            await ExpectUnavailable(client.DeclareVersionTargetAsync(local, ct).AsTask());
+            var sessions = new HashSet<SharpLinkVersionSession>();
+            foreach (var selector in selectors)
+            {
+                var inventory = await client.QueryPeerVersionInventoryAsync(selector, ct);
+                var declaration = await client.DeclareVersionTargetAsync(local, selector, ct);
+                Ensure(inventory.Session is { } session && declaration.Session == session &&
+                       declaration.Status == SharpLinkVersionDeclarationStatus.Missing && sessions.Add(session),
+                    "the explicit selectors keep each actual physical connection distinct");
+            }
+        }
+
+        async Task ExpectUnavailable(Task operation)
+        {
+            try { await operation.WaitAsync(ct); }
+            catch (SharpLinkException error) when (error.Code == SharpLinkErrorCode.Unavailable) { return; }
+            throw new InvalidOperationException("A default operation must refuse without a unique Ready connection.");
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     [Arguments("tcp")]
     [Arguments("shared-memory")]
     public async Task NStudyClientDeclaresARealLocalTargetBeforeServerDeployment(string transport)

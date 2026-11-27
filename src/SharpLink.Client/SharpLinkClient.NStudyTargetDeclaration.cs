@@ -32,7 +32,9 @@ internal sealed partial class SharpLinkClient
             var declaration = new NStudyTargetDeclaration(registration.Descriptor.ContractId, registration.NStudyAssemblyHash,
                 new(module.NStudyRegistration, module.NStudyPublication));
             var reply = await connection.Session.DeclareNStudyTargetAsync(declaration, ct).ConfigureAwait(false);
-            if (!IsNStudyPreparationConnectionCurrent(connection) ||
+            if ((selector is null
+                    ? !ReferenceEquals(RequireSingleNStudyConnection(), connection)
+                    : !IsNStudyPreparationConnectionCurrent(connection)) ||
                 !_assemblyRegistry.CaptureProxySnapshot().TryGetValue(registration.Descriptor.ContractType, out var current) ||
                 !ReferenceEquals(registration, current) || module.State != SharpLinkDynamicModuleState.Running)
                 throw NStudyPreparedSite.Unavailable();
