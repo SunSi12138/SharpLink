@@ -8,9 +8,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNERS = (
-    ("send-credit-lease-race", 2298, 8),
-    ("generated-stream-snapshot-regression", 2290, 2),
-    ("send-credit-terminal-regression", 2290, 1),
+    ("send-credit-lease-race", 2303, 8),
+    ("generated-stream-snapshot-regression", 2295, 2),
+    ("send-credit-terminal-regression", 2295, 1),
 )
 
 
@@ -38,7 +38,7 @@ class ExactRegressionSuiteCensusTests(unittest.TestCase):
 
     def test_hosting_current_full_census_is_declared_and_exact(self):
         runner = load_runner("hosting-registration-regression")
-        count = 2290
+        count = 2295
         self.assertEqual(runner.FULL_COUNT, count)
         self.assertEqual(runner.inspect(summary(count), count, 0, ())["total"], count)
         for text in (summary(count - 1), summary(count + 1), summary(count, failed=1),

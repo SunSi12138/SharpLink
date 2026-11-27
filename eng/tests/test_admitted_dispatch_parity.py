@@ -1,7 +1,8 @@
 """Keep the deliberately separate queued dispatch resource skeletons in sync.
 
 Immediate dispatch retains its own preparation/admission guards. Both paths
-must perform identical resource work after reserving the server call.
+must perform identical resource work after reserving the server call, except
+that the immediate path records early input at pre-decode state creation.
 """
 from pathlib import Path
 import re
@@ -39,7 +40,25 @@ class AdmittedDispatchParityTests(unittest.TestCase):
         self.assert_pair('AdmissionDispatch', 'AdmittedOneWayDispatch', 'DispatchOneWayRpc')
 
     def test_rpc_resource_skeleton(self):
-        self.assert_pair('InvocationDispatch', 'AdmittedRpcDispatch', 'DispatchRpcAsync')
+        immediate = (SERVER / 'SharpLinkServer.InvocationDispatch.cs').read_text()
+        admitted = (SERVER / 'SharpLinkServer.AdmittedRpcDispatch.cs').read_text()
+        entry = method(immediate, 'DispatchRpcAsync')
+        inline = resource_skeleton(immediate, 'DispatchRpcAsync')
+        queued = resource_skeleton(admitted, 'DispatchAdmittedRpcAsync')
+        early_input = ('                    if (facts.Descriptor.HasClientStreams)\n'
+                       '                        admittedCallState.SetEarlyInputStreamCount(facts.Descriptor.ClientStreamCount);\n')
+        pre_decode = '                    if (!TryPrepareCompressedRequestDecode('
+        queue_handoff = ('                if (descriptor.HasClientStreams)\n'
+                         '                    admittedCallState.SetEarlyInputStreamCount(descriptor.ClientStreamCount);\n')
+
+        # The shared queued dispatcher already receives the tracked count from admission.
+        # Record it there before the controller can defer the request, and inline just
+        # before compressed decode preparation, which can end the request.
+        self.assertEqual(entry.count('SetEarlyInputStreamCount('), 2)
+        self.assertIn(queue_handoff, entry[:entry.index('admissionTask = admissionProgram.Controller.AcquireAsync(')])
+        self.assertEqual(inline.count(early_input + pre_decode), 1)
+        self.assertNotIn('SetEarlyInputStreamCount(', queued)
+        self.assertEqual(inline.replace(early_input + pre_decode, pre_decode, 1), queued)
 
     def assert_pair(self, immediate_file, admitted_file, name):
         immediate = (SERVER / f'SharpLinkServer.{immediate_file}.cs').read_text()

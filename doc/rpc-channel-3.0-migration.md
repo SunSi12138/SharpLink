@@ -46,4 +46,4 @@ public sealed class UploadFileLines(string path, CancellationToken caller) : IAs
 
 只有在实际枚举时才打开文件；不需要提前启动生产者，也不应忽略框架传来的令牌。如果输入本来没有独立的应用令牌，继续使用传给枚举器的令牌即可。
 
-有响应的上传和双工等服务端确认接收后才生产输入。带输入的 OneWay 没有这个回执，不保证远端业务已执行。[协议](protocol-v2.md)和[整体升级清单](migration.md)列出部署边界。
+上传、双工和带输入的 OneWay 在请求进入本地发送流程后就可以开始枚举，不等服务端确认。服务端仍先准入，再把输入交给业务。因此，生产者开始枚举（例如打开文件）不表示服务端已接受调用；OneWay 返回也不保证远端业务已执行。[协议](protocol-v2.md)和[整体升级清单](migration.md)列出部署边界。
