@@ -229,33 +229,39 @@ internal static class SharpLinkModuleRpcChannel
             }
 
             SharpLinkDynamicModuleLease producerLease = default;
-            try
+            if (module is not null)
             {
-                SharpLinkClient.EnsureLogicalCallProgress(control);
-                if (module is not null && !module.TryAcquire(true, out producerLease))
+                try
                 {
                     SharpLinkClient.EnsureLogicalCallProgress(control);
-                    throw Draining();
+                    if (!module.TryAcquire(true, out producerLease))
+                    {
+                        SharpLinkClient.EnsureLogicalCallProgress(control);
+                        throw Draining();
+                    }
                 }
-            }
-            catch
-            {
-                lease.Dispose();
-                throw;
+                catch
+                {
+                    lease.Dispose();
+                    throw;
+                }
             }
 
             var producerLifetime = module is null ? null : new SharpLinkClientStreamModuleLeaseOwner(producerLease);
-            var combined = module is null ? new CombinedCancellation(callCancellation, null) :
-                Combine(callCancellation, module.ForcedCancellation);
+            var combined = module is null ? default : Combine(callCancellation, module.ForcedCancellation);
             var outputLifetime = module is not null
                 ? new NStudyServerOutputLifetime(lease, combined.Source)
                 : null;
             try
             {
-                SharpLinkClient.EnsureLogicalCallProgress(control);
+                // Static calls have no module owner acquisition between the entry
+                // check and BeginDuplexStreamingResolved's own progress check.
+                if (module is not null)
+                    SharpLinkClient.EnsureLogicalCallProgress(control);
                 var stream = inner.BeginDuplexStreamingResolved(
                     method, request, requestCodec, responseCodec, streams, interceptors,
-                    control with { InputLifetime = producerLifetime, OutputLifetime = outputLifetime }, combined.Token);
+                    module is null ? control : control with { InputLifetime = producerLifetime, OutputLifetime = outputLifetime },
+                    module is null ? callCancellation : combined.Token);
                 var ownsLogicalCall = true;
                 IAsyncEnumerator<TResponse>? enumerator = null;
                 try
@@ -291,12 +297,6 @@ internal static class SharpLinkModuleRpcChannel
                 {
                     try { outputLifetime.CloseConsumer(); }
                     finally { producerLifetime?.Dispose(); }
-                }
-                else
-                {
-                    lease.Dispose();
-                    producerLifetime?.Dispose();
-                    combined.Dispose();
                 }
             }
         }
