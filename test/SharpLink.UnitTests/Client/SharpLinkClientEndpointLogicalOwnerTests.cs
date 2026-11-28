@@ -26,6 +26,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
                 builder.UseEndpointAdmission(policy);
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var hasClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
         var method = new RpcMethodDescriptor(
@@ -37,7 +38,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
@@ -45,49 +46,51 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
         switch (kind)
         {
             case RpcMethodKind.Unary:
-                failure = await CaptureFailureAsync(channel.InvokeUnaryAsync(
+                failure = await CaptureFailureAsync(channel.InvokeUnary(
                     method,
                     in request,
                     RpcEmptyRequestCodec.Instance,
                     RpcEmptyRequestCodec.Instance,
-                    metadata: null).AsTask());
+                    metadata: null, cancellationToken: default, prepared).AsTask());
                 break;
             case RpcMethodKind.OneWay:
-                failure = await CaptureFailureAsync(channel.InvokeOneWayAsync(
+                failure = await CaptureFailureAsync(channel.InvokeOneWay(
                     method,
                     in request,
                     RpcEmptyRequestCodec.Instance,
                     in streams,
-                    metadata: null).AsTask());
+                    metadata: null, cancellationToken: default, prepared).AsTask());
                 break;
             case RpcMethodKind.ClientStreaming:
-                failure = await CaptureFailureAsync(channel.InvokeClientStreamingAsync(
+                failure = await CaptureFailureAsync(channel.InvokeClientStreaming(
                     method,
                     in request,
                     RpcEmptyRequestCodec.Instance,
                     RpcEmptyRequestCodec.Instance,
                     in streams,
-                    metadata: null).AsTask());
+                    metadata: null, cancellationToken: default, prepared, producerLifetime: null).AsTask());
                 break;
             case RpcMethodKind.ServerStreaming:
-                await using (var enumerator = channel.InvokeServerStreamingAsync(
+                await using (var enumerator = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+                    channel, null,
                     method,
                     in request,
                     RpcEmptyRequestCodec.Instance,
                     RpcEmptyRequestCodec.Instance,
-                    metadata: null).GetAsyncEnumerator())
+                    metadata: null, cancellationToken: default, prepared).GetAsyncEnumerator())
                 {
                     failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
                 }
                 break;
             case RpcMethodKind.DuplexStreaming:
-                await using (var enumerator = channel.InvokeDuplexStreamingAsync(
+                await using (var enumerator = SharpLinkModuleRpcChannel.InvokeDuplexStreamingDeferred(
+                    channel, null,
                     method,
                     in request,
                     RpcEmptyRequestCodec.Instance,
                     RpcEmptyRequestCodec.Instance,
                     in streams,
-                    metadata: null).GetAsyncEnumerator())
+                    metadata: null, cancellationToken: default, prepared).GetAsyncEnumerator())
                 {
                     failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
                 }

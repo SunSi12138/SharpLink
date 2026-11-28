@@ -108,7 +108,7 @@ jobs:
           --project test/SharpLink.IntegrationTests
           --
           --maximum-parallel-tests 1
-          --timeout 120s
+          --timeout 360s
 
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Threading;
 using SharpLink.Client;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -9,19 +10,22 @@ public class SharpLinkClientCancellationTests
     [Test]
     public async Task InvokeWithDefaultTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
+        var clock = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
+            builder => builder.UseTimeProvider(clock).UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(80));
         var exception = await EnsureThrows<SharpLinkException>(invokeTask);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout should map to DeadlineExceeded");
 
-        var cancelPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Cancel);
+        var cancelPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Cancel).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(cancelPacket.RequestId == callPacket.RequestId, "cancel should target same request");
     }
 
@@ -34,15 +38,17 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(5)));
 
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(80));
+        using var cts = new CancellationTokenSource();
         var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
             client,
-            cancellationToken: cts.Token).AsTask();
+            cancellationToken: cts.Token, prepared: prepared).AsTask();
 
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
         await EnsureThrows<OperationCanceledException>(invokeTask);
-        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(cancel.Header.RequestId == request.RequestId, "user cancel request ID");
         Ensure(cancel.Payload is [(byte)ProtocolV2CancelReason.UserCancellation],
             "user cancellation should send its negotiated reason");
@@ -57,9 +63,10 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(2)));
 
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: prepared).AsTask();
+        var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
 
         await transport.Connection.InjectPacketAsync(
             ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, unchecked((long)callPacket.RequestId));
@@ -78,8 +85,12 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(80)));
 
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        await ClientInvokerTestHelper.InvokeOneWayAsync(client);
+        await ClientInvokerTestHelper.InvokeOneWayAsync(client, prepared);
+        var sent = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request).WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(sent.Flags.HasFlag(ProtocolV2FrameFlags.OneWay) && !sent.Flags.HasFlag(ProtocolV2FrameFlags.Cancellable),
+            "untimed plain OneWay must emit a real non-cancellable head");
         var hasCancel = await transport.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Cancel, TimeSpan.FromMilliseconds(200));
         Ensure(!hasCancel, "oneway call should not send timeout cancel");
@@ -106,12 +117,20 @@ public class SharpLinkClientCancellationTests
             builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(5)));
 
         await client.ConnectAsync();
-        var stream = ClientInvokerTestHelper.InvokeServerStreaming(client);
-        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        var enumerator = stream.GetAsyncEnumerator();
-        await enumerator.DisposeAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var stream = ClientInvokerTestHelper.InvokeServerStreaming(client, prepared: prepared);
+        ProtocolV2FrameHeader request;
+        await using (var enumerator = stream.GetAsyncEnumerator())
+        {
+            var reading = enumerator.MoveNextAsync().AsTask();
+            request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            await transport.Connection.InjectInt32ServerStreamItemAsync(request.RequestId, 42);
+            Ensure(await reading.WaitAsync(TimeSpan.FromSeconds(5)) && enumerator.Current == 42,
+                "prepared enumeration must read at least one item before the consumer leaves");
+        }
 
-        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel).WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(cancel.Header.RequestId == request.RequestId, "consumer abandonment request ID");
         Ensure(cancel.Payload is [(byte)ProtocolV2CancelReason.ConsumerAbandoned],
             "early stream disposal should send ConsumerAbandoned");

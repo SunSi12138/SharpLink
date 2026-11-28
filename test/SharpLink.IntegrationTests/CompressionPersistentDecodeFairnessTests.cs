@@ -15,8 +15,8 @@ public class CompressionPersistentDecodeFairnessTests
         await using var harness = await FairHarness.CreateAsync(coordinator);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceA = await harness.ClientA.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
+        var serviceB = await harness.ClientB.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         var payloadA = Enumerable.Repeat((byte)0x41, LargePayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x42, LargePayloadBytes).ToArray();
         using var cancellation = new CancellationTokenSource();
@@ -60,8 +60,8 @@ public class CompressionPersistentDecodeFairnessTests
         await using var harness = await FairHarness.CreateAsync(coordinator);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single fair decode worker started");
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceA = await harness.ClientA.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
+        var serviceB = await harness.ClientB.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         var payloadA = Enumerable.Repeat((byte)0x51, LargePayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x52, LargePayloadBytes).ToArray();
         using var cancellation = new CancellationTokenSource();

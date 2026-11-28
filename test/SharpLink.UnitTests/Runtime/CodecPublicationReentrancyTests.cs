@@ -235,7 +235,7 @@ public sealed class CodecPublicationReentrancyTests
         if (!server)
         {
             var client = SharpClientBuilder.Create().DisableRequestTimeout().UseTcp("127.0.0.1", 1).Build();
-            return new Endpoint(client, ((IRpcChannel)client).RuntimeContext);
+            return new Endpoint(client, client.RuntimeContext);
         }
         var instance = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback).Build();
         // Observe the server's existing context; all mutations still use the public registry.

@@ -4,7 +4,7 @@ SharpLink 是面向 .NET 10 的 Source Generator RPC 框架。契约、代理、
 
 ## 引用
 
-契约项目通常只需引用 `SharpLink.Sdk`；Client、Server 或 Hosting 应用再引用对应应用包。SDK 3.0 只传递引入 Abstractions，不再传递引入 Runtime。仓库内 Demo 使用项目引用以便开发验证，发布使用 NuGet 包。
+契约项目通常只需引用 `SharpLink.Sdk`；Client、Server 或 Hosting 应用再引用对应应用包。SDK 3.0 只传递引入 Abstractions，不再传递引入 Runtime。下方用法适用于 #999 验证分支：仓库内用项目引用，独立项目使用同一构建的本地 NuGet 包，并把 `3.0.0` 换成实际包版本。
 
 ```xml
 <ItemGroup>
@@ -42,7 +42,7 @@ public sealed class Calculator : ICalculator
 
 ```csharp
 await using var server = SharpLinkServerBuilder.Create()
-    .UseTcp(19090, "127.0.0.1")
+    .UseTcp(19090, System.Net.IPAddress.Loopback)
     .Build();
 
 await server.StartAsync();
@@ -52,12 +52,20 @@ await using var client = SharpClientBuilder.Create()
     .UseRequestTimeout()
     .Build();
 
-await client.ConnectAsync();
-var value = await client.Get<ICalculator>().AddAsync(20, 22, CancellationToken.None);
+using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+var proxy = client.CreateProxy<ICalculator>();
+await client.ConnectAsync(startup.Token);
+await client.WaitForReadinessAsync(1, startup.Token);
+await proxy.PrepareAsync(TimeSpan.FromSeconds(5), startup.Token);
+var value = await proxy.Service.AddAsync(20, 22, CancellationToken.None);
+
+await client.StopAsync();
 
 await server.StopAsync(TimeSpan.FromSeconds(30));
 await server.WaitForShutdownAsync();
 ```
+
+`CreateProxy` 只在本地创建代理；连接 Ready 后，`PrepareAsync` 校验远端契约并绑定。准备的超时独立于下方的业务请求超时。实际双进程示例见 [Quick Start 客户端](../samples/QuickStart.Client/Program.cs)。
 
 每个 Client 都必须在 Build 前显式选择请求超时策略：`UseRequestTimeout()` 使用推荐的 30 秒 Unary fallback，`UseRequestTimeout(timeout)` 使用自定义 fallback，`DisableRequestTimeout()` 则明确关闭 Client-wide fallback。没有选择策略时 Build 会失败；方法 `[Timeout]` 和继承的父调用 `TimeBudget` 仍按各自规则生效。
 
@@ -70,7 +78,7 @@ Client 和 Server 都是异步可释放对象。Server 使用 `StartAsync / Wait
 
 ## 分离部署
 
-推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。API 5 生成程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
+推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。生成的契约程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
 
 - `demo/SeparatedContracts`
 - `demo/SeparatedServer`

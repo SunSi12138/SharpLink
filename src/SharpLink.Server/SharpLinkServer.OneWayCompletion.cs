@@ -10,9 +10,7 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
         RpcSession session,
-        IRpcStub stub,
-        long methodId,
-        int clientStreamCount,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -24,21 +22,21 @@ internal sealed partial class SharpLinkServer
                     Status: SharpLinkInvocationStatus.Pending
                 } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
+            DrainCompletedOneWayStreams(session, requestId, method.ClientStreamCount);
             TryClaimCallCompletion(callState);
         }
         catch (Exception ex)
         {
-            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
+            DrainCompletedOneWayStreams(session, requestId, method.ClientStreamCount);
             if (TryClaimCallCompletion(callState))
             {
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                    ex, callContext, session, stub, methodId, requestId, cancellationToken));
+                    ex, callContext, session, method, requestId, cancellationToken));
             }
         }
         finally
         {
-            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
+            DrainCompletedOneWayStreams(session, requestId, method.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 callState,
                 requestId,

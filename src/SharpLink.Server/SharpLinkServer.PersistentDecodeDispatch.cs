@@ -8,7 +8,9 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         ServerRequestEnvelope request,
-        ServiceRegistration serviceInfo,
+        CancellationToken moduleCancellation,
+        NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState? admittedCallState,
@@ -79,10 +81,16 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 request.RpcDeadline,
                 serverLoopToken,
-                serviceInfo.ModuleCancellation,
+                moduleCancellation,
                 supportsCooperativeCancellation: true,
                 requestCancellationMap) ?? throw new InvalidOperationException(
                     "Persistent decode requires a pre-activation cancellation state.");
+
+            if (facts.Descriptor.HasClientStreams)
+            {
+                callState.SetEarlyInputStreamCount(facts.Descriptor.ClientStreamCount);
+                ReservePreAdmissionRequestStreams(connection, requestId, facts.Descriptor.ClientStreamCount, callState);
+            }
 
             var result = new PersistentDecodeResult();
             var workItem = new ServerDecodeWorkItem(cancellationToken =>
@@ -151,17 +159,21 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                moduleCancellation,
+                facts,
+                binding,
                 requestCancellationMap,
                 serverLoopToken,
                 callState,
                 requestOwner);
         }
-        catch
+        catch (Exception exception)
         {
             queuePermit?.Dispose();
             if (retainedPayload is not null)
                 ReleaseRetainedPayloadUse(retainedPayload, ref retainedUseOwned);
+            if (facts.Descriptor.HasClientStreams)
+                CompleteFailedRequestStreams(session, requestId, exception);
             ReleaseDispatchResources(
                 callState,
                 requestId,
@@ -180,7 +192,9 @@ internal sealed partial class SharpLinkServer
         long requestId,
         ProtocolV2FrameFlags flags,
         ServerRequestEnvelope request,
-        ServiceRegistration serviceInfo,
+        CancellationToken moduleCancellation,
+        NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState callState,
@@ -298,7 +312,9 @@ internal sealed partial class SharpLinkServer
             requestId,
             flags,
             request,
-            serviceInfo,
+            moduleCancellation,
+            facts,
+            binding,
             requestCancellationMap,
             serverLoopToken,
             callState,

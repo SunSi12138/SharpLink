@@ -24,20 +24,27 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
-        await PrepareAsync(client);
-
         var method = UnaryMethod(TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        await client.ConnectAsync();
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(GetOnlyReadyConnection(client), method.ContractId);
         var request = default(RpcEmptyRequest);
         var before = timeProvider.TimestampReadCount;
 
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = client.InvokeUnary(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
-            channel.RuntimeContext.Codecs.GetCodec<int>(),
-            metadata: null).AsTask();
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+            client.RuntimeContext.Codecs.GetCodec<int>(),
+            metadata: null,
+            cancellationToken: default,
+            prepared).AsTask();
+        var sending = transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        if (await Task.WhenAny(invocation, sending).WaitAsync(TimeSpan.FromSeconds(3)) == invocation)
+        {
+            await invocation;
+            throw new InvalidOperationException("The invocation completed before its request was observed.");
+        }
+        var sent = await sending;
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
         Ensure(await invocation == 0, "the timed Unary must receive its response");
 
@@ -48,12 +55,6 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         // infrastructure shared with untimed traffic.
         Ensure(reads == 8,
             $"a plain timed Unary must take exactly its eight boundary/infrastructure samples, but took {reads}");
-    }
-
-    private static async Task PrepareAsync(SharpLinkClient client)
-    {
-        await client.ConnectAsync();
-        await GetOnlyReadyConnection(client).Session.FlushSendQueueAsync();
     }
 
     private static RpcMethodDescriptor UnaryMethod(TimeSpan? methodTimeout)

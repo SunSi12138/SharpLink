@@ -56,6 +56,61 @@ public partial class ServiceRegistrationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExactExecutionClaimMustWinBothTheBindingAndModuleGates(bool moduleClosesFirst)
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecs = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(typeof(ServiceRegistrationTests).Assembly, manifest, codecs);
+        using var provider = new ServiceCollection().BuildServiceProvider();
+        await using var registration = CreateClassificationRegistration(provider, SharpLinkServiceLifetime.Singleton, module);
+        var table = new NStudyServerBindings();
+        Ensure(table.TryInstall(registration, out var binding), "install the current module route");
+        Ensure(table.TryBorrow(binding, out _, out var running), "borrow the executing request's route");
+        using (running)
+        {
+            Ensure(table.TryBorrow(binding, out _, out var preparing), "borrow the next request's route");
+            using (preparing)
+            {
+                Ensure(preparing.CanPrepareDispatch() && module.RemainingCalls == 0,
+                    "transport preparation takes no business lease");
+                Ensure(running.TryEnterExecution(isStream: true, out var selected, out var executionLease) &&
+                       ReferenceEquals(selected, registration),
+                    "a request can enter business on the original open module");
+                using (executionLease)
+                {
+                    if (moduleClosesFirst)
+                    {
+                        Ensure(module.TryBeginDraining() && preparing.CanPrepareDispatch(),
+                            "module retirement has begun even though its slot has not yet been sealed");
+                    }
+                    else
+                    {
+                        table.Release(binding);
+                        Ensure(registration.AcceptsCalls, "the module is still open after single-slot release");
+                    }
+
+                    Ensure(!preparing.TryEnterExecution(isStream: true, out _, out var denied) && !denied.IsAcquired,
+                        "passing preparation cannot bypass either final admission gate");
+                    if (moduleClosesFirst)
+                        Ensure(table.Seal(registration.NStudyTarget), "seal the retiring module's exact slot");
+                    else
+                        Ensure(module.TryBeginDraining(), "begin module retirement after releasing the slot");
+
+                    Ensure(module.RemainingCalls == 1 && module.RemainingStreams == 1 &&
+                           !module.WaitForDrainAsync().IsCompleted,
+                        "retirement preserves only the call that acquired the original execution lease");
+                }
+                Ensure(module.WaitForDrainAsync().IsCompletedSuccessfully && module.RemainingCalls == 0,
+                    "the execution owner's exit completes the physical drain");
+            }
+        }
+        Ensure(table.Snapshot() == (0, 0, 0), "both original borrows returned exactly once");
+    }
+
+    [Test]
     public async Task QueuedAttemptsShareTheRegistrationWeakIdentityWithoutAllocating()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);

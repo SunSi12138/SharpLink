@@ -140,6 +140,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
         PreCutFailureTransportFactory factory)
     {
         var sourceTransport = factory.GetConnection(0);
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, sourceTransport);
         var commitEntered = new TaskCompletionSource<ClientConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseCommit = new ManualResetEventSlim(false);
@@ -172,7 +173,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
             Ensure(client.ReadyConnectionCount == 1,
                 "rolling back a failed pre-cut replacement must not publish zero-ready or retire the healthy source");
 
-            var unary = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+            var unary = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: sourceSite).AsTask();
             var request = await sourceTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             await sourceTransport.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
@@ -195,6 +196,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
             () => client.ReadyConnectionCount == 1,
             "the post-reservation failure setup must settle on exactly one Ready connection before a refresh is injected");
         var sourceTransport = factory.GetConnection(0);
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, sourceTransport);
         var reservationHeld = new TaskCompletionSource<ClientConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseReservation = new ManualResetEventSlim(false);
@@ -227,7 +229,7 @@ public sealed class SharpLinkClientSessionRefreshPreCutFailureTests
             Ensure(client.ReadyConnectionCount == 1,
                 "rejecting the commit after a fatal observation must not retire the healthy source or publish zero-ready");
 
-            var unary = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+            var unary = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: sourceSite).AsTask();
             var request = await sourceTransport.WaitForSentPacket(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             await sourceTransport.InjectInt32ResponseAsync(unchecked((long)request.RequestId));

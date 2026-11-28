@@ -52,13 +52,14 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments("sharplink-3.0-api5-generated-unsafe-blit-v1")]
-    [Arguments("other-api5-development-identity")]
-    public void UnboundOrDifferentApi5LocatorShouldRejectBeforeConstruction(string identity)
+    [Arguments("sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
+    [Arguments("sharplink-n999-api6-single-prepared-stub-v3")]
+    public void DifferentGeneratedAbiIdentityShouldRejectBeforeConstruction(string identity)
     {
         using var fixture = CreateFixture(locatorAbiIdentity: identity);
         var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest && manifest is null,
-            "an incompatible API5 factory contract must fail before publication");
+            "an incompatible generated factory contract must fail before publication");
         Ensure(fixture.State.ConstructorCalls == 0 && fixture.State.ShapeReads == 0,
             "exact ABI identity rejection must precede construction and shape reads");
         Ensure(result.Error!.Message.Contains(identity, StringComparison.Ordinal),

@@ -20,6 +20,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     private T? _response;
     private bool _hasResponsePayload;
     private bool _responseNullable;
+    private SharpLinkClient? _logicalOwner;
 
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -53,6 +54,9 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
 
     public T GetResult(short token)
     {
+        // Validate before taking responsibility for the operation's return to the pool.
+        if (_core.GetStatus(token) == ValueTaskSourceStatus.Pending)
+            throw new InvalidOperationException("The RPC request has not completed.");
         try
         {
             return _core.GetResult(token);
@@ -101,17 +105,36 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
 
     public void CompleteResponse(Exception? exception)
     {
+        var response = _response;
+        ReleaseCompletionOwners();
         if (exception is null)
-            _core.SetResult(_response!);
+            _core.SetResult(response!);
         else
             _core.SetException(exception);
     }
 
     public void SetError(Exception ex)
     {
+        ReleaseCompletionOwners();
         _core.SetException(ex);
     }
     public ValueTask<T> AsValueTask() => new(this, _core.Version);
+
+    // Set before the pending table publishes the operation. Only its terminal winner
+    // can clear the owner; the application cannot consume the result before that.
+    internal void SetLogicalOwner(SharpLinkClient? owner) => _logicalOwner = owner;
+
+    private void ReleaseCompletionOwners()
+    {
+        var owner = _logicalOwner;
+        if (owner is null)
+            return;
+        // Results may remain unobserved; retain the result, not its original codec or client.
+        _codec = null;
+        _response = default;
+        _logicalOwner = null;
+        owner.ReleaseDirectLogicalInvocation();
+    }
 
     private void ReturnToPool()
     {
@@ -119,6 +142,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         _response = default;
         _hasResponsePayload = false;
         _responseNullable = false;
+        _logicalOwner = null;
         // Clear the continuation and its state before this operation enters the
         // process-wide generic pool. A continuation can close over request types
         // from a collectible AssemblyLoadContext even when T itself is static.

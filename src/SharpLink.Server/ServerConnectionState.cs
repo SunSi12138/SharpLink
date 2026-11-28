@@ -61,6 +61,8 @@ internal sealed class ServerConnectionState
     }
 
     internal RpcSession Session { get; }
+    internal Guid NStudyPhysicalIdentity { get; } = Guid.NewGuid();
+    internal NStudyServerBindings NStudyBindings { get; } = new();
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
@@ -369,6 +371,10 @@ internal sealed class ServerConnectionState
 
         if (Volatile.Read(ref _sessionLoopState) == 1)
             await _sessionLoopCompleted.Task.ConfigureAwait(false);
+
+        // The receive loop cannot publish another grant. Drop idle binding references
+        // now, even when a retired connection still owns an unrelated physical call.
+        NStudyBindings.Close();
 
         try
         {

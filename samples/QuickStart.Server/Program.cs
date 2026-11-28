@@ -27,7 +27,8 @@ try
     Console.WriteLine($"QUICKSTART_SERVER_READY http=127.0.0.1:{port}");
 
     var requestedStop = runOnce ? QuickStartState.FirstCallCompleted.Task : stopRequested.Task;
-    var completed = await Task.WhenAny(terminal, requestedStop);
+    var onceDeadline = runOnce ? Task.Delay(TimeSpan.FromSeconds(30)) : requestedStop;
+    var completed = await Task.WhenAny(terminal, requestedStop, onceDeadline);
     if (completed == terminal)
     {
         await terminal;
@@ -37,6 +38,9 @@ try
         await server.StopAsync(TimeSpan.FromSeconds(5));
         await terminal;
     }
+
+    if (runOnce && completed == onceDeadline)
+        throw new TimeoutException("Quick Start did not receive its sample RPC within 30 seconds.");
 
     Console.WriteLine("QUICKSTART_SERVER_STOPPED");
 }

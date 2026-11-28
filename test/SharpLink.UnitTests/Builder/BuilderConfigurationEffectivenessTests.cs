@@ -31,7 +31,7 @@ public sealed class BuilderConfigurationEffectivenessTests
             .UseProtocol(static options => options.MaxMetadataBytes = 8192)
             .Build();
 
-        var context = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+        var context = (SharpLinkRuntimeContext)client.RuntimeContext;
         Ensure(context.Buffers.InitialCapacity == 2048,
             "Client UseBufferWriterPool must configure the real runtime's pooled packet writers");
         Ensure(context.Concurrency.StripeCount == 8 &&

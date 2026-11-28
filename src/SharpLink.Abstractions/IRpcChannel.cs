@@ -28,6 +28,7 @@ public readonly record struct RpcMethodDescriptor
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
     private const byte HasMethodTimeoutValueFlag = 1 << 5;
+    private const byte SupportsCancellationFlag = 1 << 6;
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>
@@ -125,6 +126,13 @@ public readonly record struct RpcMethodDescriptor
     {
         get => (_flags & ResponseNullableFlag) != 0;
         init => _flags = SetFlag(_flags, ResponseNullableFlag, value);
+    }
+
+    /// <summary>Gets whether the generated method observes a cancellation token or owns a stream.</summary>
+    public bool SupportsCancellation
+    {
+        get => (_flags & SupportsCancellationFlag) != 0;
+        init => _flags = SetFlag(_flags, SupportsCancellationFlag, value);
     }
 
     private readonly byte _flags;
@@ -262,61 +270,4 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
         long requestId,
         CancellationToken cancellationToken)
         => ValueTask.CompletedTask;
-}
-
-/// <summary>Client channel consumed by generated proxies.</summary>
-public interface IRpcChannel
-{
-    /// <summary>Gets the runtime context owned by this channel.</summary>
-    IRpcRuntimeContext RuntimeContext { get; }
-
-    /// <summary>Invokes a unary RPC.</summary>
-    ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>Invokes a one-way RPC, optionally with generated client streams.</summary>
-    ValueTask InvokeOneWayAsync<TRequest, TStreams>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        in TStreams streams,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default)
-        where TStreams : struct, IRpcClientStreamWriter;
-
-    /// <summary>Invokes a client-streaming RPC.</summary>
-    ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        in TStreams streams,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default)
-        where TStreams : struct, IRpcClientStreamWriter;
-
-    /// <summary>Invokes a server-streaming RPC.</summary>
-    IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>Invokes a duplex-streaming RPC.</summary>
-    IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        in TStreams streams,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default)
-        where TStreams : struct, IRpcClientStreamWriter;
 }

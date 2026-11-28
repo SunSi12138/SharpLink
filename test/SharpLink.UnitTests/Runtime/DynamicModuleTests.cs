@@ -198,7 +198,6 @@ public class DynamicModuleTests
             typeof(DynamicModuleTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(client, module);
 
         var provider = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
@@ -221,13 +220,16 @@ public class DynamicModuleTests
         SharpLinkException? failure = null;
         try
         {
-            _ = channel.InvokeServerStreamingAsync(
+            _ = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+                client,
+                module,
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
-                channel.RuntimeContext.Codecs.GetCodec<int>(),
+                client.RuntimeContext.Codecs.GetCodec<int>(),
                 metadata: null,
-                cancellationToken: default);
+                cancellationToken: default,
+                prepared: SharpLinkClient.NStudyPreparedSite.Unprepared);
         }
         catch (SharpLinkException exception)
         {

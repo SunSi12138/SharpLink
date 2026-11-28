@@ -79,7 +79,9 @@ public sealed class HostingBuilderRegistrationTests
             "repeated Client setup must not register two health checks with one name");
 
         await using var client = first.Build();
-        var context = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+        // The fixed historical products and current client expose the same concrete
+        // runtime context even though the public interface receiver changed in 3.0.
+        var context = (SharpLinkRuntimeContext)((SharpLinkClient)client).RuntimeContext;
         Ensure(context.Buffers.InitialCapacity == 3072,
             "second Client configure callback must influence materialized writer pool capacity");
     }

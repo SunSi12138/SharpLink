@@ -10,6 +10,9 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
+        ServerRequestEnvelope request,
+        in DispatchPreparation preparation,
+        NStudyServerBindings.Use binding,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
@@ -20,8 +23,6 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -41,7 +42,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            if (!preparation.IsBound)
             {
                 ValueTask responseSend;
                 try
@@ -49,8 +50,8 @@ internal sealed partial class SharpLinkServer
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
                         new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
+                            SharpLinkErrorCode.Unavailable,
+                            "The exact private binding is no longer available."),
                         connection.ConnectionToken);
                 }
                 finally
@@ -60,7 +61,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceInfo.AcceptsCalls)
+            if (!preparation.AcceptsCalls)
             {
                 ValueTask responseSend;
                 try
@@ -79,7 +80,17 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
+            var facts = preparation.Facts;
+            if (!preparation.HasMethod ||
+                !IsSupportedNStudyTwoWayShape(facts.Descriptor, flags))
+            {
+                return session.SendRpcErrorWithBackpressureAsync(requestId,
+                    new SharpLinkException(SharpLinkErrorCode.Unimplemented,
+                        "This private checkpoint does not support that bound RPC shape."),
+                    connection.ConnectionToken);
+            }
 
+            var moduleCancellation = preparation.ModuleCancellation;
             if (admissionProgram is not null && !admissionGranted)
             {
                 admittedCallState = CreateAdmissionWaitState(
@@ -87,11 +98,13 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     request.RpcDeadline,
                     serverLoopToken,
-                    serviceInfo.ModuleCancellation,
+                    moduleCancellation,
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
-                var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+                var descriptor = facts.Descriptor;
+                if (descriptor.HasClientStreams)
+                    admittedCallState.SetEarlyInputStreamCount(descriptor.ClientStreamCount);
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
@@ -128,7 +141,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, out var queuedRetainedPayload))
+                    if (!TryCopyAdmissionPayload(payload, flags, out var queuedRetainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -141,7 +154,7 @@ internal sealed partial class SharpLinkServer
                     }
 
                     ReservePreAdmissionRequestStreams(
-                        session,
+                        connection,
                         requestId,
                         descriptor.ClientStreamCount,
                         admittedCallState);
@@ -154,7 +167,10 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admittedCallState,
-                        admissionProgram);
+                        admissionProgram,
+                        binding,
+                        facts,
+                        moduleCancellation);
                 }
 
                 var decision = admissionTask.Result;
@@ -178,6 +194,14 @@ internal sealed partial class SharpLinkServer
                     return rejectionSend;
                 }
                 admittedCallState.AttachAdmissionLease(decision.Lease!);
+            }
+
+            if (!binding.CanPrepareDispatch())
+            {
+                if (admittedCallState is not null)
+                    ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                return session.SendRpcErrorWithBackpressureAsync(
+                    requestId, NStudyBindingRetiredError(), connection.ConnectionToken);
             }
 
             var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);
@@ -206,7 +230,7 @@ internal sealed partial class SharpLinkServer
             }
             var requestOwner = requestPermit;
 
-            if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
+            if (isCompressed && ShouldUsePersistentDecode(flags, payload))
             {
                 return DispatchRpcWithPersistentDecodeAsync(
                     connection,
@@ -214,7 +238,9 @@ internal sealed partial class SharpLinkServer
                     flags,
                     payload,
                     request,
-                    serviceInfo,
+                    moduleCancellation,
+                    facts,
+                    binding,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -233,8 +259,10 @@ internal sealed partial class SharpLinkServer
                         requestId,
                         request.RpcDeadline,
                         serverLoopToken,
-                        serviceInfo.ModuleCancellation,
+                        moduleCancellation,
                         requestCancellationMap);
+                    if (facts.Descriptor.HasClientStreams)
+                        admittedCallState.SetEarlyInputStreamCount(facts.Descriptor.ClientStreamCount);
                     if (!TryPrepareCompressedRequestDecode(
                             requestOwner,
                             retainedAdmissionPayload?.RetainedPermit,
@@ -345,7 +373,9 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                moduleCancellation,
+                facts,
+                binding,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,
@@ -359,6 +389,20 @@ internal sealed partial class SharpLinkServer
         }
     }
 
+    private static bool IsSupportedNStudyTwoWayShape(RpcMethodDescriptor method, ProtocolV2FrameFlags flags)
+    {
+        var hasReturn = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
+        return method.Kind switch
+        {
+            RpcMethodKind.Unary => !method.HasClientStreams && method.HasResponsePayload == hasReturn,
+            RpcMethodKind.ClientStreaming => method.HasClientStreams && method.ClientStreamCount > 0 &&
+                method.HasResponsePayload == hasReturn,
+            RpcMethodKind.ServerStreaming => !method.HasClientStreams && !hasReturn,
+            RpcMethodKind.DuplexStreaming => method.HasClientStreams && method.ClientStreamCount > 0 && !hasReturn,
+            _ => false
+        };
+    }
+
     private async ValueTask AwaitDispatchRpcNoReturnAsync(
         ValueTask invokeTask,
         RpcSession session,
@@ -367,8 +411,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -421,8 +464,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-                        stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -454,8 +496,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -527,8 +568,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-                        stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);

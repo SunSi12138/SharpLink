@@ -17,7 +17,8 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
             ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero)));
         await client.ConnectAsync();
 
-        var oldGenerationCall = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var oldGenerationCall = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var oldFirst = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
 
         client.UpdateRetryPolicy(RetryOptions(1, TimeSpan.Zero));
@@ -27,7 +28,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         Ensure(await oldGenerationCall == 0,
             "in-flight logical call must retain the captured two-attempt generation");
 
-        var newGenerationCall = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var newGenerationCall = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var newFirst = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, newFirst, SharpLinkErrorCode.Unavailable);
         var failure = await EnsureThrows<SharpLinkException>(newGenerationCall);
@@ -51,7 +52,8 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         });
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         await interceptor.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
         client.DisableRetry();
@@ -64,7 +66,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         Ensure(await invocation == 0,
             "logical call suspended inside an interceptor must retain its pre-disable retry generation");
 
-        var later = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var later = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var laterFirst = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, laterFirst, SharpLinkErrorCode.Unavailable);
         _ = await EnsureThrows<SharpLinkException>(later);
@@ -88,7 +90,8 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         client.UpdateRetryPolicy(policy, RetryOptions(2, TimeSpan.Zero));
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
         // Policy evaluation publishes before Task.Delay creates its timer. Advancing
@@ -104,7 +107,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
             "policy update between attempts must not alter the captured retry loop");
         Ensure(policy.Count == 1, "captured custom policy should evaluate exactly once");
 
-        var later = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var later = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var laterFirst = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, laterFirst, SharpLinkErrorCode.Unavailable);
         _ = await EnsureThrows<SharpLinkException>(later);
@@ -136,9 +139,10 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         client.UpdateRetryPolicy(policy, RetryOptions(2, TimeSpan.Zero));
         await client.ConnectAsync();
 
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
         using var cancellation = new CancellationTokenSource();
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
-            client, cancellationToken: cancellation.Token).AsTask();
+            client, prepared, cancellationToken: cancellation.Token).AsTask();
         try
         {
             var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -230,7 +234,8 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         client.UpdateRetryPolicy(new ThrowingRetryPolicy(), RetryOptions(2, TimeSpan.Zero));
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
 

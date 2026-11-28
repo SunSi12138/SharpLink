@@ -361,6 +361,7 @@ internal sealed partial class SharpLinkServer
 
             lock (_server._registryGate)
                 _server.TransitionTo(ServerState.Draining);
+            _server._runtimeContext.SealNStudyVersionObservations();
             _server._admissionController?.StopAccepting();
             _server.BeginDrainDynamicModules();
             _server._frameworkTasks.Seal();
@@ -492,6 +493,7 @@ internal sealed partial class SharpLinkServer
                 _server._shutdownPlan.CleanupBudget,
                 timeProvider.TimestampFrequency);
 
+            _server._runtimeContext.SealNStudyVersionObservations();
             CancelForShutdown(_acceptCts, "AcceptCancellation");
             _server._admissionController?.StopAccepting();
             _server.BeginDrainDynamicModules();

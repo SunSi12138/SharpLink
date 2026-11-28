@@ -7,7 +7,7 @@ public class RuntimeInterceptorContinuationIntegrationTests
     [Test]
     public async Task ClientReplacementBeforeDownstreamNextAdvancesShouldRetainCapturedGeneration()
     {
-        await using var harness = await RuntimeInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new AwaitingClientInterceptor("A", log);
         var b = new GatedNextClientInterceptor("B", log);
@@ -38,7 +38,7 @@ public class RuntimeInterceptorContinuationIntegrationTests
     [Test]
     public async Task ServerReplacementBeforeDownstreamNextAdvancesShouldRetainCapturedGeneration()
     {
-        await using var harness = await RuntimeInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new AwaitingServerInterceptor("A", log);
         var b = new GatedNextServerInterceptor("B", log);
@@ -73,7 +73,7 @@ public class RuntimeInterceptorContinuationIntegrationTests
         var serverLog = new ConcurrentQueue<string>();
         var initialClient = new AwaitingClientInterceptor("client-build", clientLog);
         var initialServer = new AwaitingServerInterceptor("server-build", serverLog);
-        await using var harness = await RuntimeInterceptorHarness.CreateAsync(initialClient, initialServer);
+        await using var harness = await InterceptorHarness.CreateAsync(initialClient, initialServer);
 
         Ensure(await harness.Service.DescribeNumberAsync(1) == 2, "build-configured interceptor result");
         await Task.WhenAll(initialClient.Completed, initialServer.Completed).WaitAsync(TimeSpan.FromSeconds(3));
@@ -243,64 +243,6 @@ public class RuntimeInterceptorContinuationIntegrationTests
                 log.Enqueue($"{id}:after");
                 _completed.TrySetResult();
             }
-        }
-    }
-
-    private sealed class RuntimeInterceptorHarness : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _serverCts;
-        private readonly Task _serverTask;
-
-        public ISharpLinkServer Server { get; }
-        public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
-
-        private RuntimeInterceptorHarness(
-            CancellationTokenSource serverCts,
-            Task serverTask,
-            ISharpLinkServer server,
-            ISharpLinkClient client)
-        {
-            _serverCts = serverCts;
-            _serverTask = serverTask;
-            Server = server;
-            Client = client;
-            Service = client.Get<IInterceptorTestService>();
-        }
-
-        public static async Task<RuntimeInterceptorHarness> CreateAsync(
-            ISharpLinkClientInterceptor? clientInterceptor = null,
-            ISharpLinkServerInterceptor? serverInterceptor = null)
-        {
-            var cts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            if (serverInterceptor is not null)
-                serverBuilder.AddInterceptor(serverInterceptor);
-
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
-
-            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            if (clientInterceptor is not null)
-                clientBuilder.AddInterceptor(clientInterceptor);
-
-            var client = clientBuilder.Build();
-            await client.ConnectAsync(cts.Token);
-            return new RuntimeInterceptorHarness(cts, serverTask, server, client);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
         }
     }
 }

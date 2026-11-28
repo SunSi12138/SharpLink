@@ -9,12 +9,14 @@ internal sealed partial class SharpLinkServer
     {
         BindDesiredSessionSnapshot(session, desiredSession);
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
+        session.ConfigureNStudyCoordination(NStudyVersionCoordinationMode);
         var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
             desiredSession.Configuration.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
-            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement,
+            enableNStudyCoordination: session.NStudyHandshakeCoordinationMode != NStudyCoordinationMode.Disabled);
         var reader = session.Input;
         SharpLinkAuthenticationResult? handshakeResult = null;
 

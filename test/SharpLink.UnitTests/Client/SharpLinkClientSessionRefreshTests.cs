@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -20,6 +21,7 @@ public sealed class SharpLinkClientSessionRefreshTests
         Ensure(client.ReadyConnectionCount == 1 && factory.ConnectCount == 1,
             $"fixed test must start with one Ready physical connection; ready={client.ReadyConnectionCount}, connects={factory.ConnectCount}");
         var source = factory.GetConnection(0);
+        var sourceSite = await ClientInvokerTestHelper.PrepareAsync(client, source);
         var serverInstanceId = Guid.NewGuid();
 
         await InjectRefreshAsync(source, serverInstanceId, 2);
@@ -28,9 +30,8 @@ public sealed class SharpLinkClientSessionRefreshTests
         Ensure(client.ReadyConnectionCount == 1,
             $"the old fixed connection must remain Ready while its replacement is still connecting; ready={client.ReadyConnectionCount}");
 
-        var inflight = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var inflightRequest = await source.WaitForSentPacket(ProtocolV2FrameType.Request)
-            .WaitAsync(TimeSpan.FromSeconds(2));
+        var inflight = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: sourceSite).AsTask();
+        var inflightRequest = await WaitForBoundRequestAsync(source, sourceSite);
 
         await InjectRefreshAsync(source, serverInstanceId, 2);
         await InjectRefreshAsync(source, serverInstanceId, 1);
@@ -43,15 +44,27 @@ public sealed class SharpLinkClientSessionRefreshTests
         Ensure(client.ReadyConnectionCount == 1,
             $"replacement publication must atomically swap Ready eligibility instead of overshooting the pool; ready={client.ReadyConnectionCount}");
 
-        var next = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
-        var nextRequest = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
-            .WaitAsync(TimeSpan.FromSeconds(2));
-        await replacement.InjectInt32ResponseAsync(unchecked((long)nextRequest.RequestId));
-        Ensure(await next.WaitAsync(TimeSpan.FromSeconds(2)) == 0,
-            "new work after replacement publication must use the replacement connection");
+        try
+        {
+            await ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: sourceSite).AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            throw new InvalidOperationException("a previously prepared site must not route a new call after the eligibility swap");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.Unavailable)
+        {
+        }
 
-        await source.InjectInt32ResponseAsync(unchecked((long)inflightRequest.RequestId));
-        Ensure(await inflight.WaitAsync(TimeSpan.FromSeconds(2)) == 0,
+        var replacementSite = await ClientInvokerTestHelper.PreparePublishedAsync(client, replacement, TimeSpan.FromSeconds(3));
+        Ensure(replacementSite.Ack.Authority != sourceSite.Ack.Authority,
+            "the replacement must acquire binding authority independent from its source");
+        var next = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared: replacementSite).AsTask();
+        var nextRequest = await WaitForBoundRequestAsync(replacement, replacementSite);
+        await replacement.InjectInt32ResponseAsync(unchecked((long)nextRequest), 29);
+        Ensure(await next.WaitAsync(TimeSpan.FromSeconds(2)) == 29,
+            "new work after explicit preparation must use the replacement connection");
+
+        await source.InjectInt32ResponseAsync(unchecked((long)inflightRequest), 17);
+        Ensure(await inflight.WaitAsync(TimeSpan.FromSeconds(2)) == 17,
             "work accepted before the Ready swap must drain successfully on the old connection");
 
         Ensure(!await factory.WaitForThirdConnectAsync(TimeSpan.FromMilliseconds(250)),
@@ -142,6 +155,16 @@ public sealed class SharpLinkClientSessionRefreshTests
             options.MaxConnectionsPerEndpoint = 1;
             options.MaxRetiringConnections = 2;
         });
+
+    private static async Task<ulong> WaitForBoundRequestAsync(
+        TestTransportConnection transport, SharpLinkClient.NStudyPreparedSite site)
+    {
+        var request = await transport.WaitForSentFrame(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(BinaryPrimitives.ReadInt64LittleEndian(request.Payload) == site.Ack.BindingId,
+            "the outbound Request must carry the binding confirmed on its physical connection");
+        return request.Header.RequestId;
+    }
 
     private static SharpLinkEndpoint CreateEndpoint(string id, int port)
         => new()

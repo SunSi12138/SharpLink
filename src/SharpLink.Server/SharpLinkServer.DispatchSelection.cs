@@ -2,6 +2,16 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    // Preparation may call application admission or a compression provider.
+    // Keep only scalar facts and the original cancellation token. The binding
+    // borrow identifies the registration; it does not keep a dynamic service alive.
+    internal readonly record struct DispatchPreparation(
+        NStudyMethodFacts Facts,
+        CancellationToken ModuleCancellation,
+        bool IsBound,
+        bool AcceptsCalls,
+        bool HasMethod);
+
     /// <summary>
     /// Captures identity, not lifetime, for an admission waiter. Dynamic registration roots remain
     /// owned by the registry until retirement. A waiter must not prevent collectible unload after
@@ -11,6 +21,8 @@ internal sealed partial class SharpLinkServer
     {
         private readonly ServiceRegistration? _staticService;
         private readonly WeakReference<ServiceRegistration>? _dynamicService;
+
+        internal ServiceRegistration? StaticService => _staticService;
 
         internal QueuedServiceSelection(ServiceRegistration service)
         {

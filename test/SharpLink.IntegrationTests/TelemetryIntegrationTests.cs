@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 
 namespace SharpLink.IntegrationTests;
 
+[NotInParallel]
 public class TelemetryIntegrationTests
 {
     [Test]
@@ -24,9 +25,8 @@ public class TelemetryIntegrationTests
         ActivitySource.AddActivityListener(activityListener);
 
         await using var harness = await TelemetryHarness.CreateAsync();
-        await using (var stream = harness.Client.Get<IInterceptorTestService>()
-                         .FailStreamAsync()
-                         .GetAsyncEnumerator())
+        var service = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
+        await using (var stream = service.FailStreamAsync().GetAsyncEnumerator())
         {
             Ensure(await stream.MoveNextAsync() && stream.Current == 1,
                 "early-disposal telemetry stream item");
@@ -80,7 +80,9 @@ public class TelemetryIntegrationTests
 
         await using (var harness = await TelemetryHarness.CreateAsync())
         {
-            var service = harness.Client.Get<IInterceptorTestService>();
+            var service = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
+            Ensure(activities.IsEmpty && !measurements.Any(static value => value.Name == "sharplink.calls.started"),
+                "preparing the route must not emit business-call telemetry");
             Ensure(await service.DescribeNumberAsync(4) == 5, "telemetry unary result");
 
             var stream = service.FailStreamAsync().GetAsyncEnumerator();
@@ -118,19 +120,23 @@ public class TelemetryIntegrationTests
         foreach (var name in requiredInstruments)
             Ensure(instrumentNames.ContainsKey(name), $"published metric {name}");
 
-        Ensure(activities.Any(static activity =>
-            activity.Source == "SharpLink.Client" && activity.Status == ActivityStatusCode.Ok),
-            "client success activity");
-        Ensure(activities.Any(static activity =>
-            activity.Source == "SharpLink.Server" && activity.Status == ActivityStatusCode.Ok),
-            "server success activity");
+        var load = SharpLinkAssemblyManifestLoader.TryLoad(typeof(IInterceptorTestService).Assembly, out var manifest);
+        Ensure(load.Succeeded, "generated telemetry contract manifest");
+        var contract = manifest!.Contracts.Single(item => item.ContractType == typeof(IInterceptorTestService));
+        var unary = contract.Methods.Single(item => item.Name == nameof(IInterceptorTestService.DescribeNumberAsync));
+        var contractId = contract.ContractId.ToString();
+        var methodId = unary.MethodId.ToString();
+        foreach (var source in new[] { "SharpLink.Client", "SharpLink.Server" })
+        {
+            Ensure(activities.Any(activity =>
+                activity.Source == source && activity.Status == ActivityStatusCode.Ok &&
+                activity.Tags.TryGetValue("rpc.sharplink.contract_id", out var emittedContract) && emittedContract == contractId &&
+                activity.Tags.TryGetValue("rpc.sharplink.method_id", out var emittedMethod) && emittedMethod == methodId),
+                $"{source}: business activity must retain generated contract/method IDs, not the binding token");
+        }
         Ensure(activities.Any(static activity =>
             activity.Status == ActivityStatusCode.Error),
             "failed stream activity");
-        Ensure(activities.Any(static activity =>
-            activity.Tags.ContainsKey("rpc.sharplink.contract_id") &&
-            activity.Tags.ContainsKey("rpc.sharplink.method_id")),
-            "activity method tags");
 
         Ensure(measurements.Any(static value =>
             value.Name == "sharplink.connections.active" && value.Value > 0),

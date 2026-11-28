@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
+using static SharpLink.UnitTests.Client.SharpLinkClientLifecycleReconnectSupport;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -147,13 +148,14 @@ public class ClientConnectionConsumerAbandonmentTests
     public async Task ThrowingCancellationCompletionShouldEvictFatalConnectionBeforeReadinessWait()
     {
         var timeProvider = new ManualTimeProvider();
+        var reconnectDelay = TimeSpan.FromMilliseconds(100);
+        var clock = new TimerArmObservingTimeProvider(timeProvider, reconnectDelay);
         var transport = new ReadyThenBlockingTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
         {
-            builder.UseTimeProvider(timeProvider);
+            builder.UseTimeProvider(clock);
             builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
-            builder.UseReconnectJitterForTesting(new FixedReconnectJitter(
-                TimeSpan.FromMilliseconds(100)));
+            builder.UseReconnectJitterForTesting(new FixedReconnectJitter(reconnectDelay));
         });
         await client.ConnectAsync();
         var connection = GetReadyConnections(client).Single();
@@ -204,6 +206,10 @@ public class ClientConnectionConsumerAbandonmentTests
 
         using var waiterCancellation = new CancellationTokenSource();
         var readiness = client.WaitForReadinessAsync(1, waiterCancellation.Token).AsTask();
+        await clock.ExpectedTimerArmed.WaitAsync(RaceCoordinationTimeout);
+        Ensure(!readiness.IsCompleted && !transport.LaterAttemptStarted.Task.IsCompleted,
+            "a readiness waiter must not bypass the reconnect delay");
+        timeProvider.Advance(reconnectDelay);
         await transport.LaterAttemptStarted.Task.WaitAsync(RaceCoordinationTimeout);
         Ensure(!readiness.IsCompleted &&
                client.ReadyConnectionCount == 0 &&

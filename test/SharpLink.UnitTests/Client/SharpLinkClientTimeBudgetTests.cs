@@ -24,18 +24,20 @@ public class SharpLinkClientTimeBudgetTests
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var method = MethodWithTimeout(TimeSpan.FromSeconds(120));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
 
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = channel.InvokeUnary(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
 
         Ensure((sent.Header.Flags & ProtocolV2FrameFlags.HasTimeBudget) != 0,
@@ -69,16 +71,18 @@ public class SharpLinkClientTimeBudgetTests
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = channel.InvokeUnary(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
 
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(4),
@@ -108,21 +112,23 @@ public class SharpLinkClientTimeBudgetTests
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         // ResolveCallControl first samples the local-policy anchor, then observes the shared parent
         // boundary. Advance the one shared monotonic clock on that second read: the parent is now
         // at t=5 with one second left. Preserving the original parent RpcDeadline must retain its
         // t=6 boundary rather than anchoring the remaining second back at logical entry.
         timeProvider.AdvanceOnTimestampRead(2, TimeSpan.FromSeconds(3));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = channel.InvokeUnary(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
 
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(1),
@@ -152,21 +158,23 @@ public class SharpLinkClientTimeBudgetTests
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
             });
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         // The old projection sampled four seconds of parent lifetime at t=2 and could then be
         // descheduled before taking a fresh child anchor. Advancing on the third timestamp read
         // models that gap: re-anchoring four seconds at t=5 would incorrectly extend the parent
         // to t=9. A shared clock must preserve the original t=6 parent boundary and emit one second.
         timeProvider.AdvanceOnTimestampRead(3, TimeSpan.FromSeconds(3));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = channel.InvokeUnary(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
 
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(1),
@@ -184,6 +192,7 @@ public class SharpLinkClientTimeBudgetTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -196,32 +205,32 @@ public class SharpLinkClientTimeBudgetTests
             ClientStreamCount: 1);
         var probe = new ProducerProbe();
         var streams = new ProbeClientStreams(probe);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
-        // The ownership gate is unchanged: the producer still starts only after the owning
-        // Request finished emission. What changed is that emission no longer re-samples or
-        // arbitrates the TimeBudget, so the frame carries the remaining sampled at creation.
+        // Emission does not re-sample the TimeBudget. Starting the producer still checks
+        // the original pending deadline after publication.
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(
             () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
-        var invocation = channel.InvokeClientStreamingAsync(
+        var invocation = channel.InvokeClientStreaming(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             in streams,
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared,
+            producerLifetime: null).AsTask();
 
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
             "the wire TimeBudget must be the remaining sampled once when the frame is created");
-        await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(!invocation.IsCompleted,
-            "starting the client-stream producer must not complete the call on its own");
+        Ensure(!probe.Started.Task.IsCompleted,
+            "emitting the request after its deadline must not start the producer");
 
         // The pending deadline owns the terminal decision now that the send pump publishes
         // frames verbatim, so the elapsed budget fails the call and cancels the remote stream.
@@ -229,6 +238,7 @@ public class SharpLinkClientTimeBudgetTests
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "an emitted client-stream Request whose budget elapsed must fail through its pending deadline");
+        Ensure(!probe.Started.Task.IsCompleted, "the pending deadline must prevent producer start");
     }
 
     [Test]
@@ -249,7 +259,6 @@ public class SharpLinkClientTimeBudgetTests
             typeof(SharpLinkClientTimeBudgetTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(client, module);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
             MethodId: 289,
@@ -260,13 +269,16 @@ public class SharpLinkClientTimeBudgetTests
             MethodTimeout: TimeSpan.FromSeconds(5));
         var request = default(RpcEmptyRequest);
 
-        var stream = channel.InvokeServerStreamingAsync(
+        var stream = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+            client,
+            module,
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             client.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default);
+            cancellationToken: default,
+            prepared: SharpLinkClient.NStudyPreparedSite.Unprepared);
 
         // The dynamic wrapper freezes the logical lifetime at proxy invocation. Let that lifetime
         // expire without running timers, then make the module drain before enumeration. The earlier
@@ -297,12 +309,13 @@ public class SharpLinkClientTimeBudgetTests
                 .UseTimeProvider(timeProvider)
                 .UseRequestTimeout(TimeSpan.FromSeconds(30)));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         // The benchmark probe declares neither [Timeout] nor a per-call deadline for its one-way and
         // streaming methods while the client runs with a 30 s default. Only the unary entry point
         // resolves that default, so only it may put a budget on the wire.
         var method = MethodWithoutTimeout(kind, 320 + (long)kind);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var noStreams = default(RpcNoClientStreams);
         var probe = new ProducerProbe();
@@ -317,13 +330,14 @@ public class SharpLinkClientTimeBudgetTests
         {
             case RpcMethodKind.Unary:
                 {
-                    var invocation = channel.InvokeUnaryAsync(
+                    var invocation = channel.InvokeUnary(
                         method,
                         in request,
                         RpcEmptyRequestCodec.Instance,
                         responseCodec,
                         metadata: null,
-                        cancellationToken: cancellation.Token);
+                        cancellationToken: cancellation.Token,
+                        prepared);
                     var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
                     Ensure(HasTimeBudget(sent),
                         "the client default must reach a unary method that declares no [Timeout]");
@@ -335,13 +349,14 @@ public class SharpLinkClientTimeBudgetTests
                 }
             case RpcMethodKind.OneWay:
                 {
-                    var invocation = channel.InvokeOneWayAsync(
+                    var invocation = channel.InvokeOneWay(
                         method,
                         in request,
                         RpcEmptyRequestCodec.Instance,
                         in noStreams,
                         metadata: null,
-                        cancellationToken: default).AsTask();
+                        cancellationToken: default,
+                        prepared).AsTask();
                     var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
                     Ensure(!HasTimeBudget(sent),
                         "the client default must not reach a plain OneWay benchmark method");
@@ -350,14 +365,15 @@ public class SharpLinkClientTimeBudgetTests
                 }
             case RpcMethodKind.ClientStreaming:
                 {
-                    var invocation = channel.InvokeClientStreamingAsync(
+                    var invocation = channel.InvokeClientStreaming(
                         method,
                         in request,
                         RpcEmptyRequestCodec.Instance,
                         responseCodec,
                         in producer,
                         metadata: null,
-                        cancellationToken: cancellation.Token).AsTask();
+                        cancellationToken: cancellation.Token,
+                        prepared, producerLifetime: null).AsTask();
                     var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
                     Ensure(!HasTimeBudget(sent),
                         "the client default must not reach a client-streaming benchmark Request");
@@ -366,13 +382,15 @@ public class SharpLinkClientTimeBudgetTests
                 }
             case RpcMethodKind.ServerStreaming:
                 {
-                    await using var enumerator = channel.InvokeServerStreamingAsync(
+                    await using var enumerator = SharpLinkModuleRpcChannel.InvokeServerStreamingDeferred(
+                        channel, null,
                         method,
                         in request,
                         RpcEmptyRequestCodec.Instance,
                         responseCodec,
                         metadata: null,
-                        cancellationToken: cancellation.Token).GetAsyncEnumerator();
+                        cancellationToken: cancellation.Token,
+                        prepared).GetAsyncEnumerator();
                     var moveNext = enumerator.MoveNextAsync().AsTask();
                     var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
                     Ensure(!HasTimeBudget(sent),
@@ -382,14 +400,16 @@ public class SharpLinkClientTimeBudgetTests
                 }
             default:
                 {
-                    await using var enumerator = channel.InvokeDuplexStreamingAsync(
+                    await using var enumerator = SharpLinkModuleRpcChannel.InvokeDuplexStreamingDeferred(
+                        channel, null,
                         method,
                         in request,
                         RpcEmptyRequestCodec.Instance,
                         responseCodec,
                         in producer,
                         metadata: null,
-                        cancellationToken: cancellation.Token).GetAsyncEnumerator();
+                        cancellationToken: cancellation.Token,
+                        prepared).GetAsyncEnumerator();
                     var moveNext = enumerator.MoveNextAsync().AsTask();
                     var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
                     Ensure(!HasTimeBudget(sent),
@@ -411,9 +431,10 @@ public class SharpLinkClientTimeBudgetTests
                 .UseTimeProvider(timeProvider)
                 .UseRequestTimeout(TimeSpan.FromSeconds(30)));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var method = MethodWithoutTimeout(RpcMethodKind.OneWay, 326);
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
@@ -442,13 +463,14 @@ public class SharpLinkClientTimeBudgetTests
 
         try
         {
-            var invocation = channel.InvokeOneWayAsync(
+            var invocation = channel.InvokeOneWay(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 in streams,
                 metadata: null,
-                cancellationToken: default).AsTask();
+                cancellationToken: default,
+                prepared).AsTask();
 
             // Admission is not emission: the untimed OneWay must complete while its
             // queued Request is actually blocked at the transport output boundary.

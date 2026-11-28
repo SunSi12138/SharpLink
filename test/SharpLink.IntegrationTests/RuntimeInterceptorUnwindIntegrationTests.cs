@@ -8,7 +8,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
     [Test]
     public async Task ClientFaultUnwindShouldRetainCapturedGenerationAcrossReplacement()
     {
-        await using var harness = await UnwindHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var oldLog = new ConcurrentQueue<string>();
         var newLog = new ConcurrentQueue<string>();
         var a = new UnwindClientInterceptor("A", oldLog);
@@ -40,7 +40,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
     [Test]
     public async Task ClientCancellationUnwindShouldRetainCapturedGenerationAcrossReplacement()
     {
-        await using var harness = await UnwindHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var oldLog = new ConcurrentQueue<string>();
         var newLog = new ConcurrentQueue<string>();
         var a = new UnwindClientInterceptor("A", oldLog);
@@ -80,7 +80,7 @@ public class RuntimeInterceptorUnwindIntegrationTests
     [Test]
     public async Task ServerFaultUnwindShouldRetainCapturedGenerationAcrossReplacement()
     {
-        await using var harness = await UnwindHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var oldLog = new ConcurrentQueue<string>();
         var newLog = new ConcurrentQueue<string>();
         var a = new UnwindServerInterceptor("A", oldLog);
@@ -283,56 +283,6 @@ public class RuntimeInterceptorUnwindIntegrationTests
                 log.Enqueue($"{id}:after");
                 _completed.TrySetResult();
             }
-        }
-    }
-
-    private sealed class UnwindHarness : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _serverCts;
-        private readonly Task _serverTask;
-
-        public ISharpLinkServer Server { get; }
-        public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
-
-        private UnwindHarness(
-            CancellationTokenSource serverCts,
-            Task serverTask,
-            ISharpLinkServer server,
-            ISharpLinkClient client)
-        {
-            _serverCts = serverCts;
-            _serverTask = serverTask;
-            Server = server;
-            Client = client;
-            Service = client.Get<IInterceptorTestService>();
-        }
-
-        public static async Task<UnwindHarness> CreateAsync()
-        {
-            var cts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
-
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
-                .Build();
-            await client.ConnectAsync(cts.Token);
-            return new UnwindHarness(cts, serverTask, server, client);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
         }
     }
 }

@@ -11,8 +11,8 @@ var ordersPort = DemoStream.GetFreePort();
 var paymentsPort = DemoStream.GetFreePort();
 using var app = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
-var ordersServer = CreateServer(ordersPort);
-var paymentsServer = CreateServer(paymentsPort);
+var ordersServer = CreateServer(ordersPort, "orders");
+var paymentsServer = CreateServer(paymentsPort, "payments");
 var ordersTask = DemoTcp.StartServerAsync(ordersServer, app.Token);
 var paymentsTask = DemoTcp.StartServerAsync(paymentsServer, app.Token);
 
@@ -24,9 +24,13 @@ var client = SharpLinkMultiClusterClientBuilder.Create()
 
 try
 {
+    var ordersProxy = client.CreateProxy<IOrdersService>();
+    var paymentsProxy = client.CreateProxy<IPaymentsService>();
     await client.ConnectAsync(app.Token);
-    var orders = await client.Get<IOrdersService>().GetClusterAsync(app.Token);
-    var payments = await client.Get<IPaymentsService>().GetClusterAsync(app.Token);
+    await ordersProxy.PrepareAsync(TimeSpan.FromSeconds(5), app.Token);
+    await paymentsProxy.PrepareAsync(TimeSpan.FromSeconds(5), app.Token);
+    var orders = await ordersProxy.Service.GetClusterAsync(app.Token);
+    var payments = await paymentsProxy.Service.GetClusterAsync(app.Token);
     Console.WriteLine($"orders route -> {orders}");
     Console.WriteLine($"payments route -> {payments}");
     if (orders != "orders" || payments != "payments")
@@ -43,27 +47,33 @@ finally
         Task.WhenAny(paymentsTask, Task.Delay(300)));
 }
 
-static ISharpLinkServer CreateServer(int port)
+static ISharpLinkServer CreateServer(int port, string cluster)
     => SharpLinkServerBuilder.Create()
         .UseTcp(port, IPAddress.Loopback)
+        .ReplaceService<IOrdersService>(new OrdersService { Cluster = cluster })
+        .ReplaceService<IPaymentsService>(new PaymentsService { Cluster = cluster })
         .Build();
 
 [RpcService]
 public sealed class OrdersService : IOrdersService
 {
+    public string Cluster { get; init; } = "orders";
+
     public ValueTask<string> GetClusterAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult("orders");
+        return ValueTask.FromResult(Cluster);
     }
 }
 
 [RpcService]
 public sealed class PaymentsService : IPaymentsService
 {
+    public string Cluster { get; init; } = "payments";
+
     public ValueTask<string> GetClusterAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult("payments");
+        return ValueTask.FromResult(Cluster);
     }
 }

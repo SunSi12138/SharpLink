@@ -20,15 +20,17 @@ public sealed class SharpLinkMultiClusterValidationTests : SharpLinkMultiCluster
     [Test]
     public async Task UnknownContractShouldFailWithoutSelectingAnotherCluster()
     {
+        var transport = new TestClientTransportFactory();
         await using var client = CreateStaticBuilder()
-            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .AddCluster("orders", child => child.UseTransport(transport))
             .Build();
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = client.Get<IUnroutedContract>();
+            _ = client.CreateProxy<IUnroutedContract>();
             return Task.CompletedTask;
         });
+        Ensure(transport.ConnectCount == 0, "an unrouted contract must not dial the configured child");
     }
 
     [Test]

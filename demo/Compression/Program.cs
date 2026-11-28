@@ -18,9 +18,11 @@ var client = DemoTcp.CreateClient(port,
 
 try
 {
-    await DemoTcp.EnsureConnectedAsync(client, app.Token);
+    var proxy = client.CreateProxy<ICompressionService>();
+    await client.ConnectAsync(app.Token);
+    await proxy.PrepareAsync(TimeSpan.FromSeconds(5), app.Token);
     var payload = string.Concat(Enumerable.Repeat("SharpLink compression demo. ", 512));
-    var response = await client.Get<ICompressionService>().EchoAsync(payload, app.Token);
+    var response = await proxy.Service.EchoAsync(payload, app.Token);
     if (response != payload)
         throw new InvalidOperationException("Compression round trip changed the payload.");
 

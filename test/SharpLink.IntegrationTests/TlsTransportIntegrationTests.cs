@@ -45,7 +45,9 @@ public class TlsTransportIntegrationTests
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")));
         await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42,
+        var original = client.CreateProxy<ITlsIntegrationService>();
+        await original.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await original.Service.AddAsync(20, 22) == 42,
             "runtime Add must preserve TLS and client authentication configuration");
 
         await client.ReplaceClusterAsync(
@@ -58,7 +60,9 @@ public class TlsTransportIntegrationTests
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")),
             TimeSpan.FromSeconds(2));
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(19, 23) == 42,
+        var replacement = client.CreateProxy<ITlsIntegrationService>();
+        await replacement.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await replacement.Service.AddAsync(19, 23) == 42,
             "runtime Replace must preserve TLS and client authentication configuration");
     }
 
@@ -69,8 +73,10 @@ public class TlsTransportIntegrationTests
         var port = GetFreePort();
         await using var firstServer = await StartServerAsync(port, CreateServerOptions(certificate));
         await using var client = CreateClient(port, CreateClientOptions("localhost"));
+        var proxy = client.CreateProxy<ITlsIntegrationService>();
         await client.ConnectAsync();
-        await VerifyRpcShapesAsync(client.Get<ITlsIntegrationService>());
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        await VerifyRpcShapesAsync(proxy.Service);
 
         await firstServer.StopAsync();
         var concreteClient = (SharpLinkClient)client;
@@ -79,7 +85,16 @@ public class TlsTransportIntegrationTests
         await WaitUntilAsync(() =>
             concreteClient.ReadyConnectionCount != 0 &&
             concreteClient.State == SharpLinkConnectionState.Ready);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42, "TLS reconnect RPC");
+        try
+        {
+            _ = await proxy.Service.AddAsync(20, 22);
+            throw new InvalidOperationException("The new TLS session must not inherit the old binding.");
+        }
+        catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.Unavailable)
+        {
+        }
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await proxy.Service.AddAsync(20, 22) == 42, "TLS reconnect uses a new explicit preparation");
     }
 
     [Test]
@@ -134,13 +149,8 @@ public class TlsTransportIntegrationTests
         missingCertificateOptions.LocalCertificateSelectionCallback = static (_, _, _, _, _) => null;
         await using (var missingCertificateClient = CreateClient(server.Port, missingCertificateOptions))
         {
-            await EnsureTlsFailure(
-                async () =>
-                {
-                    await missingCertificateClient.ConnectAsync();
-                    _ = await missingCertificateClient.Get<ITlsIntegrationService>().AddAsync(1, 1);
-                },
-                "missing mutual TLS certificate");
+            await EnsureTlsFailure(() => missingCertificateClient.ConnectAsync().AsTask(),
+                "missing mutual TLS certificate must fail before RPC preparation");
         }
 
         var clientOptions = CreateClientOptions("localhost");
@@ -148,7 +158,8 @@ public class TlsTransportIntegrationTests
         clientOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(2, 3) == 5, "mutual TLS RPC");
+        var service = await client.PrepareTestServiceAsync<ITlsIntegrationService>();
+        Ensure(await service.AddAsync(2, 3) == 5, "mutual TLS RPC");
     }
 
     [Test]
@@ -187,7 +198,9 @@ public class TlsTransportIntegrationTests
             offline: true);
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(3, 4) == 7,
+        var proxy = client.CreateProxy<ITlsIntegrationService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await proxy.Service.AddAsync(3, 4) == 7,
             "client certificate context mutual TLS RPC");
     }
 
@@ -251,10 +264,13 @@ public class TlsTransportIntegrationTests
 
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(5, 6) == 11, "static TLS RPC");
+        var proxy = client.CreateProxy<ITlsIntegrationService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(first.HasPreparedPeer && second.HasPreparedPeer, "both TLS endpoint authorities must prepare on their own Sessions");
+        Ensure(await proxy.Service.AddAsync(5, 6) == 11, "static TLS RPC");
         await first.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(7, 8) == 15, "remaining static TLS endpoint");
+        Ensure(await proxy.Service.AddAsync(7, 8) == 15, "remaining static TLS endpoint");
     }
 
     private static ISharpLinkClient CreateClient(int port, SslClientAuthenticationOptions options)
@@ -465,6 +481,8 @@ public class TlsTransportIntegrationTests
     {
         private int _stopped;
         public int Port { get; } = port;
+        public bool HasPreparedPeer => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)server)
+            .Values.Single().NStudyBindings.Snapshot() == (1, 0, 0);
 
         public async Task StopAsync()
         {

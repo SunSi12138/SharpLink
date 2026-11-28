@@ -15,6 +15,7 @@ namespace SharpLink.Benchmarks;
 
 internal sealed class BenchmarkEnvironment : IAsyncDisposable
 {
+    private static readonly TimeSpan s_prepareTimeout = TimeSpan.FromSeconds(10);
     private readonly CancellationTokenSource _shutdown;
     private readonly Task _serverTask;
     private readonly ISharpLinkServer _server;
@@ -81,17 +82,20 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         if (configureClientRuntime is not null)
             client.UseRuntime(configureClientRuntime);
         var builtClient = client.Build();
-        configureBuiltClient?.Invoke(builtClient);
-
-        await builtClient.ConnectAsync(shutdown.Token);
-        await WaitForReadyConnectionsAsync(
-            builtClient,
-            expectedReadyConnections,
-            shutdown.Token).ConfigureAwait(false);
-
-        var rpc = builtClient.Get<IBenchmarkRpc>();
-        return new BenchmarkEnvironment(
-            rpc, localService, shutdown, serverTask, server, builtClient);
+        try
+        {
+            configureBuiltClient?.Invoke(builtClient);
+            await builtClient.ConnectAsync(shutdown.Token).ConfigureAwait(false);
+            await WaitForReadyConnectionsAsync(builtClient, expectedReadyConnections, shutdown.Token).ConfigureAwait(false);
+            var rpc = await PrepareServiceAsync<IBenchmarkRpc>(builtClient, shutdown.Token,
+                balancePreparedEndpoints: expectedReadyConnections > 1).ConfigureAwait(false);
+            return new BenchmarkEnvironment(rpc, localService, shutdown, serverTask, server, builtClient);
+        }
+        catch
+        {
+            await DisposeFailedSetupAsync(builtClient, server, shutdown, serverTask).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync(
@@ -132,19 +136,16 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         if (configureClientRuntime is not null)
             clientBuilder.UseRuntime(configureClientRuntime);
         var client = clientBuilder.Build();
-        configureBuiltClient?.Invoke(client);
         try
         {
+            configureBuiltClient?.Invoke(client);
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
-            return new BenchmarkEnvironment(
-                client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client, serverReadProbe);
+            var rpc = await PrepareServiceAsync<IBenchmarkRpc>(client, shutdown.Token).ConfigureAwait(false);
+            return new BenchmarkEnvironment(rpc, localService, shutdown, serverTask, server, client, serverReadProbe);
         }
         catch
         {
-            shutdown.Cancel();
-            await client.DisposeAsync().ConfigureAwait(false);
-            await server.DisposeAsync().ConfigureAwait(false);
-            shutdown.Dispose();
+            await DisposeFailedSetupAsync(client, server, shutdown, serverTask).ConfigureAwait(false);
             throw;
         }
     }
@@ -153,7 +154,39 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     internal bool HasPendingServerRead => _serverReadProbe?.HasPendingRead ?? false;
     internal ISharpLinkServer Server => _server;
 
-    public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
+    // Establish the binding during setup, before the benchmark starts recording.
+    internal static async ValueTask<TContract> PrepareServiceAsync<TContract>(
+        ISharpLinkClient client, CancellationToken cancellationToken, bool balancePreparedEndpoints = false)
+        where TContract : IService
+    {
+        var proxy = client.CreateProxy<TContract>(new RpcProxyOptions
+        {
+            BalancePreparedEndpoints = balancePreparedEndpoints
+        });
+        await proxy.PrepareAsync(s_prepareTimeout, cancellationToken).ConfigureAwait(false);
+        return proxy.Service;
+    }
+
+    internal ValueTask<TContract> PrepareServiceAsync<TContract>() where TContract : IService
+        => PrepareServiceAsync<TContract>(_client, _shutdown.Token);
+
+    private static async Task DisposeFailedSetupAsync(
+        ISharpLinkClient client, ISharpLinkServer server, CancellationTokenSource shutdown, Task serverTask)
+    {
+        using (shutdown)
+        {
+            await shutdown.CancelAsync().ConfigureAwait(false);
+            try
+            {
+                await client.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await server.DisposeAsync().ConfigureAwait(false);
+                await Task.WhenAny(serverTask, Task.Delay(500)).ConfigureAwait(false);
+            }
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {

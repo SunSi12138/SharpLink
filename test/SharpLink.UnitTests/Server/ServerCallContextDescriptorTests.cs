@@ -45,10 +45,13 @@ public partial class SharpLinkServerInvocationTests
                 IsIdempotent: true,
                 ResponseNullable: true);
             var stub = new CallContextCountingStub(descriptor, found: true);
-            var context = CreateInterceptedContext(server, connection, stub, requestId: 42);
+            await using var registration = ServiceRegistration.CreateSingleton(
+                typeof(object), stub, new object(), ownsService: false);
+            var prepared = PrepareContextDescriptor(registration, descriptor);
+            var context = (SharpLinkServerInvocationContext)CreateContext(server, connection, prepared, requestId: 42);
 
             Ensure(stub.LookupCount == 1,
-                "interceptor context must reuse the descriptor resolved for stream reservation");
+                "interceptor context must reuse the descriptor resolved once at publication");
             Ensure(context.Method == descriptor,
                 "interceptor context must expose the exact previously resolved descriptor");
             Ensure(context.RequestId == 42 && context.ConnectionId == session.Id,
@@ -56,16 +59,16 @@ public partial class SharpLinkServerInvocationTests
             Ensure(context.InterceptorGeneration is not null,
                 "interceptor context must retain its captured generation");
 
-            // An unresolved custom stub still produces the established conservative
-            // Unary descriptor; the refactor must not turn that into a second lookup.
+            // A custom stub that lacks the declared method cannot publish a binding;
+            // creating a conservative Unary fact here would restore the old fallback.
             var missing = new CallContextCountingStub(descriptor, found: false);
-            var fallback = CreateInterceptedContext(server, connection, missing, requestId: 43);
-            Ensure(missing.LookupCount == 1,
-                "missing-descriptor fallback must query the stub exactly once");
-            Ensure(fallback.Method.Kind == RpcMethodKind.Unary &&
-                fallback.Method.ContractId == missing.InterfaceHash &&
-                fallback.Method.MethodId == descriptor.MethodId,
-                "missing-descriptor fallback must preserve method identity and Unary kind");
+            await using var incomplete = ServiceRegistration.CreateSingleton(
+                typeof(object), missing, new object(), ownsService: false);
+            var rejected = false;
+            try { PreparedServerDispatchFixture.PrepareRegistration(incomplete, descriptor); }
+            catch (InvalidOperationException) { rejected = true; }
+            Ensure(rejected && missing.LookupCount == 1 && !incomplete.TryGetNStudyMethod(descriptor.MethodId, out _),
+                "an absent descriptor must stop publication without leaving a fallback method");
         }
         finally
         {
@@ -93,28 +96,20 @@ public partial class SharpLinkServerInvocationTests
 
         try
         {
-            var stub = new CallContextCountingStub(
-                new RpcMethodDescriptor(
-                    81, 17, RpcMethodKind.Unary,
-                    HasResponsePayload: true,
-                    HasClientStreams: false,
-                    HasMethodTimeout: false,
-                    MethodTimeout: null),
-                found: true);
-            var context = (SharpLinkCallContextSnapshot)(CreateCallContextMethod.Invoke(
-                server,
-                [
-                    connection,
-                    stub,
-                    17L,
-                    44L,
-                    default(RpcDeadline),
-                    null,
-                    CancellationToken.None
-                ]) ?? throw new Exception("CreateCallContext returned null"));
+            var descriptor = new RpcMethodDescriptor(
+                81, 17, RpcMethodKind.Unary,
+                HasResponsePayload: true,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            var stub = new CallContextCountingStub(descriptor, found: true);
+            await using var registration = ServiceRegistration.CreateSingleton(
+                typeof(object), stub, new object(), ownsService: false);
+            var prepared = PrepareContextDescriptor(registration, descriptor);
+            var context = CreateContext(server, connection, prepared, requestId: 44);
 
-            Ensure(stub.LookupCount == 0,
-                "no-interceptor fast path must not query method metadata");
+            Ensure(stub.LookupCount == 1,
+                "no-interceptor fast path must not perform another lookup after publication");
             Ensure(ReferenceEquals(context, connection.DefaultCallContext),
                 "no-interceptor fast path must still reuse the default call context");
         }
@@ -124,17 +119,24 @@ public partial class SharpLinkServerInvocationTests
         }
     }
 
-    private static SharpLinkServerInvocationContext CreateInterceptedContext(
+    private static RpcMethodDescriptor PrepareContextDescriptor(ServiceRegistration registration, RpcMethodDescriptor descriptor)
+    {
+        PreparedServerDispatchFixture.PrepareRegistration(registration, descriptor);
+        if (!registration.TryGetNStudyMethod(descriptor.MethodId, out var facts))
+            throw new InvalidOperationException("the registration must publish its prepared method");
+        return facts.Descriptor;
+    }
+
+    private static SharpLinkCallContextSnapshot CreateContext(
         SharpLinkServer server,
         ServerConnectionState connection,
-        IRpcStub stub,
+        RpcMethodDescriptor method,
         long requestId)
-        => (SharpLinkServerInvocationContext)(CreateCallContextMethod.Invoke(
+        => (SharpLinkCallContextSnapshot)(CreateCallContextMethod.Invoke(
             server,
             [
                 connection,
-                stub,
-                17L,
+                method,
                 requestId,
                 default(RpcDeadline),
                 null,
@@ -156,52 +158,20 @@ public partial class SharpLinkServerInvocationTests
         internal int LookupCount => Volatile.Read(ref _lookupCount);
         public long InterfaceHash => descriptor.ContractId;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor method)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
             Interlocked.Increment(ref _lookupCount);
-            if (found && methodHash == descriptor.MethodId)
+            if (found && methodId == descriptor.MethodId)
             {
-                method = descriptor;
+                method = new(descriptor, Execute);
                 return true;
             }
             method = default;
             return false;
         }
 
-        public ValueTask InvokeNoReturnAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args)
-            => ValueTask.CompletedTask;
-
-        public ValueTask InvokeNoReturnCancellableAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args,
-            CancellationToken cancellationToken)
-            => ValueTask.CompletedTask;
-
-        public ValueTask InvokeAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args,
-            IBufferWriter<byte> output)
-            => ValueTask.CompletedTask;
-
-        public ValueTask InvokeCancellableAsync(
-            object service,
-            IRpcGeneratedServerBridge bridge,
-            long methodHash,
-            long requestId,
-            ReadOnlySequence<byte> args,
-            IBufferWriter<byte> output,
-            CancellationToken cancellationToken)
+        private static ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
     }
 }

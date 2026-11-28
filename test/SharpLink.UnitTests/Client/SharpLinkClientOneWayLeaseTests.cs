@@ -23,7 +23,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
         var connection = GetConnection(client);
-        await connection.Session.FlushSendQueueAsync();
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(connection, contractId: 1);
         using var cancellation = new CancellationTokenSource();
         var producer = new ProducerProbe();
         OperationProbe? operation = null;
@@ -41,7 +41,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
             clock.Manual.Advance(TimeSpan.FromSeconds(5));
             Ensure(!connection.PendingCalls.Contains(operation.Id), "the terminal must remove the entry before registration returns");
         };
-        var failure = await CaptureFailure(Invoke(client, producer, cancellation.Token));
+        var failure = await CaptureFailure(Invoke(client, prepared, producer, cancellation.Token));
 
         Ensure(operation is not null, "the registration boundary must have been exercised");
         AssertTerminal(terminal, failure, cancellation.Token, close);
@@ -61,7 +61,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
         var connection = GetConnection(client);
-        await connection.Session.FlushSendQueueAsync();
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(connection, contractId: 1);
         using var cancellation = new CancellationTokenSource();
         using var releaseEmission = new ManualResetEventSlim();
         var emissionEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,7 +74,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         });
         try
         {
-            var invocation = Invoke(client, producer, cancellation.Token);
+            var invocation = Invoke(client, prepared, producer, cancellation.Token);
             await emissionEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(!invocation.IsCompleted, "emission must still be suspended at the terminal boundary");
             var operation = OperationProbe.Capture(connection);
@@ -106,10 +106,11 @@ public sealed class SharpLinkClientOneWayLeaseTests
         await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
         await client.ConnectAsync();
         var connection = GetConnection(client);
+        var prepared = await transport.Connection.PrepareInvocationRouteAsync(connection, contractId: 1);
         using var cancellation = new CancellationTokenSource();
         var producer = new ProducerProbe();
         var close = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "producer connection closed");
-        var invocation = Invoke(client, producer, cancellation.Token);
+        var invocation = Invoke(client, prepared, producer, cancellation.Token);
         await producer.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var operation = OperationProbe.Capture(connection);
         if (terminal == "success")
@@ -146,7 +147,8 @@ public sealed class SharpLinkClientOneWayLeaseTests
         AssertAdmissionReleased(connection);
     }
 
-    private static Task Invoke(SharpLinkClient client, ProducerProbe producer, CancellationToken token)
+    private static Task Invoke(
+        SharpLinkClient client, SharpLinkClient.NStudyPreparedSite prepared, ProducerProbe producer, CancellationToken token)
     {
         var request = default(RpcEmptyRequest);
         var streams = new GatedProducer(producer);
@@ -154,8 +156,8 @@ public sealed class SharpLinkClientOneWayLeaseTests
             ContractId: 1, MethodId: 297, Kind: RpcMethodKind.OneWay,
             HasResponsePayload: false, HasClientStreams: true,
             HasMethodTimeout: true, MethodTimeout: TimeSpan.FromSeconds(5), ClientStreamCount: 1);
-        return ((IRpcChannel)client).InvokeOneWayAsync(
-            method, in request, RpcEmptyRequestCodec.Instance, in streams, metadata: null, token).AsTask();
+        return client.InvokeOneWay(
+            method, in request, RpcEmptyRequestCodec.Instance, in streams, metadata: null, token, prepared).AsTask();
     }
 
     private static void ApplyTerminal(
@@ -226,9 +228,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
 
         internal static OperationProbe Capture(ClientConnection connection)
         {
-            var slots = (Array)typeof(PendingRequestTable).GetField(
-                "_slots", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection.PendingCalls)!;
-            var call = slots.Cast<object?>().Single(static call => call is not null)!;
+            var call = PendingRequestTableTestFixture.CaptureSinglePendingCall(connection.PendingCalls);
             var operation = (RpcRequestOperation<RpcEmptyRequest>)call.GetType().GetProperty("Operation")!.GetValue(call)!;
             return new OperationProbe(operation, connection.PendingCalls.GetProducerCancellationToken(operation.Id));
         }

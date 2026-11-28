@@ -3,69 +3,72 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     private ValueTask InvokeServiceAsync(
-        ServiceRegistration registration,
         ServerConnectionState connection,
         RpcSession session,
-        long methodId,
+        NStudyMethodFacts facts,
+        NStudyServerBindings.Use binding,
+        ServerCallCancellationState? callState,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
-        if (registration.TryGetStaticSingleton(
-                connection.GeneratedBridge,
-                requestId,
-                out var singleton))
+        var methodDescriptor = facts.Descriptor;
+        if (context.Authentication?.IsExpired() == true)
         {
-            return InvokeServiceTrackedAsync(
-                registration.Stub,
-                singleton,
-                session,
-                connection.GeneratedBridge,
-                methodId,
-                requestId,
-                arguments,
-                output,
-                cancellationToken,
-                context);
+            // A valid connection can outlive its credential. A request already
+            // expired here must not resolve a service factory or create a scope.
+            var error = CreateExpiredAuthenticationError();
+            var rejectedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
+            rejectedTelemetry.Complete(error);
+            return ValueTask.FromException(error);
         }
 
-        var isStream = false;
-        var hasRequestStreams = false;
-        StreamManager.InputStreamDrain inputDrain = default;
-        RpcMethodDescriptor? methodDescriptor = null;
-        if (registration.HasModule)
+        var oneWayInput = methodDescriptor.Kind == RpcMethodKind.OneWay && methodDescriptor.HasClientStreams;
+        var isStream = oneWayInput || methodDescriptor.Kind is RpcMethodKind.ClientStreaming or
+            RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+        if (!binding.TryEnterExecution(isStream, out var registration, out var executionLease))
         {
-            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
-            methodDescriptor = descriptor;
-            isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
-            hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.DuplexStreaming;
-            if (descriptor.Kind == RpcMethodKind.OneWay && descriptor.ClientStreamCount > 0)
+            var error = NStudyBindingRetiredError();
+            var rejectedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
+            rejectedTelemetry.Complete(error);
+            return ValueTask.FromException(error);
+        }
+        if (executionLease.IsAcquired)
+        {
+            if (callState is null)
             {
-                isStream = hasRequestStreams = true;
-                inputDrain = session.StreamManager.CaptureInputStreamDrain(requestId, descriptor.ClientStreamCount);
+                executionLease.Dispose();
+                throw new InvalidOperationException("A dynamic call needs a physical owner.");
             }
+            callState.AttachExecutionLease(executionLease);
         }
 
-        SharpLinkDynamicModuleLease dynamicSingletonLease = default;
+        var execute = registration.GetNStudyExecutor(facts.ExecutorSlot);
+        if (registration.TryGetStaticSingleton(connection.GeneratedBridge, requestId, out var singleton))
+            return InvokeServiceTrackedAsync(execute, singleton, session, connection.GeneratedBridge,
+                requestId, arguments, output, cancellationToken, context, methodDescriptor);
+
+        // Two-way typed inputs are finished at the invocation boundary for both
+        // static and dynamic services. OneWay retains its existing physical join.
+        var hasRequestStreams = registration.HasModule && oneWayInput;
+        var inputDrain = registration.HasModule && oneWayInput
+            ? session.StreamManager.CaptureInputStreamDrain(requestId, methodDescriptor.ClientStreamCount)
+            : default;
+
         try
         {
-            if (registration.TryAcquireDynamicSingleton(
-                    isStream,
+            if (registration.TryGetAdmittedDynamicSingleton(
                     connection.GeneratedBridge,
                     requestId,
-                    out var dynamicSingleton,
-                    out dynamicSingletonLease))
+                    out var dynamicSingleton))
             {
                 var invocation = InvokeServiceTrackedAsync(
-                    registration.Stub,
+                    execute,
                     dynamicSingleton,
                     session,
                     connection.GeneratedBridge,
-                    methodId,
                     requestId,
                     arguments,
                     output,
@@ -73,57 +76,57 @@ internal sealed partial class SharpLinkServer
                     context,
                     methodDescriptor);
                 if (!inputDrain.IsEmpty)
-                    return CompleteDynamicOneWayInputAsync(invocation,
-                        new ServiceLease(dynamicSingleton, moduleLease: dynamicSingletonLease), inputDrain);
-                return CompleteDynamicSingletonInvocationAsync(
-                    invocation,
-                    dynamicSingletonLease,
-                    session,
-                    requestId,
-                    hasRequestStreams);
+                    return CompleteDynamicOneWayInputAsync(invocation, default, inputDrain);
+                return hasRequestStreams ? CompleteDynamicInputAsync(invocation, session, requestId) : invocation;
             }
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+            var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
+            var failed = ValueTask.FromException(exception);
             if (!inputDrain.IsEmpty)
-                return CompleteDynamicOneWayInputAsync(ValueTask.FromException(exception),
-                    new ServiceLease(registration, moduleLease: dynamicSingletonLease), inputDrain);
-            return CompleteDynamicSingletonInvocationAsync(
-                ValueTask.FromException(exception),
-                dynamicSingletonLease,
-                session,
-                requestId,
-                hasRequestStreams);
+                return CompleteDynamicOneWayInputAsync(failed, default, inputDrain);
+            return hasRequestStreams ? CompleteDynamicInputAsync(failed, session, requestId) : failed;
         }
 
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync(
+            acquisition = registration.AcquireAdmittedServiceAsync(
                 connection,
-                isStream,
                 connection.GeneratedBridge,
-                requestId);
+                requestId,
+                moduleLease: default); // Owned by the call, not by the service activation.
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+            var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
 
         if (!acquisition.IsCompletedSuccessfully)
         {
+            if (!acquisition.IsCompleted && methodDescriptor.HasClientStreams && !oneWayInput)
+            {
+                try
+                {
+                    ReservePreInvocationRequestStreams(connection, methodDescriptor.ClientStreamCount,
+                        requestId, cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    // Acquisition is already live. Keep the original execution owner until
+                    // it has either failed or handed back the unused service lease.
+                    return DisposeUnusedAcquisitionAsync(acquisition, exception);
+                }
+            }
             return InvokeServiceAfterAcquisitionAsync(
                 acquisition,
-                registration.Stub,
+                execute,
                 session,
                 connection.GeneratedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -135,11 +138,10 @@ internal sealed partial class SharpLinkServer
         }
 
         return InvokeAcquiredServiceAsync(
-            registration.Stub,
+            execute,
             acquisition.Result,
             session,
             connection.GeneratedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -148,14 +150,28 @@ internal sealed partial class SharpLinkServer
             hasRequestStreams,
             methodDescriptor,
             inputDrain);
+
     }
 
-    private static async ValueTask CompleteDynamicSingletonInvocationAsync(
+    private static async ValueTask DisposeUnusedAcquisitionAsync(
+        ValueTask<ServiceLease> acquisition, Exception failure)
+    {
+        try
+        {
+            var lease = await acquisition.ConfigureAwait(false);
+            await lease.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            throw new AggregateException(failure, exception);
+        }
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private static async ValueTask CompleteDynamicInputAsync(
         ValueTask invocation,
-        SharpLinkDynamicModuleLease moduleLease,
         RpcSession session,
-        long requestId,
-        bool hasRequestStreams)
+        long requestId)
     {
         Exception? terminalException = null;
         try
@@ -169,17 +185,8 @@ internal sealed partial class SharpLinkServer
 
         try
         {
-            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams)
+            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams: true)
                 .ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            terminalException = CombineTerminalExceptions(terminalException, exception);
-        }
-
-        try
-        {
-            moduleLease.Dispose();
         }
         catch (Exception exception)
         {
@@ -191,28 +198,26 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         ServiceLease lease,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor,
+        RpcMethodDescriptor methodDescriptor,
         StreamManager.InputStreamDrain inputDrain)
     {
-        if (!lease.RequiresDisposal)
+        if (!lease.RequiresDisposal && !hasRequestStreams && inputDrain.IsEmpty)
         {
             return InvokeServiceTrackedAsync(
-                stub,
+                execute,
                 lease.Service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -226,8 +231,8 @@ internal sealed partial class SharpLinkServer
             ValueTask invocation;
             try
             {
-                invocation = InvokeServiceTrackedAsync(stub, lease.Service, session, generatedBridge,
-                    methodId, requestId, arguments, output, cancellationToken, context, methodDescriptor);
+                invocation = InvokeServiceTrackedAsync(execute, lease.Service, session, generatedBridge,
+                    requestId, arguments, output, cancellationToken, context, methodDescriptor);
             }
             catch (Exception exception)
             {
@@ -236,11 +241,10 @@ internal sealed partial class SharpLinkServer
             return CompleteDynamicOneWayInputAsync(invocation, lease, inputDrain);
         }
         return InvokeServiceWithLeaseAsync(
-            stub,
+            execute,
             lease,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -252,17 +256,16 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
         ValueTask<ServiceLease> acquisition,
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor,
+        RpcMethodDescriptor methodDescriptor,
         StreamManager.InputStreamDrain inputDrain)
     {
         ServiceLease lease;
@@ -272,18 +275,16 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+            var failedTelemetry = StartServerTelemetryCall(methodDescriptor, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
 
         await InvokeAcquiredServiceAsync(
-            stub,
+            execute,
             lease,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -295,33 +296,35 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeServiceTrackedAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        RpcMethodDescriptor? methodDescriptor = null)
+        RpcMethodDescriptor methodDescriptor)
     {
-        var telemetry = StartServerTelemetryCall(
-            methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+        var telemetry = StartServerTelemetryCall(methodDescriptor, requestId);
         try
         {
-            var invocation = InvokeServiceCoreAsync(
-                stub,
-                service,
-                session,
-                generatedBridge,
-                methodId,
-                requestId,
-                arguments,
-                output,
-                cancellationToken,
-                context);
+            var inputOwner = methodDescriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming
+                ? (ServerGeneratedBridge)generatedBridge
+                : null;
+            ValueTask invocation;
+            try
+            {
+                invocation = InvokeServiceCoreAsync(execute, service, session, generatedBridge,
+                    requestId, arguments, output, cancellationToken, context, methodDescriptor);
+            }
+            catch (Exception exception) when (inputOwner is not null)
+            {
+                invocation = ValueTask.FromException(exception);
+            }
+            if (inputOwner is not null)
+                invocation = FinishGeneratedInputInvocationAsync(invocation, inputOwner, requestId);
             if (!telemetry.IsEnabled)
                 return invocation;
             if (invocation.IsCompletedSuccessfully)
@@ -338,29 +341,39 @@ internal sealed partial class SharpLinkServer
         }
     }
 
+    private static async ValueTask FinishGeneratedInputInvocationAsync(
+        ValueTask invocation, ServerGeneratedBridge inputOwner, long requestId)
+    {
+        Exception? failure = null;
+        try { await invocation.ConfigureAwait(false); }
+        catch (Exception exception) { failure = exception; }
+        try { await inputOwner.FinishGeneratedInputsAsync(requestId).ConfigureAwait(false); }
+        catch (Exception exception) { failure = CombineTerminalExceptions(failure, exception); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
     private async ValueTask InvokeServiceWithLeaseAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         ServiceLease lease,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        RpcMethodDescriptor methodDescriptor)
     {
         Exception? terminalException = null;
         try
         {
             await InvokeServiceTrackedAsync(
-                stub,
+                execute,
                 lease.Service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -415,40 +428,32 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeServiceCoreAsync(
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        in RpcMethodDescriptor method)
     {
+        // The credential can also expire while service acquisition awaits.
         if (context.Authentication?.IsExpired() == true)
-        {
-            return ValueTask.FromException(new SharpLinkException(
-                SharpLinkErrorCode.AuthenticationExpired,
-                "Authentication token has expired."));
-        }
+            return ValueTask.FromException(CreateExpiredAuthenticationError());
         var interceptors = (context as SharpLinkServerInvocationContext)?.InterceptorGeneration as ServerInterceptorGeneration;
         if (interceptors is null || interceptors.Count == 0)
         {
-            return output is null
-                ? stub.InvokeNoReturnCancellableAsync(
-                    service, generatedBridge, methodId, requestId, arguments, cancellationToken)
-                : stub.InvokeCancellableAsync(
-                    service, generatedBridge, methodId, requestId, arguments, output, cancellationToken);
+            return execute(service, generatedBridge, in method, requestId, arguments, output, cancellationToken);
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
             interceptors,
-            stub,
+            execute,
             service,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
@@ -456,13 +461,15 @@ internal sealed partial class SharpLinkServer
             (SharpLinkServerInvocationContext)context);
     }
 
+    private static SharpLinkException CreateExpiredAuthenticationError()
+        => new(SharpLinkErrorCode.AuthenticationExpired, "Authentication token has expired.");
+
     private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
         ServerInterceptorGeneration interceptors,
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -482,10 +489,9 @@ internal sealed partial class SharpLinkServer
         {
             await InvokeComposedServerInterceptorsAsync(
                 interceptors,
-                stub,
+                execute,
                 service,
                 generatedBridge,
-                methodId,
                 requestId,
                 ReadOnlySequence<byte>.Empty,
                 output,
@@ -501,10 +507,9 @@ internal sealed partial class SharpLinkServer
             var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
             await InvokeComposedServerInterceptorsAsync(
                 interceptors,
-                stub,
+                execute,
                 service,
                 generatedBridge,
-                methodId,
                 requestId,
                 ownedArguments,
                 output,
@@ -519,10 +524,9 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask InvokeComposedServerInterceptorsAsync(
         ServerInterceptorGeneration interceptors,
-        IRpcStub stub,
+        RpcGeneratedMethodExecutor execute,
         object service,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -530,10 +534,9 @@ internal sealed partial class SharpLinkServer
         SharpLinkServerInvocationContext context)
     {
         var timeProvider = _runtimeContext.TimeProvider;
-        context.InterceptorStub = stub;
+        context.InterceptorExecutor = execute;
         context.InterceptorService = service;
         context.InterceptorGeneratedBridge = generatedBridge;
-        context.InterceptorMethodId = methodId;
         context.InterceptorArguments = arguments;
         context.InterceptorOutput = output;
         context.InterceptorTimeProvider = timeProvider;
@@ -559,7 +562,7 @@ internal sealed partial class SharpLinkServer
         finally
         {
             context.Elapsed = timeProvider.GetElapsedTime(context.InterceptorStarted);
-            context.InterceptorStub = null;
+            context.InterceptorExecutor = null;
             context.InterceptorService = null;
             context.InterceptorGeneratedBridge = null;
             context.InterceptorArguments = default;
@@ -588,15 +591,14 @@ internal sealed partial class SharpLinkServer
         Exception exception,
         SharpLinkCallContextSnapshot callContext,
         RpcSession session,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         long requestId,
         CancellationToken cancellationToken)
     {
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
-                GetMethodDescriptor(stub, methodId),
+                method,
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
@@ -633,12 +635,10 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> callCancellations,
         RpcSession session,
         long requestId,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
         Exception exception)
     {
-        if (exception is OperationCanceledException &&
-            callCancellations.TryCapture(
+        if (exception is OperationCanceledException && callCancellations.TryCapture(
                 requestId,
                 static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
                 out var callLease) &&
@@ -646,9 +646,7 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
-                exception = MapServerCancellationException(
-                    callLease.State,
-                    callLease.State.Deadline);
+                exception = MapServerCancellationException(callLease.State, callLease.State.Deadline);
             }
             finally
             {
@@ -658,15 +656,13 @@ internal sealed partial class SharpLinkServer
 
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
-        if (SharpLinkCallContext.Current is { } callContext &&
-            Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
+        if (SharpLinkCallContext.Current is { } callContext)
         {
             return MapServiceException(
                 exception,
                 callContext,
                 session,
-                serviceInfo.Stub,
-                methodId,
+                method,
                 requestId,
                 CancellationToken.None);
         }

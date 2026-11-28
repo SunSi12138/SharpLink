@@ -12,7 +12,8 @@ internal sealed partial class SharpLinkClient
     {
         // This helper is reached through the unary invocation pipeline, including
         // telemetry and interceptor terminals. Generated unary calls use Unary descriptors.
-        if (!method.IsIdempotent)
+        // An invocation created without a binding cannot acquire one by retrying.
+        if (!method.IsIdempotent || ReferenceEquals(control.SiteForDispatch, NStudyPreparedSite.Unprepared))
         {
             return InvokeUnaryCoreAsync(
                 method,
@@ -66,7 +67,7 @@ internal sealed partial class SharpLinkClient
             {
                 var response = await InvokeUnaryRetryAttemptAsync(
                     method,
-                    method.ContractId, method.MethodId, method.HasResponsePayload,
+                    method.MethodId, method.HasResponsePayload,
                     request, requestCodec, responseCodec, control, selection, outcome, cancellationToken).ConfigureAwait(false);
                 EnsureLogicalCallProgress(control);
                 attemptScope.Complete();
@@ -223,7 +224,6 @@ internal sealed partial class SharpLinkClient
 
     private ValueTask<TResponse> InvokeUnaryRetryAttemptAsync<TRequest, TResponse>(
         RpcMethodDescriptor method,
-        long contractId,
         long methodId,
         bool hasResponsePayload,
         TRequest request,
@@ -238,7 +238,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, selection, outcome);
+            connection = GetReadyConnection(method, selection, outcome, control.SiteForDispatch);
             try
             {
                 EnsureLogicalCallProgress(control);
@@ -271,7 +271,6 @@ internal sealed partial class SharpLinkClient
 
             return StartUnaryCall(
                 connection,
-                contractId,
                 methodId,
                 requestId,
                 hasResponsePayload,

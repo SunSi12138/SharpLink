@@ -31,7 +31,8 @@ public sealed partial class DynamicEndpointIntegrationTests
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
         Ensure(counter.Count == 2, "initial dynamic topology should dial exactly two Ready endpoints");
 
-        var service = client.Get<IConnectionBehaviorService>();
+        var proxy = await PrepareBalancedProxyAsync(client);
+        var service = proxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic selector should route to first");
 
         client.UpdateEndpointSelector(new IdSelector("second"));
@@ -45,6 +46,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             .GetAsyncEnumerator();
         Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 0,
             "the accepted stream should bind to the endpoint selected before retirement begins");
+        Ensure(await second.StreamStarted.WaitAsync(TimeSpan.FromSeconds(3)) == "second",
+            "the stream started on the old physical connection");
 
         var topologyUpdate = resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(
             2,
@@ -67,9 +70,11 @@ public sealed partial class DynamicEndpointIntegrationTests
             "the accepted stream should complete normally while its endpoint drains");
 
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
-        await WaitUntilAsync(
-            async () => await service.GetEndpointIdAsync() == "third",
-            TimeSpan.FromSeconds(3));
+        Ensure(await service.GetEndpointIdAsync() == "first" && third.OpenBindings == 0,
+            "the new policy cannot route to an unprepared replacement");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await service.GetEndpointIdAsync() == "third" && third.OpenBindings == 1,
+            "the latest policy applies to the replacement after explicit preparation");
         Ensure(counter.Count == 3,
             "the resolver replacement should require exactly one new dial; policy publications must add none");
         Ensure(client.GetReadinessSnapshot().ActiveEndpoints == 2,

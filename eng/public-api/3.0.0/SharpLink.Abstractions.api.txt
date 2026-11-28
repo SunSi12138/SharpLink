@@ -18,18 +18,6 @@ namespace SharpLink.Abstractions
         System.Span<byte> WrittenSpan { get; }
         void Clear();
     }
-    public interface IRpcChannel
-    {
-        SharpLink.Abstractions.IRpcRuntimeContext RuntimeContext { get; }
-        System.Threading.Tasks.ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
-            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
-        System.Collections.Generic.IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
-            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
-        System.Threading.Tasks.ValueTask InvokeOneWayAsync<TRequest, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
-            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
-        System.Collections.Generic.IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default);
-        System.Threading.Tasks.ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default);
-    }
     public interface IRpcClientStreamSink
     {
         System.Threading.Tasks.Task SendClientStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, System.Threading.CancellationToken cancellationToken = default);
@@ -57,6 +45,19 @@ namespace SharpLink.Abstractions
         T? Deserialize(in System.Buffers.ReadOnlySequence<byte> buffer);
         void Serialize(in T value, System.Buffers.IBufferWriter<byte> buffer);
     }
+    public interface IRpcContractChannel
+    {
+        SharpLink.Abstractions.IRpcRuntimeContext RuntimeContext { get; }
+        System.Threading.Tasks.ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
+            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
+        System.Collections.Generic.IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
+            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
+        System.Threading.Tasks.ValueTask InvokeOneWayAsync<TRequest, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
+            where TStreams :  struct, SharpLink.Abstractions.IRpcClientStreamWriter;
+        System.Collections.Generic.IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask PrepareAsync(System.TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default);
+    }
     public interface IRpcContractCodecProviderResolver
     {
         SharpLink.Abstractions.IRpcCodecProvider GetContractCodecProvider(System.Reflection.Assembly ownerAssembly);
@@ -78,7 +79,7 @@ namespace SharpLink.Abstractions
     {
         System.Collections.Generic.IAsyncEnumerable<T> CreateInboundStream<T>(long requestId, ushort streamId, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, System.Threading.CancellationToken cancellationToken);
         void EnsureUserCodeEntry(long requestId);
-        System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, long contractId, long methodId, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, SharpLink.Abstractions.RpcMethodDescriptor method, System.Threading.CancellationToken cancellationToken);
     }
     public interface IRpcGeneratedUnsafeBlitCodecFactory : SharpLink.Abstractions.IRpcGeneratedCodecFactory
     {
@@ -105,12 +106,7 @@ namespace SharpLink.Abstractions
     public interface IRpcStub
     {
         long InterfaceHash { get; }
-        System.Threading.Tasks.ValueTask InvokeAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output);
-        System.Threading.Tasks.ValueTask InvokeCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output, System.Threading.CancellationToken cancellationToken);
-        System.Threading.Tasks.ValueTask InvokeNoReturnAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args);
-        System.Threading.Tasks.ValueTask InvokeNoReturnCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Threading.CancellationToken cancellationToken);
-        bool SupportsCancellation(long methodHash);
-        bool TryGetMethodDescriptor(long methodHash, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
+        bool TryPrepareMethod(long methodId, out SharpLink.Abstractions.RpcGeneratedPreparedMethod method);
     }
     public interface IServerTransportListener : System.IAsyncDisposable
     {
@@ -136,24 +132,27 @@ namespace SharpLink.Abstractions
         SharpLink.Abstractions.SharpLinkClusterState ClusterState { get; }
         SharpLink.Abstractions.SharpLinkClientLifecycleState LifecycleState { get; }
         SharpLink.Abstractions.SharpLinkReadinessState Readiness { get; }
+        SharpLink.Abstractions.IRpcRuntimeContext RuntimeContext { get; }
         SharpLink.Abstractions.SharpLinkConnectionState State { get; }
         System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkHealthCheckResult> CheckHealthAsync(System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask ConnectAsync(System.Threading.CancellationToken cancellationToken = default);
+        SharpLink.Abstractions.IRpcContractChannel CreateContractChannel(SharpLink.Abstractions.RpcLocalContract local, SharpLink.Abstractions.RpcProxyOptions? options = null);
+        SharpLink.Abstractions.RpcProxy<TContract> CreateProxy<TContract>(SharpLink.Abstractions.RpcProxyOptions? options = null)
+            where TContract : SharpLink.Sdk.IService;
         void DisableCircuitBreaker();
         void DisableEndpointAdmissionPolicy();
         void DisableRequestTimeout();
         void DisableRetry();
-        TContract Get<TContract>()
-            where TContract : SharpLink.Sdk.IService;
         SharpLink.Abstractions.SharpLinkCircuitBreakerPolicySnapshot GetCircuitBreakerPolicySnapshot();
         SharpLink.Abstractions.SharpLinkEndpointAdmissionPolicySnapshot GetEndpointAdmissionPolicySnapshot();
         SharpLink.Abstractions.SharpLinkHeartbeatConfigurationSnapshot GetHeartbeatConfigurationSnapshot();
+        SharpLink.Abstractions.RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId);
+        SharpLink.Abstractions.RpcLocalContract GetLocalContract<TContract>()
+            where TContract : SharpLink.Sdk.IService;
         SharpLink.Abstractions.SharpLinkClientReadinessSnapshot GetReadinessSnapshot();
         SharpLink.Abstractions.SharpLinkReconnectPolicy GetReconnectPolicy();
         SharpLink.Abstractions.SharpLinkRequestTimeoutPolicySnapshot GetRequestTimeoutPolicySnapshot();
         SharpLink.Abstractions.SharpLinkRetryPolicySnapshot GetRetryPolicySnapshot();
-        TContract GetWithMetadata<TContract>(SharpLink.Sdk.SharpLinkMetadata metadata)
-            where TContract : SharpLink.Sdk.IService;
         void ReplaceInterceptors(System.Collections.Generic.IEnumerable<SharpLink.Abstractions.ISharpLinkClientInterceptor> interceptors);
         System.Threading.Tasks.ValueTask SetResponseCompressionPreferenceAsync(bool allowResponseCompression, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask StartAsync(System.Threading.CancellationToken cancellationToken = default);
@@ -224,13 +223,11 @@ namespace SharpLink.Abstractions
         SharpLink.Abstractions.SharpLinkMultiClusterState State { get; }
         System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkHealthCheckResult> CheckHealthAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask ConnectAsync(System.Threading.CancellationToken cancellationToken = default);
-        TContract Get<TContract>()
+        SharpLink.Abstractions.RpcProxy<TContract> CreateProxy<TContract>(SharpLink.Abstractions.RpcProxyOptions? options = null)
             where TContract : SharpLink.Sdk.IService;
         SharpLink.Abstractions.SharpLinkReadinessState GetClusterReadiness(SharpLink.Abstractions.SharpLinkClusterKey cluster);
         SharpLink.Abstractions.SharpLinkClusterState GetClusterRuntimeState(SharpLink.Abstractions.SharpLinkClusterKey cluster);
         SharpLink.Abstractions.SharpLinkConnectionState GetClusterState(SharpLink.Abstractions.SharpLinkClusterKey cluster);
-        TContract GetWithMetadata<TContract>(SharpLink.Sdk.SharpLinkMetadata metadata)
-            where TContract : SharpLink.Sdk.IService;
         SharpLink.Abstractions.SharpLinkAssemblyRegistrationResult RegisterAssembly(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Reflection.Assembly assembly);
         System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask StartAsync(System.Threading.CancellationToken cancellationToken = default);
@@ -361,8 +358,8 @@ namespace SharpLink.Abstractions
     {
         public const int HeaderBytes = 15;
         public const byte Magic = 137;
-        public const ushort MinimumCompatibleMinorVersion = 4;
-        public const ushort MinorVersion = 4;
+        public const ushort MinimumCompatibleMinorVersion = 6;
+        public const ushort MinorVersion = 6;
         public const int RequestPrefixBytes = 16;
     }
     public readonly struct ProtocolV2Error : System.IEquatable<SharpLink.Abstractions.ProtocolV2Error>
@@ -518,6 +515,13 @@ namespace SharpLink.Abstractions
         public RpcGeneratedLengthToken(int Offset) { }
         public int Offset { get; init; }
     }
+    public delegate System.Threading.Tasks.ValueTask RpcGeneratedMethodExecutor(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, in SharpLink.Abstractions.RpcMethodDescriptor method, long requestId, System.Buffers.ReadOnlySequence<byte> arguments, System.Buffers.IBufferWriter<byte>? output, System.Threading.CancellationToken cancellationToken);
+    public readonly struct RpcGeneratedPreparedMethod : System.IEquatable<SharpLink.Abstractions.RpcGeneratedPreparedMethod>
+    {
+        public RpcGeneratedPreparedMethod(SharpLink.Abstractions.RpcMethodDescriptor Descriptor, SharpLink.Abstractions.RpcGeneratedMethodExecutor Execute) { }
+        public SharpLink.Abstractions.RpcMethodDescriptor Descriptor { get; init; }
+        public SharpLink.Abstractions.RpcGeneratedMethodExecutor Execute { get; init; }
+    }
     public enum RpcGeneratedWireType : byte
     {
         Null = 0,
@@ -545,6 +549,7 @@ namespace SharpLink.Abstractions
     {
         public static System.Threading.Tasks.ValueTask AsVoid<T>(this System.Threading.Tasks.ValueTask<T> pending) { }
     }
+    public sealed class RpcLocalContract { }
     public readonly struct RpcMethodDescriptor : System.IEquatable<SharpLink.Abstractions.RpcMethodDescriptor>
     {
         public RpcMethodDescriptor(long ContractId, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool HasResponsePayload, bool HasClientStreams, bool HasMethodTimeout, System.TimeSpan? MethodTimeout, bool IsIdempotent = false, int ClientStreamCount = 0, bool ResponseNullable = false) { }
@@ -558,6 +563,7 @@ namespace SharpLink.Abstractions
         public long MethodId { get; init; }
         public System.TimeSpan? MethodTimeout { get; init; }
         public bool ResponseNullable { get; init; }
+        public bool SupportsCancellation { get; init; }
         public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount) { }
         public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount, out bool ResponseNullable) { }
     }
@@ -572,6 +578,18 @@ namespace SharpLink.Abstractions
     public readonly struct RpcNoClientStreams : SharpLink.Abstractions.IRpcClientStreamWriter
     {
         public System.Threading.Tasks.ValueTask WriteAsync(SharpLink.Abstractions.IRpcClientStreamSink sink, long requestId, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class RpcProxyOptions
+    {
+        public RpcProxyOptions() { }
+        public bool BalancePreparedEndpoints { get; init; }
+        public SharpLink.Sdk.SharpLinkMetadata? Metadata { get; init; }
+    }
+    public sealed class RpcProxy<TContract>
+        where TContract : SharpLink.Sdk.IService
+    {
+        public TContract Service { get; }
+        public System.Threading.Tasks.ValueTask PrepareAsync(System.TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public sealed class SharpLinkAnonymousPipeAddress : SharpLink.Abstractions.SharpLinkTransportAddress, System.IEquatable<SharpLink.Abstractions.SharpLinkAnonymousPipeAddress>
     {
@@ -734,6 +752,14 @@ namespace SharpLink.Abstractions
         public SharpLink.Abstractions.SharpLinkConnectionState State { get; init; }
         public int TargetReadyEndpoints { get; init; }
     }
+    public readonly struct SharpLinkClientVersionChangeResult : System.IEquatable<SharpLink.Abstractions.SharpLinkClientVersionChangeResult>
+    {
+        public SharpLinkClientVersionChangeResult(SharpLink.Abstractions.SharpLinkVersionChange Change, SharpLink.Abstractions.SharpLinkVersionDeclineReason DeclineReason, System.Guid? LocalRegistrationId) { }
+        public SharpLink.Abstractions.SharpLinkVersionChange Change { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionDeclineReason DeclineReason { get; init; }
+        public System.Guid? LocalRegistrationId { get; init; }
+        public bool Resumed { get; }
+    }
     public readonly struct SharpLinkClusterKey : System.IEquatable<SharpLink.Abstractions.SharpLinkClusterKey>
     {
         public SharpLinkClusterKey(string value) { }
@@ -885,6 +911,7 @@ namespace SharpLink.Abstractions
             public const ushort AdmissionRate = 5;
             public const ushort PendingRequestCapacity = 8;
             public const ushort PerConnectionCallCapacity = 2;
+            public const ushort PreparedBindingCapacity = 15;
             public const ushort SendQueueCapacity = 9;
             public const ushort ServerCallCapacity = 1;
             public const ushort ServerDecodeConcurrency = 10;
@@ -941,25 +968,26 @@ namespace SharpLink.Abstractions
     }
     public sealed class SharpLinkGeneratedContractDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedContractDescriptor>
     {
-        public SharpLinkGeneratedContractDescriptor(System.Type ContractType, string ContractName, long ContractId, string Fingerprint, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor> Methods, System.Func<SharpLink.Abstractions.IRpcChannel, SharpLink.Abstractions.IRpcCodecProvider, object> ProxyFactory, System.Func<SharpLink.Abstractions.IRpcCodecProvider, SharpLink.Abstractions.IRpcStub> StubFactory) { }
+        public SharpLinkGeneratedContractDescriptor(System.Type ContractType, string ContractName, long ContractId, string Fingerprint, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor> Methods, System.Func<SharpLink.Abstractions.IRpcContractChannel, SharpLink.Abstractions.IRpcCodecProvider, object> ProxyFactory, System.Func<SharpLink.Abstractions.IRpcCodecProvider, SharpLink.Abstractions.IRpcStub> StubFactory) { }
         public long ContractId { get; init; }
         public string ContractName { get; init; }
         public System.Type ContractType { get; init; }
         public string Fingerprint { get; init; }
         public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor> Methods { get; init; }
-        public System.Func<SharpLink.Abstractions.IRpcChannel, SharpLink.Abstractions.IRpcCodecProvider, object> ProxyFactory { get; init; }
+        public System.Func<SharpLink.Abstractions.IRpcContractChannel, SharpLink.Abstractions.IRpcCodecProvider, object> ProxyFactory { get; init; }
         public System.Func<SharpLink.Abstractions.IRpcCodecProvider, SharpLink.Abstractions.IRpcStub> StubFactory { get; init; }
     }
     public static class SharpLinkGeneratedManifestVersions
     {
-        public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+        public const string AbiIdentity = "sharplink-3.0-api5-prepared-contract-v2";
         public const int Api = 5;
         public const int Protocol = 2;
     }
     public sealed class SharpLinkGeneratedMethodDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor>
     {
-        public SharpLinkGeneratedMethodDescriptor(string Name, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool SupportsCancellation, string RequestSchema, string ResponseSchema, string Fingerprint) { }
+        public SharpLinkGeneratedMethodDescriptor(string Name, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool SupportsCancellation, string RequestSchema, string ResponseSchema, string Fingerprint, SharpLink.Abstractions.RpcMethodDescriptor Invocation) { }
         public string Fingerprint { get; init; }
+        public SharpLink.Abstractions.RpcMethodDescriptor Invocation { get; init; }
         public SharpLink.Abstractions.RpcMethodKind Kind { get; init; }
         public long MethodId { get; init; }
         public string Name { get; init; }
@@ -1141,6 +1169,11 @@ namespace SharpLink.Abstractions
         Stopped = 4,
         Faulted = 5,
     }
+    public sealed class SharpLinkServerVersionChangeResult
+    {
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkVersionPeerResult> Peers { get; }
+        public SharpLink.Abstractions.SharpLinkAssemblyReplacementResult Replacement { get; }
+    }
     public enum SharpLinkSessionRolloutMode : byte
     {
         FutureOnly = 0,
@@ -1190,6 +1223,116 @@ namespace SharpLink.Abstractions
     {
         public SharpLinkUnixDomainSocketAddress(string path) { }
         public string Path { get; }
+    }
+    public readonly struct SharpLinkVersionChange : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionChange>
+    {
+        public SharpLinkVersionChange(ulong TransitionId, SharpLink.Abstractions.SharpLinkVersionSession Session, SharpLink.Abstractions.SharpLinkVersionInitiator Initiator, SharpLink.Abstractions.SharpLinkVersionRegistration Current, SharpLink.Abstractions.SharpLinkVersionRegistration Candidate) { }
+        public SharpLink.Abstractions.SharpLinkVersionRegistration Candidate { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionRegistration Current { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionInitiator Initiator { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionSession Session { get; init; }
+        public ulong TransitionId { get; init; }
+    }
+    public readonly struct SharpLinkVersionChangeNotice : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionChangeNotice>
+    {
+        public SharpLinkVersionChangeNotice(SharpLink.Abstractions.SharpLinkVersionChangeStage Stage, SharpLink.Abstractions.SharpLinkVersionChange Change, bool LocalPublicationOccurred, SharpLink.Abstractions.SharpLinkVersionDeclineReason DeclineReason) { }
+        public SharpLink.Abstractions.SharpLinkVersionChange Change { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionDeclineReason DeclineReason { get; init; }
+        public bool LocalPublicationOccurred { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionChangeStage Stage { get; init; }
+    }
+    public enum SharpLinkVersionChangeStage
+    {
+        Proposed = 0,
+        Published = 1,
+        Completed = 2,
+        Declined = 3,
+        Failed = 4,
+        Deferred = 5,
+    }
+    public enum SharpLinkVersionCoordinationMode
+    {
+        Disabled = 0,
+        Manual = 1,
+        Automatic = 2,
+    }
+    public enum SharpLinkVersionDecision
+    {
+        Reject = 0,
+        Approve = 1,
+        Defer = 2,
+    }
+    public readonly struct SharpLinkVersionDeclarationResult : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionDeclarationResult>
+    {
+        public SharpLinkVersionDeclarationResult(SharpLink.Abstractions.SharpLinkVersionSession Session, SharpLink.Abstractions.SharpLinkVersionRegistration LocalRegistration, SharpLink.Abstractions.SharpLinkVersionDeclarationStatus Status, SharpLink.Abstractions.SharpLinkVersionRegistration? ObservedServerRegistration) { }
+        public SharpLink.Abstractions.SharpLinkVersionRegistration LocalRegistration { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionRegistration? ObservedServerRegistration { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionSession Session { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionDeclarationStatus Status { get; init; }
+    }
+    public enum SharpLinkVersionDeclarationStatus
+    {
+        Missing = 0,
+        Incompatible = 1,
+        Disabled = 2,
+        ApprovalRequired = 3,
+        NotReady = 4,
+        Observed = 5,
+    }
+    public enum SharpLinkVersionDeclineReason
+    {
+        None = 0,
+        Policy = 1,
+        MissingLocalRegistration = 2,
+        IncompatibleLocalRegistration = 3,
+        SourceUnavailable = 4,
+        CandidateChanged = 5,
+        PeerDisabled = 6,
+        ApprovalRequired = 7,
+        PeerNotEnrolled = 8,
+        PolicyDeferred = 9,
+    }
+    public enum SharpLinkVersionInitiator
+    {
+        Client = 1,
+        Server = 2,
+    }
+    public sealed class SharpLinkVersionInventory
+    {
+        public System.Guid PublisherEpoch { get; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkVersionRegistration> Registrations { get; }
+        public long Revision { get; }
+        public SharpLink.Abstractions.SharpLinkVersionSession? Session { get; }
+    }
+    public readonly struct SharpLinkVersionParticipant : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionParticipant>
+    {
+        public SharpLinkVersionParticipant(SharpLink.Abstractions.SharpLinkVersionSession Session, SharpLink.Abstractions.SharpLinkVersionInitiator Initiator) { }
+        public SharpLink.Abstractions.SharpLinkVersionInitiator Initiator { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionSession Session { get; init; }
+    }
+    public readonly struct SharpLinkVersionPeerResult : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionPeerResult>
+    {
+        public SharpLinkVersionPeerResult(SharpLink.Abstractions.SharpLinkVersionSession Session, SharpLink.Abstractions.SharpLinkVersionChange? Change, SharpLink.Abstractions.SharpLinkVersionDeclineReason DeclineReason, System.Guid? PreparedClientRegistrationId, bool ActivationSent) { }
+        public bool ActivationSent { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionChange? Change { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionDeclineReason DeclineReason { get; init; }
+        public System.Guid? PreparedClientRegistrationId { get; init; }
+        public SharpLink.Abstractions.SharpLinkVersionSession Session { get; init; }
+    }
+    public readonly struct SharpLinkVersionRegistration : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionRegistration>
+    {
+        public SharpLinkVersionRegistration(long ContractId, SharpLink.Abstractions.RpcHash128 AssemblyHash, System.Guid RegistrationId, long PublicationGeneration) { }
+        public SharpLink.Abstractions.RpcHash128 AssemblyHash { get; init; }
+        public long ContractId { get; init; }
+        public long PublicationGeneration { get; init; }
+        public System.Guid RegistrationId { get; init; }
+    }
+    public readonly struct SharpLinkVersionSession : System.IEquatable<SharpLink.Abstractions.SharpLinkVersionSession>
+    {
+        public SharpLinkVersionSession(System.Guid ServerInstanceId, System.Guid ServerRegistryEpoch, System.Guid PhysicalSessionId) { }
+        public System.Guid PhysicalSessionId { get; init; }
+        public System.Guid ServerInstanceId { get; init; }
+        public System.Guid ServerRegistryEpoch { get; init; }
     }
 }
 namespace SharpLink.Sdk

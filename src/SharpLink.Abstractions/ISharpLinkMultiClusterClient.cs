@@ -126,11 +126,10 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Stops every cluster slot and releases coordinator-owned state.</summary>
     ValueTask StopAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
-    TContract Get<TContract>() where TContract : IService;
-
-    /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
-    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+    /// <summary>Creates a local proxy on the child currently routed for the contract.</summary>
+    /// <remarks>Preparing or calling the returned proxy never moves it to a replacement child.</remarks>
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+        => throw new NotSupportedException("This multi-cluster client does not support prepared RPC proxies.");
 
     /// <summary>Attempts to capture the current status values for a configured cluster slot.</summary>
     /// <remarks>

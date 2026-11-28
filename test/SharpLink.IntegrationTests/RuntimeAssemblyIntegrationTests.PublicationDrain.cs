@@ -29,8 +29,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var endpoint = server ? (ISharpLinkAssemblyRegistry)harness.Server : harness.Client;
             var probe = typeof(PublicationProbeManifest).Assembly;
             Ensure(endpoint.RegisterAssembly(probe).Succeeded, "public metadata trigger registers");
-            var proxy = GetProxy(harness.Client, contract);
-            activeCall = InvokeValueTaskAsync<int>(proxy, contract, "BlockAsync", CancellationToken.None).AsTask();
+            var proxy = CreatePreparedGeneratedProxy(harness.Client, contract);
+            await proxy.PrepareAsync();
+            activeCall = InvokeValueTaskAsync<int>(proxy.Service, contract, "BlockAsync", CancellationToken.None).AsTask();
             await ((Task)service.GetProperty("Started")!.GetValue(null)!).WaitAsync(TimeSpan.FromSeconds(2));
             PublicationProbeManifest.OnRead = () =>
             {

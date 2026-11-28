@@ -43,7 +43,7 @@ public partial class IntegrationBehaviorTests
             });
         var client = (SharpLinkClient)harness.Client;
         var session = GetSingleCreditTestSession(client);
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
         var permitOwner = service.BlockingAddAsync(10, 11, CancellationToken.None).AsTask();
         Task? failedOneWay = null;
         var creditPreserved = false;

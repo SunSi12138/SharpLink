@@ -171,10 +171,18 @@ public partial class TransportConnectionIntegrationTests
         }
     }
 
+    private static async ValueTask<IConnectionBehaviorService> PrepareServiceAsync(
+        ISharpLinkClient client, CancellationToken cancellationToken = default)
+    {
+        var proxy = client.CreateProxy<IConnectionBehaviorService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4), cancellationToken);
+        return proxy.Service;
+    }
+
     private static async Task VerifyReconnectWithNewClientInstanceAsync(TransportKind kind)
     {
         await using var harness1 = await TransportHarness.CreateAsync(kind);
-        var svc1 = harness1.Client.Get<IConnectionBehaviorService>();
+        var svc1 = harness1.Service;
         Ensure(await svc1.PingAsync(20) == 21, $"{kind} first connect");
         await harness1.DisposeClientOnlyAsync();
         await Task.Delay(120);
@@ -184,7 +192,7 @@ public partial class TransportConnectionIntegrationTests
         {
             await client2.ConnectAsync();
             Ensure(client2.State == SharpLinkConnectionState.Ready, $"{kind} reconnect connect");
-            var svc2 = client2.Get<IConnectionBehaviorService>();
+            var svc2 = await PrepareServiceAsync(client2);
             Ensure(await svc2.PingAsync(30) == 31, $"{kind} reconnect ping");
         }
         finally
@@ -213,7 +221,7 @@ public partial class TransportConnectionIntegrationTests
         try
         {
             await client.ConnectAsync(cts.Token);
-            var service = client.Get<IConnectionBehaviorService>();
+            var service = await PrepareServiceAsync(client, cts.Token);
             await EnsureThrowsSharpLink(
                 service.EchoAsync(new string('x', 2_048)).AsTask(),
                 "oversized request",
@@ -289,6 +297,8 @@ public partial class TransportConnectionIntegrationTests
 
         public ISharpLinkClient Client { get; }
         public TransportEndpoint Endpoint { get; }
+        public IConnectionBehaviorService Service { get; }
+        public Task PendingCallStarted { get; }
 
         private TransportHarness(
             ISharpLinkServer server,
@@ -296,7 +306,9 @@ public partial class TransportConnectionIntegrationTests
             CancellationTokenSource serverCts,
             ISharpLinkClient client,
             TransportEndpoint endpoint,
-            Action cleanup)
+            Action cleanup,
+            IConnectionBehaviorService service,
+            Task pendingCallStarted)
         {
             _server = server;
             _serverTask = serverTask;
@@ -304,6 +316,8 @@ public partial class TransportConnectionIntegrationTests
             Client = client;
             Endpoint = endpoint;
             _cleanup = cleanup;
+            Service = service;
+            PendingCallStarted = pendingCallStarted;
         }
 
         public static Task<TransportHarness> CreateAsync(TransportKind kind) => CreateAsync(kind, default);
@@ -358,6 +372,11 @@ public partial class TransportConnectionIntegrationTests
                     }
             }
 
+            var pendingCallStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            serverBuilder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService
+            {
+                SlowUnaryStarted = pendingCallStarted
+            });
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>
             {
@@ -372,9 +391,29 @@ public partial class TransportConnectionIntegrationTests
             }, CancellationToken.None);
 
             var client = clientBuilder.Build();
-            await client.ConnectAsync(cts.Token);
-
-            return new TransportHarness(server, serverTask, cts, client, resolvedEndpoint, cleanup);
+            try
+            {
+                await client.ConnectAsync(cts.Token);
+                var service = await PrepareServiceAsync(client, cts.Token);
+                return new TransportHarness(server, serverTask, cts, client, resolvedEndpoint, cleanup,
+                    service, pendingCallStarted.Task);
+            }
+            catch
+            {
+                try
+                {
+                    await client.DisposeAsync();
+                    await cts.CancelAsync();
+                    await server.DisposeAsync();
+                    await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+                }
+                finally
+                {
+                    cts.Dispose();
+                    cleanup();
+                }
+                throw;
+            }
         }
 
         public async ValueTask DisposeServerOnlyAsync()
@@ -611,6 +650,7 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
     public string EndpointId { get; set; } = "default";
     public TaskCompletionSource<string>? SlowCallStarted { get; set; }
     public TaskCompletionSource<string>? SlowUnaryStarted { get; set; }
+    internal Task? ContinueSlowRange { get; init; }
 
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
 
@@ -638,6 +678,8 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
         for (var value = 0; value < count; value++)
         {
             yield return value;
+            if (value == 0 && ContinueSlowRange is { } continuation)
+                await continuation.WaitAsync(cancellationToken);
             await Task.Delay(delayMs, cancellationToken);
         }
     }

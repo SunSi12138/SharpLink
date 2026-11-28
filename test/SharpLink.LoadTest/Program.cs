@@ -21,6 +21,7 @@ namespace SharpLink.LoadTest;
 
 public static class Program
 {
+    private static readonly TimeSpan s_prepareTimeout = TimeSpan.FromSeconds(10);
     private static PerformanceEvidenceCollector? s_evidenceCollector;
 
     public static async Task Main(string[] args)
@@ -247,6 +248,8 @@ public static class Program
                 clientBuilder.DisableRequestTimeout();
             else if (options.RequestTimeout is { } requestTimeout)
                 clientBuilder.UseRequestTimeout(requestTimeout);
+            else
+                clientBuilder.UseRequestTimeout();
             await using var client = clientBuilder.Build();
             await RunClientOnlyAsync(options, metrics, client);
         }
@@ -363,8 +366,12 @@ public static class Program
             if (tailObserverClient is not null)
                 await tailObserverClient.ConnectAsync();
 
-            var rpc = client.Get<ILoadTestService>();
-            var tailObserverRpc = tailObserverClient?.Get<ILoadTestService>();
+            var proxy = client.CreateProxy<ILoadTestService>(new RpcProxyOptions
+            {
+                BalancePreparedEndpoints = options.UseDynamicResolver ||
+                                           (options.UseStaticEndpoints ? options.EndpointCount > 1 : options.MaxConnections > 1)
+            });
+            var tailObserver = tailObserverClient?.CreateProxy<ILoadTestService>();
             var retryOneWaySendQueueBackpressure =
                 options.Operation == "oneway" && options.MaxSendQueueBytes.HasValue;
             foreach (var concurrency in options.ConcurrencyConfig)
@@ -375,11 +382,12 @@ public static class Program
                 var warmupDurationSeconds = 0d;
                 if (options.WarmupSeconds > 0)
                 {
+                    await proxy.PrepareAsync(s_prepareTimeout);
                     Console.WriteLine($"[Client] warmup {options.WarmupSeconds}s @ c={concurrency}");
                     var warmupStarted = Stopwatch.GetTimestamp();
                     _ = await ExecuteStageAsync(
-                        rpc,
-                        tailObserverRpc,
+                        proxy.Service,
+                        null,
                         options,
                         options.WarmupSeconds,
                         0,
@@ -391,9 +399,13 @@ public static class Program
                     warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
                 }
 
+                // Include newly Ready Sessions at the boundary, never inside a timed worker.
+                await proxy.PrepareAsync(s_prepareTimeout);
+                if (tailObserver is not null)
+                    await tailObserver.PrepareAsync(s_prepareTimeout);
                 var result = await ExecuteStageAsync(
-                    rpc,
-                    tailObserverRpc,
+                    proxy.Service,
+                    tailObserver?.Service,
                     options,
                     options.DurationSeconds,
                     warmupDurationSeconds,

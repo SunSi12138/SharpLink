@@ -13,8 +13,8 @@ namespace SharpLink.Benchmarks;
 
 /// <summary>
 /// Reproducible storage/deadline evidence runner for issue #252. The historical class/CLI name is
-/// retained so recorded evidence commands remain runnable, but outputs describe the final flat-table
-/// implementations rather than the rejected segmented prototype.
+/// retained so recorded evidence commands remain runnable. The implementation label records
+/// whether this checkout uses eager-flat, lazy-flat or inline-then-flat storage.
 /// </summary>
 internal static class PendingRequestSegmentationEvidenceRunner
 {
@@ -180,7 +180,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
             active,
             deadlines,
             iterations,
-            inspectedSlots = GetOptionalBoolean(table, "SlotsMaterialized") is false ? 0 : Capacity,
+            inspectedSlots = GetDeadlineSlotSpan(table),
             nanosecondsPerScan = elapsedTicks * 1_000_000_000d / Stopwatch.Frequency / iterations
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
@@ -230,7 +230,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
             p50LatenessMilliseconds = Percentile(lateness, 0.50),
             p95LatenessMilliseconds = Percentile(lateness, 0.95),
             maxLatenessMilliseconds = lateness[^1],
-            inspectedSlots = GetOptionalBoolean(table, "SlotsMaterialized") is false ? 0 : Capacity
+            inspectedSlots = GetDeadlineSlotSpan(table)
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
     }
@@ -411,16 +411,22 @@ internal static class PendingRequestSegmentationEvidenceRunner
     }
 
     private static string GetImplementation(PendingRequestTable table)
-        => GetOptionalBoolean(table, "SlotsMaterialized").HasValue
-            ? "lazy-flat"
-            : "eager-flat";
+        => GetOptionalProperty<int>(table, "DeadlineSlotSpan").HasValue ? "inline-then-flat"
+            : GetOptionalBoolean(table, "SlotsMaterialized").HasValue ? "lazy-flat" : "eager-flat";
+
+    private static int GetDeadlineSlotSpan(PendingRequestTable table)
+        => GetOptionalProperty<int>(table, "DeadlineSlotSpan")
+            ?? (GetOptionalBoolean(table, "SlotsMaterialized") is false ? 0 : Capacity);
 
     private static bool? GetOptionalBoolean(object instance, string propertyName)
+        => GetOptionalProperty<bool>(instance, propertyName);
+
+    private static T? GetOptionalProperty<T>(object instance, string propertyName) where T : struct
     {
         var property = instance.GetType().GetProperty(
             propertyName,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        return property?.GetValue(instance) is bool value ? value : null;
+        return property?.GetValue(instance) is T value ? value : null;
     }
 
     private static int GetInt32(

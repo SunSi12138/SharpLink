@@ -15,8 +15,8 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         await using var harness = await Harness.CreateAsync(coordinator);
         var workerCount = GetPortableWorkerCount(harness);
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceA = await harness.ClientA.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
+        var serviceB = await harness.ClientB.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         var payloadA = Enumerable.Repeat((byte)0x61, PayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x62, PayloadBytes).ToArray();
 
@@ -66,8 +66,8 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         await using var harness = await Harness.CreateAsync(coordinator);
         var workerCount = GetPortableWorkerCount(harness);
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceA = await harness.ClientA.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
+        var serviceB = await harness.ClientB.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         var payloadA = Enumerable.Repeat((byte)0x71, PayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x72, PayloadBytes).ToArray();
 

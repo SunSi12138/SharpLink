@@ -174,6 +174,13 @@ internal sealed partial class StreamManager
     /// <inheritdoc />
     internal ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
+        TryDispatchChunk(requestId, streamId, payload, out var dispatch);
+        return dispatch;
+    }
+
+    internal bool TryDispatchChunk(
+        long requestId, ushort streamId, ReadOnlySequence<byte> payload, out ValueTask dispatch)
+    {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
         if (dispatchersByRequestId is not null &&
             dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
@@ -187,18 +194,20 @@ internal sealed partial class StreamManager
                 if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 {
                     _acceptBytes(requestId, streamId, encodedByteCount);
-                    return CompleteDispatch(
+                    dispatch = CompleteDispatch(
                         entry,
                         dispatcher is IStreamDispatchLease leased
                             ? leased.DispatchAcquiredAsync(payload, encodedByteCount)
                             : consumptionAware.DispatchAsync(payload, encodedByteCount));
+                    return true;
                 }
 
-                return CompleteDispatch(
+                dispatch = CompleteDispatch(
                     entry,
                     dispatcher is IStreamDispatchLease dispatchLease
                         ? dispatchLease.DispatchAcquiredAsync(payload, encodedByteCount)
                         : dispatcher.DispatchAsync(payload));
+                return true;
             }
             catch
             {
@@ -207,8 +216,9 @@ internal sealed partial class StreamManager
             }
         }
 
-        Interlocked.Increment(ref _droppedStreamFrames);
-        return ValueTask.CompletedTask;
+        RecordUnroutedStreamData();
+        dispatch = ValueTask.CompletedTask;
+        return false;
     }
 
     private static void ThrowIfPeerTerminal(DispatcherEntry entry)
@@ -405,104 +415,6 @@ internal sealed partial class StreamManager
         ThrowCompletionFailures(failures);
     }
 
-    internal void CompleteRequestStreams(long requestId, Exception? exception)
-    {
-        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
-        if (dispatchersByRequestId is null ||
-            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
-        {
-            return;
-        }
-
-        List<Exception>? failures = null;
-        var completed = requestDispatchers.CompleteAll(exception, ref failures);
-        SharpLinkTelemetry.AddActiveStreams(-completed);
-        Interlocked.Add(ref _activeStreamCount, -completed);
-        ThrowCompletionFailures(failures);
-    }
-
-    /// <summary>
-    /// Removes every receive stream owned by one request and waits for StreamData dispatches that
-    /// acquired their entries before removal. Callers may release request-owned Codec/module state
-    /// only after this barrier completes.
-    /// </summary>
-    internal ValueTask CompleteRequestStreamsAfterDispatchesAsync(long requestId, Exception? exception)
-    {
-        var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
-        if (dispatchersByRequestId is null ||
-            !dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
-            return ValueTask.CompletedTask;
-
-        var entries = requestDispatchers.TakeAllForDrain();
-        if (entries.Length == 0)
-            return ValueTask.CompletedTask;
-
-        SharpLinkTelemetry.AddActiveStreams(-entries.Length);
-        Interlocked.Add(ref _activeStreamCount, -entries.Length);
-        List<Exception>? failures = null;
-        for (var index = 0; index < entries.Length; index++)
-        {
-            try
-            {
-                entries[index].Entry.Dispatcher.Complete(exception);
-            }
-            catch (Exception completionException)
-            {
-                (failures ??= []).Add(completionException);
-            }
-        }
-
-        if (entries.All(static item => !item.Entry.HasActiveDispatches))
-        {
-            FinalizeRequestDrain(requestId, entries, ref failures);
-            ThrowCompletionFailures(failures);
-            return ValueTask.CompletedTask;
-        }
-
-        return AwaitRequestDispatchesAndFinalizeAsync(requestId, entries, failures);
-    }
-
-    private async ValueTask AwaitRequestDispatchesAndFinalizeAsync(
-        long requestId,
-        RequestDrainEntry[] entries,
-        List<Exception>? failures)
-    {
-        for (var index = 0; index < entries.Length; index++)
-            await entries[index].Entry.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
-
-        FinalizeRequestDrain(requestId, entries, ref failures);
-        ThrowCompletionFailures(failures);
-    }
-
-    private void FinalizeRequestDrain(
-        long requestId,
-        RequestDrainEntry[] entries,
-        ref List<Exception>? failures)
-    {
-        for (var index = 0; index < entries.Length; index++)
-        {
-            var item = entries[index];
-            try
-            {
-                if (item.Entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-                    consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-                _streamCompleted?.Invoke(requestId, item.StreamId);
-            }
-            catch (Exception completionException)
-            {
-                (failures ??= []).Add(completionException);
-            }
-            try
-            {
-                item.Entry.Detach();
-            }
-            catch (Exception detachException)
-            {
-                (failures ??= []).Add(detachException);
-            }
-        }
-    }
-
     private static void ThrowCompletionFailures(List<Exception>? failures)
     {
         if (failures is { Count: 1 })
@@ -519,7 +431,8 @@ internal sealed partial class StreamManager
         Action<int> releaseBytes,
         Action capacityExceeded,
         Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
-        bool retainUntilLocalCompletion = false)
+        bool retainUntilLocalCompletion = false,
+        StreamTerminalOwner retainedInputOwner = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamCount);
         for (var index = 1; index <= streamCount; index++)
@@ -533,7 +446,8 @@ internal sealed partial class StreamManager
                     releaseBytes,
                     capacityExceeded,
                     decodeCompressed,
-                    retainUntilLocalCompletion));
+                    retainUntilLocalCompletion,
+                    retainedInputOwner: retainedInputOwner));
         }
     }
 
@@ -585,6 +499,16 @@ internal sealed partial class StreamManager
         ReadOnlySequence<byte> wirePayload,
         int originalByteCount,
         out ValueTask dispatch)
+        => TryDispatchPreAdmissionCompressed(
+            requestId, streamId, wirePayload, originalByteCount, out dispatch, out _);
+
+    internal bool TryDispatchPreAdmissionCompressed(
+        long requestId,
+        ushort streamId,
+        ReadOnlySequence<byte> wirePayload,
+        int originalByteCount,
+        out ValueTask dispatch,
+        out bool hasRoute)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
         if (dispatchersByRequestId is null ||
@@ -592,18 +516,33 @@ internal sealed partial class StreamManager
             !requestDispatchers.TryAcquire(streamId, out var entry))
         {
             dispatch = default;
+            hasRoute = false;
             return false;
         }
 
+        hasRoute = true;
         try
         {
             ThrowIfPeerTerminal(entry);
-            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
+            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+                (preAdmission.HasCompressedDecoder || preAdmission.IsDiscarding))
             {
                 _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-                dispatch = CompleteDispatch(
-                    entry,
-                    preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount));
+                ValueTask received;
+                try
+                {
+                    received = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
+                }
+                catch (SharpLinkException exception) when (
+                    exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
+                {
+                    // Report a provider failure after handing the accounted frame back to the
+                    // caller. Its mailbox already returned the bytes; do not drain it twice.
+                    entry.Release();
+                    dispatch = ValueTask.FromException(exception);
+                    return true;
+                }
+                dispatch = CompleteDispatch(entry, received);
                 return true;
             }
             if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
@@ -675,6 +614,7 @@ internal sealed partial class StreamManager
     }
 
     internal long DroppedStreamFrames => Volatile.Read(ref _droppedStreamFrames);
+    internal void RecordUnroutedStreamData() => Interlocked.Increment(ref _droppedStreamFrames);
     internal int ActiveStreamCount => Volatile.Read(ref _activeStreamCount);
     internal bool IsTerminated => Volatile.Read(ref _termination) is not null;
     internal bool HasMaterializedRoutingState => Volatile.Read(ref _dispatchersByRequestId) is not null;
@@ -1156,6 +1096,14 @@ internal sealed partial class StreamManager
             return completions.WaitForDispatchesDrainedAsync();
         }
 
+        public void AfterDispatchesDrained(Action action)
+        {
+            var completions = GetOrCreateCompletions();
+            completions.SetAfterDispatchesDrained(action);
+            if (!HasActiveDispatches)
+                completions.SignalDispatchesDrained();
+        }
+
         public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
         {
             if (IsDetached)
@@ -1207,6 +1155,7 @@ internal sealed partial class StreamManager
         {
             private int _dispatchesDrainedSignaled;
             private int _detachedSignaled;
+            private Action? _afterDispatchesDrained;
             private TaskCompletionSource? _dispatchesDrainedCompletion;
             private TaskCompletionSource? _detachedCompletion;
 
@@ -1214,6 +1163,14 @@ internal sealed partial class StreamManager
             {
                 if (Interlocked.Exchange(ref _dispatchesDrainedSignaled, 1) == 0)
                     Volatile.Read(ref _dispatchesDrainedCompletion)?.TrySetResult();
+                Interlocked.Exchange(ref _afterDispatchesDrained, null)?.Invoke();
+            }
+
+            internal void SetAfterDispatchesDrained(Action action)
+            {
+                Volatile.Write(ref _afterDispatchesDrained, action);
+                if (Volatile.Read(ref _dispatchesDrainedSignaled) != 0)
+                    Interlocked.Exchange(ref _afterDispatchesDrained, null)?.Invoke();
             }
 
             internal void SignalDetached()

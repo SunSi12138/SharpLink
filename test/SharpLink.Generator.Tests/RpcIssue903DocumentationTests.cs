@@ -10,29 +10,25 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task Issue903DocumentedSingleMetadataEntryMustCompileAgainstActualMetadataSource()
+    public Task Issue903DocumentedPreparedMetadataEntryMustCompileAgainstActualClient()
     {
         var markdown = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "doc-calls-and-streaming.md"));
         var codeBlock = markdown.Split("```csharp", StringSplitOptions.None)
             .Skip(1)
             .Select(part => part.Split("```", StringSplitOptions.None)[0])
-            .Single(block => block.Contains("GetWithMetadata<IMyService>", StringComparison.Ordinal));
-        var metadataSource = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "SharpLinkMetadata.source.cs"));
+            .Single(block => block.Contains("CreateProxy<IMyService>", StringComparison.Ordinal) &&
+                block.Contains("RpcProxyOptions", StringComparison.Ordinal));
         var wrapper = $$"""
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Abstractions;
 using SharpLink.Sdk;
 
-public interface IMyService { Task<int> GetAsync(int id, CancellationToken token); }
-public sealed class Client
-{
-    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : class
-        => throw new NotSupportedException();
-}
+public interface IMyService : IService { Task<int> GetAsync(int id, CancellationToken token); }
 public static class DocumentedMetadataExample
 {
-    public static async Task Use(Client client, int id, CancellationToken cancellationToken)
+    public static async Task Use(ISharpLinkClient client, int id, CancellationToken cancellationToken)
     {
         {{codeBlock}}
     }
@@ -40,16 +36,12 @@ public static class DocumentedMetadataExample
 """;
         var compilation = CSharpCompilation.Create(
             "SharpLinkMetadataDocumentationCompilation",
-            [
-                CSharpSyntaxTree.ParseText("global using System;"),
-                CSharpSyntaxTree.ParseText(metadataSource),
-                CSharpSyntaxTree.ParseText(wrapper)
-            ],
-            GeneratorTestHarness.GetPlatformReferences(),
+            [CSharpSyntaxTree.ParseText(wrapper)],
+            GeneratorTestHarness.GetPlatformReferences().Add(RealAbstractionsCompilationReference.Create()),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         var errors = compilation.GetDiagnostics()
             .Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-        Ensure(errors.Length == 0, $"metadata docs must compile against real SharpLinkMetadata.cs: {FormatDiagnostics(errors)}");
+        Ensure(errors.Length == 0, $"metadata docs must compile against the real client and metadata API: {FormatDiagnostics(errors)}");
         return Task.CompletedTask;
     }
 }

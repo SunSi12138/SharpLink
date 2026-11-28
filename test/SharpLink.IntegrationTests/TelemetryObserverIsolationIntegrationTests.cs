@@ -9,7 +9,7 @@ public sealed class TelemetryObserverIsolationIntegrationTests
     public async Task ThrowingCompletionMeterListenerShouldNotReplaceResultOrPoisonSameSession()
     {
         await using var harness = await TelemetryObserverIsolationHarness.CreateAsync();
-        var service = harness.Client.Get<IInterceptorTestService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
         var initialSession = ExtractSessionId(await service.DescribeAsync(1));
 
         using (var listener = new ThrowingMeterScope("sharplink.calls.completed", "client"))
@@ -32,7 +32,7 @@ public sealed class TelemetryObserverIsolationIntegrationTests
     public async Task ThrowingFailedMeterListenerShouldNotReplaceAuthoritativeErrorOrPoisonSameSession()
     {
         await using var harness = await TelemetryObserverIsolationHarness.CreateAsync();
-        var service = harness.Client.Get<IInterceptorTestService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
         var initialSession = ExtractSessionId(await service.DescribeAsync(5));
 
         using (var listener = new ThrowingMeterScope("sharplink.calls.failed", "client"))
@@ -55,7 +55,7 @@ public sealed class TelemetryObserverIsolationIntegrationTests
     public async Task ThrowingActivityStoppedCallbackShouldNotReplaceResultOrPoisonSameSession()
     {
         await using var harness = await TelemetryObserverIsolationHarness.CreateAsync();
-        var service = harness.Client.Get<IInterceptorTestService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IInterceptorTestService>();
         var initialSession = ExtractSessionId(await service.DescribeAsync(3));
 
         using (var listener = new ThrowingActivityStoppedScope())

@@ -16,8 +16,8 @@ public class CompressionPersistentDecodePreActivationRaceTests
 
         using var cancellation = new CancellationTokenSource();
         var payload = Enumerable.Repeat((byte)0x5a, LargePayloadBytes).ToArray();
-        var call = harness.Client.Get<IPersistentDecodeReviewService>()
-            .MeasureAsync(payload, cancellation.Token)
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
+        var call = service.MeasureAsync(payload, cancellation.Token)
             .AsTask();
 
         try

@@ -76,7 +76,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await RegisterAllAsync(harness, plugin);
         var originalServerContract = GetDynamicModule(harness.Server, plugin.ContractAssembly);
         await WaitForRemoteContractManifestAsync(harness.Client, contract);
-        var proxy = GetProxy(harness.Client, contract);
+        var proxy = await PrepareGeneratedServiceAsync(harness.Client, contract);
         var consume = typeof(RuntimeAssemblyIntegrationTests).GetMethod(nameof(ConsumePhysicalTail),
             BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(item);
         Task Invoke(string method, params object[] arguments)

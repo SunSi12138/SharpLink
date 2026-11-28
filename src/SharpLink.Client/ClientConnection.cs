@@ -72,7 +72,7 @@ internal sealed class ClientConnection :
            Session.CanAcceptCalls;
 
     public int ActiveCallCount
-        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
+        => PendingCalls.ActiveCount + PendingCalls.NStudyProducerCount + Volatile.Read(ref _auxiliaryActiveCallCount);
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
 
@@ -125,6 +125,9 @@ internal sealed class ClientConnection :
         admitted = null!;
         return false;
     }
+
+    // A caller prepared for a physical Session may not follow a refresh redirect.
+    internal bool TryReserveExactCallAdmission() => TryReserveOwnCallAdmission(notifyTestHook: true);
 
     internal bool TryReserveSessionRefreshCommit()
     {

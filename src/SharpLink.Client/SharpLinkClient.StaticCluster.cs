@@ -102,7 +102,9 @@ internal sealed partial class SharpLinkClient
         public ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
-            AttemptOutcomeState? attemptOutcome)
+            AttemptOutcomeState? attemptOutcome,
+            bool reserveCall = true,
+            NStudyPreparedSite? prepared = null)
         {
             var snapshot = _topology.SelectionSnapshot;
             var selectionPolicy = _topology.CaptureSelectionPolicy();
@@ -113,9 +115,17 @@ internal sealed partial class SharpLinkClient
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint is ready.");
             }
 
-            var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
+            ulong unprepared = 0;
+            if (prepared is not null)
+                for (var i = 0; i < endpoints.Length; i++)
+                    if (!prepared.CanSelectFrom(endpoints[i].ReadyConnections))
+                        unprepared |= 1UL << i;
+            var excluded = (retrySelection?.GetExcludedMask(snapshot, endpoints.Length, unprepared) ?? 0UL) | unprepared;
+            var all = endpoints.Length == 64 ? ulong.MaxValue : (1UL << endpoints.Length) - 1;
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
+                if (prepared is not null && excluded == all)
+                    break;
                 var selectedIndex = _topology.SelectEndpoint(snapshot, selectionPolicy, excluded);
                 if ((uint)selectedIndex >= (uint)endpoints.Length || (excluded & (1UL << selectedIndex)) != 0)
                 {
@@ -130,11 +140,12 @@ internal sealed partial class SharpLinkClient
                     excluded |= 1UL << selectedIndex;
                     continue;
                 }
-                var connection = SelectConnection(endpoints[selectedIndex]);
+                var connection = EndpointSelectionKernel.SelectConnection(endpoints[selectedIndex].ReadyConnections, reserveCall, prepared);
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
-                    if (connection.ActiveCallCount != 0)
+                    // Expansion opens transport only. It does not add the new Session to a prepared cohort.
+                    if (reserveCall && connection.ActiveCallCount != 0)
                         EnsureExpansion(endpoints[selectedIndex]);
                     return connection;
                 }
@@ -736,9 +747,6 @@ internal sealed partial class SharpLinkClient
                 ReadyConnections: publication.ReadyConnections,
                 TargetReadyEndpoints: TargetReadyEndpointCount));
         }
-
-        private static ClientConnection? SelectConnection(EndpointState endpoint)
-            => EndpointSelectionKernel.SelectConnection(endpoint.ReadyConnections);
 
         private EndpointState? FindEndpointLocked(ClientConnection connection)
         {

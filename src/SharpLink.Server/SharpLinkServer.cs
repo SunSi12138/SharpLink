@@ -82,6 +82,13 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _exceptionMapper = composition.ExceptionMapper;
         _serviceProvider = composition.ServiceProvider;
         _staticManifests = composition.StaticManifests;
+        foreach (var registration in composition.Services.Values)
+        {
+            var manifest = _staticManifests.First(
+                manifest => ReferenceEquals(manifest.OwnerAssembly, registration.ContractType.Assembly));
+            registration.PrepareNStudyMethods(manifest,
+                manifest.Contracts.Single(contract => contract.ContractType == registration.ContractType));
+        }
         _admissionController = composition.AdmissionController;
         _connectionAdmission = composition.ConnectionAdmission;
         _shutdownPlan = composition.ShutdownPlan;
@@ -170,8 +177,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private SharpLinkCallContextSnapshot CreateCallContext(
         ServerConnectionState connection,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         long requestId,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
@@ -182,11 +188,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         if (interceptors.Count == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
-        var method = GetMethodDescriptor(stub, methodId);
         if (method.Kind != RpcMethodKind.OneWay)
         {
             ReservePreInvocationRequestStreams(
-                session,
+                connection,
                 method.ClientStreamCount,
                 requestId,
                 cancellationToken);
@@ -227,22 +232,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             metadata,
             cancellationToken,
             interceptors);
-    }
-
-    private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)
-    {
-        if (!stub.TryGetMethodDescriptor(methodId, out var method))
-        {
-            method = new RpcMethodDescriptor(
-                stub.InterfaceHash,
-                methodId,
-                RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-        }
-        return method;
     }
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)

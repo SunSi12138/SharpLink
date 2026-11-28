@@ -10,13 +10,19 @@
 
 - Fixed a deadline wait that could remain pending when the clock crossed its absolute deadline between sampling the remaining time and installing the relative timer delay. Task waits and deadline-limited retry backoff now claim an expiry observed immediately after arming, without requiring another timer tick.
 
-- Preserve receive-credit accounting for late client-stream frames while a completed server call still owns its request entry. Terminal processing drains only an existing already-discarding route, validates compressed original-byte lengths, and keeps route completion bound to the exact captured stream owner.
+- Return credit for client-stream input that the server discards, including input arriving after admission rejects a call. Discarded compressed frames use the declared original length without running the decompressor.
 
 ### Added
 
-- Added the optional `SharpLink.GenerationControl` package for peer generation declaration and synchronization. The RPC surface is declaration-only: Client can query Server state and a Client-initiated duplex sync stream exchanges both endpoints' current inventories/revisions, while each peer reconciles locally through application-owned stage/validate/activate/drain policy. Artifact transport, rollout policy, dynamic loading, and NativeAOT process replacement remain local application/deployment concerns; Protocol v2 and ordinary RPC hot paths are unchanged.
+- Added native 3.0 contract inventory and coordinated assembly replacement. Eligible calls already executing stay on the old registration through physical completion; activated peers can use the replacement on the same connection. See [coordinating a service replacement](doc/coordinated-version-change.md).
+
+- Added the optional `SharpLink.GenerationControl` package for application-owned deployment inventories. One peer can query the other or exchange inventories over a client-initiated duplex stream. Each peer still controls its own rollout and artifact handling. This package adds no protocol frames of its own.
 
 ### Changed
+
+- **3.0 breaking change:** Create a contract-bound proxy with `CreateProxy` and call `PrepareAsync` before RPCs; this replaces `Get`, `GetWithMetadata` and the unbound channel. Rebuild both peers and generated assemblies together for wire minor 6 and generated API 5. See the [3.0 migration guide](doc/rpc-channel-3.0-migration.md).
+
+- Client-streaming and duplex calls start producing input after publishing the request, without waiting for a per-call acknowledgement. Input remains flow-controlled and the server still must admit the call before delivering input to the service.
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 

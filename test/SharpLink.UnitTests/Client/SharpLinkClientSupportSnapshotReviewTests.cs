@@ -90,7 +90,8 @@ public sealed class SharpLinkClientSupportSnapshotReviewTests
             endpoint => transports[endpoint.Id]);
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, oldTransport);
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var request = await oldTransport.Connection
             .WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(2));

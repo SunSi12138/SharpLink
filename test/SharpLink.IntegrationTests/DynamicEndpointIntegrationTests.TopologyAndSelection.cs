@@ -38,10 +38,11 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
-            Ensure(await service.GetEndpointIdAsync() == "first", "initial resolver endpoint");
+            var proxy = await PrepareBalancedProxyAsync(client);
+            var service = proxy.Service;
+            Ensure(await service.GetEndpointIdAsync() == "first" && first.OpenBindings == 1, "initial resolver endpoint");
 
-            resolver.Publish(new SharpLinkEndpointSnapshot(2,
+            await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(2,
             [
                 Endpoint("first", first.Port, "blue"),
                 Endpoint("second", second.Port, "green")
@@ -51,21 +52,31 @@ public sealed partial class DynamicEndpointIntegrationTests
             Ensure(factoryCreates == 2, "only the added endpoint should create a factory");
 
             selector.Zone = "blue";
-            Ensure(await service.GetEndpointIdAsync() == "first", "blue selector before attributes update");
-            resolver.Publish(new SharpLinkEndpointSnapshot(3,
+            Ensure(await service.GetEndpointIdAsync() == "first" && second.OpenBindings == 0,
+                "the added Ready endpoint has not inherited a binding");
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+            Ensure(second.OpenBindings == 1, "an explicit Prepare adds the second connection to the cohort");
+
+            await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(3,
             [
                 Endpoint("first", first.Port, "red"),
                 Endpoint("second", second.Port, "blue")
             ]));
-            await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "second", TimeSpan.FromSeconds(3));
+            Ensure(await service.GetEndpointIdAsync() == "second" && second.OpenBindings == 1,
+                "the attributes-only update routes to the already prepared second endpoint");
             Ensure(factoryCreates == 2, "attributes-only update must not create a new endpoint factory");
 
-            resolver.Publish(new SharpLinkEndpointSnapshot(4, [Endpoint("second", second.Port, "blue")]));
+            await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(4, [Endpoint("second", second.Port, "blue")]));
             await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
             Ensure(await service.GetEndpointIdAsync() == "second", "removed endpoint must leave the candidate set");
 
-            resolver.Publish(new SharpLinkEndpointSnapshot(5, [Endpoint("second", replacement.Port, "blue")]));
-            await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "replacement", TimeSpan.FromSeconds(4));
+            await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(5, [Endpoint("second", replacement.Port, "blue")]));
+            await client.WaitForReadinessAsync(1).AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+            await EnsureUnpreparedRouteAsync(service);
+            Ensure(replacement.OpenBindings == 0, "reuse of the endpoint ID does not reuse a physical binding");
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+            Ensure(await service.GetEndpointIdAsync() == "replacement" && replacement.OpenBindings == 1,
+                "explicit Prepare binds the replacement physical connection");
             Ensure(factoryCreates == 3, "address change must create exactly one new generation factory");
         }
         finally
@@ -178,6 +189,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "A/B topology before replacement");
+        var proxy = await PrepareBalancedProxyAsync(client);
+        var service = proxy.Service;
 
         await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(5,
         [
@@ -194,7 +207,10 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "A/C replacement topology");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        Ensure(await service.GetEndpointIdAsync() == "first" && third.OpenBindings == 0,
+            "the already prepared survivor serves until the preferred replacement is prepared");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await service.GetEndpointIdAsync() == "third" && third.OpenBindings == 1,
             "the replacement topology must route to the new C endpoint generation");
 
         var lastAccepted = client.GetReadinessSnapshot();
@@ -205,7 +221,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         ]));
         Ensure(client.GetReadinessSnapshot() == lastAccepted,
             "a stale resolver snapshot must leave readiness facts unchanged");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        Ensure(await service.GetEndpointIdAsync() == "third",
             "a stale resolver snapshot must not restore the retired B endpoint");
 
         await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(6,
@@ -217,7 +233,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         ]));
         Ensure(client.GetReadinessSnapshot() == lastAccepted,
             "a rejected resolver snapshot must leave readiness facts unchanged");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        Ensure(await service.GetEndpointIdAsync() == "third",
             "a rejected resolver snapshot must retain the last accepted topology");
     }
 
@@ -270,7 +286,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "empty-to-two endpoint recovery");
-        var endpointId = await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync();
+        var proxy = await PrepareBalancedProxyAsync(client);
+        var endpointId = await proxy.Service.GetEndpointIdAsync();
         Ensure(endpointId is "first" or "second", "topology recovery RPC");
     }
 
@@ -309,9 +326,11 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "two active endpoints before retirement");
-        var service = client.Get<IConnectionBehaviorService>();
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         await using var stream = service.SlowRangeAsync(3, 500, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first stream item");
+        Ensure(await first.StreamStarted.WaitAsync(TimeSpan.FromSeconds(3)) == "first",
+            "the accepted stream started on the endpoint being removed");
 
         await resolver.PublishAndWaitAsync(
             new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
@@ -331,6 +350,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         Ensure(await stream.MoveNextAsync() && stream.Current == 1, "draining stream second item");
         Ensure(await stream.MoveNextAsync() && stream.Current == 2, "draining stream third item");
         Ensure(!await stream.MoveNextAsync(), "draining stream completion");
+        await WaitUntilAsync(() => first.ActiveConnections == 0, TimeSpan.FromSeconds(3));
     }
 
     [Test]
@@ -349,8 +369,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var call = Task.Run(async () =>
-            await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync());
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        var call = Task.Run(async () => await service.GetEndpointIdAsync());
         await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
         try
@@ -400,8 +420,8 @@ public sealed partial class DynamicEndpointIntegrationTests
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("east", east.Port, "east")]));
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
 
-        var exception = await CaptureSharpLinkException(
-            client.Get<IConnectionBehaviorService>().GetEndpointIdAsync().AsTask());
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        var exception = await CaptureSharpLinkException(service.GetEndpointIdAsync().AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
             "a strict dynamic selector must not be bypassed for one candidate");
     }
@@ -430,7 +450,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var service = (await PrepareBalancedProxyAsync(client)).Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic endpoint");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));

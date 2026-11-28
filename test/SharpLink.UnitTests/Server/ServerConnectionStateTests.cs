@@ -66,6 +66,145 @@ public class ServerConnectionStateTests
     }
 
     [Test]
+    public async Task CloseShouldReleaseIdleGrantsAndKeepEachBorrowReturnable()
+    {
+        var state = CreateState(static () => { });
+        Ensure(state.MarkReady(null), "connection ready");
+        var bindings = state.NStudyBindings;
+        await using var active = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var idle = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var invalidating = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(bindings.TryInstall(active, out var activeId), "install the active grant");
+        Ensure(bindings.TryInstall(idle, out var idleId), "install another independent idle grant");
+        Ensure(bindings.TryInstall(invalidating, out _), "install a different registration");
+        Ensure(bindings.Seal(invalidating.NStudyTarget), "an invalidation is pending before closure");
+        Ensure(bindings.TryBorrow(activeId, out _, out var use), "borrow the original slot");
+        using (use)
+        {
+            Ensure(use.CanPrepareDispatch() && bindings.Snapshot() == (2, 0, 1), "one exact borrowed grant is active");
+            await state.CloseAsync();
+            Ensure(bindings.Snapshot() == (0, 1, 1) && !use.CanPrepareDispatch() &&
+                   !use.TryEnterExecution(isStream: false, out _, out _) &&
+                   !bindings.TryResolve(idleId, out _) && !bindings.TryInstall(idle, out _) &&
+                   bindings.TakeInvalidated(new long[NStudyWire.BindingLimit]) == 0,
+                "close drops idle grants and pending notices without forgetting the exact physical borrower");
+        }
+        Ensure(bindings.Snapshot() == (0, 0, 0), "the last original borrow can return normally");
+    }
+
+    [Test]
+    public async Task BindingGroupCutClosesOldStartsAndKeepsTheirSlotsUntilReturn()
+    {
+        var table = new NStudyServerBindings();
+        await using var group = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var sibling = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(table.TryInstall(group, out var first), "install the first group member");
+        Ensure(table.TryInstall(group, out var second), "install the second group member");
+        Ensure(table.TryInstall(sibling, out var other), "install the unrelated member");
+        Ensure(table.TryBorrow(first, out _, out var firstUse), "capture the first exact slot");
+        using (firstUse)
+        {
+            Ensure(table.TryBorrow(second, out _, out var secondUse), "capture the second exact slot");
+            using (secondUse)
+            {
+                Ensure(firstUse.CanPrepareDispatch() && secondUse.CanPrepareDispatch(),
+                    "both original routes pass preparation before the cut");
+                Ensure(table.Seal(group.NStudyTarget), "the group has pending invalidations");
+                Ensure(!firstUse.CanPrepareDispatch() && !secondUse.CanPrepareDispatch() &&
+                       !firstUse.TryEnterExecution(isStream: false, out _, out _) &&
+                       !secondUse.TryEnterExecution(isStream: true, out _, out _) && table.Snapshot() == (1, 2, 2),
+                    "the cut denies both new starts but keeps both physical owners until they return");
+                Ensure(table.TryResolve(other, out var current) && ReferenceEquals(current, sibling),
+                    "the cut does not close the unrelated binding");
+            }
+        }
+
+        Ensure(table.Snapshot() == (1, 0, 0), "both old slots are reclaimable only after return");
+        Ensure(table.TryInstall(sibling, out var replacement) && NStudyWire.SlotIndex(replacement) == NStudyWire.SlotIndex(first) &&
+               replacement != first && !table.TryResolve(first, out _), "slot reuse does not reopen the previous incarnation");
+        Ensure(table.TryBorrow(replacement, out _, out var nextUse), "capture the new incarnation");
+        using (nextUse)
+        {
+            Ensure(nextUse.TryEnterExecution(isStream: false, out var selected, out var lease) &&
+                   ReferenceEquals(selected, sibling) && !lease.IsAcquired,
+                "the new static incarnation can start without a dynamic module lease");
+            table.Release(replacement);
+            Ensure(!nextUse.CanPrepareDispatch() && !nextUse.TryEnterExecution(isStream: false, out _, out _),
+                "single-binding release prevents subsequent preparation and execution claims");
+        }
+    }
+
+    [Test]
+    public async Task BindingTableGrowthPreservesRetiringBorrowAndPendingNotice()
+    {
+        var table = new NStudyServerBindings();
+        await using var retiring = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var live = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(table.TryInstall(retiring, out var original), "install the initial grant");
+        Ensure(table.TryBorrow(original, out _, out var borrow), "hold the old grant through table growth");
+        long last = 0;
+        using (borrow)
+        {
+            Ensure(table.Seal(retiring.NStudyTarget), "retirement records a notice while the borrower is active");
+            for (var index = 1; index < NStudyWire.BindingLimit; index++)
+            {
+                Ensure(table.TryInstall(live, out var binding) && NStudyWire.SlotIndex(binding) == index &&
+                       table.TryResolve(binding, out var current) && ReferenceEquals(current, live),
+                    "growing the table must retain published indices and exact service selection");
+                last = binding;
+            }
+
+            Ensure(!borrow.CanPrepareDispatch() && !borrow.TryEnterExecution(isStream: false, out _, out _) &&
+                   table.Snapshot() == (NStudyWire.BindingLimit - 1, 1, 1) &&
+                   !table.TryInstall(live, out _), "an old physical borrower still occupies one of the 64 slots");
+            var notices = new long[NStudyWire.BindingLimit];
+            Ensure(table.TakeInvalidated(notices) == 1 && notices[0] == original && table.TakeInvalidated(notices) == 0,
+                "growth preserves the queued notice for the exact original token");
+        }
+
+        Ensure(table.TryInstall(live, out var replacement) &&
+               NStudyWire.SlotIndex(replacement) == NStudyWire.SlotIndex(original) && replacement != original &&
+               !table.TryResolve(original, out _) && table.IsRetired(original),
+            "only physical return enables reuse at the next incarnation");
+        Ensure(table.TryBorrow(last, out _, out var lastUse), "borrow the last protocol slot after growth");
+        using (lastUse)
+        {
+            Ensure(lastUse.CanPrepareDispatch(), "the last protocol slot retains its independent open state");
+            table.Release(last);
+            Ensure(!lastUse.CanPrepareDispatch() && table.TryResolve(replacement, out _),
+                "retiring the last slot leaves the first slot open");
+        }
+        table.Close();
+        Ensure(table.Snapshot() == (0, 0, 0), "close reclaims all grown slots");
+    }
+
+    [Test]
+    public async Task OpenBorrowAdmitsOriginalStaticRegistrationAfterTableGrowth()
+    {
+        var table = new NStudyServerBindings();
+        await using var first = CreateConnectionRegistration(new ThrowingService("never activated"));
+        await using var sibling = CreateConnectionRegistration(new ThrowingService("never activated"));
+        Ensure(table.TryInstall(first, out var original), "publish the original static binding");
+        Ensure(table.TryBorrow(original, out _, out var borrow), "borrow it before table growth");
+        using (borrow)
+        {
+            for (var index = 1; index < NStudyWire.BindingLimit; index++)
+                Ensure(table.TryInstall(sibling, out _), "fill the table through every growth step");
+
+            Ensure(borrow.TryEnterExecution(isStream: false, out var selected, out var lease) &&
+                   ReferenceEquals(selected, first) && !lease.IsAcquired,
+                "the physical borrow still admits its original static service, without a dynamic lease");
+            table.Release(original);
+            Ensure(!borrow.TryEnterExecution(isStream: false, out _, out _) && !table.TryInstall(sibling, out _),
+                "release closes admission but the physical borrow still pins the full table");
+        }
+
+        Ensure(table.TryInstall(sibling, out var next) && next != original &&
+               NStudyWire.SlotIndex(next) == NStudyWire.SlotIndex(original),
+            "return frees the old slot for a new incarnation");
+    }
+
+    [Test]
     public async Task CloseShouldWaitForSessionLoopToReleaseItsReadBuffer()
     {
         var input = new Pipe();
@@ -381,17 +520,11 @@ public class ServerConnectionStateTests
     private sealed class StubMarker : IRpcStub
     {
         public long InterfaceHash => 1;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-            => ValueTask.CompletedTask;
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-            => ValueTask.CompletedTask;
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
-            CancellationToken cancellationToken) => ValueTask.CompletedTask;
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
+        {
+            method = default;
+            return false;
+        }
     }
 
     private static void Ensure(bool condition, string message)

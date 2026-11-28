@@ -22,9 +22,9 @@ Runtime is not globally trimmable. Generated correctness no longer depends on fi
 
 ## Compatibility and consequences
 
-3.0 uses generated API 5 and exact ABI identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`, a single increment from released 2.0.3/API4. The exact identity rejects incompatible development artifacts that also happen to use API 5. This work does not incorporate the independent #754 method-shape proposal. Before a combined 3.0 release, #754 and #762 must use one coordinated generated identity, generator output contract and reviewed public API baseline; sharing the API5 number is not compatibility.
+The standalone UnsafeBlit candidate used API 5 identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`. The combined 3.0 upgrade in [#999](https://github.com/SunSi12138/SharpLink/issues/999) keeps API 5, one increment from released 2.0.3/API 4, but uses the exact identity `sharplink-3.0-api5-prepared-contract-v2`. It rejects generated assemblies built with the old development identity even though both say API 5. The owner-local UnsafeBlit rules above still apply.
 
-The raw wire representation, physical ABI requirements and CodecHash remain unchanged. The public process-wide `SharpLinkGeneratedUnsafeBlitCatalog` is removed. Arbitrary unmanaged types without a generated or explicit codec now fail in ordinary JIT as well as trimmed/AOT applications. See the migration guide for the distinction between standalone runtime registration and generated RPC policy.
+The UnsafeBlit decision does not change raw payload layout, physical ABI requirements or CodecHash. The combined upgrade changes the RPC protocol as described in the [3.0 migration guide](../rpc-channel-3.0-migration.md). The public process-wide `SharpLinkGeneratedUnsafeBlitCatalog` is removed. Arbitrary unmanaged types without a generated or explicit codec now fail in ordinary JIT as well as trimmed/AOT applications. See the UnsafeBlit migration guide for standalone registration versus generated RPC policy.
 
 ## Alternatives considered
 

@@ -8,8 +8,9 @@
 - `AssemblyVersion` 与 `FileVersion` 始终使用四段纯数字；预发布后缀只进入包版本和 `InformationalVersion`。
 - 冻结前更新 `CHANGELOG.md`、包引用示例和迁移说明。公开 API、Protocol v2、生成代码、契约 Manifest 或默认行为的变化必须明确标注兼容性。
 - `2.0.0` 公开 API 基线是 2.x 历史基线；3.0 是破坏性 major 升级，不以保持 2.0.3 API/二进制兼容为门禁。发布包 API 对照用于审阅和迁移证据，不代表无破坏变更承诺。补丁版本仍不得进行破坏性 API 或 wire 变更。
-- 3.0 的 Generated ABI 为 API 5 / 精确 owner-bound identity，网络仍为 Protocol v2 minor 4；这两条版本轴分别验收。
+- 3.0 的 Generated ABI 为 API 5 / 精确 identity `sharplink-3.0-api5-prepared-contract-v2`，网络为 Protocol v2 minor/floor 6；两条版本轴分别验收。部署时重新生成并一并更换客户端、服务端和插件。
 - `eng/verify-protocol-v2-cross-version.sh` 保留历史路径，但实际验收同一批当前 NuGet 包的双进程互操作，不是真实 2.0.3 ↔ 3.0 矩阵。必须保留当前包成功路径及不兼容 minor、required capability、ABI identity、契约 hash 的拒绝测试；不自行扩大跨 major 成功互操作承诺。测试存在或文档列出范围不等于最终候选已经通过。
+- Release Gate 的 `pack` 任务还使用同批 NuGet 包，在 Linux JIT 的两个独立进程之间执行一次真实热换代。新旧服务实现分开构建；同一物理连接上，原代理恢复后调用新实现，已开始的请求由旧实现完成。应用释放 R1 后，检查其程序集及可收集加载上下文已经回收，新实现和无关 RPC 仍可调用。运行证据在 `packaged-coordination` 工件中；此项是功能门禁，不计入换代延迟或 NativeAOT 动态加载验收。
 
 ## 本地冻结门禁
 
@@ -20,7 +21,13 @@
 3. 打包全部九个 NuGet 包并确认：版本一致、依赖版本正确、仓库提交正确、主程序集具有 XML 文档、符号包具有 portable PDB、SDK 包具有 Generator。
 4. 使用空 NuGet 缓存执行 `SharpLink.PackageSmoke`，避免项目引用或开发机缓存掩盖缺包。
 5. 在支持的平台执行独立进程 SharedMemory NativeAOT smoke；其余平台由 Release Gate 矩阵完成。
-6. 在 GitHub Actions 上启动 10 分钟 release soak（TCP / SharedMemory 并行）；本地不运行长稳。2026-10-03 发布负责人明确要求约 10 分钟：release soak 默认由 5 小时改为 10 分钟，同次发布验收的 Generated ABI Dynamic-module Churn 由 2 小时改为 10 分钟；日常定时 ABI 长稳仍为 2 小时。release soak 检查点由每 30 分钟改为每 2 分钟，以覆盖缩短后的窗口；并发、重启间隔、故障注入、恢复与资源归零检查保持。最终报告必须记录实际时长与精确 SHA；ABI 每轮完整执行，末轮可能使实际时长超过 10 分钟，额外时间取决于完整末轮。缩短观察窗口不代表已验证 5 小时稳定性。发布前等待当前必需长稳正常结束并通过，已经观察到的非注入错误、崩溃、恢复超时或资源泄漏仍须先处理。2.0.0 当时获批的 5 小时异步验收例外只属于该历史版本，不自动沿用到后续发布。
+   - 发布门禁还直接运行以实际包发布的 NativeAOT 消费者：三个桌面平台验证 TCP，Linux 加验 SharedMemory。两端清单必须与同一条认证连接的本地注册一致；静态代理须在正常拒绝动态注册后继续可用。运行记录保留在各平台的 `packaged-trim` 工件中。
+6. 对当前候选在 GitHub Actions 手动运行 [Nightly Regression](../.github/workflows/nightly.yml)，设置 `release_soak: true`；本地不运行长稳。核对以下工件来自同一候选 SHA，记录实际时长：
+   - `release-soak` 的 TCP 和 SharedMemory 两个并行任务，各跑约 10 分钟，每 2 分钟记录检查点。保留并发、正常滚动重启、恢复和资源归零检查；受控故障覆盖仍按相应回归门禁执行。
+   - `generated-abi-dynamic-module-soak` 的 Generated ABI Dynamic-module Churn，目标 600 秒，每轮完整执行，实际时长可能更长。日常定时 ABI 长稳仍为两小时。
+   - Nightly 还会启动常规性能烟测和分配趋势，单独报告，不把它们当作下面的完整性能验收。[Release Gate](../.github/workflows/release-gate.yml) 的 120 秒 SharedMemory 烟测也不能抵销这两项长稳。
+
+   发布前等待本次所需长稳成功结束；非注入错误、崩溃、恢复超时或资源泄漏须先处理。按 2026-10-03 决定采用约 10 分钟的观察窗口，不以此证明 5 小时稳定性；2.0.0 当时获批的异步验收例外不沿用。
 7. 在同一精确提交执行下述 [3.0 完整性能验证](#30-完整性能验证)，保存原始 JSON 和环境快照，只把可复现汇总写入仓库。[历史成绩页](performance.md) 不能代替当前候选的验证。
 8. 执行传递依赖漏洞和弃用扫描；高危漏洞或运行时可达的中危漏洞必须在发布前解决。
 

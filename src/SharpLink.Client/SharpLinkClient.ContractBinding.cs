@@ -15,7 +15,6 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(manifest);
 
-        var isInitial = false;
         lock (_remoteContractManifestGate)
         {
             PruneDisconnectedRemoteContractManifestsLocked();
@@ -26,10 +25,7 @@ internal sealed partial class SharpLinkClient
                 _remoteContractManifests[session] = manifest;
             }
             else
-            {
                 _remoteContractManifests.Add(session, manifest);
-                isInitial = true;
-            }
 
             var snapshot = new RemoteContractManifestBinding[_remoteContractManifests.Count];
             var index = 0;
@@ -38,13 +34,6 @@ internal sealed partial class SharpLinkClient
             Volatile.Write(ref _remoteContractManifestSnapshot, snapshot);
         }
         PulseRemoteContractWaiters();
-
-        // Get<T>() historically supports pre-connection proxy acquisition. The first manifest
-        // for a session validates every proxy that already escaped to user code before that
-        // connection is published as callable. Later manifest refreshes intentionally do not
-        // rebind or invalidate held proxy references; later Get<T>() calls validate the refresh.
-        if (isInitial)
-            ValidateAcquiredContractAssemblies();
     }
 
     private void PruneDisconnectedRemoteContractManifestsLocked()
@@ -65,52 +54,21 @@ internal sealed partial class SharpLinkClient
             _remoteContractManifests.Remove(disconnected[index]);
     }
 
-    private void ValidateAcquiredContractAssemblies()
-    {
-        foreach (var registration in _assemblyRegistry.CaptureProxySnapshot().Values)
-        {
-            if (Volatile.Read(ref registration.Proxy) is null)
-                continue;
-            ValidateRemoteContractAssembly(registration);
-        }
-    }
-
-    private void ValidateRemoteContractAssembly(ClientProxyRegistration registration)
-    {
-        var contract = registration.Descriptor;
-        var localManifest = FindOwningManifest(registration);
-        var localHash = localManifest.RpcAssemblyHash;
-        if (localHash.IsEmpty)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.FailedPrecondition,
-                $"RPC contract '{contract.ContractName}' ({contract.ContractId}) is owned by assembly " +
-                $"'{localManifest.OwnerAssembly.FullName}', but its local RpcAssemblyHash is empty.");
-        }
-
-        var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
-        for (var index = 0; index < manifests.Length; index++)
-        {
-            var binding = manifests[index];
-            var session = binding.Session;
-            if (!session.IsConnected || session.ProtocolPhase != RpcSessionProtocolPhase.Ready)
-                continue;
-
-            ValidateRemoteContractAssembly(
-                registration,
-                localManifest,
-                localHash,
-                session,
-                binding.Manifest);
-        }
-
-        // With no ready remote identity yet, preserve the existing synchronous API: callers may
-        // acquire a proxy before ConnectAsync. Initial-manifest publication validates such proxies
-        // before the connection becomes available to calls.
-    }
-
     private ISharpLinkGeneratedAssemblyManifest FindOwningManifest(ClientProxyRegistration registration)
         => _assemblyRegistry.FindOwningManifest(registration);
+
+    private void ValidateNStudyRemoteContractOn(ClientProxyRegistration registration, RpcSession session)
+    {
+        foreach (var binding in Volatile.Read(ref _remoteContractManifestSnapshot))
+        {
+            if (!ReferenceEquals(binding.Session, session))
+                continue;
+            ValidateRemoteContractAssembly(registration, FindOwningManifest(registration),
+                registration.NStudyAssemblyHash, session, binding.Manifest);
+            return;
+        }
+        throw NStudyPreparedSite.Unavailable();
+    }
 
     private static void ValidateRemoteContractAssembly(
         ClientProxyRegistration registration,

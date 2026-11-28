@@ -27,8 +27,9 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
         var publicServer = (ISharpLinkServer)harness.Server;
         var source = harness.Server.CurrentAdmissionProgramForTests
             ?? throw new Exception("resource update regression requires enabled Admission");
-        var blocker = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(1, 2, CancellationToken.None).AsTask();
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var compression = await harness.ClientB.PrepareTestServiceAsync<ICompressionService>();
+        var blocker = unary.BlockingAddAsync(1, 2, CancellationToken.None).AsTask();
 
         try
         {
@@ -50,7 +51,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             var decompressionsBeforeRejectedRequest = serverProvider.DecompressCount;
             var payload = Enumerable.Repeat((byte)0x51, 32 * 1024).ToArray();
             var failure = await CaptureFailureAsync(
-                harness.ClientB.Get<ICompressionService>().EchoBytesAsync(payload).AsTask());
+                compression.EchoBytesAsync(payload).AsTask());
 
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "Admission update must not replace or bypass ServerResourceGovernor call capacity");
@@ -65,8 +66,10 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(5)) == 3,
                 "capacity owner must complete normally after Admission update");
 
-            var response = await harness.ClientB.Get<ICompressionService>()
-                .EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            // Receiving the response does not prove the server's physical permit was returned.
+            await WaitUntilAsync(() => harness.Server.ActiveCallCountForDiagnostics == 0,
+                "old physical call releases the sole global capacity permit");
+            var response = await compression.EchoBytesAsync(payload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(response.SequenceEqual(payload),
                 "controlled capacity rejection after update must leave the connection reusable");
             Ensure(serverProvider.DecompressCount == decompressionsBeforeRejectedRequest + 1,
@@ -84,6 +87,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
     public async Task PreAdmissionStreamAccountingShouldRemainExactAcrossRuntimeUpdate()
     {
         TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
         await using var harness = await RunningHarness.CreateAsync(
             serverRuntimeConfigure: options =>
             {
@@ -100,16 +104,17 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             ?? throw new Exception("stream update regression requires global concurrency state");
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var active = harness.ClientA.Get<ITestService>()
-            .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
-        Task<int>? queued = null;
+        var unary = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var recovery = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
+        var oneWay = await harness.ClientB.PrepareTestServiceAsync<ICompressionService>();
+        var active = unary.BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
+        Task? queued = null;
         AdmissionProgram? replacement = null;
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = harness.ClientB.Get<ICompressionService>()
-                .UploadBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
+            queued = oneWay.NotifyStreamBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2 &&
                       kernel.QueuedCalls == 1 && kernel.QueuedBytes > 0 &&
@@ -124,6 +129,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
                 options.MaxQueuedCalls = 1;
                 options.MaxQueuedBytes = 32 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(5);
+                options.QueueOneWayCalls = true;
             });
             replacement = harness.Server.CurrentAdmissionProgramForTests
                 ?? throw new Exception("stream update regression requires N+1");
@@ -143,8 +149,9 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
             Ensure(await active.WaitAsync(TimeSpan.FromSeconds(5)) == 7,
                 "old active Request must complete after N+1 publication");
             producerRelease.TrySetResult();
-            Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(5)) == StreamItemBytes * 2,
-                "queued generation N stream must replay and complete after runtime update");
+            await queued.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(5)) == StreamItemBytes * 2,
+                "the actual queued OneWay handler replays both items after runtime update");
 
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics == 0 &&
@@ -153,7 +160,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
                 "stream bytes, Admission reservation, waiter, and retired generation must all drain exactly");
             Ensure(original.ReclaimCount == 1 && original.DuplicateReleaseAttempts == 0,
                 "generation N stream path must reclaim exactly once without duplicate release");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await recovery.AddAsync(20, 22) == 42,
                 "queued-stream update must leave the connection reusable");
 
             publicServer.DisableAdmissionControl();
@@ -187,6 +194,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
         options.MaxQueuedCalls = 2;
         options.MaxQueuedBytes = 64 * 1024;
         options.MaxQueueDelay = TimeSpan.FromSeconds(10);
+        options.QueueOneWayCalls = true;
     }
 
     private static byte[] CreateStreamItem(byte value)

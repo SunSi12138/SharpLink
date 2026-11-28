@@ -136,7 +136,11 @@ internal static class HoldCapacityRunner
             }
 
             await Task.WhenAll(clients.Select(static client => client.ConnectAsync().AsTask()));
-            var services = clients.Select(static client => client.Get<ILoadTestService>()).ToArray();
+            // This capacity test uses exactly one physical connection per client.
+            // Complete preparation before issuing any control or measured calls.
+            var proxies = clients.Select(static client => client.CreateProxy<ILoadTestService>()).ToArray();
+            await Task.WhenAll(proxies.Select(static proxy => proxy.PrepareAsync(s_controlRpcTimeout).AsTask()));
+            var services = proxies.Select(static proxy => proxy.Service).ToArray();
             var originalSessionIds = await Task.WhenAll(services.Select(static service => service
                 .GetSessionIdAsync()
                 .AsTask()

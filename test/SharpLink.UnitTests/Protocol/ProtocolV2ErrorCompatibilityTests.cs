@@ -3,12 +3,18 @@ namespace SharpLink.UnitTests.Protocol;
 public class ProtocolV2ErrorCompatibilityTests
 {
     [Test]
-    public async Task StructuredErrorShapeShouldRejectPublishedMinorThreePeers()
+    [Arguments((ushort)3)]
+    [Arguments((ushort)4)]
+    [Arguments((ushort)5)]
+    public async Task PreparedProfileShouldRejectEarlierWireMinors(ushort legacyMinor)
     {
-        Ensure(ProtocolV2Constants.MinorVersion == 4, "2.0 increments the published minor 3 once");
+        // Development minor 5 required an input receipt and cannot interoperate.
+        const ushort preparedProfileMinor = 6;
+        Ensure(ProtocolV2Constants.MinorVersion == preparedProfileMinor,
+            "this test must run on the exact prepared wire generation under rehearsal");
         Ensure(
-            ProtocolV2Constants.MinimumCompatibleMinorVersion == 4,
-            "published minor-3 peers must be rejected before decoding the structured error shape");
+            ProtocolV2Constants.MinimumCompatibleMinorVersion == preparedProfileMinor,
+            "the profile must reject older wire grammars before structured error decoding");
 
         var policy = ProtocolV2NegotiationPolicy.Create(
             ProtocolV2Constants.MinorVersion,
@@ -17,7 +23,6 @@ public class ProtocolV2ErrorCompatibilityTests
             1024 * 1024,
             16 * 1024 * 1024,
             Array.Empty<SharpLinkCompressionProviderBinding>());
-        var legacyMinor = checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1));
         var legacyOffer = new ProtocolV2HandshakeRequest(
             legacyMinor,
             ProtocolV2Capabilities.None,

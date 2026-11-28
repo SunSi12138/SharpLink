@@ -7,6 +7,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
     public async Task InitiallyDisabledPublicEnableShouldGovernNextRequest()
     {
         await using var harness = await Harness.CreateAsync();
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var publicServer = (ISharpLinkServer)harness.Server;
         publicServer.EnableAdmissionControl(options => options.Global.UseConcurrency(1));
         var program = harness.Server.CurrentAdmissionProgramForTests
@@ -18,7 +19,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
         try
         {
             var failure = await CaptureFailureAsync(
-                harness.ClientA.Get<ITestService>().AddAsync(20, 22).AsTask());
+                service.AddAsync(20, 22).AsTask());
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "request captured after public enable returns must be governed by the new program");
         }
@@ -27,7 +28,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
             held.Lease!.Dispose();
         }
 
-        Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await service.AddAsync(20, 22) == 42,
             "connection must remain reusable after controlled admission rejection");
         publicServer.DisableAdmissionControl();
         await WaitUntilAsync(() => program.IsReclaimed,
@@ -40,6 +41,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
     public async Task RequestCapturedDisabledShouldRemainBypassWhenPublicEnablePublishes()
     {
         await using var harness = await Harness.CreateAsync();
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
         var publicServer = (ISharpLinkServer)harness.Server;
         AdmissionDecision held = default;
         AdmissionProgram? replacement = null;
@@ -62,14 +64,14 @@ public sealed class DynamicAdmissionRuntimeControlTests
                 Ensure(held.IsAcquired, "test must occupy the newly published permit");
             };
 
-            Ensure(await harness.ClientA.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await service.AddAsync(20, 22) == 42,
                 "request that captured disabled must bypass the later public enable");
             Ensure(replacement is not null,
                 "capture seam must have published the public enabled generation");
             SharpLinkServer.AfterAdmissionCaptureForTests = null;
 
             var nextFailure = await CaptureFailureAsync(
-                harness.ClientA.Get<ITestService>().AddAsync(20, 22).AsTask());
+                service.AddAsync(20, 22).AsTask());
             Ensure(nextFailure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "next request must observe the public enabled publication");
         }
@@ -95,9 +97,10 @@ public sealed class DynamicAdmissionRuntimeControlTests
         TestService.ResetBlockingAdd();
         await using var harness = await Harness.CreateAsync(
             admissionConfigure: options => options.Global.UseConcurrency(1));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var secondService = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
         var publicServer = (ISharpLinkServer)harness.Server;
         var original = harness.Server.CurrentAdmissionProgramForTests!;
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
 
         try
@@ -107,7 +110,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
             publicServer.DisableAdmissionControl();
             Ensure(original.IsRetired && !original.IsReclaimed && original.ActiveUses == 1,
                 "disable must retire the current program without cancelling its captured active request");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await secondService.AddAsync(20, 22) == 42,
                 "request captured after disable returns must bypass admission immediately");
             Ensure(!active.IsCompleted,
                 "public disable must not cancel the already-admitted active request");
@@ -143,9 +146,10 @@ public sealed class DynamicAdmissionRuntimeControlTests
                 options.MaxQueuedBytes = 64 * 1024;
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             });
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var secondService = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
         var publicServer = (ISharpLinkServer)harness.Server;
         var original = harness.Server.CurrentAdmissionProgramForTests!;
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? queuedTwoWay = null;
 
@@ -162,7 +166,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
             publicServer.DisableAdmissionControl();
             Ensure(original.IsRetired && !original.IsReclaimed && original.ActiveUses == 2,
                 "active and queued captures must keep the retired generation alive");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(3, 4) == 7,
+            Ensure(await secondService.AddAsync(3, 4) == 7,
                 "new request must bypass admission while old queued work remains retained");
 
             TestService.ReleaseBlockingAdd();
@@ -203,8 +207,9 @@ public sealed class DynamicAdmissionRuntimeControlTests
         await using var harness = await Harness.CreateAsync(
             serverRuntimeConfigure: options => options.FlowControl.MaxConcurrentCallsPerServer = 1,
             admissionConfigure: options => options.Global.UseConcurrency(2));
+        var service = await harness.ClientA.PrepareTestServiceAsync<ITestService>();
+        var secondService = await harness.ClientB.PrepareTestServiceAsync<ITestService>();
         var publicServer = (ISharpLinkServer)harness.Server;
-        var service = harness.ClientA.Get<ITestService>();
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
 
         try
@@ -212,7 +217,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
             publicServer.DisableAdmissionControl();
             var failure = await CaptureFailureAsync(
-                harness.ClientB.Get<ITestService>().AddAsync(20, 22).AsTask());
+                secondService.AddAsync(20, 22).AsTask());
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
                 "ServerResourceGovernor call capacity must remain enforced while admission is runtime-disabled");
         }
@@ -223,7 +228,9 @@ public sealed class DynamicAdmissionRuntimeControlTests
 
         Ensure(await active.WaitAsync(TimeSpan.FromSeconds(5)) == 2,
             "resource-governor owner must complete normally");
-        Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+        await WaitUntilAsync(() => harness.Server.ActiveCallCountForDiagnostics == 0,
+            "active call releases its server capacity before the recovery request");
+        Ensure(await secondService.AddAsync(20, 22) == 42,
             "controlled call-capacity rejection must keep the connection reusable");
         AssertKernelEmpty(harness.Server.AdmissionStateKernelForTests!, "runtime-disabled resource governor");
     }

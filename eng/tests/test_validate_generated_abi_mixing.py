@@ -64,6 +64,8 @@ class AbiMixingValidationTests(unittest.TestCase):
             ("build", "MixedContract.cs(1,15): error CS0246: The type UnrelatedTypo could not be found"),
             ("build", "MixedContract.cs(1,15): error CS0029: Cannot convert string to int"),
             ("build", "MixedContract.cs(1,15): error CS0246: IRpcStub could not be found"),
+            ("build", "obj/IRpcStub.g.cs(1,15): error CS0246: UnrelatedType could not be found"),
+            ("build", "MixedContract.cs(1,15): error CS0246: RpcStub.g.cs IRpcContractChannel could not be found"),
             ("restore", "error NU1301: Unable to load the service index from source"),
             ("restore", "error NU1101: Unable to find package SharpLink.Sdk"),
             ("restore", "warning NU1605: Package downgrade: SharpLink.Abstractions"),
@@ -81,6 +83,12 @@ class AbiMixingValidationTests(unittest.TestCase):
             "build",
             "obj/Release/net10.0/SharpLink.Generator/RpcStub.g.cs(4,3): error CS0246: IRpcStub could not be found",
         ))
+        for member in ("IRpcContractChannel", "RpcGeneratedPreparedMethod", "RpcGeneratedMethodExecutor"):
+            with self.subTest(member=member):
+                self.assertTrue(MOD.is_expected_rejection(
+                    "build",
+                    f"obj/Release/net10.0/SharpLink.Generator/RpcStub.g.cs(4,3): error CS0246: {member} could not be found",
+                ))
 
 
 if __name__ == "__main__":

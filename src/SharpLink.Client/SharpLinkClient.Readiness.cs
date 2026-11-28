@@ -84,6 +84,12 @@ internal sealed partial class SharpLinkClient
                 exception);
         }
 
+        return await WaitForPublishedReadinessAsync(minimumReadyEndpoints, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<SharpLinkClientReadinessSnapshot> WaitForPublishedReadinessAsync(
+        int minimumReadyEndpoints, CancellationToken cancellationToken)
+    {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();

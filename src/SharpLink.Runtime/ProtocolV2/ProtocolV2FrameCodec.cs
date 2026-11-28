@@ -102,6 +102,8 @@ public static class ProtocolV2FrameParser
         var flags = ParseFlags(flagsRaw);
         var requestId = unchecked((ulong)requestIdBits);
         ValidateHeader(type, flags, requestId);
+        if (NStudyWire.IsBindingFrame(type))
+            NStudyWire.ValidateLength(type, payloadLength);
         if (buffer.Length - ProtocolV2Constants.HeaderBytes < payloadLength)
             return false;
 
@@ -131,6 +133,16 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
         (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
+        (byte)NStudyWire.Bind => NStudyWire.Bind,
+        (byte)NStudyWire.BindAck => NStudyWire.BindAck,
+        (byte)NStudyWire.Release => NStudyWire.Release,
+        (byte)NStudyWire.Invalidated => NStudyWire.Invalidated,
+        (byte)NStudyWire.OneWayInputRequest => NStudyWire.OneWayInputRequest,
+        (byte)NStudyWire.Coordination => NStudyWire.Coordination,
+        (byte)NStudyWire.InventoryQuery => NStudyWire.InventoryQuery,
+        (byte)NStudyWire.InventoryReply => NStudyWire.InventoryReply,
+        (byte)NStudyWire.TargetDeclaration => NStudyWire.TargetDeclaration,
+        (byte)NStudyWire.TargetDeclarationReply => NStudyWire.TargetDeclarationReply,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -155,7 +167,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.ContractManifest or
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
             ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-            ProtocolV2FrameType.SessionRefreshRequested;
+            ProtocolV2FrameType.SessionRefreshRequested or NStudyWire.Release or NStudyWire.Invalidated;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
         if (!controlFrame && requestId == 0)
@@ -173,6 +185,11 @@ public static class ProtocolV2FrameParser
                                            ProtocolV2FrameFlags.Cancellable |
                                            ProtocolV2FrameFlags.OneWay |
                                            ProtocolV2FrameFlags.HasReturn,
+            NStudyWire.OneWayInputRequest => ProtocolV2FrameFlags.HasTimeBudget |
+                                             ProtocolV2FrameFlags.HasMetadata |
+                                             ProtocolV2FrameFlags.Compressed |
+                                             ProtocolV2FrameFlags.Cancellable |
+                                             ProtocolV2FrameFlags.OneWay,
             ProtocolV2FrameType.Response => ProtocolV2FrameFlags.Error |
                                             ProtocolV2FrameFlags.Truncated |
                                             ProtocolV2FrameFlags.Compressed,
@@ -204,6 +221,8 @@ public static class ProtocolV2FrameParser
         {
             throw Violation("One-way requests cannot request a return payload.");
         }
+        if (type == NStudyWire.OneWayInputRequest && (flags & ProtocolV2FrameFlags.OneWay) == 0)
+            throw Violation("A private OneWay input frame must use the OneWay flag.");
     }
 
     private static void ValidatePayloadShape(
@@ -236,6 +255,10 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.Request:
                 ValidateRequestPayload(payload, flags, limits.MaxMetadataBytes);
+                break;
+            case NStudyWire.OneWayInputRequest:
+                _ = NStudyWire.ReadOneWayInputCount(payload);
+                ValidateRequestPayload(payload.Slice(1), flags, limits.MaxMetadataBytes);
                 break;
             case ProtocolV2FrameType.Response:
                 if ((flags & ProtocolV2FrameFlags.Error) != 0)
@@ -306,6 +329,15 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.SessionRefreshRequested:
                 _ = ProtocolV2PayloadCodec.ReadSessionRefreshRequested(payload);
+                break;
+            case NStudyWire.Bind:
+                _ = NStudyWire.ReadBind(payload);
+                break;
+            case NStudyWire.BindAck:
+                _ = NStudyWire.ReadAck(payload);
+                break;
+            case NStudyWire.Release:
+                _ = NStudyWire.ReadRelease(payload);
                 break;
         }
     }

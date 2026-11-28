@@ -15,7 +15,7 @@
 - 调用侧 cancellation、monotonic deadline、consumer-abandoned 等终态仲裁。
 - 每次连接的认证 payload 创建。
 - 动态 Contract/Proxy assembly 的注册、替换、注销、generation publication 与 drain 生命周期。
-- Generator Proxy 最终调用的 `IRpcChannel` 实现。
+- Generator Proxy 使用的 `IRpcContractChannel`，以及每条物理 Session 的契约准备和绑定。
 - Client interceptor、调用侧 telemetry 和 resilience policy 的实例级编排。
 
 ## 依赖边界
@@ -57,8 +57,8 @@ Client 不拥有：
 
 1. Builder 收集 endpoint、transport、auth、resilience、interceptor 和 Runtime Context 相关配置。
 2. Build 验证配置并冻结客户端实例；调用路径不再依赖可变 Builder。
-3. `ConnectAsync` 建立初始连接/Session，并发布可用于调用的连接快照。
-4. 调用期间 Client 选择 endpoint/connection、建立 pending call，并把请求交给 Runtime。
+3. `ConnectAsync` 建立初始连接/Session 并发布就绪连接。用 `CreateProxy` 创建的本地代理仍须显式 `PrepareAsync`，在要用的 Session 上准备契约路由。
+4. 调用期间 Client 从已准备的连接选择路由、建立 pending call，并把请求交给 Runtime。
 5. `RegisterAssembly` / `ReplaceAssemblyAsync` / `UnregisterAssemblyAsync` 由 Client 实例发布动态 Contract/Proxy generation；被替换或注销的旧 generation 从新调用选择中移除，但保持到相关调用排空后再释放对应 Codec/Manifest runtime registration。
 6. 断连、GoAway 或 topology 变化由 Client policy 更新候选集合，并按配置进行重连/替换/排空。
 7. `StopAsync` 是终止边界：停止接收新工作，取消并等待 Client 自己拥有的后台 worker 和 pending lifecycle，再释放所拥有的 Session/transport factory；仍被合法 owner 持有的动态 generation 按其 drain/release 规则完成最终清理。
@@ -93,7 +93,7 @@ Client 负责 endpoint discovery、负载均衡、Retry、Circuit Breaker、admi
 
 Client 位于用户调用热路径，架构上要求：
 
-- Generator Proxy 通过静态 `IRpcChannel` 路径进入 Client，不依赖运行时代理生成或契约扫描。
+- Generator Proxy 通过已准备的 `IRpcContractChannel` 进入 Client，不依赖运行时代理生成或逐次扫描契约。
 - 单 endpoint、单 connection、无 interceptor/telemetry/resilience 的默认路径保持最短，不因未启用能力创建额外 worker 或策略对象图。
 - endpoint snapshot 和 connection candidate 集合以不可变/原子发布方式供读路径使用，避免调用热路径争用 topology writer lock。
 - pending call、request operation 等高频状态必须有界；池化复用不能改变单一完成/清理语义。

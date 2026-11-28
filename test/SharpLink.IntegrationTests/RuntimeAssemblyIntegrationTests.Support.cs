@@ -22,10 +22,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => _items.Add((name, value as WeakReference ?? new WeakReference(value, trackResurrection: false)));
     }
 
-    private static object? GetMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)
-        => typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.Get))!
-            .MakeGenericMethod(contractType)
-            .Invoke(client, null);
+    private static PreparedMultiClusterProxy CreatePreparedMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)
+        => (PreparedMultiClusterProxy)typeof(RuntimeAssemblyIntegrationTests)
+            .GetMethod(nameof(CreatePreparedMultiClusterProxyTyped), BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(contractType).Invoke(null, [client])!;
+
+    private static PreparedMultiClusterProxy CreatePreparedMultiClusterProxyTyped<T>(ISharpLinkMultiClusterClient client)
+        where T : IService
+    {
+        var proxy = client.CreateProxy<T>();
+        return new(proxy.Service, proxy.PrepareAsync);
+    }
+
+    private sealed record PreparedMultiClusterProxy(object Service, Func<TimeSpan, CancellationToken, ValueTask> Prepare)
+    {
+        internal ValueTask PrepareAsync() => Prepare(TimeSpan.FromSeconds(5), default);
+    }
 
     private sealed class PluginBundle : IDisposable
     {
@@ -250,11 +262,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
 
 
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-
-
-            => throw new NotSupportedException();
-
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public bool IsDynamicAssemblyRegistered(Assembly assembly)
@@ -334,11 +341,6 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
 
 
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-
-
-            => throw new NotSupportedException();
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => throw new NotSupportedException();

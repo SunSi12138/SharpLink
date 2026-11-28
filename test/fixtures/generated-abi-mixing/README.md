@@ -3,10 +3,11 @@
 These projects are intentionally excluded from `Sharplink.slnx`. They model unsupported package
 graphs and must not produce a loadable assembly:
 
-- `new-generator-old-abstractions`: SharpLink.Sdk/Generator 2.0.0 with Abstractions 1.1.1.
-- `old-generator-new-abstractions`: SharpLink.Sdk/Generator 1.1.1 with Abstractions 2.0.0.
+- `new-generator-old-abstractions`: the current SharpLink SDK and Generator with Abstractions 1.1.1.
+- `old-generator-new-abstractions`: SharpLink SDK and Generator 1.1.1 with the current Abstractions.
 
-Run `eng/verify-generated-abi-mixing.sh` after packing 2.0.0 packages into `artifacts/nuget`.
-The gate accepts a package-resolution rejection or an ABI compile rejection, but always requires
-the target assembly to remain absent. This prevents an old Generator from producing an API 3 or API 4
-shape that could be mistaken for the current API 4 through consumer-side constants.
+On the release runner, run `eng/verify-generated-abi-mixing.sh` after packing the current
+`VersionPrefix` into `artifacts/nuget`. Each fixture must compile with a same-version control.
+The mixed graph must fail with a SharpLink package-resolution error or a generated-source ABI
+diagnostic, and must produce no target assembly. Runtime rejection of a previously generated
+assembly, including one with the same API number but a different identity, is a separate check.

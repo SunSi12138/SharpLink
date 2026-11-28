@@ -76,6 +76,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
 
     private T? _current;
     private IRpcCodec<T>? _codec;
+    private IDisposable? _physicalOwner;
     private bool _payloadNullable;
     private Action<long, ushort, int>? _bytesConsumed;
     private Action<long>? _consumerAbandoned;
@@ -157,6 +158,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         CancellationToken enumerationToken,
         IRpcCodec<T> codec,
         bool payloadNullable)
+        => Rent(enumerationToken, codec, payloadNullable, physicalOwner: null);
+
+    internal static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken, IRpcCodec<T> codec, bool payloadNullable, IDisposable? physicalOwner)
     {
         ArgumentNullException.ThrowIfNull(codec);
         if (!Pool.TryPop(out var dispatcher))
@@ -165,6 +170,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
             Interlocked.Decrement(ref s_retainedCount);
 
         dispatcher.Reset(enumerationToken, codec, payloadNullable);
+        dispatcher._physicalOwner = physicalOwner;
         dispatcher.ActivateLease();
         return dispatcher;
     }
@@ -865,9 +871,26 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
     }
 
     /// <inheritdoc />
-    public ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => DisposeObservedLeaseAsync(Volatile.Read(ref _leaseState));
+
+    internal Func<ValueTask> CapturePhysicalLeaseClose()
     {
-        var activeLeaseState = Volatile.Read(ref _leaseState);
+        var captured = CapturePhysicalLeaseGeneration();
+        return () => DisposeCapturedLeaseAsync(captured);
+    }
+
+    internal long CapturePhysicalLeaseGeneration() => Volatile.Read(ref _leaseState);
+
+    internal ValueTask DisposeCapturedLeaseAsync(long captured)
+    {
+        var observed = Volatile.Read(ref _leaseState);
+        return IsSameLeaseGeneration(captured, observed)
+            ? DisposeObservedLeaseAsync(observed)
+            : ValueTask.CompletedTask;
+    }
+
+    private ValueTask DisposeObservedLeaseAsync(long activeLeaseState)
+    {
         var leaseStatus = GetLeaseStatus(activeLeaseState);
         if (leaseStatus == LeaseInactive)
             return ValueTask.CompletedTask;
@@ -1455,6 +1478,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         {
             RunContinuationsAsynchronously = true
         };
+        var owner = _physicalOwner;
+        _physicalOwner = null;
+        owner?.Dispose();
         // 注意：_completed/_disposed 会在下次 Reset 时统一清
         if (Interlocked.Increment(ref s_retainedCount) <= MaxRetainedDispatchers)
         {
@@ -1473,7 +1499,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
     {
         get
         {
-            if (_codec is not null || _error is not null || Volatile.Read(ref _dispatchState) is not null ||
+            if (_codec is not null || _physicalOwner is not null || _error is not null || Volatile.Read(ref _dispatchState) is not null ||
                 _bytesConsumed is not null || _localAbortBytesConsumed is not null ||
                 _consumerAbandoned is not null || _consumerAbandonedAsync is not null ||
                 _current is not null || _enumerationToken.CanBeCanceled ||

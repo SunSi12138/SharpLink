@@ -110,7 +110,7 @@ public sealed class SharpLinkMultiClusterMutationResultTests : SharpLinkMultiClu
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             "orders",
@@ -120,14 +120,14 @@ public sealed class SharpLinkMultiClusterMutationResultTests : SharpLinkMultiClu
                     static _ => ValueTask.FromResult<ReadOnlyMemory<byte>>(new byte[2])))
                 .UseTransport(candidateTransport),
             TimeSpan.Zero).AsTask());
-        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var retainedProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(failure is SharpLinkException
         {
             Code: SharpLinkErrorCode.ResourceExhausted
         } exception && exception.Message.Contains("Authentication payload exceeds", StringComparison.Ordinal),
             "local SharpLink configuration failures must remain exceptional instead of becoming CandidateUnavailable");
-        Ensure(ReferenceEquals(oldProxy.Channel, retainedProxy.Channel),
+        Ensure(ReferenceEquals(oldProxy.Channel.RuntimeContext, retainedProxy.Channel.RuntimeContext),
             "a local pre-publication SharpLink failure must leave the old route authoritative");
         Ensure(candidateTransport.DisposeCount == 1 && oldTransport.DisposeCount == 0,
             "local candidate failure rollback must dispose only the rejected candidate");
@@ -143,18 +143,18 @@ public sealed class SharpLinkMultiClusterMutationResultTests : SharpLinkMultiClu
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(invariantCandidate),
             TimeSpan.Zero).AsTask());
-        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var retainedProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(failure is InvalidOperationException exception &&
                exception.Message.Contains("controlled replacement invariant failure", StringComparison.Ordinal),
             "unexpected candidate invariant failures must remain exceptional instead of becoming CandidateUnavailable");
-        Ensure(ReferenceEquals(oldProxy.Channel, retainedProxy.Channel),
+        Ensure(ReferenceEquals(oldProxy.Channel.RuntimeContext, retainedProxy.Channel.RuntimeContext),
             "an exceptional pre-publication candidate failure must leave the old route authoritative");
         Ensure(invariantCandidate.DisposeCount == 1 && oldTransport.DisposeCount == 0,
             "exceptional candidate rollback must dispose only the rejected candidate");

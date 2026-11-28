@@ -16,6 +16,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
         await using var client = ClientBuilderTestHelper.Build(
             transport, builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         var trackedBefore = client.FrameworkTaskSnapshotForDiagnostics.TotalTracked;
@@ -29,7 +30,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
                 throw new TimeoutException("test did not release request emission");
         });
 
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1, MethodId: 292, Kind: RpcMethodKind.Unary,
@@ -37,9 +38,9 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasMethodTimeout: true, MethodTimeout: TimeSpan.FromSeconds(5));
         try
         {
-            var invocation = channel.InvokeUnaryAsync(
+            var invocation = channel.InvokeUnary(
                 method, in request, RpcEmptyRequestCodec.Instance,
-                channel.RuntimeContext.Codecs.GetCodec<int>(), metadata: null).AsTask();
+                channel.RuntimeContext.Codecs.GetCodec<int>(), metadata: null, cancellationToken: default, prepared).AsTask();
             await emissionEntered.Task;
             Ensure(!invocation.IsCompleted,
                 "a request blocked before emission must still await its response");
@@ -68,6 +69,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -77,7 +79,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
 
         // Drain output already owned by ConnectAsync (notably the first heartbeat Ping) before
@@ -87,13 +89,14 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
         await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(() =>
             timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
-        var invocation = channel.InvokeUnaryAsync(
+        var invocation = channel.InvokeUnary(
             method,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),
             metadata: null,
-            cancellationToken: default).AsTask();
+            cancellationToken: default,
+            prepared).AsTask();
 
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
@@ -119,6 +122,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
 
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
@@ -139,17 +143,18 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = (SharpLinkClient)client;
         var request = default(RpcEmptyRequest);
         try
         {
-            var invocation = channel.InvokeUnaryAsync(
+            var invocation = channel.InvokeUnary(
                 method,
                 in request,
                 RpcEmptyRequestCodec.Instance,
                 channel.RuntimeContext.Codecs.GetCodec<int>(),
                 metadata: null,
-                cancellationToken: default).AsTask();
+                cancellationToken: default,
+                prepared).AsTask();
             await writeEntered.Task;
             Ensure(!invocation.IsCompleted,
                 "a Request blocked inside the transport write must still be in flight");

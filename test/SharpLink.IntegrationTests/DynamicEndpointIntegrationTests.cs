@@ -129,7 +129,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             "repeated ConnectAsync must wait for recovery instead of replaying the initial dial failure");
         await recovery.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(factory.ConnectCount >= 2, "same accepted topology must reconnect after the first dial fails");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered",
+        var proxy = await PrepareBalancedProxyAsync(client);
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "recovered",
             "same-version dynamic topology recovers after its reconnect worker succeeds");
     }
 
@@ -164,7 +165,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var service = (await PrepareBalancedProxyAsync(client)).Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial retained topology");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2,
@@ -214,22 +215,25 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
-        await using var stream = service.SlowRangeAsync(3, 100, CancellationToken.None).GetAsyncEnumerator();
+        var proxy = await PrepareBalancedProxyAsync(client);
+        var service = proxy.Service;
+        await using var stream = service.SlowRangeAsync(3, 500, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "initial active stream");
 
-        resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
-        await Task.Delay(150);
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 0,
+        await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
+        Ensure(second.ActiveConnections == 0 && client.GetReadinessSnapshot().ReadyConnections == 0,
             "retiring budget must defer replacement connection creation while an old stream is active");
         Ensure(await stream.MoveNextAsync() && stream.Current == 1,
             "budget pressure must not abort the already accepted stream");
         Ensure(await stream.MoveNextAsync() && stream.Current == 2,
             "retired stream must remain bound through its final item");
         Ensure(!await stream.MoveNextAsync(), "retired stream completion after replacement");
-        await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "second", TimeSpan.FromSeconds(3));
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
-            "replacement must resume once the excess retiring stream has drained");
+        await client.WaitForReadinessAsync(1).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        await EnsureUnpreparedRouteAsync(service);
+        Ensure(second.OpenBindings == 0 && client.GetReadinessSnapshot().ReadyConnections == 1,
+            "after the excess retiring stream drains the replacement connects but is not bound");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await service.GetEndpointIdAsync() == "second", "replacement serves after explicit preparation");
     }
 
     [Test]
@@ -327,7 +331,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));
 
             await initial.WaitAsync(TimeSpan.FromSeconds(3));
-            Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "replacement",
+            var proxy = await PrepareBalancedProxyAsync(client);
+            Ensure(await proxy.Service.GetEndpointIdAsync() == "replacement",
                 "initial ConnectAsync must observe a ready replacement instead of waiting for a retired dial");
         }
         finally
@@ -478,9 +483,17 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "first", "initial last-good topology");
-        await WaitUntilAsync(async () => await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered",
-            TimeSpan.FromSeconds(4));
+        var proxy = await PrepareBalancedProxyAsync(client);
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "first", "initial last-good topology");
+        await WaitUntilAsync(() => resolver.ResolveCount >= 3, TimeSpan.FromSeconds(4));
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "first",
+            "a watch retry leaves the last-good prepared route available");
+        resolver.ReleaseRecovery();
+        await WaitUntilAsync(() => recovered.ActiveConnections == 1 && first.ActiveConnections == 0, TimeSpan.FromSeconds(4));
+        await client.WaitForReadinessAsync(1).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        await EnsureUnpreparedRouteAsync(proxy.Service);
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "recovered", "explicit Prepare uses the recovered topology");
         Ensure(resolver.ResolveCount >= 3, "watch end should retry Resolve after one resolver failure");
     }
 
@@ -504,7 +517,21 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "dns", "DNS discovery RPC");
+        var proxy = await PrepareBalancedProxyAsync(client);
+        Ensure(await proxy.Service.GetEndpointIdAsync() == "dns", "DNS discovery RPC");
+    }
+
+    private static async ValueTask<RpcProxy<IConnectionBehaviorService>> PrepareBalancedProxyAsync(ISharpLinkClient client)
+    {
+        var proxy = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        return proxy;
+    }
+
+    private static async Task EnsureUnpreparedRouteAsync(IConnectionBehaviorService service)
+    {
+        var failure = await CaptureSharpLinkException(service.GetEndpointIdAsync().AsTask());
+        Ensure(failure.Code == SharpLinkErrorCode.Unavailable, "no prepared route is available in the current topology");
     }
 
     private static SharpLinkEndpoint Endpoint(string id, int port, string zone) => new()
@@ -521,25 +548,6 @@ public sealed partial class DynamicEndpointIntegrationTests
             await Task.Delay(20);
         if (!condition())
             throw new TimeoutException("Dynamic topology did not reach the expected state.");
-    }
-
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
-    {
-        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
-        while (Stopwatch.GetTimestamp() < deadline)
-        {
-            try
-            {
-                if (await condition())
-                    return;
-            }
-            catch (SharpLinkException)
-            {
-                // A generation replacement deliberately has a short interval with no ready endpoint.
-            }
-            await Task.Delay(20);
-        }
-        throw new TimeoutException("Dynamic topology did not reach the expected state.");
     }
 
     private static void Ensure(bool condition, string message)
@@ -858,17 +866,23 @@ public sealed partial class DynamicEndpointIntegrationTests
         SharpLinkEndpointSnapshot initial,
         SharpLinkEndpointSnapshot recovered) : ISharpLinkEndpointResolver
     {
+        private readonly TaskCompletionSource _releaseRecovery = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _resolveCount;
 
         public int ResolveCount => Volatile.Read(ref _resolveCount);
 
-        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+        public async ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
         {
             var count = Interlocked.Increment(ref _resolveCount);
-            return count == 2
-                ? ValueTask.FromException<SharpLinkEndpointSnapshot>(new InvalidOperationException("transient resolver failure"))
-                : ValueTask.FromResult(count >= 3 ? recovered : initial);
+            if (count == 1)
+                return initial;
+            if (count == 2)
+                throw new InvalidOperationException("transient resolver failure");
+            await _releaseRecovery.Task.WaitAsync(cancellationToken);
+            return recovered;
         }
+
+        public void ReleaseRecovery() => _releaseRecovery.TrySetResult();
 
         public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -923,14 +937,19 @@ public sealed partial class DynamicEndpointIntegrationTests
         private readonly Task _runTask;
         private int _stopped;
 
-        private TcpServerScope(ISharpLinkServer server, int port)
+        private TcpServerScope(ISharpLinkServer server, int port, Task<string> streamStarted)
         {
             _server = server;
             Port = port;
+            StreamStarted = streamStarted;
             _runTask = Task.Run(() => _server.RunUntilStoppedAsync(_cancellation.Token).AsTask(), CancellationToken.None);
         }
 
         public int Port { get; }
+        public Task<string> StreamStarted { get; }
+        public int ActiveConnections => ServerRegistryTestAccessor.ActiveConnectionCount((SharpLinkServer)_server);
+        public int OpenBindings => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)_server).Values
+            .Sum(connection => connection.NStudyBindings.Snapshot().Open);
 
         public async ValueTask StopAsync()
         {
@@ -947,9 +966,11 @@ public sealed partial class DynamicEndpointIntegrationTests
                 .UseTcp(0, IPAddress.Loopback)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
-            builder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
+            var streamStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            builder.ReplaceService<IConnectionBehaviorService>(
+                new ConnectionBehaviorService { EndpointId = endpointId, SlowCallStarted = streamStarted });
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
-            return Task.FromResult(new TcpServerScope(builder.Build(), port));
+            return Task.FromResult(new TcpServerScope(builder.Build(), port, streamStarted.Task));
         }
 
         public async ValueTask DisposeAsync()

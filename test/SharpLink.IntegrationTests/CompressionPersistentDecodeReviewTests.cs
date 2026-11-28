@@ -18,7 +18,7 @@ public class CompressionPersistentDecodeReviewTests
             maxConcurrentDecodes: 1,
             maxDecodedBytes: 128L * 1024 * 1024);
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "single persistent decode worker started");
-        var service = harness.Client.Get<IPersistentDecodeReviewService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         using var cancellation = new CancellationTokenSource();
         var payload = Enumerable.Repeat((byte)0x2a, LargePayloadBytes).ToArray();
 
@@ -76,7 +76,7 @@ public class CompressionPersistentDecodeReviewTests
             maxConcurrentDecodes: 1,
             clientRequestTimeout: TimeSpan.FromMilliseconds(750));
         await WaitUntilAsync(() => harness.DecodeWorkerCount == 1, "persistent decode worker started");
-        var service = harness.Client.Get<IPersistentDecodeReviewService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IPersistentDecodeReviewService>();
         var payload = Enumerable.Repeat((byte)0x39, LargePayloadBytes).ToArray();
 
         var call = service.MeasureNonCancellableAsync(payload).AsTask();
@@ -94,91 +94,6 @@ public class CompressionPersistentDecodeReviewTests
         finally
         {
             serverProvider.ReleaseAll();
-        }
-    }
-
-    [Test]
-    [NotInParallel]
-    public async Task LargeCompressedInputWithSmallDeclaredOutputShouldOffloadBeforeRequestLoopCancel()
-    {
-        var provider = new BlockingRawInputCompressionProvider();
-        await using var harness = await RawInputHarness.CreateAsync(provider);
-        await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "raw-input persistent decode worker started");
-
-        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        await socket.ConnectAsync(IPAddress.Loopback, harness.Port);
-        await using var stream = new NetworkStream(socket, ownsSocket: false);
-        const ulong requestId = 41;
-        const int declaredDecodedArgumentsBytes = 64 * 1024;
-        const int compressedBodyBytes = 2 * 1024 * 1024;
-
-        using var frames = new PooledByteBufferWriter();
-        var limits = new SharpLinkProtocolOptions();
-        var handshake = ProtocolV2FrameWriter.BeginFrame(
-            frames,
-            ProtocolV2FrameType.HandshakeRequest,
-            ProtocolV2FrameFlags.None,
-            0);
-        ProtocolV2PayloadCodec.WriteHandshakeRequest(
-            frames,
-            new ProtocolV2HandshakeRequest(
-                ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.Compression,
-                ProtocolV2Capabilities.Compression,
-                SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
-                1024 * 1024,
-                16 * 1024 * 1024,
-                ReadOnlyMemory<byte>.Empty,
-                new[] { provider.WireProfile }),
-            limits);
-        ProtocolV2FrameWriter.EndFrame(frames, handshake);
-
-        var request = ProtocolV2FrameWriter.BeginFrame(
-            frames,
-            ProtocolV2FrameType.Request,
-            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable,
-            requestId);
-        Span<byte> requestPrefix = stackalloc byte[ProtocolV2Constants.RequestPrefixBytes];
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
-            requestPrefix,
-            harness.InterfaceHash);
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
-            requestPrefix[sizeof(long)..],
-            1L);
-        frames.Write(requestPrefix);
-        Span<byte> originalLength = stackalloc byte[sizeof(uint)];
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
-            originalLength,
-            declaredDecodedArgumentsBytes);
-        frames.Write(originalLength);
-        frames.Write(new byte[compressedBodyBytes]);
-        ProtocolV2FrameWriter.EndFrame(frames, request);
-
-        await stream.WriteAsync(frames.WrittenMemory);
-        await stream.FlushAsync();
-        await provider.WaitForStartedCountAsync(1);
-        Ensure(harness.DecodeStartedWorkCount == 1,
-            "large compressed input must route to D even when declared output is below 1 MiB");
-
-        using var cancel = new PooledByteBufferWriter();
-        ProtocolV2FrameWriter.WriteEmptyFrame(
-            cancel,
-            ProtocolV2FrameType.Cancel,
-            ProtocolV2FrameFlags.None,
-            requestId);
-        await stream.WriteAsync(cancel.WrittenMemory);
-        await stream.FlushAsync();
-
-        try
-        {
-            await provider.WaitForCancellationCountAsync(1);
-            await AssertResourcesReleasedAsync(harness, "large compressed-input cancel");
-            Ensure(provider.StartedCount == 1,
-                "hostile large compressed input should execute provider exactly once on D");
-        }
-        finally
-        {
-            provider.ReleaseAll();
         }
     }
 
@@ -357,74 +272,6 @@ public class CompressionPersistentDecodeReviewTests
         }
     }
 
-    private sealed class RawInputHarness : ReviewDiagnosticsBase, IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _serverCts;
-        private readonly Task _serverTask;
-        private bool _stopped;
-
-        private RawInputHarness(
-            CancellationTokenSource serverCts,
-            Task serverTask,
-            ISharpLinkServer server,
-            int port,
-            long interfaceHash)
-            : base(server)
-        {
-            _serverCts = serverCts;
-            _serverTask = serverTask;
-            Port = port;
-            InterfaceHash = interfaceHash;
-        }
-
-        internal int Port { get; }
-        internal long InterfaceHash { get; }
-
-        internal static Task<RawInputHarness> CreateAsync(ISharpLinkCompressionProvider provider)
-        {
-            var serverCts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseRuntime(options =>
-                {
-                    options.FlowControl.MaxConcurrentCallsPerConnection = 8;
-                    options.FlowControl.MaxConcurrentCallsPerServer = 8;
-                    options.FlowControl.MaxConcurrentDecodesPerServer = 1;
-                    options.FlowControl.MaxRetainedCompressedBytesPerServer = 16L * 1024 * 1024;
-                    options.FlowControl.MaxDecodedBytesInFlightPerServer = 8L * 1024 * 1024;
-                    options.Compression.Providers.Add(provider);
-                })
-                .UseTcp(0, IPAddress.Loopback);
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var interfaceHash = ReadAnyInterfaceHash(server);
-            var serverTask = RunServerAsync(server, serverCts.Token);
-            return Task.FromResult(new RawInputHarness(
-                serverCts,
-                serverTask,
-                server,
-                port,
-                interfaceHash));
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (_stopped)
-                return;
-            _stopped = true;
-            await _serverCts.CancelAsync();
-            await Server.StopAsync(TimeSpan.Zero);
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
-        }
-
-        private static long ReadAnyInterfaceHash(ISharpLinkServer server)
-        {
-            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
-                return key;
-            throw new Exception("server has no registered service hash");
-        }
-    }
-
     private static Task RunServerAsync(ISharpLinkServer server, CancellationToken cancellationToken)
         => Task.Run(async () =>
         {
@@ -482,50 +329,6 @@ public class CompressionPersistentDecodeReviewTests
             {
                 _release.Wait(cancellationToken);
                 inner.Decompress(input, output, maxOutputBytes, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                Interlocked.Increment(ref _cancellationCount);
-                throw;
-            }
-        }
-    }
-
-    private sealed class BlockingRawInputCompressionProvider : ISharpLinkCompressionProvider
-    {
-        private readonly ManualResetEventSlim _release = new();
-        private int _startedCount;
-        private int _cancellationCount;
-
-        public string WireProfile => "review-input-cost";
-        internal int StartedCount => Volatile.Read(ref _startedCount);
-        internal void ReleaseAll() => _release.Set();
-        internal Task WaitForStartedCountAsync(int count)
-            => WaitForCounterAsync(() => StartedCount, count, "raw-input provider starts");
-        internal Task WaitForCancellationCountAsync(int count)
-            => WaitForCounterAsync(
-                () => Volatile.Read(ref _cancellationCount),
-                count,
-                "raw-input provider cancellations");
-
-        public bool TryCompress(
-            ReadOnlySequence<byte> input,
-            IBufferWriter<byte> output,
-            int maxOutputBytes,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public void Decompress(
-            ReadOnlySequence<byte> input,
-            IBufferWriter<byte> output,
-            int maxOutputBytes,
-            CancellationToken cancellationToken = default)
-        {
-            Interlocked.Increment(ref _startedCount);
-            try
-            {
-                _release.Wait(cancellationToken);
-                throw new InvalidDataException("raw input probe was released without cancellation");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

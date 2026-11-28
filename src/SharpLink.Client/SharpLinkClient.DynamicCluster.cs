@@ -89,7 +89,9 @@ internal sealed partial class SharpLinkClient
         public ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
-            AttemptOutcomeState? attemptOutcome)
+            AttemptOutcomeState? attemptOutcome,
+            bool reserveCall = true,
+            NStudyPreparedSite? prepared = null)
         {
             var snapshot = _current.SelectionSnapshot;
             var selectionPolicy = _current.CaptureSelectionPolicy();
@@ -100,9 +102,17 @@ internal sealed partial class SharpLinkClient
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint is ready.");
             }
 
-            var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
+            ulong unprepared = 0;
+            if (prepared is not null)
+                for (var i = 0; i < endpoints.Length; i++)
+                    if (!prepared.CanSelectFrom(endpoints[i].ReadyConnections))
+                        unprepared |= 1UL << i;
+            var excluded = (retrySelection?.GetExcludedMask(snapshot, endpoints.Length, unprepared) ?? 0UL) | unprepared;
+            var all = endpoints.Length == 64 ? ulong.MaxValue : (1UL << endpoints.Length) - 1;
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
+                if (prepared is not null && excluded == all)
+                    break;
                 int selectedIndex;
                 if (selectionPolicy.HasCustomSelector)
                 {
@@ -137,11 +147,12 @@ internal sealed partial class SharpLinkClient
                     continue;
                 }
                 var endpoint = endpoints[selectedIndex];
-                var connection = DynamicClusterTopologyState.SelectConnection(endpoint);
+                var connection = DynamicClusterTopologyState.SelectConnection(endpoint, reserveCall, prepared);
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
-                    if (connection.ActiveCallCount != 0)
+                    // Expansion opens transport only. It does not add the new Session to a prepared cohort.
+                    if (reserveCall && connection.ActiveCallCount != 0)
                         EnsureExpansion(endpoint);
                     return connection;
                 }

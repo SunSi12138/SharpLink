@@ -6,7 +6,7 @@ public partial class TransportConnectionIntegrationTests
     public async Task TcpConnectAndBasicRpcShouldWork()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Tcp);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var value = await svc.PingAsync(7);
         Ensure(value == 8, "tcp ping");
@@ -16,7 +16,7 @@ public partial class TransportConnectionIntegrationTests
     public async Task NamedPipeConnectAndBasicRpcShouldWork()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.NamedPipe);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var value = await svc.PingAsync(9);
         Ensure(value == 10, "namedpipe ping");
@@ -29,10 +29,11 @@ public partial class TransportConnectionIntegrationTests
             return;
 
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Uds);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var value = await svc.PingAsync(11);
         Ensure(value == 12, "uds ping");
+        Console.WriteLine("PREPARED_SINGLE_UDS_RPC_PASS");
     }
 
     [Test]
@@ -57,7 +58,7 @@ public partial class TransportConnectionIntegrationTests
                          UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) == 0,
                 "filesystem UDS must deny group and other access");
 
-            var svc = harness.Client.Get<IConnectionBehaviorService>();
+            var svc = harness.Service;
             Ensure(await svc.PingAsync(13) == 14, "uds rpc with hardened socket permissions");
         }
 
@@ -68,10 +69,10 @@ public partial class TransportConnectionIntegrationTests
     public async Task TcpServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Tcp);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "tcp pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -81,10 +82,10 @@ public partial class TransportConnectionIntegrationTests
     public async Task NamedPipeServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.NamedPipe);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "namedpipe pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -97,10 +98,10 @@ public partial class TransportConnectionIntegrationTests
             return;
 
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Uds);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "uds pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -110,10 +111,10 @@ public partial class TransportConnectionIntegrationTests
     public async Task TcpClientDisposeShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Tcp);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "tcp pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -123,10 +124,10 @@ public partial class TransportConnectionIntegrationTests
     public async Task NamedPipeClientDisposeShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.NamedPipe);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "namedpipe pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
@@ -139,10 +140,10 @@ public partial class TransportConnectionIntegrationTests
             return;
 
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Uds);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svc = harness.Service;
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
+        await harness.PendingCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
         await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "uds pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);

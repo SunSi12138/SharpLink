@@ -18,7 +18,7 @@ public class EnterpriseHostingIntegrationTests
                 static services => new EnterpriseLifetimeService(
                     services.GetRequiredService<LifetimeDependency>()),
                 SharpLinkServiceLifetime.Call));
-        var service = harness.Client.Get<IEnterpriseLifetimeService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IEnterpriseLifetimeService>();
 
         var first = await service.GetValueAsync();
         var second = await service.GetValueAsync();
@@ -37,6 +37,7 @@ public class EnterpriseHostingIntegrationTests
         }
         finally
         {
+            LifetimeServiceState.ReleaseStream();
             await stream.DisposeAsync();
         }
         await WaitUntilAsync(() => LifetimeServiceState.Disposed == 3);
@@ -56,7 +57,8 @@ public class EnterpriseHostingIntegrationTests
                     services.GetRequiredService<LifetimeDependency>()),
                 SharpLinkServiceLifetime.Call)))
         {
-            _ = await harness.Client.Get<IEnterpriseLifetimeService>().GetValueAsync();
+            var service = await harness.Client.PrepareTestServiceAsync<IEnterpriseLifetimeService>();
+            _ = await service.GetValueAsync();
             Ensure(LifetimeServiceState.Disposed == 1, "factory scoped service disposed");
         }
 
@@ -65,7 +67,8 @@ public class EnterpriseHostingIntegrationTests
         await using (var harness = await EnterpriseHarness.CreateAsync(builder =>
             builder.ReplaceService<IEnterpriseLifetimeService>(instance)))
         {
-            _ = await harness.Client.Get<IEnterpriseLifetimeService>().GetValueAsync();
+            var service = await harness.Client.PrepareTestServiceAsync<IEnterpriseLifetimeService>();
+            _ = await service.GetValueAsync();
         }
         Ensure(LifetimeServiceState.Disposed == 0, "caller-owned singleton is not disposed");
         await instance.DisposeAsync();
@@ -86,7 +89,7 @@ public class EnterpriseHostingIntegrationTests
                     services.GetRequiredService<LifetimeDependency>()),
                 SharpLinkServiceLifetime.Call)))
         {
-            var service = transientHarness.Client.Get<IEnterpriseLifetimeService>();
+            var service = await transientHarness.Client.PrepareTestServiceAsync<IEnterpriseLifetimeService>();
             _ = await service.GetValueAsync();
             _ = await service.GetValueAsync();
             Ensure(LifetimeServiceState.Created == 2, "two transient instances created");
@@ -99,7 +102,7 @@ public class EnterpriseHostingIntegrationTests
                 static _ => new EnterpriseLifetimeService(new LifetimeDependency(9)),
                 SharpLinkServiceLifetime.Singleton)))
         {
-            var singleton = singletonHarness.Client.Get<IEnterpriseLifetimeService>();
+            var singleton = await singletonHarness.Client.PrepareTestServiceAsync<IEnterpriseLifetimeService>();
             var first = await singleton.GetValueAsync();
             var second = await singleton.GetValueAsync();
             Ensure(first == second, "server-owned singleton reused");
@@ -118,23 +121,29 @@ public class EnterpriseHostingIntegrationTests
         var health = await harness.Client.CheckHealthAsync();
         Ensure(health.Status == SharpLinkHealthStatus.Ready, "remote health ready");
 
-        var stream = harness.Client.Get<IEnterpriseLifetimeService>().StreamAsync().GetAsyncEnumerator();
-        Ensure(await stream.MoveNextAsync(), "active stream started");
-        await LifetimeServiceState.WaitForStreamBlockedAsync().WaitAsync(TimeSpan.FromSeconds(3));
-        var stopTask = harness.Server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();
-        await WaitUntilAsync(() => harness.Server.HealthStatus == SharpLinkHealthStatus.Draining);
-        Ensure(!stopTask.IsCompleted, "stop waits for active stream");
-        await Task.Delay(250);
-        Ensure(!stopTask.IsCompleted, "GoAway does not terminate an active stream");
-
-        LifetimeServiceState.ReleaseStream();
-        while (await stream.MoveNextAsync())
+        var service = await harness.Client.PrepareTestServiceAsync<IEnterpriseLifetimeService>();
+        await using var stream = service.StreamAsync().GetAsyncEnumerator();
+        try
         {
+            Ensure(await stream.MoveNextAsync(), "active stream started");
+            var instance = stream.Current;
+            await LifetimeServiceState.WaitForStreamBlockedAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            var stopTask = harness.Server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();
+            await WaitUntilAsync(() => harness.Server.HealthStatus == SharpLinkHealthStatus.Draining &&
+                harness.Client.GetReadinessSnapshot().ReadyConnections == 0);
+            Ensure(!stopTask.IsCompleted, "stop waits for the active stream after the client processes GoAway");
+
+            LifetimeServiceState.ReleaseStream();
+            Ensure(await stream.MoveNextAsync() && stream.Current == instance,
+                "the active stream must continue on the original service instance");
+            Ensure(!await stream.MoveNextAsync(), "the active stream must finish normally");
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy, "stopped server is unhealthy");
         }
-        await stream.DisposeAsync();
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
-            "stopped server is unhealthy");
+        finally
+        {
+            LifetimeServiceState.ReleaseStream();
+        }
     }
 
     [Test]
@@ -146,22 +155,27 @@ public class EnterpriseHostingIntegrationTests
             .ReplaceService<IUncooperativeLifetimeService>(
                 static _ => new UncooperativeLifetimeService(),
                 SharpLinkServiceLifetime.Singleton));
-        var service = harness.Client.Get<IUncooperativeLifetimeService>();
+        var service = await harness.Client.PrepareTestServiceAsync<IUncooperativeLifetimeService>();
 
         var invocation = service.WaitForReleaseAsync(CancellationToken.None).AsTask();
-        await UncooperativeLifetimeService.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        try
+        {
+            await UncooperativeLifetimeService.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(3));
 
-        var started = Stopwatch.GetTimestamp();
-        await harness.Server.StopAsync(TimeSpan.FromMilliseconds(100));
-        var elapsed = Stopwatch.GetElapsedTime(started);
+            var started = Stopwatch.GetTimestamp();
+            await harness.Server.StopAsync(TimeSpan.FromMilliseconds(100));
+            var elapsed = Stopwatch.GetElapsedTime(started);
 
-        Ensure(elapsed < TimeSpan.FromSeconds(2), "uncooperative user call must not hold server stop");
-        Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy, "stopped server is unhealthy");
-        Ensure(UncooperativeLifetimeService.Disposed == 0,
-            "server-owned service must remain alive while its invocation is still running");
-        await EnsureConnectionClosedAsync(invocation);
-
-        UncooperativeLifetimeService.Release();
+            Ensure(elapsed < TimeSpan.FromSeconds(2), "uncooperative user call must not hold server stop");
+            Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy, "stopped server is unhealthy");
+            Ensure(UncooperativeLifetimeService.Disposed == 0,
+                "server-owned service must remain alive while its invocation is still running");
+            await EnsureConnectionClosedAsync(invocation);
+        }
+        finally
+        {
+            UncooperativeLifetimeService.Release();
+        }
         await UncooperativeLifetimeService.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(3));
         await WaitUntilAsync(() => UncooperativeLifetimeService.Disposed == 1);
     }

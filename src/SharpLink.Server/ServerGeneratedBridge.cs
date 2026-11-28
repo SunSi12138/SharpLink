@@ -1,5 +1,11 @@
 namespace SharpLink.Server;
 
+internal abstract class ServerGeneratedInputOwner
+{
+    internal ServerGeneratedInputOwner? Next { get; set; }
+    internal abstract ValueTask CloseAsync();
+}
+
 /// <summary>
 /// Binds generated streaming operations to one Server connection. Runtime owns protocol pumping;
 /// this invocation-layer bridge owns business exception mapping.
@@ -54,30 +60,59 @@ internal sealed class ServerGeneratedBridge(
         IRpcCodec<T> codec,
         bool payloadNullable,
         CancellationToken cancellationToken)
-        => new UserCodeEntryAsyncEnumerable<T>(
-            this,
-            requestId,
-            _protocolBridge.CreateInboundStream(
-                requestId,
-                streamId,
-                codec,
-                payloadNullable,
-                cancellationToken));
+    {
+        var input = new UserCodeEntryAsyncEnumerable<T>(this, requestId,
+            session.CreateGeneratedInboundStream(requestId, streamId, codec, payloadNullable, cancellationToken));
+        if (TryCaptureCall(requestId, out var callLease) && callLease.TryAcquire())
+        {
+            try { callLease.State.TrackGeneratedInput(input); }
+            finally { callLease.ReleaseUse(); }
+        }
+        return input;
+    }
+
+    internal async ValueTask FinishGeneratedInputsAsync(long requestId)
+    {
+        Exception? failure = null;
+        if (TryCaptureCall(requestId, out var callLease) && callLease.TryAcquire())
+        {
+            try
+            {
+                for (var input = callLease.State.TakeGeneratedInputs(); input is not null;)
+                {
+                    var next = input.Next;
+                    input.Next = null;
+                    try { await input.CloseAsync().ConfigureAwait(false); }
+                    catch (Exception exception)
+                    {
+                        failure = failure is null ? exception : new AggregateException(failure, exception);
+                    }
+                    input = next;
+                }
+            }
+            finally { callLease.ReleaseUse(); }
+        }
+        await session.StreamManager.CompleteRequestStreamsAfterDispatchesAsync(requestId, failure)
+            .ConfigureAwait(false);
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private bool TryCaptureCall(long requestId, out ServerCallCancellationLease lease)
+        => callCancellations.TryCapture(requestId, static (id, state) => state.CaptureLease(id), out lease);
 
     public ValueTask PumpOutboundStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
-        bool payloadNullable,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
         CancellationToken cancellationToken)
         => new OutputInvocation<T>(this, requestId, stream).PumpAsync(
-            streamId, codec, payloadNullable, contractId, methodId, cancellationToken);
+            streamId, codec, method, cancellationToken);
 
     private void CompleteFailedOutput(
-        long requestId, ushort streamId, long contractId, long methodId, Exception exception)
+        long requestId, ushort streamId, RpcMethodDescriptor method, Exception exception)
     {
         // A selected call terminal already owns the externally visible outcome. Close
         // only local send flow here; the invocation still owns its physical output join.
@@ -88,7 +123,7 @@ internal sealed class ServerGeneratedBridge(
         }
 
         var protocolError = server.MapStreamServiceException(
-            callCancellations, session, requestId, contractId, methodId, exception);
+            callCancellations, session, requestId, method, exception);
         session.SendStreamErrorAsync(requestId, streamId, protocolError);
     }
 
@@ -128,8 +163,12 @@ internal sealed class ServerGeneratedBridge(
     }
 
     private sealed class UserCodeEntryAsyncEnumerable<T>(
-        ServerGeneratedBridge bridge, long requestId, IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
+        ServerGeneratedBridge bridge, long requestId, PooledAsyncStreamDispatcher<T> stream)
+        : ServerGeneratedInputOwner, IAsyncEnumerable<T>
     {
+        private readonly long _lease = stream.CapturePhysicalLeaseGeneration();
+        internal override ValueTask CloseAsync() => stream.DisposeCapturedLeaseAsync(_lease);
+
         public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
             bridge.EnsureUserCodeEntry(requestId);
@@ -157,18 +196,16 @@ internal sealed class ServerGeneratedBridge(
             => _streamOrTail is GeneratedOutputPhysicalTail tail ? tail.JoinAsync() : ValueTask.CompletedTask;
 
         internal async ValueTask PumpAsync(
-            ushort streamId, IRpcCodec<T> codec, bool payloadNullable,
-            long contractId, long methodId, CancellationToken cancellationToken)
+            ushort streamId, IRpcCodec<T> codec, RpcMethodDescriptor method, CancellationToken cancellationToken)
         {
             try
             {
                 await bridge._protocolBridge.PumpOutboundStreamAsync(
-                    requestId, streamId, this, codec, payloadNullable,
-                    contractId, methodId, cancellationToken).ConfigureAwait(false);
+                    requestId, streamId, this, codec, method, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
             {
-                bridge.CompleteFailedOutput(requestId, streamId, contractId, methodId, exception);
+                bridge.CompleteFailedOutput(requestId, streamId, method, exception);
             }
             finally
             {

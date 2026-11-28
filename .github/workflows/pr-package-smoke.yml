@@ -17,6 +17,9 @@ on:
       - '.github/workflows/pr-package-smoke.yml'
       - 'eng/run-packaged-trim-smoke.py'
       - 'eng/tests/test_packaged_trim_smoke.py'
+      - 'eng/release-versions.json'
+      - 'eng/verify-release-versions.py'
+      - 'eng/tests/test_release_versions.py'
       - 'eng/run-quickstart-package-smoke.sh'
       - 'eng/verify-packages.sh'
       - 'eng/run-project-reference-trim-smoke.sh'
@@ -56,6 +59,11 @@ jobs:
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
+
+      - name: Verify reviewed release versions
+        run: |
+          python3 -m unittest discover -s eng/tests -p test_release_versions.py
+          python3 eng/verify-release-versions.py
 
       - name: Restore
         run: dotnet restore Sharplink.slnx

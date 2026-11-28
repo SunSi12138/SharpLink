@@ -65,7 +65,7 @@ public abstract class SharpLinkMultiClusterClientTestBase
     protected static SharpLinkMultiClusterClientBuilder CreateDynamicBuilder()
         => CreateBuilder([], []);
 
-    protected static IRpcChannel GetChildChannel(
+    protected static ISharpLinkClient GetChildClient(
         ISharpLinkMultiClusterClient client,
         SharpLinkClusterKey cluster)
     {
@@ -73,7 +73,7 @@ public abstract class SharpLinkMultiClusterClientTestBase
         var snapshot = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
             .GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(coordinator)!;
-        return (IRpcChannel)snapshot.Clusters[cluster].Client;
+        return snapshot.Clusters[cluster].Client;
     }
 
     protected static ValueTask<SharpLinkClusterAddResult> AddClusterWithFixedDiscoveryAsync(
@@ -102,12 +102,12 @@ public abstract class SharpLinkMultiClusterClientTestBase
             throw new Exception(message);
     }
 
-    protected static void EnsureCodecIsMissing<T>(IRpcChannel channel)
+    protected static void EnsureCodecIsMissing<T>(IRpcRuntimeContext runtime)
     {
         Exception? failure = null;
         try
         {
-            _ = channel.RuntimeContext.Codecs.GetCodec<T>();
+            _ = runtime.Codecs.GetCodec<T>();
         }
         catch (Exception exception)
         {
@@ -145,9 +145,9 @@ public abstract class SharpLinkMultiClusterClientTestBase
     protected interface IOrdersContract : IService;
     protected interface IUnroutedContract : IService;
 
-    protected sealed class OrdersProxy(IRpcChannel channel) : IOrdersContract
+    protected sealed class OrdersProxy(IRpcContractChannel channel) : IOrdersContract
     {
-        internal IRpcChannel Channel { get; } = channel;
+        internal IRpcContractChannel Channel { get; } = channel;
     }
 
     protected sealed class Manifest : ISharpLinkGeneratedAssemblyManifest
@@ -437,9 +437,6 @@ public abstract class SharpLinkMultiClusterClientTestBase
         public TContract Get<TContract>() where TContract : IService
             => throw new NotSupportedException();
 
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-            => throw new NotSupportedException();
-
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
@@ -503,9 +500,6 @@ public abstract class SharpLinkMultiClusterClientTestBase
         public ValueTask DisposeAsync() => StopAsync();
 
         public TContract Get<TContract>() where TContract : IService
-            => throw new NotSupportedException();
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
             => throw new NotSupportedException();
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
@@ -592,9 +586,6 @@ public abstract class SharpLinkMultiClusterClientTestBase
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Unhealthy));
 
         public TContract Get<TContract>() where TContract : IService
-            => throw new NotSupportedException();
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
             => throw new NotSupportedException();
 
         public ValueTask DisposeAsync() => StopAsync();

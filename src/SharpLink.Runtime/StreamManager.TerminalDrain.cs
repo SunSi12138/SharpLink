@@ -1,5 +1,11 @@
 namespace SharpLink.Runtime;
 
+// Numeric identity avoids retaining a pooled call state (and its next invocation).
+internal readonly record struct StreamTerminalOwner(long StateId, long Generation)
+{
+    internal bool IsPresent => StateId != 0;
+}
+
 internal sealed partial class StreamManager
 {
     /// <summary>
@@ -11,7 +17,8 @@ internal sealed partial class StreamManager
         ushort streamId,
         ReadOnlySequence<byte> payload,
         int encodedByteCount,
-        out ValueTask dispatch)
+        out ValueTask dispatch,
+        StreamTerminalOwner terminalOwner = default)
     {
         dispatch = default;
         var routes = Volatile.Read(ref _dispatchersByRequestId);
@@ -25,6 +32,15 @@ internal sealed partial class StreamManager
             if (dispatcher is not DiscardingStreamDispatcher &&
                 dispatcher is not PreAdmissionStreamDispatcher { IsDiscarding: true })
             {
+                if (dispatcher is PreAdmissionStreamDispatcher retained && retained.IsRetainedInputOf(terminalOwner))
+                {
+                    // Cancel can precede a final queued chunk. The retained route owns
+                    // the debit and refund, but must not enter its original typed child.
+                    _acceptBytes?.Invoke(requestId, streamId, encodedByteCount);
+                    _bytesConsumed?.Invoke(requestId, streamId, encodedByteCount);
+                    entry.Release();
+                    return true;
+                }
                 entry.Release();
                 return false;
             }
@@ -43,7 +59,8 @@ internal sealed partial class StreamManager
         }
     }
 
-    internal bool TryCompleteTerminalStream(long requestId, ushort streamId, Exception? exception)
+    internal bool TryCompleteTerminalStream(long requestId, ushort streamId, Exception? exception,
+        StreamTerminalOwner terminalOwner = default)
     {
         var routes = Volatile.Read(ref _dispatchersByRequestId);
         if (routes is null || !routes.TryGetValue(requestId, out var requestRoutes) ||
@@ -51,6 +68,15 @@ internal sealed partial class StreamManager
             return false;
         try
         {
+            if (entry.Dispatcher is PreAdmissionStreamDispatcher retained && retained.IsRetainedInputOf(terminalOwner))
+            {
+                // EOF may precede the handler/queued admission's physical unwind.
+                // Record the peer terminal without entering or releasing its child.
+                entry.MarkPeerTerminalReceived();
+                if (!CompleteCapturedTerminalStream(requestId, streamId, requestRoutes, entry, exception))
+                    PublishReceiveTerminal(requestId, streamId, entry);
+                return true;
+            }
             return CompleteCapturedTerminalStream(requestId, streamId, requestRoutes, entry, exception);
         }
         finally

@@ -8,6 +8,56 @@ public sealed class StreamManagerRequestDrainTests
     private static readonly TimeSpan CoordinationTimeout = TimeSpan.FromSeconds(10);
 
     [Test]
+    public async Task RejectingRequestPublishesTerminalAfterAcquiredFirstFrameDebitsCredit()
+    {
+        const long requestId = 702;
+        const ushort streamId = 1;
+        const int window = 128;
+        var flow = new StreamFlowController(window, window, 1024);
+        var acquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowDebit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminals = 0;
+        void ReturnCredit(long id, ushort stream, int credit)
+        {
+            if (credit != 0)
+                flow.ApplyWindowUpdate(id, stream, credit);
+        }
+        var manager = new StreamManager(new RuntimeConcurrencyOptions(),
+            (id, stream, bytes) =>
+            {
+                acquired.TrySetResult();
+                allowDebit.Task.WaitAsync(CoordinationTimeout).GetAwaiter().GetResult();
+                flow.AcceptReceived(id, stream, bytes);
+            },
+            (id, stream, bytes) => ReturnCredit(id, stream, flow.RecordConsumed(id, stream, bytes)),
+            (id, stream) =>
+            {
+                Interlocked.Increment(ref terminals);
+                ReturnCredit(id, stream, flow.FlushConsumed(id, stream));
+            });
+        manager.ReservePreAdmissionStreams(requestId, 1,
+            new SharpLinkBufferWriterPool(new BufferWriterPoolOptions()),
+            static _ => true, static _ => { }, static () => { });
+        await flow.AcquireSendCreditAsync(requestId, streamId, 1, CancellationToken.None);
+        var first = Task.Run(async () =>
+            await manager.DispatchChunkAsync(requestId, streamId, new ReadOnlySequence<byte>(new byte[] { 1 })));
+        try
+        {
+            await acquired.Task.WaitAsync(CoordinationTimeout);
+            manager.CompleteRequestStreams(requestId, new OperationCanceledException("admission rejected"));
+            flow.CompleteSendStream(requestId, streamId);
+            Ensure(terminals == 0 && manager.ActiveStreamCount == 0,
+                "rejection closes routing now but cannot publish receive terminal ahead of the acquired frame");
+        }
+        finally { allowDebit.TrySetResult(); }
+
+        await first.WaitAsync(CoordinationTimeout);
+        Ensure(terminals == 1 && flow.SendConnectionCredit == window &&
+            flow.RetainedReceiveStreamCount == 0 && flow.RetainedSendStreamCount == 0,
+            "the last lease returns the below-threshold byte and retires both flow states");
+    }
+
+    [Test]
     public async Task RequestWideDrainShouldWaitForAcquiredDispatchesBeforeFinalizingStreams()
     {
         const long requestId = 701;

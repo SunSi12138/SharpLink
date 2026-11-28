@@ -184,6 +184,34 @@ public class ProtocolV2NegotiatorTests
     }
 
     [Test]
+    public void VersionPolicyDeferralRequiresBilateralNegotiation()
+    {
+        var current = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
+            8192, 2048, 4096, [], enableNStudyCoordination: true);
+        var prior = CreatePolicy(current.SupportedCapabilities & ~NStudyWire.PolicyDeferralCapability);
+        var disabled = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
+            8192, 2048, 4096, [], enableNStudyCoordination: false);
+
+        Check(current, current, coordination: true, deferral: true);
+        Check(current, prior, coordination: true, deferral: false);
+        Check(prior, current, coordination: true, deferral: false);
+        Check(current, disabled, coordination: false, deferral: false);
+        Check(disabled, current, coordination: false, deferral: false);
+
+        static void Check(ProtocolV2NegotiationPolicy clientPolicy, ProtocolV2NegotiationPolicy serverPolicy,
+            bool coordination, bool deferral)
+        {
+            var offer = ProtocolV2Negotiator.CreateClientOffer(clientPolicy, ProtocolV2Capabilities.None, default);
+            var server = ProtocolV2Negotiator.NegotiateServer(offer, serverPolicy);
+            var client = ProtocolV2Negotiator.ValidateServerResponse(offer, server.Response, clientPolicy);
+            Ensure(client.Capabilities == server.Options.Capabilities &&
+                   ((client.Capabilities & NStudyWire.CoordinationCapability) != 0) == coordination &&
+                   ((client.Capabilities & NStudyWire.PolicyDeferralCapability) != 0) == deferral,
+                "Ordinary compatibility remains, and Defer requires support at both endpoints.");
+        }
+    }
+
+    [Test]
     public void ServerNegotiationShouldIntersectLimitsAtCurrentMinorBoundaries()
     {
         var cases = new[]

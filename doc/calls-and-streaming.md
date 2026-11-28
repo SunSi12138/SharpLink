@@ -10,13 +10,19 @@ Runtime 将选中的 `Timeout` 解析为进程本地、基于 monotonic clock �
 
 ## Metadata
 
-Metadata 是 RPC envelope state，不是业务合同参数。需要由调用方为某一次 invocation 明确选择 metadata 时，使用窄能力 `GetWithMetadata<TContract>(SharpLinkMetadata)` 获取绑定该 metadata 的 proxy，再正常调用业务方法；它不会恢复通用 options bag，也不会使用 ambient/global state。例如：
+Metadata 随 RPC 传输，不是业务合同参数。在 #999 验证分支，用 `RpcProxyOptions.Metadata` 为某次调用或一组调用选择 metadata。连接就绪后，先准备代理，再通过 `Service` 发起调用：
 
 ```csharp
-var tenantProxy = client.GetWithMetadata<IMyService>(
-    new SharpLinkMetadata(new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a")));
-await tenantProxy.GetAsync(id, cancellationToken);
+var tenantProxy = client.CreateProxy<IMyService>(new RpcProxyOptions
+{
+    Metadata = new SharpLinkMetadata(
+        new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a"))
+});
+await tenantProxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+await tenantProxy.Service.GetAsync(id, cancellationToken);
 ```
+
+同一契约的代理可以共用同一次准备，但每个代理仍分别携带自己的 metadata。
 
 Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为横切策略补充/变换当前逻辑调用的 metadata；不要用调用顺序或全局可变 interceptor 状态模拟 caller-selected metadata。服务端从 `SharpLinkCallContext.Current?.Metadata` 或 Server interceptor context 读取。Metadata 受 `MaxMetadataBytes` 限制，适合低基数路由/诊断信息，不适合大对象、凭据日志或无限增长标签。
 
@@ -26,13 +32,21 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 提前停止消费时必须释放异步枚举器。Client 会发送 `ConsumerAbandoned` Cancel，关闭本地 stream、归还已消费 credit，并抑制迟到响应。不要把返回的 `IAsyncEnumerable<T>` 交给多个并发消费者；框架只支持单消费者。
 
+静态代理的每个 ServerStreaming 或 Duplex 调用结果只能取得一次枚举器，即使第一次没有开始读取。要重新发起 RPC，请再次调用代理方法，而不是重新枚举旧结果。获取枚举器本身不会发送请求；第一次读取才启动调用。
+
 ## ClientStreaming 与 Duplex
 
-客户端流泵在初始 Request 被本地 SendPump 接收/入队后即可启动；有 deadline 时，还先等待该 Request 的本地 emission/flush。pending cancellation/deadline 可以抑制尚未启动的 producer。这不是等待 Server 对该请求的接受确认。请求与每个 stream 使用同一连接；重连或 retry 不会跨连接迁移已开始的流。Streaming 和 OneWay 不自动 retry，只有标注 `[Idempotent]` 的 Unary 才进入 retry policy。
+发送初始 Request 后，ClientStreaming 和 Duplex 可以在流控额度内开始发送输入，不等服务端确认。服务端仍然独立执行准入；如果拒绝调用，客户端会停止生产，服务端会丢弃未交付的输入并归还额度。
+
+原待完成请求决定能否启动生产者；取消或 deadline 已结束的请求不会启动。带 deadline 时，本地等待 Request 发出也使用原预算。
+
+处理器可以不读完输入就返回。调用结束时框架会释放剩余输入并归还额度；不要在处理器返回后继续读它的输入流。
+
+请求和流使用同一物理连接。重连不会迁移已开始的流，Streaming 和 OneWay 也不自动重试。
 
 ## OneWay
 
-普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还等待本地 emission/flush，等待受原 deadline 约束。带 client stream 的 OneWay 还需完成本地 producer 生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
+普通、无 deadline 的非 streaming OneWay 成功只表示 Request 已被本地 SendPump 接收/入队；带 deadline 的 OneWay 还在原预算内等待本地 emission/flush。带输入流的 OneWay 在达到同样的本地发送边界且未取消时即可开始生产，成功还需完成本地生产者生命周期。这些成功都不证明 Server 已收到、admission 已接受或业务已完成；到期也不会撤回已入队字节。
 
 服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察；需要远端结果确认时使用有响应的 RPC。
 
@@ -45,7 +59,7 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 ## 3.0 扩展边界
 
 业务只通过生成的契约 proxy 调用 Unary、OneWay 和三类 Streaming。Generated API 5
-用 `IRpcChannel`/client-stream sink 与 `IRpcGeneratedServerBridge` 连接调用生命周期；
+用准备过的 `IRpcContractChannel` 与生成的 client-stream writer / server bridge 连接调用生命周期；
 bridge 不公开 Session、dispatcher 或 flow-control mutator。所有框架后台发送/排空仍由 owner
 监督并在停止时等待；应用提前停止枚举必须释放 enumerator。调用时间只传播剩余 TimeBudget
-（Protocol v2 minor 4），不读取跨机器绝对 deadline。3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。
+（Protocol v2 minor 6），不读取跨机器绝对 deadline。3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。

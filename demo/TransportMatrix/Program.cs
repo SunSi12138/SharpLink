@@ -106,7 +106,9 @@ static async Task RunPairAsync(
 
 static async Task VerifyAsync(string name, ISharpLinkClient client, CancellationToken cancellationToken)
 {
-    var response = await client.Get<ITransportService>().PingAsync(name, cancellationToken);
+    var proxy = client.CreateProxy<ITransportService>();
+    await proxy.PrepareAsync(TimeSpan.FromSeconds(5), cancellationToken);
+    var response = await proxy.Service.PingAsync(name, cancellationToken);
     Console.WriteLine(response);
     if (response != $"{name}:ok")
         throw new InvalidOperationException($"{name} transport returned an unexpected result.");

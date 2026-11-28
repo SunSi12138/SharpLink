@@ -110,6 +110,39 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal SharpLinkDynamicModule? Module { get; }
+    private readonly Guid _nStaticRegistration = Guid.NewGuid();
+    private FrozenDictionary<long, NStudyMethodFacts> _nStudyMethods = FrozenDictionary<long, NStudyMethodFacts>.Empty;
+    private RpcGeneratedMethodExecutor[] _nStudyExecutors = [];
+    internal RpcHash128 NStudyContractHash { get; private set; }
+    internal NStudyTarget NStudyTarget => Module is { } module
+        ? new(module.NStudyRegistration, module.NStudyPublication)
+        : new(_nStaticRegistration, 1);
+
+    internal void PrepareNStudyMethods(ISharpLinkGeneratedAssemblyManifest manifest,
+        SharpLinkGeneratedContractDescriptor contract)
+    {
+        var methods = new Dictionary<long, NStudyMethodFacts>(contract.Methods.Count);
+        var executors = new RpcGeneratedMethodExecutor[contract.Methods.Count];
+        var slot = 0;
+        foreach (var declared in contract.Methods)
+        {
+            var method = declared.Invocation;
+            if (!Stub.TryPrepareMethod(declared.MethodId, out var prepared) || prepared.Execute is null ||
+                prepared.Descriptor != method)
+                throw new InvalidOperationException("The private registration needs exact generated method facts.");
+            methods.Add(method.MethodId, new(method, slot));
+            executors[slot++] = prepared.Execute;
+        }
+        _nStudyExecutors = executors;
+        _nStudyMethods = methods.ToFrozenDictionary();
+        NStudyContractHash = manifest.RpcAssemblyHash;
+    }
+
+    internal bool TryGetNStudyMethod(long method, out NStudyMethodFacts facts) =>
+        _nStudyMethods.TryGetValue(method, out facts);
+
+    // The slot is local to the exact registration which supplied the facts.
+    internal RpcGeneratedMethodExecutor GetNStudyExecutor(int slot) => _nStudyExecutors[slot];
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.
     private readonly WeakReference<ServiceRegistration>? _queuedWeakIdentity;
@@ -135,6 +168,23 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
 
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
+        return true;
+    }
+
+    // The caller already holds the exact dynamic execution lease.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetAdmittedDynamicSingleton(
+        IRpcGeneratedServerBridge generatedBridge, long requestId, out object service)
+    {
+        if (!_hasModule || Lifetime != SharpLinkServiceLifetime.Singleton)
+        {
+            service = null!;
+            return false;
+        }
+
+        if (Volatile.Read(ref _disposed) != 0)
+            throw CreateDisposedRegistrationException();
         service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
         return true;
     }
@@ -238,8 +288,20 @@ internal sealed class ServiceRegistration : IAsyncDisposable
                 "RPC module is draining"));
         }
 
+        return AcquireAdmittedServiceAsync(connection, generatedBridge, requestId, moduleLease);
+    }
+
+    // Takes ownership of the module lease, including when activation fails.
+    internal ValueTask<ServiceLease> AcquireAdmittedServiceAsync(
+        ServerConnectionState connection,
+        IRpcGeneratedServerBridge? generatedBridge,
+        long requestId,
+        SharpLinkDynamicModuleLease moduleLease)
+    {
         try
         {
+            if (Volatile.Read(ref _disposed) != 0)
+                throw CreateDisposedRegistrationException();
             if (_rootProvider is not null)
                 return ValueTask.FromResult(new ServiceLease(
                     GetOrCreateSingleton(generatedBridge, requestId),
@@ -306,7 +368,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
         catch (Exception activationException)
         {
-            moduleLease.Dispose();
             try
             {
                 if (scope is not null)
@@ -315,6 +376,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             catch (Exception cleanupException)
             {
                 throw new AggregateException(activationException, cleanupException);
+            }
+            finally
+            {
+                moduleLease.Dispose();
             }
             throw;
         }

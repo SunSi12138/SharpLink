@@ -25,7 +25,8 @@ public sealed class SharpLinkClientRetryOutcomeReuseTests
             });
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var firstRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         provider.Advance(TimeSpan.FromSeconds(1));
         await InjectErrorAsync(transport, firstRequest, SharpLinkErrorCode.Unavailable);

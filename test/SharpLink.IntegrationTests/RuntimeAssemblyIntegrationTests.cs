@@ -13,7 +13,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-unload");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
         Ensure(InvokeProbeBlocking(proxy, plugin.ContractType) == 10, "ALC probe call");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
         var payload = Activator.CreateInstance(payloadType)!;
@@ -25,6 +25,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 proxy, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None) == 25,
             "ALC SharpPack payload call");
         var tracked = CapturePluginRuntimeObjects(harness.Client, plugin.ContractAssembly);
+        tracked.Add("PreparedGeneratedService", proxy);
         tracked.Add("ContractAssembly", plugin.ContractAssembly);
         tracked.Add("ServiceAssembly", plugin.ServiceAssembly);
         tracked.Add("ContractType", plugin.ContractType);
@@ -51,7 +52,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxy = await PrepareGeneratedServiceAsync(harness.Client, plugin.ContractType);
 
         if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
         {
@@ -196,8 +197,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             .Build();
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "runtime-remove setup registration");
-        object? proxy = GetMultiClusterProxy(client, plugin.ContractType);
-        Ensure(proxy is not null, "runtime-remove setup proxy");
+        PreparedMultiClusterProxy? proxy = CreatePreparedMultiClusterProxy(client, plugin.ContractType);
+        Ensure(plugin.ContractType.IsInstanceOfType(proxy.Service), "runtime-remove setup generated local proxy");
 
         var removal = await client.RemoveClusterAsync("plugins", TimeSpan.FromSeconds(2));
         Ensure(removal is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
@@ -358,11 +359,30 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)
         => GetClientAssemblyRegistry(client).CaptureProxySnapshot().ContainsKey(contractType);
 
-    private static object GetProxy(ISharpLinkClient client, Type contractType)
+    private static PreparedGeneratedProxy CreatePreparedGeneratedProxy(ISharpLinkClient client, Type contractType)
+        => (PreparedGeneratedProxy)typeof(RuntimeAssemblyIntegrationTests)
+            .GetMethod(nameof(CreatePreparedGeneratedProxyTyped), BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(contractType).Invoke(null, [client])!;
+
+    private static PreparedGeneratedProxy CreatePreparedGeneratedProxyTyped<T>(ISharpLinkClient client) where T : IService
     {
-        var get = typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.Get))!
-            .MakeGenericMethod(contractType);
-        return get.Invoke(client, null) ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
+        var proxy = client.CreateProxy<T>();
+        var manifest = GetDynamicModule(client, typeof(T).Assembly).Manifest;
+        var contract = manifest.Contracts.Single(item => item.ContractType == typeof(T));
+        return new(proxy.Service, contract.ContractId, proxy.PrepareAsync);
+    }
+
+    private sealed record PreparedGeneratedProxy(object Service, long ContractId,
+        Func<TimeSpan, CancellationToken, ValueTask> Prepare)
+    {
+        internal ValueTask PrepareAsync(CancellationToken ct = default) => Prepare(TimeSpan.FromSeconds(5), ct);
+    }
+
+    private static async ValueTask<object> PrepareGeneratedServiceAsync(ISharpLinkClient client, Type contractType)
+    {
+        var proxy = CreatePreparedGeneratedProxy(client, contractType);
+        await proxy.PrepareAsync();
+        return proxy.Service;
     }
 
     private static ValueTask<T> InvokeValueTaskAsync<T>(
@@ -465,16 +485,17 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "multi-cluster client contract registration");
 
-        var snapshotField = typeof(SharpLinkMultiClusterClient).GetField(
-            "_snapshot",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Multi-cluster snapshot field was not found.");
-        var snapshot = (MultiClusterSnapshot)(snapshotField.GetValue(client)
-            ?? throw new InvalidOperationException("Multi-cluster snapshot was unavailable."));
         await WaitForRemoteContractManifestAsync(
-            snapshot.Clusters[new SharpLinkClusterKey("plugins")].Client,
-            plugin.ContractType);
+            ReadDynamicMultiClusterChild(client), plugin.ContractType);
     }
+
+    private static SharpLinkClient ReadDynamicMultiClusterChild(ISharpLinkMultiClusterClient client)
+        => (SharpLinkClient)ReadMultiClusterSnapshot(client).Clusters[new SharpLinkClusterKey("plugins")].Client;
+
+    private static MultiClusterSnapshot ReadMultiClusterSnapshot(ISharpLinkMultiClusterClient client)
+        => (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
+            .GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)!;
 
     private static async Task UnregisterMultiClusterPluginAsync(DynamicHarness harness, PluginBundle plugin)
     {

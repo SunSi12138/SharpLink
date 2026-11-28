@@ -11,11 +11,12 @@ await using var client = SharpClientBuilder.Create()
     .UseTcp("127.0.0.1", port)
     .Build();
 
+var proxy = client.CreateProxy<IGreetingService>();
 await client.ConnectAsync(timeout.Token);
 await client.WaitForReadinessAsync(1, timeout.Token);
+await proxy.PrepareAsync(TimeSpan.FromSeconds(5), timeout.Token);
 
-var greeting = client.Get<IGreetingService>();
-var reply = await greeting.GreetAsync(
+var reply = await proxy.Service.GreetAsync(
     new GreetingRequest { Name = "SharpLink" },
     timeout.Token);
 

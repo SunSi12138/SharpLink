@@ -9,7 +9,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -21,9 +20,11 @@ using SharpLink.Server;
 
 namespace SharpLink.ChaosTests;
 
-public static class Program
+public static partial class Program
 {
     private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PrepareTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan CohortObservationInterval = TimeSpan.FromMilliseconds(100);
     private static readonly string[] OperationNames =
     [
         "Unary",
@@ -120,7 +121,9 @@ public static class Program
 
         phase = "ConnectingClient";
         await client.ConnectAsync(duration.Token).ConfigureAwait(false);
-        var service = client.Get<IChaosService>();
+        var proxy = client.CreateProxy<IChaosService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await proxy.PrepareAsync(RecoveryTimeout, duration.Token).ConfigureAwait(false);
+        var service = proxy.Service;
         phase = "Warmup";
         await WarmUpAsync(service, duration.Token).ConfigureAwait(false);
         soakStarted = Stopwatch.GetTimestamp();
@@ -304,7 +307,7 @@ public static class Program
             {
                 while (true)
                 {
-                    await Task.Delay(options.RestartInterval, duration.Token).ConfigureAwait(false);
+                    await WaitForNextRestartAsync().ConfigureAwait(false);
                     clientLogs.Clear();
                     serverLogs.Clear();
                     Interlocked.Increment(ref faultGeneration);
@@ -328,7 +331,7 @@ public static class Program
                         return;
                     }
                     Interlocked.Increment(ref restartCount);
-                    if (!await WaitForRecoveryAsync(service, recoveryTimeout.Token).ConfigureAwait(false))
+                    if (!await WaitForRecoveryAsync(proxy, recoveryTimeout.Token).ConfigureAwait(false))
                     {
                         RecordUnexpectedFailure(CreateRecoveryTimeoutException(client.State, clientLogs.Snapshot()));
                         await duration.CancelAsync().ConfigureAwait(false);
@@ -347,6 +350,24 @@ public static class Program
             {
                 RecordUnexpectedFailure(exception);
                 await duration.CancelAsync().ConfigureAwait(false);
+            }
+        }
+
+        async Task WaitForNextRestartAsync()
+        {
+            // The control loop owns preparation. Workers never rebind a business call.
+            var started = Stopwatch.GetTimestamp();
+            while (true)
+            {
+                var remaining = options.RestartInterval - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero)
+                    return;
+                var delay = remaining < CohortObservationInterval ? remaining : CohortObservationInterval;
+                await Task.Delay(delay, duration.Token).ConfigureAwait(false);
+                if (Stopwatch.GetElapsedTime(started) >= options.RestartInterval)
+                    return;
+                if (client.GetReadinessSnapshot().ReadyConnections > 0)
+                    await proxy.PrepareAsync(PrepareTimeout, duration.Token).ConfigureAwait(false);
             }
         }
 
@@ -614,14 +635,24 @@ public static class Program
         }
     }
 
-    private static async IAsyncEnumerable<int> CreateValues(
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static IAsyncEnumerable<int> CreateValues(CancellationToken caller)
+        => new OwnedInput(caller);
+
+    private sealed class OwnedInput(CancellationToken caller) : IAsyncEnumerable<int>
     {
-        for (var value = 0; value < 16; value++)
+        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken producer = default)
+            => ReadAsync(caller, producer);
+
+        private static async IAsyncEnumerator<int> ReadAsync(CancellationToken caller, CancellationToken producer)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return value;
-            await Task.CompletedTask;
+            using var link = CancellationTokenSource.CreateLinkedTokenSource(caller, producer);
+            var lifetime = link.Token;
+            for (var value = 0; value < 16; value++)
+            {
+                lifetime.ThrowIfCancellationRequested();
+                yield return value;
+                await Task.CompletedTask;
+            }
         }
     }
 
@@ -679,7 +710,7 @@ public static class Program
     }
 
     private static async Task<bool> WaitForRecoveryAsync(
-        IChaosService service,
+        RpcProxy<IChaosService> proxy,
         CancellationToken cancellationToken)
     {
         var deadline = Stopwatch.GetTimestamp() +
@@ -689,11 +720,17 @@ public static class Program
         {
             try
             {
-                var probe = await service.AddAsync(20, 22).ConfigureAwait(false);
+                if (consecutiveSuccesses == 0)
+                    await proxy.PrepareAsync(PrepareTimeout, cancellationToken).ConfigureAwait(false);
+                var probe = await proxy.Service.AddAsync(20, 22).ConfigureAwait(false);
                 if (probe != 42)
                     throw new InvalidDataException("Recovery probe result was corrupted.");
                 if (++consecutiveSuccesses >= ConsecutiveRecoveryProbeCount)
                     return true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
             }
             catch (Exception exception) when (exception is SocketException or IOException or ObjectDisposedException or
                                               SharpLinkException
@@ -808,163 +845,6 @@ public static class Program
         return baseline.RetainedBytes == 0
             ? 0
             : (last.RetainedBytes - baseline.RetainedBytes) * 100.0 / baseline.RetainedBytes;
-    }
-
-    private static string GetCommit()
-    {
-        try
-        {
-            var info = new ProcessStartInfo("git", "rev-parse HEAD")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var process = Process.Start(info);
-            if (process is null)
-                return "unknown";
-            var result = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(2000);
-            return process.ExitCode == 0 ? result : "unknown";
-        }
-        catch
-        {
-            return "unknown";
-        }
-    }
-
-    private static bool? GetWorkingTreeDirty()
-    {
-        try
-        {
-            var info = new ProcessStartInfo("git", "status --porcelain")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var process = Process.Start(info);
-            if (process is null)
-                return null;
-            var result = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(2000);
-            return process.ExitCode == 0 ? !string.IsNullOrEmpty(result) : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static async Task<ChaosDiagnosticArtifact> CaptureProcessDumpAsync(string? reportPath)
-    {
-        var dumpPath = string.IsNullOrWhiteSpace(reportPath)
-            ? Path.GetFullPath($"artifacts/chaos/chaos-failure-{Environment.ProcessId}.dmp")
-            : Path.ChangeExtension(Path.GetFullPath(reportPath), ".dmp");
-        Directory.CreateDirectory(Path.GetDirectoryName(dumpPath)!);
-        var executableName = OperatingSystem.IsWindows() ? "createdump.exe" : "createdump";
-        var externalTool = OperatingSystem.IsWindows()
-            ? Environment.GetEnvironmentVariable("SHARPLINK_CHAOS_DUMP_TOOL")
-            : null;
-        var toolPath = externalTool ?? Path.Combine(
-            System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
-            executableName);
-        if (!File.Exists(toolPath))
-        {
-            return new ChaosDiagnosticArtifact(
-                "ProcessDump",
-                dumpPath,
-                false,
-                $"Runtime dump tool was not found at {toolPath}.");
-        }
-
-        try
-        {
-            var info = new ProcessStartInfo(toolPath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            var processId = Environment.ProcessId.ToString(
-                System.Globalization.CultureInfo.InvariantCulture);
-            if (externalTool is not null)
-            {
-                foreach (var argument in new[] { "collect", "--process-id", processId, "--type", "Heap", "--output", dumpPath })
-                    info.ArgumentList.Add(argument);
-            }
-            else
-            {
-                foreach (var argument in new[] { "--withheap", "--crashreport", "--name", dumpPath, processId })
-                    info.ArgumentList.Add(argument);
-            }
-            using var process = Process.Start(info);
-            if (process is null)
-            {
-                return new ChaosDiagnosticArtifact(
-                    "ProcessDump", dumpPath, false, "Failed to start the runtime dump tool.");
-            }
-            var standardOutput = process.StandardOutput.ReadToEndAsync();
-            var standardError = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync().ConfigureAwait(false);
-                _ = await ReadDumpOutputAsync(standardOutput, standardError).ConfigureAwait(false);
-                return new ChaosDiagnosticArtifact(
-                    "ProcessDump", dumpPath, false, "Runtime dump capture exceeded 30 seconds.");
-            }
-            var output = await ReadDumpOutputAsync(standardOutput, standardError).ConfigureAwait(false);
-            return new ChaosDiagnosticArtifact(
-                "ProcessDump",
-                dumpPath,
-                process.ExitCode == 0 && File.Exists(dumpPath),
-                output);
-        }
-        catch (Exception exception)
-        {
-            return new ChaosDiagnosticArtifact(
-                "ProcessDump", dumpPath, false, exception.ToString());
-        }
-    }
-
-    private static async Task<string> ReadDumpOutputAsync(
-        Task<string> standardOutput,
-        Task<string> standardError)
-    {
-        try
-        {
-            var output = ((await standardOutput.ConfigureAwait(false)) + Environment.NewLine +
-                          (await standardError.ConfigureAwait(false))).Trim();
-            return output.Length > 4096 ? output[..4096] : output;
-        }
-        catch (Exception exception)
-        {
-            return $"Failed to read dump-tool output: {exception.Message}";
-        }
-    }
-
-    private static void WriteReport(string? path, ChaosReport report)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return;
-        var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        var temporaryPath = $"{fullPath}.tmp-{Environment.ProcessId}-{Environment.CurrentManagedThreadId}";
-        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(report, new JsonSerializerOptions
-        {
-            WriteIndented = true
-        }));
-        File.Move(temporaryPath, fullPath, overwrite: true);
-        Console.WriteLine($"CHAOS_REPORT {fullPath}");
     }
 
     private static void PrintHelp()

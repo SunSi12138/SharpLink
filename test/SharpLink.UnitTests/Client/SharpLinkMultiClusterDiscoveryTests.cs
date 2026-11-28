@@ -48,18 +48,18 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             "multi-cluster Compile must capture route then assembly discovery once");
         Ensure(routeSource.CreateSnapshotCount == 1 && manifestSource.CreateSnapshotCount == 1,
             "coordinator Compile must query each discovery source exactly once");
-        var orders = client.Get<IOrdersContract>() as OrdersProxy ??
+        var orders = client.CreateProxy<IOrdersContract>().Service as OrdersProxy ??
             throw new Exception("orders child must materialize its routed proxy");
-        var payments = GetChildChannel(client, "payments");
+        var payments = GetChildClient(client, "payments");
         Ensure(orders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
             "the routed child Runtime must consume the codec from its own frozen manifest closure");
-        EnsureCodecIsMissing<OrdersValue>(payments);
+        EnsureCodecIsMissing<OrdersValue>(payments.RuntimeContext);
 
         await client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(new TestClientTransportFactory()),
             TimeSpan.FromSeconds(2));
-        var replacementOrders = client.Get<IOrdersContract>() as OrdersProxy ??
+        var replacementOrders = client.CreateProxy<IOrdersContract>().Service as OrdersProxy ??
             throw new Exception("replacement orders child must materialize its routed proxy");
         Ensure(replacementOrders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
             "replacement must compile from the slot's frozen plan snapshot after caller lists are cleared");
@@ -100,7 +100,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
                    prepared.Slot.StaticManifests is { Count: 1 } staticManifests &&
                    ReferenceEquals(staticManifests[0], Manifest.Instance),
                 "the prepared child must own only its routed frozen manifest closure");
-            var proxy = prepared.Slot.Client.Get<IOrdersContract>() as OrdersProxy ??
+            var proxy = prepared.Slot.Client.CreateProxy<IOrdersContract>().Service as OrdersProxy ??
                 throw new Exception("runtime child must materialize its routed proxy");
             Ensure(proxy.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
                 "the runtime child must actually materialize its proxy and Runtime Codec from that closure");
@@ -126,8 +126,12 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        var proxy = client.Get<IOrdersContract>();
-        Ensure(proxy is OrdersProxy, "Get should create the proxy directly from the routed child client");
+        var proxy = client.CreateProxy<IOrdersContract>();
+        Ensure(proxy.Service is OrdersProxy orders &&
+               ReferenceEquals(orders.Channel.RuntimeContext, GetChildClient(client, "orders").RuntimeContext),
+            "CreateProxy must take the published orders route, not the sibling child");
+        Ensure(ordersTransport.ConnectCount == 0 && paymentsTransport.ConnectCount == 0,
+            "creating a routed proxy must not connect either child");
         await client.ConnectAsync();
 
         Ensure(client.State == SharpLinkMultiClusterState.Ready, "all slots should be ready after shared connect");
@@ -146,28 +150,34 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "a filtered child should build without reading an unrelated manifest snapshot entry");
     }
 
     [Test]
-    public async Task RepeatedGetShouldReturnTheSameStaticProxy()
+    public async Task RepeatedCreateProxyShouldUseThePublishedChildWithoutDialing()
     {
+        var transport = new TestClientTransportFactory();
         await using var client = CreateStaticBuilder()
-            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .AddCluster("orders", child => child.UseTransport(transport))
             .Build();
 
-        var first = client.Get<IOrdersContract>();
-        var second = client.Get<IOrdersContract>();
+        var first = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
+        var second = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
+        var runtime = GetChildClient(client, "orders").RuntimeContext;
+        Ensure(ReferenceEquals(first.Channel.RuntimeContext, runtime) &&
+               ReferenceEquals(second.Channel.RuntimeContext, runtime) &&
+               transport.ConnectCount == 0,
+            "both local handles must capture the same published owner without initiating connectivity");
+    }
 
-        Ensure(ReferenceEquals(first, second),
-            "repeated Get<T>() within the same static registration generation must return the cached Proxy reference");
-        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 1000; index++)
-            _ = client.Get<IOrdersContract>();
-        var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
-        Ensure(allocatedAfter == allocatedBefore,
-            "steady-state repeated multicluster Get<T>() must not allocate a new Proxy or channel wrapper");
+    [Test]
+    public void CoordinatorExposesOnlyThePreparedProxyFactory()
+    {
+        Ensure(typeof(ISharpLinkMultiClusterClient).GetMethod("Get") is null &&
+               typeof(SharpLinkMultiClusterClient).GetMethod("Get") is null &&
+               typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.CreateProxy)) is not null,
+            "the coordinator must have one local proxy factory and no legacy public dispatch adapter");
     }
 
     [Test]
@@ -180,7 +190,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "unconfigured route manifests must not block a coordinator's configured routes");
     }
 
@@ -205,7 +215,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
                 .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
                 .Build())
             {
-                Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
                     "the configured route must build without retaining unrelated route manifests");
             }
 

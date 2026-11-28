@@ -67,10 +67,12 @@ public partial class StreamManagerTests
     [Test]
     public async Task TerminalDiscardShouldNotAbandonALiveStableRoute()
     {
+        var owner = new StreamTerminalOwner(1, 2);
         var manager = new StreamManager();
         manager.ReservePreAdmissionStreams(907, 1,
             new SharpLinkBufferWriterPool(new BufferWriterPoolOptions()), _ => true, _ => { },
-            () => throw new Exception("unexpected stream capacity"), retainUntilLocalCompletion: true);
+            () => throw new Exception("unexpected stream capacity"), retainUntilLocalCompletion: true,
+            retainedInputOwner: owner);
         var child = new RecordingDispatcher();
         manager.Register(907, 1, child);
         Ensure(!manager.TryDiscardTerminalStreamData(907, 1,
@@ -78,10 +80,47 @@ public partial class StreamManagerTests
             "a stale terminal decision must not gain authority over a live stable route");
         Ensure(!manager.TryCompleteTerminalStream(907, 1, null),
             "terminal cleanup must not complete a newer live route");
+        var formerOwner = owner with { Generation = 1 };
+        Ensure(!manager.TryDiscardTerminalStreamData(907, 1,
+            new ReadOnlySequence<byte>(new byte[4]), 4, out _, formerOwner) &&
+            !manager.TryCompleteTerminalStream(907, 1, null, formerOwner),
+            "the previous generation of the same owner must not discard data or publish EOF");
         await manager.DispatchChunkAsync(907, 1, new ReadOnlySequence<byte>(new byte[4]));
         Ensure(child.DispatchCount == 1 && child.CompleteCount == 0,
             "a live route must remain available to its current owner");
         manager.CompleteRequestStreams(907, null);
+    }
+
+    [Test]
+    public async Task RetainedTerminalProgressShouldRefundAndKeepOwnerUntilLocalExit()
+    {
+        var accepted = 0;
+        var consumed = 0;
+        var completed = 0;
+        var owner = new StreamTerminalOwner(3, 1);
+        var manager = new StreamManager(new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes, (_, _, bytes) => consumed += bytes, (_, _) => completed++);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        // The admitted call promotes the existing queued mailbox without changing its identity.
+        for (var stage = 0; stage < 2; stage++)
+            manager.ReservePreAdmissionStreams(910, 1, buffers, _ => true, _ => { },
+                () => throw new Exception("unexpected stream capacity"), retainUntilLocalCompletion: true,
+                retainedInputOwner: owner);
+        var child = new RecordingDispatcher();
+        manager.Register(910, 1, child);
+        Ensure(manager.TryDiscardTerminalStreamData(910, 1,
+            new ReadOnlySequence<byte>(new byte[4]), 4, out var terminal, owner),
+            "the original terminal owner may account for its already queued data");
+        await terminal;
+        Ensure(accepted == 4 && consumed == 4 && child.DispatchCount == 0,
+            "late data refunds credit once without entering the typed child");
+        Ensure(manager.TryCompleteTerminalStream(910, 1, null, owner) && completed == 1,
+            "the original owner's EOF publishes once");
+        Ensure(manager.ActiveStreamCount == 1 && child.CompleteCount == 0,
+            "peer EOF alone must not release the retained typed owner");
+        manager.AbandonExistingRequestStreams(910, 1);
+        Ensure(manager.ActiveStreamCount == 0 && completed == 1,
+            "local exit retires the route without publishing another EOF");
     }
 
     [Test]

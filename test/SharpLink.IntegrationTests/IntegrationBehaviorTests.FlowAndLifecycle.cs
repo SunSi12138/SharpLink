@@ -12,7 +12,7 @@ public partial class IntegrationBehaviorTests
             options.FlowControl.StreamReceiveWindowBytes = 1;
             options.FlowControl.ConnectionReceiveWindowBytes = 1;
         }, useSharedMemory: useSharedMemory);
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         var upload = await svc.UploadAsync(
             ToAsyncEnumerable(Enumerable.Range(1, 64), CancellationToken.None));
@@ -33,15 +33,29 @@ public partial class IntegrationBehaviorTests
             options.MaxConnections = 2;
         }, useSharedMemory: useSharedMemory);
         var client = (SharpLinkClient)harness.Client;
-        var svc = harness.Client.Get<ITestService>();
+        var handle = client.CreateProxy<ITestService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        var timeout = TimeSpan.FromSeconds(5);
+        await handle.PrepareAsync(timeout);
+        var original = ReadCreditTestField<ClientConnection[]>(client, "_readyConnections").Single().Session;
+        var originalBind = original.NStudyBindOperationForDiagnostics;
+        var svc = handle.Service;
 
         var first = svc.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
         await Task.Delay(20);
         var second = svc.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
         await WaitUntilAsync(() => client.ReadyConnectionCount == 2);
 
-        Ensure(await first == 21 && await second == 21, "concurrent calls should complete across the pool");
-        Ensure(client.ReadyConnectionCount == 2, "pressure should create one bounded expansion connection");
+        Ensure(await first == 21 && await second == 21, "in-flight calls complete during bounded expansion");
+        var added = ReadCreditTestField<ClientConnection[]>(client, "_readyConnections")
+            .Select(connection => connection.Session).Single(session => !ReferenceEquals(session, original));
+        Ensure(original.NStudyPreparedCount == 1 && original.NStudyBindOperationForDiagnostics == originalBind &&
+               added.NStudyPreparedCount == 0 && added.NStudyBindOperationForDiagnostics == 0,
+            "pressure creates one new Ready connection but does not give it a route");
+        await handle.PrepareAsync(timeout);
+        Ensure(client.ReadyConnectionCount == 2 && original.NStudyBindOperationForDiagnostics == originalBind &&
+               added.NStudyPreparedCount == 1 && added.NStudyBindOperationForDiagnostics == 1 &&
+               await svc.AddAsync(20, 22) == 42,
+            "explicit Prepare extends the cohort to the new physical Session and reuses the original route");
     }
 
     [Test]
@@ -49,7 +63,7 @@ public partial class IntegrationBehaviorTests
     {
         TestService.ResetOneWayDeadlineCancellation();
         await using var harness = await TestHarness.CreateAsync();
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
 
         await service.WaitForOneWayDeadlineAsync(CancellationToken.None);
         await TestService.WaitForOneWayDeadlineCancellationAsync()
@@ -60,7 +74,7 @@ public partial class IntegrationBehaviorTests
     public async Task UserCancellationShouldPropagateOperationCanceledException()
     {
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         await EnsureThrows<OperationCanceledException>(
@@ -76,7 +90,7 @@ public partial class IntegrationBehaviorTests
         TestService.ResetBlockingAdd(callCount);
         await using var harness = await TestHarness.CreateAsync(disableRequestTimeout: true);
         var client = (SharpLinkClient)harness.Client;
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
         var cancellations = Enumerable.Range(0, callCount)
             .Select(static _ => new CancellationTokenSource())
             .ToArray();
@@ -137,7 +151,7 @@ public partial class IntegrationBehaviorTests
     public async Task DefaultRequestTimeoutShouldThrowDeadlineExceeded()
     {
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         await EnsureThrowsSharpLinkFast(
             svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask(),
@@ -151,7 +165,7 @@ public partial class IntegrationBehaviorTests
     {
         TestService.ResetNonCancellableCompletion();
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         await EnsureThrowsSharpLinkFast(
             svc.SlowAddWithoutTimeoutAsync(1, 2).AsTask(),
@@ -169,7 +183,7 @@ public partial class IntegrationBehaviorTests
     {
         TestService.ResetNonCancellableFailure();
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         await EnsureThrowsSharpLinkFast(
             svc.SlowThrowWithoutTimeoutAsync().AsTask(),
@@ -187,7 +201,7 @@ public partial class IntegrationBehaviorTests
     {
         TestService.ResetNonCancellableCompletion();
         await using var harness = await TestHarness.CreateAsync(disableRequestTimeout: true);
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         Ensure(await svc.SlowAddWithoutTimeoutAsync(20, 22) == 42,
             "disabled default timeout should wait for the service result");
@@ -198,8 +212,9 @@ public partial class IntegrationBehaviorTests
     public async Task NonCancellableOperationCanceledExceptionShouldNotBeMisreportedAsDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();
+        var service = await harness.PrepareServiceAsync<ITestService>();
         await EnsureThrowsSharpLinkFast(
-            harness.Client.Get<ITestService>().ThrowCancellationAsync().AsTask(),
+            service.ThrowCancellationAsync().AsTask(),
             "non-cancellable service cancellation classification",
             SharpLinkErrorCode.Cancelled);
     }
@@ -209,7 +224,7 @@ public partial class IntegrationBehaviorTests
     {
         await using var harness = await TestHarness.CreateAsync();
         var client = (SharpLinkClient)harness.Client;
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
 
         for (var iteration = 0; iteration < 100; iteration++)
         {
@@ -232,7 +247,7 @@ public partial class IntegrationBehaviorTests
     {
         TestService.ResetDownloadDisposed();
         await using var harness = await TestHarness.CreateAsync();
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
 
         await using (var enumerator = service.DownloadAsync(int.MaxValue).GetAsyncEnumerator())
             Ensure(await enumerator.MoveNextAsync(), "stream should produce its first item");
@@ -251,7 +266,7 @@ public partial class IntegrationBehaviorTests
                 // Amplify completed-state pressure while leaving enough room for a canceled
                 // producer to observe its terminal token and retire its final in-flight frame.
                 options.Protocol.MaxConcurrentStreamsPerConnection = 8);
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
 
         for (var iteration = 0; iteration < 10_000; iteration++)
         {
@@ -294,7 +309,9 @@ public partial class IntegrationBehaviorTests
     public async Task MethodTimeoutShouldExpireWithoutPublicCallContextDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var proxy = harness.Client.CreateProxy<ITestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var svc = proxy.Service;
 
         var summary = await svc.DescribeCallAsync(42, CancellationToken.None);
         Ensure(summary.StartsWith("42:missing:no-deadline", StringComparison.Ordinal),
@@ -307,17 +324,25 @@ public partial class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task CallerSelectedMetadataShouldVaryPerInvocation()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CallerSelectedMetadataShouldVaryPerInvocation(bool useSharedMemory)
     {
-        await using var harness = await TestHarness.CreateAsync();
-        var tenantA = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "a")));
-        var tenantB = harness.Client.GetWithMetadata<ITestService>(new SharpLinkMetadata(
-            new KeyValuePair<string, string>("tenant", "b")));
+        await using var harness = await TestHarness.CreateAsync(useSharedMemory: useSharedMemory);
+        var tenantA = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "a"))
+        });
+        var tenantB = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "b"))
+        });
+        var timeout = TimeSpan.FromSeconds(5);
+        await Task.WhenAll(tenantA.PrepareAsync(timeout).AsTask(), tenantB.PrepareAsync(timeout).AsTask());
 
         var results = await Task.WhenAll(
-            tenantA.DescribeCallAsync(1, CancellationToken.None).AsTask(),
-            tenantB.DescribeCallAsync(2, CancellationToken.None).AsTask());
+            tenantA.Service.DescribeCallAsync(1, CancellationToken.None).AsTask(),
+            tenantB.Service.DescribeCallAsync(2, CancellationToken.None).AsTask());
 
         Ensure(results[0].StartsWith("1:a:", StringComparison.Ordinal),
             "caller-selected metadata A should stay bound to its invocation");
@@ -334,7 +359,7 @@ public partial class IntegrationBehaviorTests
         {
             await using var harness = await TestHarness.CreateAsync(
                 serverConfigure: builder => builder.UseExceptionMapper(exceptionMapper));
-            var svc = harness.Client.Get<ITestService>();
+            var svc = await harness.PrepareServiceAsync<ITestService>();
 
             var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
             var streamTask = CollectAsync(
@@ -365,7 +390,7 @@ public partial class IntegrationBehaviorTests
     public async Task ClientDisposeShouldFailFastPendingUnaryAndStream()
     {
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
 
         var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
         var streamTask = CollectAsync(svc.SlowDownloadAsync(100, 200, CancellationToken.None), CancellationToken.None);
@@ -388,7 +413,9 @@ public partial class IntegrationBehaviorTests
             options.MinConnections = 1;
             options.MaxConnections = 4;
         });
-        var service = harness.Client.Get<ITestService>();
+        var handle = harness.Client.CreateProxy<ITestService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await handle.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = handle.Service;
         using var producerCancellation = new CancellationTokenSource();
         var calls = new Task<int>[callCount];
         for (var index = 0; index < calls.Length; index++)
@@ -422,7 +449,7 @@ public partial class IntegrationBehaviorTests
     {
         TestService.ResetActiveUploads();
         await using var harness = await TestHarness.CreateAsync();
-        var service = harness.Client.Get<ITestService>();
+        var service = await harness.PrepareServiceAsync<ITestService>();
 
         for (var iteration = 0; iteration < 1_000; iteration++)
         {
@@ -440,20 +467,32 @@ public partial class IntegrationBehaviorTests
     [NotInParallel]
     public async Task GracefulStopShouldDrainAcceptedCallAndRejectNewCallsAfterGoAway()
     {
+        TestService.ResetBlockingAdd(1);
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var proxy = harness.Client.CreateProxy<ITestService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        var svc = proxy.Service;
 
-        var acceptedCall = svc.SlowAddWithoutTimeoutAsync(20, 22).AsTask();
-        await Task.Delay(50);
-        var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
-        await WaitUntilAsync(() => harness.Client.State == SharpLinkConnectionState.Draining);
+        var acceptedCall = svc.BlockingAddAsync(20, 22, CancellationToken.None).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
+            await WaitUntilAsync(() => harness.Client.GetReadinessSnapshot() is
+            { State: SharpLinkConnectionState.Reconnecting, ReadyConnections: 0 });
 
-        await EnsureThrowsSharpLinkFast(
-            svc.AddAsync(1, 1).AsTask(),
-            "new call after GoAway",
-            SharpLinkErrorCode.Unavailable);
-        Ensure(await acceptedCall == 42, "accepted call should complete during grace period");
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await EnsureThrowsSharpLinkFast(
+                svc.AddAsync(1, 1).AsTask(),
+                "new call after GoAway",
+                SharpLinkErrorCode.Unavailable);
+            TestService.ReleaseBlockingAdd();
+            Ensure(await acceptedCall == 42, "accepted call should complete during grace period");
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     [Test]
@@ -463,7 +502,7 @@ public partial class IntegrationBehaviorTests
         const int callCount = 100;
         TestService.ResetBlockingAdd(callCount);
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
         var acceptedCalls = Enumerable.Range(0, callCount)
             .Select(iteration => svc.BlockingAddAsync(iteration, 1, CancellationToken.None).AsTask())
             .ToArray();
@@ -492,7 +531,7 @@ public partial class IntegrationBehaviorTests
         const int callCount = 100;
         TestService.ResetBlockingAdd(callCount);
         await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var svc = await harness.PrepareServiceAsync<ITestService>();
         var pending = Enumerable.Range(0, callCount)
             .Select(iteration => svc.BlockingAddAsync(iteration, 1, CancellationToken.None).AsTask())
             .ToArray();

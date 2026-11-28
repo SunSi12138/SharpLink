@@ -30,7 +30,7 @@ public sealed class GeneratedOutputSendPhysicalTailTests
         using (SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(session.Id, null, deadline, clock)))
         {
             pump = new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
-                73, 0, stream, codec, false, 101, 202, CancellationToken.None).AsTask();
+                73, 0, stream, codec, new RpcMethodDescriptor(101, 202, RpcMethodKind.ServerStreaming, true, false, false, null) { SupportsCancellation = true }, CancellationToken.None).AsTask();
         }
         try
         {

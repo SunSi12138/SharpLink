@@ -29,7 +29,8 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
+        await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         Ensure(await service.PingAsync(41) == 42, "initial static-cluster RPC");
 
         await first.StopAsync();
@@ -60,7 +61,8 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "available",
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        Ensure(await service.GetEndpointIdAsync() == "available",
             "a healthy endpoint should connect when another is unavailable");
     }
 
@@ -156,7 +158,8 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "both preferred-endpoint candidates readiness");
-        var service = client.Get<IConnectionBehaviorService>();
+        var proxy = await PrepareBalancedProxyAsync(client);
+        var service = proxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial preferred endpoint");
 
         var port = first.Port;
@@ -185,7 +188,12 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "reconnected endpoint readiness");
-        Ensure(await service.GetEndpointIdAsync() == "first-reconnected", "reconnected endpoint should rejoin selection");
+        Ensure(replacement.OpenBindings == 0 && await service.GetEndpointIdAsync() == "second",
+            "transport readiness must not make the replacement Session eligible");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(replacement.OpenBindings == 1 &&
+               await service.GetEndpointIdAsync() == "first-reconnected",
+            "explicit preparation should return the reconnected endpoint to selection");
     }
 
 
@@ -210,7 +218,8 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(4) == 5, "named-pipe static-cluster RPC");
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        Ensure(await service.PingAsync(4) == 5, "named-pipe static-cluster RPC");
     }
 
     [Test]
@@ -231,7 +240,8 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(6) == 7, "shared-memory static-cluster RPC");
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        Ensure(await service.PingAsync(6) == 7, "shared-memory static-cluster RPC");
     }
 
     [Test]
@@ -254,7 +264,9 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(10) == 11, "UDS static-cluster RPC");
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        Ensure(await service.PingAsync(10) == 11, "UDS static-cluster RPC");
+        Console.WriteLine("PREPARED_STATIC_UDS_RPC_PASS");
     }
 
     [Test]
@@ -299,7 +311,7 @@ public sealed partial class StaticEndpointIntegrationTests
         await WaitUntilAsync(
             () => ((SharpLinkClient)client).ReadyConnectionCount == endpoints.Count,
             TimeSpan.FromSeconds(3));
-        var service = client.Get<IConnectionBehaviorService>();
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         var observed = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < endpoints.Count * 2; index++)
             observed.Add(await service.GetEndpointIdAsync());
@@ -484,7 +496,8 @@ public sealed partial class StaticEndpointIntegrationTests
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
         Ensure(delayedFailure.ConnectCount >= 2,
             "failed initial sibling must be retried to restore the configured minimum ready count");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() is "first" or "recovered",
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
+        Ensure(await service.GetEndpointIdAsync() is "first" or "recovered",
             "recovered static endpoint topology should remain usable");
     }
 
@@ -579,7 +592,7 @@ public sealed partial class StaticEndpointIntegrationTests
         var implementation = (SharpLinkClient)client;
         await WaitUntilAsync(() => implementation.ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(implementation.ReadyConnectionCount == 2, "both GoAway endpoints should be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         var longUnary = service.SlowAsync(600, CancellationToken.None).AsTask();
         Ensure(await first.Service.SlowUnaryStarted!.Task == "first", "accepted unary should start on first endpoint");
         await using var stream = service.SlowRangeAsync(3, 100, CancellationToken.None).GetAsyncEnumerator();
@@ -596,6 +609,13 @@ public sealed partial class StaticEndpointIntegrationTests
         Ensure(!await stream.MoveNextAsync(), "draining stream completion");
         Ensure(await longUnary == 600, "accepted unary should complete during graceful drain");
         await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    private static async ValueTask<RpcProxy<IConnectionBehaviorService>> PrepareBalancedProxyAsync(ISharpLinkClient client)
+    {
+        var proxy = client.CreateProxy<IConnectionBehaviorService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        return proxy;
     }
 
     private static SharpLinkEndpoint Endpoint(string id, int port, string? zone = null) => new()
@@ -690,6 +710,8 @@ public sealed partial class StaticEndpointIntegrationTests
 
         public int Port { get; }
         public ConnectionBehaviorService Service { get; }
+        public int OpenBindings => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)_server).Values
+            .Sum(connection => connection.NStudyBindings.Snapshot().Open);
 
         public static Task<TcpServerScope> StartAsync(
             string endpointId = "default",
@@ -886,12 +908,16 @@ public sealed partial class StaticEndpointIntegrationTests
     private sealed class ThrowOnceSelector : ISharpLinkEndpointSelector
     {
         private int _remainingFailures = 1;
+        internal Exception Failure { get; } = new InvalidOperationException("test selector failure");
 
         public int Select(in SharpLinkEndpointSelectionContext context)
         {
             if (Interlocked.Exchange(ref _remainingFailures, 0) != 0)
-                throw new InvalidOperationException("test selector failure");
-            return 0;
+                throw Failure;
+            for (var index = 0; index < context.Count; index++)
+                if ((context.ExcludedMask & (1UL << index)) == 0)
+                    return index;
+            return -1;
         }
     }
 

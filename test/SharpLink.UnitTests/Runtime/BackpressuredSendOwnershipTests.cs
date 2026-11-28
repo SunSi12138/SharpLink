@@ -397,6 +397,49 @@ public sealed class BackpressuredSendOwnershipTests
     }
 
     [Test]
+    public async Task SuccessfulFlushOwnerFailureDoesNotReturnBatchPrefixTwice()
+    {
+        var fixture = new Fixture(profile: SharpLinkPerformanceProfile.Throughput);
+        var beforeFailure = new ReturnGateWriter();
+        var failing = new ReturnGateWriter(throwOnReturn: true);
+        var afterFailure = new ReturnGateWriter();
+        beforeFailure.ReleaseReturn();
+        failing.ReleaseReturn();
+        afterFailure.ReleaseReturn();
+        Exception? joinedFailure = null;
+        try
+        {
+            var opening = fixture.Session.SendPacketAndFlushAsync(fixture.Frame(1, 32)).AsTask();
+            await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+            fixture.WriteFrame(beforeFailure, 2, 32);
+            fixture.WriteFrame(failing, 3, 32);
+            fixture.WriteFrame(afterFailure, 4, 32);
+            fixture.Session.SendPacket(beforeFailure);
+            fixture.Session.SendPacket(failing);
+            var subsequentMarker = fixture.Session.SendPacketAndFlushAsync(afterFailure).AsTask();
+            fixture.Output.Release();
+
+            await opening.WaitAsync(Timeout);
+            Ensure(await FailureAsync(subsequentMarker) is SharpLinkException
+            {
+                Code: SharpLinkErrorCode.ConnectionClosed
+            } terminal && ReferenceEquals(terminal.InnerException, failing.ReturnFailure),
+                "the following waiter sees the session's original failure, not an unfinished flush");
+        }
+        finally
+        {
+            joinedFailure = await FailureAsync(fixture.DisposeAsync().AsTask());
+        }
+
+        Ensure(beforeFailure.ReturnCount == 1 && failing.ReturnCount == 1 && afterFailure.ReturnCount == 1 &&
+               fixture.Session.QueuedSendBytes == 0,
+            $"ownership must settle once per frame; returns={beforeFailure.ReturnCount}/{failing.ReturnCount}/{afterFailure.ReturnCount}, " +
+            $"queued={fixture.Session.QueuedSendBytes}");
+        Ensure(ReferenceEquals(joinedFailure, failing.ReturnFailure),
+            "joined disposal must preserve the initial frame cleanup exception");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task TerminalTransitionReleasesEveryRegisteredWaiter(bool fault)
@@ -766,12 +809,12 @@ public sealed class BackpressuredSendOwnershipTests
         internal GatePipeWriter Output { get; }
         internal RpcSession Session { get; }
 
-        internal Fixture(int maxQueueBytes = 1024)
+        internal Fixture(int maxQueueBytes = 1024, SharpLinkPerformanceProfile profile = SharpLinkPerformanceProfile.LowLatency)
         {
             _context = new SharpLinkRuntimeContextBuilder().Configure(options =>
             {
                 options.FlowControl.MaxSendQueueBytes = maxQueueBytes;
-                options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency;
+                options.PerformanceProfile = profile;
             }).Build(includeGeneratedAssemblyCatalog: false);
             Output = new GatePipeWriter(_output.Writer);
             Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
@@ -812,10 +855,13 @@ public sealed class BackpressuredSendOwnershipTests
         public async ValueTask DisposeAsync()
         {
             Output.Release();
-            await Session.DisposeAsync().AsTask().WaitAsync(Timeout);
-            await _input.Writer.CompleteAsync();
-            await _output.Reader.CompleteAsync();
-            _context.Dispose();
+            try { await Session.DisposeAsync().AsTask().WaitAsync(Timeout); }
+            finally
+            {
+                await _input.Writer.CompleteAsync();
+                await _output.Reader.CompleteAsync();
+                _context.Dispose();
+            }
         }
     }
 
@@ -852,6 +898,7 @@ public sealed class BackpressuredSendOwnershipTests
         private int _returnCount;
         internal TaskCompletionSource ReturnEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int ReturnCount => Volatile.Read(ref _returnCount);
+        internal InvalidOperationException? ReturnFailure { get; } = throwOnReturn ? new("writer cleanup failure") : null;
         internal void ReleaseReturn() => _release.Set();
         public int WrittenCount => _inner.WrittenCount;
         public ReadOnlyMemory<byte> WrittenMemory => _inner.WrittenMemory;
@@ -867,7 +914,7 @@ public sealed class BackpressuredSendOwnershipTests
             ReturnEntered.TrySetResult();
             if (!_release.Wait(Timeout)) throw new TimeoutException("writer return was not released");
             _inner.Dispose();
-            if (throwOnReturn) throw new InvalidOperationException("injected writer cleanup failure");
+            if (ReturnFailure is { } failure) throw failure;
         }
     }
 }

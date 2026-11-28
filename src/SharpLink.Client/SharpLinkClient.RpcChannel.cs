@@ -105,8 +105,7 @@ internal sealed partial class SharpLinkClient
         }
         if (HasReachedReconnectStableWindow(readyTimestamp, hasReadyTimestamp, reconnectPolicy))
             Volatile.Write(ref _reconnectDelayTicks, reconnectPolicy.InitialDelay.Ticks);
-        TransitionTo(SharpLinkConnectionState.Reconnecting);
-        EnsureReconnectLoop();
+        EnsureReconnectLoop(publishRecoveryState: true);
     }
 
     internal void HandleConnectionFatalFailure(ClientConnection connection, Exception exception)
@@ -122,12 +121,14 @@ internal sealed partial class SharpLinkClient
         HandleDisconnected(connection, exception);
     }
 
-    private void EnsureReconnectLoop()
+    private void EnsureReconnectLoop(bool publishRecoveryState = false)
     {
         lock (_stateGate)
         {
-            if (_shutdownCts.IsCancellationRequested)
+            if (_shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
                 return;
+            if (publishRecoveryState && ReadyConnectionCount == 0)
+                TransitionTo(SharpLinkConnectionState.Reconnecting);
             if (_reconnectTask is not { IsCompleted: false })
             {
                 _reconnectTask = ReconnectLoopAsync();
@@ -192,57 +193,23 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private ClientConnection GetReadyConnection()
-    {
-        if (_cluster is not null)
-            return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
-
-        for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
-        {
-            var connections = Volatile.Read(ref _readyConnections);
-            if (_shutdownCts.IsCancellationRequested || connections.Length == 0)
-                break;
-
-            ClientConnection selected;
-            if (connections.Length == 1)
-            {
-                selected = connections[0];
-            }
-            else
-            {
-                var first = Random.Shared.Next(connections.Length);
-                var second = Random.Shared.Next(connections.Length - 1);
-                if (second >= first)
-                    second++;
-                selected = EndpointSelectionKernel.SelectLeastLoaded(connections, first, second);
-            }
-
-            if (selected.TryReserveCallAdmission(out var admitted))
-            {
-                if (admitted.ActiveCallCount != 0)
-                    EnsureExpansion();
-                return admitted;
-            }
-        }
-
-        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
-            throw CreateConnectionClosedException("Client is not accepting new calls.");
-        throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
-    }
-
     private ClientConnection GetReadyConnection(
         RpcMethodDescriptor method,
         EndpointRetrySelectionState? retrySelection,
-        AttemptOutcomeState? attemptOutcome)
+        AttemptOutcomeState? attemptOutcome,
+        NStudyPreparedSite prepared)
     {
+        // Reached only by a remote continuation, not by a local interceptor result.
+        if (ReferenceEquals(prepared, NStudyPreparedSite.Unprepared))
+            throw NStudyPreparedSite.Unavailable();
+
         if (_cluster is not null)
-            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
+            return !prepared.IsBalanced
+                ? ReserveClusterPreparedSite(prepared, attemptOutcome)
+                : _cluster.GetReadyConnection(method, retrySelection, attemptOutcome, prepared: prepared);
 
-        if (attemptOutcome is null || _fixedEndpoint is null)
-            return GetReadyConnection();
-
-        if (ReadyConnectionCount == 0)
-            return GetReadyConnection();
+        if (attemptOutcome is null || _fixedEndpoint is null || ReadyConnectionCount == 0)
+            return ReservePreparedSite(prepared);
 
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
@@ -253,13 +220,84 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            return GetReadyConnection();
+            return ReservePreparedSite(prepared);
         }
         catch (Exception exception)
         {
             attemptOutcome.CompleteLocalFailure(exception);
             throw;
         }
+    }
+
+    private ClientConnection ReserveClusterPreparedSite(NStudyPreparedSite prepared, AttemptOutcomeState? outcome)
+    {
+        // Without endpoint admission policy, the captured binding and the exact connection's
+        // reservation gate are sufficient. Refresh, endpoint retirement and failure close that
+        // gate; resolving the endpoint again would block an ordinary call on the topology lock.
+        if (outcome is null)
+            return ReservePreparedSite(prepared);
+
+        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
+            throw CreateConnectionClosedException("Client is not accepting new calls.");
+        if (!prepared.TryGetReadyPinnedConnection(out var owner) ||
+            !TryGetNStudyClusterCandidate(owner, out var candidate))
+            throw NStudyPreparedSite.Unavailable();
+        if (!outcome.TryAcquire(candidate))
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The endpoint admission policy rejected the prepared endpoint.");
+        try
+        {
+            // Do not use the cluster picker or the Session refresh redirect here.
+            return ReservePreparedSite(prepared);
+        }
+        catch (Exception exception)
+        {
+            outcome.CompleteLocalFailure(exception);
+            throw;
+        }
+    }
+
+    private ClientConnection ReservePreparedSite(NStudyPreparedSite prepared)
+    {
+        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
+            throw CreateConnectionClosedException("Client is not accepting new calls.");
+        if (prepared.IsBalanced)
+            return ReserveFixedPoolPreparedCohort(prepared);
+
+        if (!prepared.TryGetReadyPinnedConnection(out var connection) ||
+            !connection.TryReserveExactCallAdmission())
+            throw NStudyPreparedSite.Unavailable();
+        return connection;
+    }
+
+    private ClientConnection ReserveFixedPoolPreparedCohort(NStudyPreparedSite prepared)
+    {
+        for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
+        {
+            ClientConnection? selected = null;
+            var leastLoad = long.MaxValue;
+            foreach (var candidate in Volatile.Read(ref _readyConnections))
+            {
+                if (!candidate.CanAcceptCalls || prepared.Find(candidate) is null)
+                    continue;
+                var load = (long)candidate.ActiveCallCount + candidate.CallAdmissionReservationCount;
+                if (load < leastLoad)
+                {
+                    selected = candidate;
+                    leastLoad = load;
+                }
+            }
+            if (selected is null)
+                break;
+            if (selected.TryReserveExactCallAdmission())
+            {
+                // Expand the transport pool under load, without binding or using the new Session here.
+                if (selected.ActiveCallCount != 0)
+                    EnsureExpansion();
+                return selected;
+            }
+        }
+
+        throw NStudyPreparedSite.Unavailable();
     }
 
     private bool RemoveReadyConnection(ClientConnection connection)
@@ -331,13 +369,8 @@ internal sealed partial class SharpLinkClient
 
         RetireDrainingConnectionIfIdle(connection);
 
-        if (ReadyConnectionCount != 0)
-        {
-            EnsureReconnectLoop();
-            return;
-        }
-        TransitionTo(SharpLinkConnectionState.Draining);
-        EnsureReconnectLoop();
+        // The peer is draining this connection, not stopping the client.
+        EnsureReconnectLoop(publishRecoveryState: true);
     }
 
     private void ReportGoAwayToCircuitBreaker(ClientConnection connection)

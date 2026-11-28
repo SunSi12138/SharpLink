@@ -5,7 +5,8 @@ internal sealed partial class SharpLinkServer
     private static bool TryAcceptInboundStreamProgress(
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         long requestId,
-        out bool hasOwningCallState)
+        out bool hasOwningCallState,
+        out TerminalInputProgress terminalOwner)
     {
         if (!requestCancellationMap.TryCapture(
                 requestId,
@@ -14,18 +15,20 @@ internal sealed partial class SharpLinkServer
         {
             // No owning state yet: preserve pre-admission buffering.
             hasOwningCallState = false;
+            terminalOwner = default;
             return true;
         }
 
         return TryAcceptCapturedInboundStreamProgress(
-            requestCancellationMap, requestId, callLease, out hasOwningCallState);
+            requestCancellationMap, requestId, callLease, out hasOwningCallState, out terminalOwner);
     }
 
     private static bool TryAcceptCapturedInboundStreamProgress(
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         long requestId,
         ServerCallCancellationLease callLease,
-        out bool hasOwningCallState)
+        out bool hasOwningCallState,
+        out TerminalInputProgress terminalOwner)
     {
         // Losing a pooled generation is not a terminal decision. Retry current ownership;
         // removal falls back to ordinary existing-route handling, never terminal abandonment.
@@ -39,6 +42,7 @@ internal sealed partial class SharpLinkServer
                     requestId, static (id, state) => state.CaptureLease(id), out callLease))
             {
                 hasOwningCallState = false;
+                terminalOwner = default;
                 return true;
             }
         }
@@ -49,6 +53,8 @@ internal sealed partial class SharpLinkServer
         {
             var accepted = callLease.State.TryAcceptStreamDataDeferredCancellation(
                 out var notifyCancellation);
+            terminalOwner = accepted ? default : new TerminalInputProgress(
+                callLease.TerminalOwner, callLease.State.EarlyInputStreamCount);
             if (notifyCancellation)
             {
                 // The connection read loop owns frame parsing for every call on this transport.
@@ -56,17 +62,7 @@ internal sealed partial class SharpLinkServer
                 // until the best-effort notification completes so the pooled state cannot be
                 // recycled underneath the queued work.
                 releaseLease = false;
-                _ = Task.Run(() =>
-                {
-                    try
-                    {
-                        callLease.State.NotifyInvocationCancellation();
-                    }
-                    finally
-                    {
-                        callLease.ReleaseUse();
-                    }
-                });
+                QueueInboundCancellation(callLease);
             }
             return accepted;
         }
@@ -75,6 +71,22 @@ internal sealed partial class SharpLinkServer
             if (releaseLease)
                 callLease.ReleaseUse();
         }
+    }
+
+    private static void QueueInboundCancellation(ServerCallCancellationLease callLease)
+    {
+        // Keep the captured lease in the notification path, not in every frame check.
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                callLease.State.NotifyInvocationCancellation();
+            }
+            finally
+            {
+                callLease.ReleaseUse();
+            }
+        });
     }
 
     private async Task ProcessRequestLoop(ServerConnectionState connection)
@@ -106,6 +118,17 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
 
+                        var oneWayInputCount = 0;
+                        if (header.Type == NStudyWire.OneWayInputRequest)
+                        {
+                            // Count is independent of the registry. Check the entire
+                            // compressed envelope before stripping the count byte.
+                            oneWayInputCount = NStudyWire.ReadOneWayInputCount(payload);
+                            session.ValidateInboundPayloadEnvelope(header.Type, header.Flags, payload);
+                            payload = payload.Slice(1);
+                            header = header with { Type = ProtocolV2FrameType.Request };
+                        }
+
                         var isStreamProgress = header.Type is
                             ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
                         var streamRequestId = isStreamProgress
@@ -116,25 +139,22 @@ internal sealed partial class SharpLinkServer
                             !TryAcceptInboundStreamProgress(
                                 requestCancellationMap,
                                 streamRequestId,
-                                out hasOwningStreamCallState))
+                                out hasOwningStreamCallState,
+                                out var terminalOwner))
                         {
                             await DrainTerminalStreamProgressAsync(
-                                session, header.Type, header.Flags, streamRequestId, payload, decoded: false)
+                                session, header.Type, header.Flags, streamRequestId, payload, decoded: false, terminalOwner)
                                 .ConfigureAwait(false);
                             continue;
                         }
 
                         IRpcByteBufferWriter? decodedOwner = null;
+                        var compressedMailboxOwnedFrame = false;
                         try
                         {
                             if (header.Type == ProtocolV2FrameType.StreamData &&
-                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
-                                !hasOwningStreamCallState)
+                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0)
                             {
-                                // Only a genuinely pre-admission stream may use the manager's
-                                // compressed buffering path. Once an owning call state exists,
-                                // decode stays in this loop so we can re-arbitrate immediately
-                                // after the potentially user-supplied decompressor returns.
                                 var preAdmissionStreams = session.StreamManager;
                                 session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
@@ -146,9 +166,19 @@ internal sealed partial class SharpLinkServer
                                         streamId,
                                         payload,
                                         originalLength,
-                                        out var preAdmissionDispatch))
+                                        out var preAdmissionDispatch,
+                                        out var hasRoute))
                                 {
+                                    compressedMailboxOwnedFrame = true;
                                     await preAdmissionDispatch.ConfigureAwait(false);
+                                    continue;
+                                }
+                                if (!hasRoute)
+                                {
+                                    // Rejected input needs neither a route nor a decompressor.
+                                    preAdmissionStreams.RecordUnroutedStreamData();
+                                    if (streamId != 0)
+                                        session.RefundDiscardedStreamData(streamRequestId, streamId, originalLength);
                                     continue;
                                 }
                             }
@@ -160,8 +190,8 @@ internal sealed partial class SharpLinkServer
                                 // prefix. Never perform potentially blocking decompression here:
                                 // dispatch must first resolve that relative budget into one local
                                 // RpcDeadline and then carry the same boundary through decode.
-                                session.ValidateInboundPayloadEnvelope(
-                                    header.Type, header.Flags, payload);
+                                if (oneWayInputCount == 0)
+                                    session.ValidateInboundPayloadEnvelope(header.Type, header.Flags, payload);
                             }
                             else
                             {
@@ -183,7 +213,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-                                            ResolveRawRequestClientStreamCount(payload));
+                                            ResolveRejectedNStudyOneWayCount(connection, payload, oneWayInputCount));
                                     }
                                     else
                                     {
@@ -203,11 +233,13 @@ internal sealed partial class SharpLinkServer
                                         !TryAcceptInboundStreamProgress(
                                             requestCancellationMap,
                                             failedRequestId,
-                                            out _))
+                                            out _,
+                                            out var failedTerminalOwner))
                                     {
-                                        await DrainTerminalStreamProgressAsync(
-                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
-                                            .ConfigureAwait(false);
+                                        if (!compressedMailboxOwnedFrame)
+                                            await DrainTerminalStreamProgressAsync(
+                                                session, header.Type, header.Flags, failedRequestId, payload, decoded: false, failedTerminalOwner)
+                                                .ConfigureAwait(false);
                                         continue;
                                     }
 
@@ -229,12 +261,13 @@ internal sealed partial class SharpLinkServer
                             !TryAcceptInboundStreamProgress(
                                 requestCancellationMap,
                                 streamRequestId,
-                                out _))
+                                out _,
+                                out var decodedTerminalOwner))
                         {
                             try
                             {
                                 await DrainTerminalStreamProgressAsync(
-                                    session, header.Type, header.Flags, streamRequestId, payload, decoded: true)
+                                    session, header.Type, header.Flags, streamRequestId, payload, decoded: true, decodedTerminalOwner)
                                     .ConfigureAwait(false);
                             }
                             finally
@@ -259,6 +292,30 @@ internal sealed partial class SharpLinkServer
                                 case ProtocolV2FrameType.Pong:
                                     DebugLogClientHeartbeatReceived(_logger);
                                     break;
+                                case NStudyWire.Bind:
+                                    await HandleNStudyBindAsync(connection, header.RequestId,
+                                        NStudyWire.ReadBind(payload), ct).ConfigureAwait(false);
+                                    break;
+                                case NStudyWire.TargetDeclaration:
+                                    await HandleNStudyTargetDeclarationAsync(connection, header.RequestId,
+                                        NStudyWire.ReadTargetDeclaration(payload), ct).ConfigureAwait(false);
+                                    break;
+                                case NStudyWire.InventoryQuery:
+                                    if (!payload.IsEmpty)
+                                        throw RpcSession.InvalidNStudy("A server inventory query does not carry a Session scope.");
+                                    await HandleNStudyInventoryAsync(connection, header.RequestId, ct).ConfigureAwait(false);
+                                    break;
+                                case NStudyWire.InventoryReply:
+                                    session.OnNStudyInventoryReply(header.RequestId, payload);
+                                    break;
+                                case NStudyWire.Release:
+                                    session.EnsureNStudyReady(RpcSessionRole.Server);
+                                    connection.NStudyBindings.Release(NStudyWire.ReadRelease(payload));
+                                    break;
+                                case NStudyWire.Coordination:
+                                    // Client-to-server coordination messages are queued synchronously.
+                                    _ = session.OnNStudyCoordination(header.RequestId, payload);
+                                    break;
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceUpdate:
                                     var responseCompressionPreference =
                                         ProtocolV2PayloadCodec.ReadResponseCompressionPreferenceUpdate(payload);
@@ -277,7 +334,8 @@ internal sealed partial class SharpLinkServer
                                             header.Flags,
                                             payload,
                                             requestCancellationMap,
-                                            ct);
+                                            ct,
+                                            oneWayInputCount);
                                         break;
                                     }
                                 case ProtocolV2FrameType.Cancel:
@@ -384,9 +442,11 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken)
+        CancellationToken serverLoopToken,
+        int oneWayInputCount)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        NStudyServerBindings.Use bindingUse = default;
         try
         {
             if (!TryAcceptRequest(connection, requestId))
@@ -398,7 +458,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        ResolveRejectedNStudyOneWayCount(connection, payload, oneWayInputCount));
                     return;
                 }
 
@@ -414,10 +474,13 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            var admissionProgram = CaptureAdmissionProgram(requestId);
             ValueTask dispatchTask;
             try
             {
+                var request = ReadRequestEnvelope(connection.Session, payload, flags);
+                var preparation = connection.NStudyBindings.BorrowDispatch(request.InterfaceHash, request.MethodHash,
+                    out bindingUse);
+                var admissionProgram = CaptureAdmissionProgram(requestId);
                 dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
                     ? DispatchOneWayRpc(
                         connection,
@@ -426,7 +489,11 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram)
+                        admissionProgram,
+                        request,
+                        in preparation,
+                        bindingUse,
+                        oneWayInputCount)
                     : DispatchRpcAsync(
                         connection,
                         requestId,
@@ -434,7 +501,10 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram);
+                        admissionProgram,
+                        request,
+                        in preparation,
+                        bindingUse);
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)
@@ -475,6 +545,10 @@ internal sealed partial class SharpLinkServer
         {
             LogRpcDispatchUnhandledException(_logger, ex);
         }
+        finally
+        {
+            bindingUse.Dispose();
+        }
     }
 
     private async Task AwaitDispatchAsync(ValueTask dispatchTask, long requestId)
@@ -504,14 +578,20 @@ internal sealed partial class SharpLinkServer
         await AwaitDispatchAsync(dispatchTask, requestId).ConfigureAwait(false);
     }
 
-    private static async Task DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
             throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "StreamData stream ID is truncated.");
         var streamId = unchecked((ushort)streamIdBits);
         var streamPayload = payload.Slice(sizeof(ushort));
-        await session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
+        if (session.StreamManager.TryDispatchChunk(requestId, streamId, streamPayload, out var dispatch))
+            return dispatch;
+        // A rejected request may have no input route at all. Its sender already
+        // debited the frame, and the receiver retains nothing.
+        if (streamId != 0)
+            session.RefundDiscardedStreamData(requestId, streamId, Math.Max(1, checked((int)streamPayload.Length)));
+        return ValueTask.CompletedTask;
     }
 
     private static void DispatchStreamComplete(

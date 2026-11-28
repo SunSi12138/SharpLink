@@ -39,100 +39,24 @@ public partial class RpcGenerator
         RpcInterfaceModel model,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
-        var noReturnMethods = model.Methods.Where(m => m.IsVoid || m.IsStreamReturn).ToArray();
-        var responseMethods = model.Methods.Where(m => !m.IsVoid && !m.IsStreamReturn).ToArray();
-
         sb.AppendLine($"    public long InterfaceHash => {model.Hash}L;");
         AppendStubCodecFieldsAndConstructor(sb, model, concreteCodecTypes);
         AppendSizeFieldsByType(sb, model.Methods);
-        AppendCancellationSupport(sb, model.Methods);
-        AppendMethodDescriptors(sb, model);
-        AppendStubResponseAwaitHelpers(sb, responseMethods);
-        sb.AppendLine($$"""
+        AppendPreparedMethods(sb, model);
+        AppendStubResponseAwaitHelpers(sb, model.Methods.Where(StubWritesResponse));
+        sb.AppendLine("""
                             private static void __ValidateResponse<T>(T result, bool responseNullable)
                             {
                                 if (!responseNullable && default(T) is null && result is null)
                                     throw new SharpLinkException(SharpLinkErrorCode.Internal, "A non-nullable RPC response was null.");
                             }
 
-                            private static async ValueTask __AwaitTaskIgnoreAsync<T>(Task<T> task)
-                            {
-                                _ = await task.ConfigureAwait(false);
-                            }
-
-                            private static async ValueTask __AwaitValueTaskIgnoreAsync<T>(ValueTask<T> task)
-                            {
-                                _ = await task.ConfigureAwait(false);
-                            }
-
-                            public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
-                                => InvokeNoReturnCoreAsync(service, bridge, methodHash, requestId, args, CancellationToken.None);
-
-                            public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-                                => InvokeNoReturnCoreAsync(service, bridge, methodHash, requestId, args, cancellationToken);
-
-                            private ValueTask InvokeNoReturnCoreAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-                            {
-                                var impl = ({{model.FullName}})service;
-                                var reader = new SequenceReader<byte>(args);
                         """);
-
-        if (noReturnMethods.Length == 0)
-        {
-            sb.AppendLine("""
-                                throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, "Method is not implemented.");
-                            }
-""");
-        }
-        else
-        {
-            var needsCompletedReturn = noReturnMethods.Any(static m => !m.IsStreamReturn);
-            sb.AppendLine("""
-        switch (methodHash)
-        {
-""");
-            AppendStubDispatchCases(sb, noReturnMethods, model.Hash, writeResponse: false);
-            sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
-            sb.AppendLine("        }");
-            if (needsCompletedReturn)
-                sb.AppendLine("        return ValueTask.CompletedTask;");
-            sb.AppendLine("    }");
-        }
-
-        sb.AppendLine($$"""
-                            public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-                                => InvokeCoreAsync(service, bridge, methodHash, requestId, args, output, CancellationToken.None);
-
-                            public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
-                                => InvokeCoreAsync(service, bridge, methodHash, requestId, args, output, cancellationToken);
-
-                            private ValueTask InvokeCoreAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
-                            {
-                                var impl = ({{model.FullName}})service;
-                                var reader = new SequenceReader<byte>(args);
-                        """);
-
-        if (responseMethods.Length == 0)
-        {
-            sb.AppendLine("""
-                                throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, "Method is not implemented.");
-                            }
-""");
-        }
-        else
-        {
-            sb.AppendLine("""
-        switch (methodHash)
-        {
-""");
-            AppendStubDispatchCases(sb, responseMethods, model.Hash, writeResponse: true);
-            sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
-            sb.AppendLine("        }");
-            sb.AppendLine("        return ValueTask.CompletedTask;");
-            sb.AppendLine("    }");
-        }
-
+        AppendStubExecutionBodies(sb, model);
     }
+
+    private static bool StubWritesResponse(RpcMethodModel method)
+        => !method.IsVoid && !method.IsStreamReturn;
 
     private static void AppendStubResponseAwaitHelpers(
         StringBuilder sb,
@@ -142,19 +66,18 @@ public partial class RpcGenerator
         {
             var suffix = GetMethodSuffix(method);
             var responseType = GetResponseType(method);
-            var responseNullable = method.ResponseNullable ? "true" : "false";
             var codecField = GetStubResponseCodecField(method);
             if (method.ReturnsValueTask)
             {
-                sb.AppendLine($"    private async ValueTask __AwaitValueTaskResultAsync_{suffix}(ValueTask<{responseType}> task, IBufferWriter<byte> output)");
+                sb.AppendLine($"    private async ValueTask __AwaitValueTaskResultAsync_{suffix}(ValueTask<{responseType}> task, IBufferWriter<byte> output, bool responseNullable)");
             }
             else
             {
-                sb.AppendLine($"    private async ValueTask __AwaitTaskResultAsync_{suffix}(Task<{responseType}> task, IBufferWriter<byte> output)");
+                sb.AppendLine($"    private async ValueTask __AwaitTaskResultAsync_{suffix}(Task<{responseType}> task, IBufferWriter<byte> output, bool responseNullable)");
             }
             sb.AppendLine("    {");
             sb.AppendLine("        var result = await task.ConfigureAwait(false);");
-            sb.AppendLine($"        __ValidateResponse(result, {responseNullable});");
+            sb.AppendLine("        __ValidateResponse(result, responseNullable);");
             sb.AppendLine($"        {codecField}.Serialize(result!, output);");
             sb.AppendLine("    }");
             sb.AppendLine();
@@ -234,65 +157,46 @@ public partial class RpcGenerator
     private static string GetStubResponseCodecField(RpcMethodModel method)
         => $"__responseCodec_{GetMethodSuffix(method)}";
 
-    private static void AppendCancellationSupport(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
+    private static bool StubSupportsCancellation(RpcMethodModel method)
+        => method.HasCancellationToken || method.IsStreamReturn ||
+           method.Parameters.Any(static parameter => parameter.IsStream);
+
+    private static string GetMethodDescriptorExpression(RpcInterfaceModel model, RpcMethodModel method)
     {
-        var cancellableMethods = methods
-            .Where(static method => method.HasCancellationToken ||
-                                    method.IsStreamReturn ||
-                                    method.Parameters.Any(static parameter => parameter.IsStream))
-            .ToArray();
-
-        if (cancellableMethods.Length == 0)
-        {
-            sb.AppendLine("    public bool SupportsCancellation(long methodHash) => false;");
-            return;
-        }
-
-        sb.AppendLine("    public bool SupportsCancellation(long methodHash)");
-        sb.AppendLine("        => methodHash switch");
-        sb.AppendLine("        {");
-        foreach (var method in cancellableMethods)
-            sb.AppendLine($"            {method.Hash}L => true,");
-        sb.AppendLine("            _ => false");
-        sb.AppendLine("        };");
+        var kind = GetMethodKind(method);
+        var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
+        var clientStreamCount = method.Parameters.Count(static parameter => parameter.IsStream);
+        var methodTimeout = method.TimeoutTicks is { } ticks
+            ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
+            : "null";
+        return $"new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(clientStreamCount != 0 ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")}) {{ SupportsCancellation = {(StubSupportsCancellation(method) ? "true" : "false")} }}";
     }
 
-    private static void AppendMethodDescriptors(StringBuilder sb, RpcInterfaceModel model)
+    private static void AppendPreparedMethods(StringBuilder sb, RpcInterfaceModel model)
     {
-        sb.AppendLine("    public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)");
+        sb.AppendLine("    public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)");
         sb.AppendLine("    {");
-        sb.AppendLine("        switch (methodHash)");
+        sb.AppendLine("        switch (methodId)");
         sb.AppendLine("        {");
         foreach (var method in model.Methods)
         {
-            var kind = GetMethodKind(method);
-            var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
-            var clientStreamCount = method.Parameters.Count(static parameter => parameter.IsStream);
-            var hasClientStreams = clientStreamCount != 0;
-            var methodTimeout = method.TimeoutTicks is { } ticks
-                ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
-                : "null";
             sb.AppendLine($"            case {method.Hash}L:");
-            sb.AppendLine($"                descriptor = new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
+            sb.AppendLine($"                method = new({GetMethodDescriptorExpression(model, method)}, __Invoke_{GetMethodSuffix(method)});");
             sb.AppendLine("                return true;");
         }
-        sb.AppendLine("            default:");
-        sb.AppendLine("                descriptor = default;");
-        sb.AppendLine("                return false;");
+        sb.AppendLine("            default: method = default; return false;");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
     }
 
-    private static void AppendStubDispatchCases(
-        StringBuilder sb,
-        IEnumerable<RpcMethodModel> methods,
-        long interfaceHash,
-        bool writeResponse)
+    private static void AppendStubExecutionBodies(StringBuilder sb, RpcInterfaceModel model)
     {
-        foreach (var method in methods)
+        foreach (var method in model.Methods)
         {
-            sb.AppendLine($"            case {method.Hash}L:");
-            sb.AppendLine("            {");
+            sb.AppendLine($"    private ValueTask __Invoke_{GetMethodSuffix(method)}(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)");
+            sb.AppendLine("    {");
+            sb.AppendLine($"                var impl = ({model.FullName})service;");
+            sb.AppendLine("                var reader = new SequenceReader<byte>(args);");
             var indexedParameters = method.Parameters
                 .Select(static (parameter, index) => (Parameter: parameter, Index: index))
                 .ToArray();
@@ -381,7 +285,7 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, {(method.ResponseNullable ? "true" : "false")}, {interfaceHash}L, {method.Hash}L, cancellationToken);");
+                sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, method, cancellationToken);");
             }
             else if (method.IsVoid)
             {
@@ -407,14 +311,11 @@ public partial class RpcGenerator
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
-                    if (writeResponse)
-                        AppendStubCompletedResponse(sb, method, "pending.Result");
+                    AppendStubCompletedResponse(sb, method, "pending.Result");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
-                    sb.AppendLine(writeResponse
-                        ? $"                    return __AwaitValueTaskResultAsync_{GetMethodSuffix(method)}(pending, output);"
-                        : "                    return __AwaitValueTaskIgnoreAsync(pending);");
+                    sb.AppendLine($"                    return __AwaitValueTaskResultAsync_{GetMethodSuffix(method)}(pending, output!, method.ResponseNullable);");
                     sb.AppendLine("                }");
                 }
                 else
@@ -422,21 +323,18 @@ public partial class RpcGenerator
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
-                    if (writeResponse)
-                        AppendStubCompletedResponse(sb, method, "pending.GetAwaiter().GetResult()");
+                    AppendStubCompletedResponse(sb, method, "pending.GetAwaiter().GetResult()");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
-                    sb.AppendLine(writeResponse
-                        ? $"                    return __AwaitTaskResultAsync_{GetMethodSuffix(method)}(pending, output);"
-                        : "                    return __AwaitTaskIgnoreAsync(pending);");
+                    sb.AppendLine($"                    return __AwaitTaskResultAsync_{GetMethodSuffix(method)}(pending, output!, method.ResponseNullable);");
                     sb.AppendLine("                }");
                 }
             }
 
             if (!method.IsStreamReturn)
-                sb.AppendLine("                break;");
-            sb.AppendLine("            }");
+                sb.AppendLine("                return ValueTask.CompletedTask;");
+            sb.AppendLine("    }");
         }
     }
 
@@ -446,8 +344,8 @@ public partial class RpcGenerator
         string resultExpression)
     {
         sb.AppendLine($"                    var result = {resultExpression};");
-        sb.AppendLine($"                    __ValidateResponse(result, {(method.ResponseNullable ? "true" : "false")});");
-        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result!, output);");
+        sb.AppendLine("                    __ValidateResponse(result, method.ResponseNullable);");
+        sb.AppendLine($"                    {GetStubResponseCodecField(method)}.Serialize(result!, output!);");
     }
 
     private static void AppendSizeFieldsByType(StringBuilder sb, EquatableArray<RpcMethodModel> methods)

@@ -15,9 +15,10 @@ var client = DemoTcp.CreateClient(port);
 
 try
 {
-    await DemoTcp.EnsureConnectedAsync(client, cts.Token, "Failed to connect to SharpLink server.");
-
-    var hello = client.Get<IHelloService>();
+    var proxy = client.CreateProxy<IHelloService>();
+    await client.ConnectAsync(cts.Token);
+    await proxy.PrepareAsync(TimeSpan.FromSeconds(5), cts.Token);
+    var hello = proxy.Service;
     await hello.Notify();
 
     var ping = await hello.Ping();

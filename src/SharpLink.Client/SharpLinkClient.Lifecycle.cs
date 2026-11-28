@@ -20,6 +20,10 @@ internal sealed partial class SharpLinkClient
 
             if (_connectTask is not { IsCompleted: false })
             {
+                // Recovery belongs to the existing dial loop, not to any waiting caller.
+                if (_reconnectTask is { IsCompleted: false })
+                    return new ValueTask(WaitForPublishedReadinessAsync(1, cancellationToken).AsTask());
+
                 TransitionTo(SharpLinkConnectionState.Connecting);
                 // The initialization attempt belongs to the client. A caller may cancel only its
                 // WaitAsync below; shutdown remains the operation's lifetime boundary.
@@ -325,45 +329,6 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public T Get<T>() where T : IService
-    {
-        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
-        {
-            ValidateRemoteContractAssembly(registration);
-            var existing = Volatile.Read(ref registration.Proxy);
-            if (existing is not null)
-                return (T)existing;
-
-            var channel = registration.Module is null
-                ? (IRpcChannel)this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            var created = registration.Descriptor.ProxyFactory(channel, registration.Codecs);
-            var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
-            return (T)(published ?? created);
-        }
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
-    }
-
-    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
-    {
-        ArgumentNullException.ThrowIfNull(metadata);
-        if (metadata.Count == 0)
-            return Get<T>();
-
-        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
-        {
-            ValidateRemoteContractAssembly(registration);
-            IRpcChannel channel = registration.Module is null
-                ? this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            channel = new SharpLinkMetadataRpcChannel(channel, metadata);
-            return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
-        }
-
-        throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
-    }
-
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null
@@ -376,12 +341,14 @@ internal sealed partial class SharpLinkClient
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
+        session.ConfigureNStudyCoordination(NStudyVersionCoordinationMode);
         var negotiationPolicy = ProtocolV2ContractManifestNegotiation.CreateImplementedPolicy(
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
-            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement,
+            enableNStudyCoordination: session.NStudyHandshakeCoordinationMode != NStudyCoordinationMode.Disabled);
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
@@ -566,6 +533,26 @@ internal sealed partial class SharpLinkClient
                                 break;
                             case ProtocolV2FrameType.Pong:
                                 DebugLogServerHeartbeatReceived(_logger);
+                                break;
+                            case NStudyWire.BindAck:
+                                session.OnNStudyBindAck(header.RequestId, payload);
+                                break;
+                            case NStudyWire.TargetDeclarationReply:
+                                session.OnNStudyTargetDeclarationReply(header.RequestId, payload);
+                                break;
+                            case NStudyWire.InventoryQuery:
+                                await HandleNStudyInventoryAsync(session, header.RequestId,
+                                    NStudyWire.ReadInventoryQueryAuthority(payload), ct).ConfigureAwait(false);
+                                break;
+                            case NStudyWire.InventoryReply:
+                                session.OnNStudyInventoryReply(header.RequestId, payload);
+                                break;
+                            case NStudyWire.Invalidated:
+                                session.OnNStudyInvalidated(payload);
+                                break;
+                            case NStudyWire.Coordination:
+                                if (session.OnNStudyCoordination(header.RequestId, payload, () => NStudyVersionCoordinationMode) is { } offer)
+                                    TrackFrameworkTask(offer, "NStudyOfferAdmission");
                                 break;
                             case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
                                 session.ApplyResponseCompressionPreferenceAck(

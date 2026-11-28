@@ -19,7 +19,10 @@ public class RpcMethodDescriptorTests
             MethodTimeout: timeout,
             IsIdempotent: true,
             ClientStreamCount: 2,
-            ResponseNullable: true);
+            ResponseNullable: true)
+        {
+            SupportsCancellation = true
+        };
 
         var (contractId, methodId, kind, hasResponse, hasStreams, hasTimeout,
             oldTimeout, idempotent, streamCount) = descriptor;
@@ -36,6 +39,9 @@ public class RpcMethodDescriptorTests
         await Assert.That(oldTimeout).IsEqualTo(timeout);
         await Assert.That(streamCount).IsEqualTo(2);
         await Assert.That(changed.ResponseNullable || changed.HasClientStreams).IsFalse();
+        await Assert.That(changed.SupportsCancellation).IsTrue();
+        await Assert.That(descriptor == (descriptor with { SupportsCancellation = false })).IsFalse();
+        await Assert.That(RuntimeHelpers.IsReferenceOrContainsReferences<RpcMethodDescriptor>()).IsFalse();
         await Assert.That(changed.MethodTimeout).IsEqualTo(timeout);
         await Assert.That(changed.HasResponsePayload && changed.HasMethodTimeout && changed.IsIdempotent).IsTrue();
     }

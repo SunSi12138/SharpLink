@@ -12,7 +12,7 @@ public class SharpClientBuilderTests
     public async Task StaticClientSnapshotShouldRejectIncompatibleManifestVersions()
     {
         Ensure(SharpLinkGeneratedManifestVersions.Api == 5,
-            "the 3.0 Runtime must require generated manifest API 5");
+            "this runtime must require the selected 3.0 manifest API 5");
         await EnsureThrows<InvalidOperationException>(() =>
         {
             SharpLinkClient.ValidateStaticManifestCompatibility(new IncompatibleManifest());
@@ -86,7 +86,7 @@ public class SharpClientBuilderTests
             .DisableRequestTimeout()
             .Build();
 
-        var runtimeContext = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+        var runtimeContext = (SharpLinkRuntimeContext)client.RuntimeContext;
         Ensure(ReferenceEquals(runtimeContext.TimeProvider, timeProvider),
             "client builder must preserve the configured provider instance");
         await client.DisposeAsync();

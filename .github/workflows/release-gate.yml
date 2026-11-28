@@ -94,12 +94,13 @@ jobs:
         run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
 
       - name: Integration Tests
+        # TUnit's timeout caps the entire serial session, not each test.
         run: >-
           dotnet run -c Release --no-build
           --project test/SharpLink.IntegrationTests
           --
           --maximum-parallel-tests 1
-          --timeout 120s
+          --timeout 360s
           --output Detailed
           --github-reporter-style full
           --no-progress
@@ -228,6 +229,21 @@ jobs:
 
       - name: Verify Protocol v2 Current-package Process Interoperability
         run: ./eng/verify-protocol-v2-cross-version.sh
+
+      - name: Verify Current-package Coordinated Replacement Across Processes
+        run: >-
+          python3 -B eng/run-packaged-coordination.py --cross-process
+          --package-directory artifacts/nuget --pack-revision "$(git rev-parse HEAD)"
+          --output "$RUNNER_TEMP/packaged-coordination"
+
+      - name: Upload packaged coordination evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packaged-coordination
+          path: '${{ runner.temp }}/packaged-coordination'
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Run NuGet package smoke
         uses: ./.github/actions/package-smoke

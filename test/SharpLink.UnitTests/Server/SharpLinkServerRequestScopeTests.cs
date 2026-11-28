@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
@@ -135,6 +134,7 @@ public class SharpLinkServerRequestScopeTests
         await Assert.That(snapshot.BeginCount).IsEqualTo(requestCount);
         await Assert.That(snapshot.DisposeCount).IsEqualTo(requestCount);
         await Assert.That(snapshot.MaxDepth).IsEqualTo(1);
+        await Assert.That(stub.InvocationCount).IsEqualTo(requestCount);
         await Assert.That(harness.Connection.ActiveCalls).IsEqualTo(0);
     }
 
@@ -144,18 +144,11 @@ public class SharpLinkServerRequestScopeTests
         var stub = new ControlledStub(RpcMethodKind.Unary, isAsync);
         await using var harness = new DispatchHarness(loggerFactory, stub);
 
-        Task? observer = null;
-        using (harness.BeginRequestScope(requestId))
-        {
-            var dispatch = harness.DispatchUnary(requestId);
-            if (!dispatch.IsCompletedSuccessfully)
-                observer = harness.Observe(dispatch, requestId);
-        }
-
+        var dispatch = harness.DispatchUnary(requestId);
         if (isAsync)
             stub.Complete();
-        if (observer is not null)
-            await observer;
+        await dispatch;
+        await Assert.That(stub.InvocationCount).IsEqualTo(1);
 
         return loggerFactory.Snapshot();
     }
@@ -175,6 +168,7 @@ public class SharpLinkServerRequestScopeTests
         await dispatch;
 
         await Assert.That(harness.Connection.ActiveCalls).IsEqualTo(0);
+        await Assert.That(stub.InvocationCount).IsEqualTo(1);
         return loggerFactory.Snapshot();
     }
 
@@ -297,12 +291,6 @@ public class SharpLinkServerRequestScopeTests
         private static readonly MethodInfo BeginRequestScopeMethod = typeof(SharpLinkServer).GetMethod(
             "BeginRequestLogScope", BindingFlags.Static | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find RequestId logging scope helper");
-        private static readonly MethodInfo DispatchRpcMethod = typeof(SharpLinkServer).GetMethod(
-            "DispatchRpcAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find RPC dispatch path");
-        private static readonly MethodInfo DispatchOneWayMethod = typeof(SharpLinkServer).GetMethod(
-            "DispatchOneWayRpc", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find one-way dispatch path");
         private static readonly MethodInfo AwaitDispatchMethod = typeof(SharpLinkServer).GetMethod(
             "AwaitDispatchAsync", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find dispatch observer");
@@ -321,12 +309,11 @@ public class SharpLinkServerRequestScopeTests
 
         private readonly Pipe _input = new();
         private readonly Pipe _output = new();
-        private readonly ControlledStub _stub;
+        private readonly PreparedServerDispatchFixture _dispatch;
         private readonly ILogger _logger;
 
         internal DispatchHarness(ILoggerFactory loggerFactory, ControlledStub stub)
         {
-            _stub = stub;
             Server = (SharpLinkServer)SharpLinkServerBuilder.Create()
                 .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .DisableAutomaticServiceRegistration()
@@ -354,6 +341,7 @@ public class SharpLinkServerRequestScopeTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+            _dispatch = new(Server, Connection, registration, ControlledStub.MethodHash);
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
@@ -373,47 +361,13 @@ public class SharpLinkServerRequestScopeTests
         internal IDisposable? BeginRequestScope(long requestId)
             => (IDisposable?)BeginRequestScopeMethod.Invoke(null, [_logger, requestId]);
 
-        internal ValueTask DispatchUnary(long requestId)
-            => (ValueTask)DispatchRpcMethod.Invoke(Server,
-            [
-                Connection,
-                requestId,
-                ProtocolV2FrameFlags.None,
-                CreateRequestPayload(),
-                Connection.CallCancellations,
-                CancellationToken.None,
-                null,
-                null,
-                false,
-                null
-            ])!;
+        internal Task DispatchUnary(long requestId) => _dispatch.Dispatch(requestId);
 
         internal ValueTask DispatchOneWay(long requestId)
-            => (ValueTask)DispatchOneWayMethod.Invoke(Server,
-            [
-                Connection,
-                requestId,
-                ProtocolV2FrameFlags.OneWay,
-                CreateRequestPayload(),
-                Connection.CallCancellations,
-                CancellationToken.None,
-                null,
-                null,
-                false,
-                0,
-                null
-            ])!;
+            => _dispatch.DispatchOneWayInsideCallerScope(requestId);
 
         internal Task Observe(ValueTask dispatchTask, long requestId)
             => (Task)AwaitDispatchMethod.Invoke(Server, [dispatchTask, requestId])!;
-
-        private ReadOnlySequence<byte> CreateRequestPayload()
-        {
-            var request = new byte[sizeof(long) * 2];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
-            return new ReadOnlySequence<byte>(request);
-        }
 
         public async ValueTask DisposeAsync()
         {
@@ -435,38 +389,26 @@ public class SharpLinkServerRequestScopeTests
         private readonly TaskCompletionSource? _completion = asynchronous
             ? new(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
+        private int _invocationCount;
 
         public long InterfaceHash { get; } = interfaceHash;
+        internal int InvocationCount => Volatile.Read(ref _invocationCount);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
         {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
-                kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return methodHash == MethodHash;
+            method = methodId == MethodHash
+                ? new(new RpcMethodDescriptor(InterfaceHash, methodId, kind, false, false, false, null)
+                { SupportsCancellation = true }, Execute)
+                : default;
+            return methodId == MethodHash;
         }
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args)
-            => _completion is null ? ValueTask.CompletedTask : new ValueTask(_completion.Task);
-
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-            => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
-
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-            => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
-
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
-            CancellationToken cancellationToken)
-            => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
+        private ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return _completion is null ? ValueTask.CompletedTask : new ValueTask(_completion.Task);
+        }
 
         internal void Complete() => _completion?.TrySetResult();
         internal void Fail(Exception exception) => _completion?.TrySetException(exception);

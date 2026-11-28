@@ -22,25 +22,12 @@ namespace SharpLink.Benchmarks;
 ///   <item><b>Layer 2</b>: <c>InvokeTerminalTrackedAsync</c> — awaits the terminal stub invoker and
 ///     sets the terminal status/elapsed.</item>
 ///   <item><b>Terminal</b>: <see cref="IValueTaskSource"/> (non-generic <see cref="ValueTask"/>,
-///     exactly the shape produced by <c>_stub.InvokeCancellableAsync → generated bridge</c>).</item>
+///     driven through a prepared generated method executor).</item>
 /// </list>
-/// The chain bodies are verbatim reproductions of <c>SharpLinkServer.Interceptors.cs</c>
-/// (<c>InvokeAsync</c> 613-631, <c>InvokeNextAsync</c> 633-657, <c>AwaitInterceptorAsync</c> 659-690,
-/// <c>EnsureResponseContinuationInvoked</c> 692-699, <c>ServerInterceptorContinuation</c> 701-735,
-/// <c>ServerContinuationState</c> 737-842, <c>InvokeTerminalTrackedAsync</c> 844-872,
-/// <c>RecordInvocationFailure</c> 879-893, <c>IsCancellationException</c> 875-877) inside a faithful
-/// <c>ServerPipelineFacts</c> value struct (fields 574-585, ctor 587-611) using the real public
-/// <see cref="IRpcStub"/>, <see cref="IRpcGeneratedServerBridge"/>, <see cref="IRpcByteBufferWriter"/>,
-/// <see cref="SharpLinkInvocationStatus"/>, <see cref="SharpLinkErrorCode"/>, and
-/// <see cref="SharpLinkException"/> types. A <b>minimal pass-through interceptor is registered</b> so the
-/// benchmark exercises the same dispatch path production takes (which is reachable only when
-/// <c>_serverInterceptors.Length &gt; 0</c>; with zero interceptors <c>InvokeServiceCoreAsync</c> bypasses
-/// <c>ServerPipelineFacts</c> entirely). The internal-only field type (<c>RpcSession</c>) is modelled as
-/// <c>object</c> (a reference-type field of identical size), and the internal-constructor
-/// <see cref="SharpLinkServerInvocationContext"/> / <see cref="ISharpLinkServerInterceptor"/> /
-/// <see cref="SharpLinkServerInvocationDelegate"/> are reproduced as minimal reference-type stand-ins
-/// (<c>ServerInvocationContext</c> / <c>IServerInterceptor</c> / <c>ServerInvocationDelegate</c>) that
-/// carry only the members the chain uses, preserving the struct field layout. No production source is modified.
+/// This is the historical continuation-chain model, not a current full-runtime comparison.
+/// A single pass-through interceptor drives the chain. Both cases resolve the same prepared
+/// <see cref="IRpcStub"/> method before measurement and then use the real
+/// <see cref="RpcGeneratedMethodExecutor"/> to await the terminal.
 /// <para>
 /// Two terminal shapes are compared (plus a bare-source control): a synchronously-completed pooled source
 /// (the hot path where the response lands before the await) and a genuinely suspended source (completes on a
@@ -60,6 +47,7 @@ namespace SharpLink.Benchmarks;
 [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 20)]
 public class ServerInterceptorChainLoweringBenchmarks
 {
+    private const long MethodId = 1;
     private static readonly IServerInterceptor[] Interceptors = [new PassThroughInterceptor()];
 
     private ServerPipelineFacts _syncFacts;
@@ -80,18 +68,14 @@ public class ServerInterceptorChainLoweringBenchmarks
         _suspendedFacts = CreateFacts(_suspendedStub);
     }
 
-    private ServerPipelineFacts CreateFacts(IRpcStub stub) => new(
-        Interceptors,
-        stub,
-        service: null!,
-        session: null!,
-        generatedBridge: null!,
-        methodId: 0,
-        requestId: 0,
-        arguments: default,
-        output: _output,
-        timeProvider: TimeProvider.System,
-        cancellationToken: CancellationToken.None);
+    private ServerPipelineFacts CreateFacts(IRpcStub stub)
+    {
+        if (!stub.TryPrepareMethod(MethodId, out var method))
+            throw new InvalidOperationException("The benchmark terminal could not be prepared.");
+        return new(Interceptors, method, service: null!, session: null!, generatedBridge: null!,
+            requestId: 0, arguments: default, output: _output, timeProvider: TimeProvider.System,
+            cancellationToken: CancellationToken.None);
+    }
 
     // ---- chain cases ---------------------------------------------------------------
     // The context is reused across operations, so its Status is reset to Pending before each
@@ -150,7 +134,7 @@ public class ServerInterceptorChainLoweringBenchmarks
     }
 
     // ---------------------------------------------------------------------------------
-    // Verbatim reproduction of the SERVER interceptor chain from SharpLinkServer.Interceptors.cs.
+    // Historical model of the server continuation chain.
     // ---------------------------------------------------------------------------------
 
     private struct ServerPipelineFacts
@@ -159,11 +143,10 @@ public class ServerInterceptorChainLoweringBenchmarks
         // reference-type field of identical size/layout; ISharpLinkServerInterceptor is reproduced
         // as the reference-type IServerInterceptor stand-in).
         private readonly IServerInterceptor[] _interceptors;
-        private readonly IRpcStub _stub;
+        private readonly RpcGeneratedPreparedMethod _method;
         private readonly object _service;
         private readonly object _session;
         private readonly IRpcGeneratedServerBridge _generatedBridge;
-        private readonly long _methodId;
         private readonly long _requestId;
         private readonly ReadOnlySequence<byte> _arguments;
         private readonly IRpcByteBufferWriter? _output;
@@ -174,11 +157,10 @@ public class ServerInterceptorChainLoweringBenchmarks
         // SharpLinkServer.Interceptors.cs:587-611.
         public ServerPipelineFacts(
             IServerInterceptor[] interceptors,
-            IRpcStub stub,
+            RpcGeneratedPreparedMethod method,
             object service,
             object session,
             IRpcGeneratedServerBridge generatedBridge,
-            long methodId,
             long requestId,
             ReadOnlySequence<byte> arguments,
             IRpcByteBufferWriter? output,
@@ -186,11 +168,10 @@ public class ServerInterceptorChainLoweringBenchmarks
             CancellationToken cancellationToken)
         {
             _interceptors = interceptors;
-            _stub = stub;
+            _method = method;
             _service = service;
             _session = session;
             _generatedBridge = generatedBridge;
-            _methodId = methodId;
             _requestId = requestId;
             _arguments = arguments;
             _output = output;
@@ -436,23 +417,14 @@ public class ServerInterceptorChainLoweringBenchmarks
             }
         }
 
-        // SharpLinkServer.Interceptors.cs:844-872 (verbatim body; response-bearing path, output non-null).
+        // Uses the already-prepared terminal; the chain does not look up a method on invocation.
         private async ValueTask InvokeTerminalTrackedAsync(ServerInvocationContext context)
         {
             try
             {
-                if (_output is null)
-                {
-                    await _stub.InvokeNoReturnCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                else
-                {
-                    await _stub.InvokeCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _output, _cancellationToken)
-                        .ConfigureAwait(false);
-                }
+                var descriptor = _method.Descriptor;
+                await _method.Execute(_service, _generatedBridge, in descriptor, _requestId, _arguments, _output,
+                    _cancellationToken).ConfigureAwait(false);
                 if (context.Status == SharpLinkInvocationStatus.Pending)
                     context.Status = SharpLinkInvocationStatus.Succeeded;
             }
@@ -525,13 +497,17 @@ public class ServerInterceptorChainLoweringBenchmarks
     {
         public CompletedSource Source { get; } = new();
         public long InterfaceHash => 0;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
-            => Source.AsValueTask();
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-            => Source.AsValueTask();
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-            => Source.AsValueTask();
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
+        {
+            method = methodId == MethodId
+                ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, true, false, false, null)
+                { SupportsCancellation = true }, Execute)
+                : default;
+            return methodId == MethodId;
+        }
+
+        private ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
             => Source.AsValueTask();
     }
 
@@ -539,13 +515,17 @@ public class ServerInterceptorChainLoweringBenchmarks
     {
         public SuspendedSource Source { get; } = new();
         public long InterfaceHash => 0;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
-            => Source.AsValueTask();
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-            => Source.AsValueTask();
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-            => Source.AsValueTask();
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        public bool TryPrepareMethod(long methodId, out RpcGeneratedPreparedMethod method)
+        {
+            method = methodId == MethodId
+                ? new(new RpcMethodDescriptor(InterfaceHash, methodId, RpcMethodKind.Unary, true, false, false, null)
+                { SupportsCancellation = true }, Execute)
+                : default;
+            return methodId == MethodId;
+        }
+
+        private ValueTask Execute(object service, IRpcGeneratedServerBridge bridge, in RpcMethodDescriptor method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte>? output, CancellationToken cancellationToken)
             => Source.AsValueTask();
     }
 

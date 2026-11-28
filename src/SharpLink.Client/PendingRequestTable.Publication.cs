@@ -40,6 +40,7 @@ partial class PendingRequestTable
     /// Set when the session refused admission and already returned the frame. The caller owns the
     /// frame on every other path.
     /// </param>
+    /// <param name="binding">Private N-profile route captured before building the frame, when present.</param>
     /// <returns><c>true</c> when the frame reached the send queue.</returns>
     public bool TryPublishRequest(
         long id,
@@ -49,23 +50,20 @@ partial class PendingRequestTable
         CancellationToken cancellationToken,
         IRequestEmissionFailureObserver? failureObserver,
         out ValueTask emission,
-        out Exception? rejection)
+        out Exception? rejection,
+        NStudyClientRoute? binding = null)
     {
         emission = default;
         rejection = null;
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return false;
-
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
+        ref var slot = ref ReadSlot(id);
+        var current = Volatile.Read(ref slot);
         if (current is null || current.Id != id)
             return false;
 
         PendingCall? expiredCall = null;
         lock (current.CompletionGate)
         {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
+            if (!ReferenceEquals(Volatile.Read(ref slot), current) || current.Id != id)
                 return false;
 
             if (current.Deadline.IsExpired(_timeProvider))
@@ -74,7 +72,7 @@ partial class PendingRequestTable
                 // the scheduler callback here would let a late callback publish a Request whose
                 // budget already elapsed, and the peer would then dispatch work the caller has
                 // already given up on.
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref slot, null, current), current))
                     return false;
                 current.WaitUntilRegistered();
                 expiredCall = current;
@@ -84,13 +82,12 @@ partial class PendingRequestTable
                 // Admission is the linearization point and it is synchronous: the frame is either in
                 // the queue now or it was already returned. Marking the call published on a faulted
                 // or deferred send is what produced a cancel for a Request the peer never received.
-                if (!session.TryEnqueuePreparedFrame(
-                        writer,
-                        observeEmission,
-                        cancellationToken,
-                        failureObserver,
-                        out emission,
-                        out rejection))
+                var published = binding is not null
+                    ? session.TryEnqueueNStudyRequest(binding, writer, observeEmission, cancellationToken,
+                        failureObserver, out emission, out rejection)
+                    : session.TryEnqueuePreparedFrame(writer, observeEmission, cancellationToken,
+                        failureObserver, out emission, out rejection);
+                if (!published)
                 {
                     emission = default;
                     return false;

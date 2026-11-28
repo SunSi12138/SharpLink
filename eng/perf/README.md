@@ -39,6 +39,13 @@ dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
   -c Release --no-build -- --server-call-admission-smoke-test
 ```
 
+On the #999 study branch, real RPC benchmark setup calls `PrepareAsync` before the timed work.
+Endpoint-selection cases prepare the full Ready set after their configured readiness gate.
+`LocalProxyCreationBenchmarks` measures only `CreateProxy` on disconnected clients: static and
+collectible registrations are set up before timing, and neither case connects or binds. The historical
+`ProxyCacheBenchmarks.RepeatedGet_*` measured cache retrieval on the old API; those rows are not
+an A/B baseline for the new creation benchmark. Measure cold Prepare separately if needed.
+
 A negative-control run can inject managed allocation into each measured target operation:
 
 ```bash

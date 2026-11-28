@@ -7,7 +7,7 @@ public class DynamicInterceptorIntegrationTests
     [Test]
     public async Task ClientReplacementShouldEnableDisableCopyAndRejectInvalidCandidates()
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new RecordingClientInterceptor("A", log);
         var b = new RecordingClientInterceptor("B", log);
@@ -39,7 +39,7 @@ public class DynamicInterceptorIntegrationTests
     [Test]
     public async Task ServerReplacementShouldEnableDisableCopyAndRejectInvalidCandidates()
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new RecordingServerInterceptor("A", log);
         var b = new RecordingServerInterceptor("B", log);
@@ -76,7 +76,7 @@ public class DynamicInterceptorIntegrationTests
     [Arguments("duplex-streaming")]
     public async Task ClientLogicalRpcShouldRetainCapturedGeneration(string shape)
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new BlockingClientInterceptor("A", log);
         var b = new RecordingClientInterceptor("B", log);
@@ -104,7 +104,7 @@ public class DynamicInterceptorIntegrationTests
     [Arguments("duplex-streaming")]
     public async Task ServerLogicalRpcShouldRetainCapturedGeneration(string shape)
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var a = new BlockingServerInterceptor("A", log);
         var b = new RecordingServerInterceptor("B", log);
@@ -136,7 +136,7 @@ public class DynamicInterceptorIntegrationTests
     [Test]
     public async Task TelemetryPathShouldUseOuterClientSnapshot()
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var log = new ConcurrentQueue<string>();
         var oldInterceptor = new RecordingClientInterceptor("old", log);
         var newInterceptor = new RecordingClientInterceptor("new", log);
@@ -166,7 +166,7 @@ public class DynamicInterceptorIntegrationTests
     [Test]
     public async Task ReplacementShouldNotDisposeRemovedInterceptors()
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var client = new DisposableClientInterceptor();
         var server = new DisposableServerInterceptor();
         harness.Client.ReplaceInterceptors([client]);
@@ -184,7 +184,7 @@ public class DynamicInterceptorIntegrationTests
     [Test]
     public async Task ConcurrentCallsAndFullReplacementsShouldRemainStable()
     {
-        await using var harness = await DynamicInterceptorHarness.CreateAsync();
+        await using var harness = await InterceptorHarness.CreateAsync();
         var clientA = new PassThroughClientInterceptor();
         var clientB = new PassThroughClientInterceptor();
         var serverA = new PassThroughServerInterceptor();
@@ -493,54 +493,5 @@ public class DynamicInterceptorIntegrationTests
             SharpLinkServerInvocationContext context,
             SharpLinkServerInvocationDelegate next) => next(context);
         public void Dispose() => Interlocked.Increment(ref _disposeCount);
-    }
-
-    private sealed class DynamicInterceptorHarness : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _serverCts;
-        private readonly Task _serverTask;
-        public ISharpLinkServer Server { get; }
-        public ISharpLinkClient Client { get; }
-        public IInterceptorTestService Service { get; }
-
-        private DynamicInterceptorHarness(
-            CancellationTokenSource serverCts,
-            Task serverTask,
-            ISharpLinkServer server,
-            ISharpLinkClient client)
-        {
-            _serverCts = serverCts;
-            _serverTask = serverTask;
-            Server = server;
-            Client = client;
-            Service = client.Get<IInterceptorTestService>();
-        }
-
-        public static async Task<DynamicInterceptorHarness> CreateAsync()
-        {
-            var cts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var serverTask = Task.Run(() => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
-
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
-                .Build();
-            await client.ConnectAsync(cts.Token);
-            return new DynamicInterceptorHarness(cts, serverTask, server, client);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
-        }
     }
 }

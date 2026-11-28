@@ -10,13 +10,15 @@ public class GeneratedManifestCompatibilityTests
     [Arguments(2)]
     [Arguments(3)]
     [Arguments(4)]
-    [Arguments(6)]
+    [Arguments(6)] // Superseded private prepared ABI; API 5 is the selected 3.0 boundary.
     [Arguments(0)]
     [Arguments(-1)]
     [Arguments(int.MinValue)]
     [Arguments(int.MaxValue)]
     public void ValidatorShouldRejectEveryUnsupportedApiBeforeReadingManifestShape(int apiVersion)
     {
+        Ensure(apiVersion != SharpLinkGeneratedManifestVersions.Api,
+            "the unsupported-API matrix must not include the current API");
         var manifest = new ProbeManifest(
             apiVersion,
             SharpLinkGeneratedManifestVersions.Protocol,

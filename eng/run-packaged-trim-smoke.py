@@ -111,6 +111,15 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
+def verify_inventory_cases(output, include_shared_memory):
+    transports = ["tcp", "shared-memory"] if include_shared_memory else ["tcp"]
+    prefix = "PACKAGE_AOT_VERSION_INVENTORY_PASS transport="
+    actual = [line for line in output.splitlines() if line.startswith(prefix)]
+    if actual != [prefix + transport for transport in transports]:
+        raise ValueError(f"NativeAOT inventory cases did not complete: {actual}; expected {transports}")
+    return transports
+
+
 def run(command, log, environment, evidence):
     command = [str(arg) for arg in command]
     print("+ " + subprocess.list2cmdline(command), flush=True)
@@ -179,18 +188,28 @@ def main():
             assets = json.loads(assets_paths[0].read_text(encoding="utf-8"))
             write_json(output / f"{consumer}-assets.json", assets)
             consumed = verify_assets(assets, cache, manifest, version)
+            if aot:
+                expected_endpoints = {f"SharpLink.{part}/{version}" for part in ("Client", "Server")}
+                if not expected_endpoints.issubset(consumed):
+                    raise ValueError(f"Missing packaged endpoint dependencies: {sorted(expected_endpoints - consumed.keys())}")
             publish = consumer_work / "publish"
             run([dotnet, "publish", project, "--no-restore", "-c", "Release", "--self-contained", "true",
                  "-o", publish, *common], output / f"{consumer}-publish.log", env, evidence)
             executable = publish / (name + (".exe" if args.rid == "win-x64" else ""))
             if not executable.is_file() or (publish / (name + ".dll")).exists() == aot:
                 raise ValueError(f"Expected {'NativeAOT' if aot else 'trimmed managed'} publish layout: {publish}")
-            # Existing Main performs both round-trip and fail-closed missing-ABI reject controls.
-            result = run([executable], output / f"{consumer}-run.log", env, evidence)
-            if not aot and "PACKAGE_TRIM_SMOKE_PASS" not in result.splitlines():
+            # Keep the existing Codec controls. Exercise package-hosted native endpoints on
+            # TCP and add the already-qualified shared-memory case on Linux.
+            shared_memory = aot and args.rid == "linux-x64"
+            result = run([executable, *(["--include-shared-memory"] if shared_memory else [])],
+                         output / f"{consumer}-run.log", env, evidence)
+            verified = {"name": name, "trimMode": mode, "publishAot": aot, "packages": consumed,
+                        "executableSha256": digest(executable).hex(), "status": "passed"}
+            if aot:
+                verified["versionInventoryTransports"] = verify_inventory_cases(result, shared_memory)
+            elif "PACKAGE_TRIM_SMOKE_PASS" not in result.splitlines():
                 raise ValueError(f"{consumer} did not emit its success marker")
-            evidence["consumers"].append({"name": name, "trimMode": mode, "publishAot": aot,
-                                           "packages": consumed, "executableSha256": digest(executable).hex(), "status": "passed"})
+            evidence["consumers"].append(verified)
         if package_manifest(args.package_directory.resolve(), version, commit) != manifest:
             raise ValueError("Candidate packages changed during smoke")
         evidence["status"] = "passed"

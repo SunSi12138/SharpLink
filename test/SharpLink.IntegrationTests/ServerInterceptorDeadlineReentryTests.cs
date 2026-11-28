@@ -31,9 +31,8 @@ public class ServerInterceptorDeadlineReentryTests
         try
         {
             await client.ConnectAsync(serverCancellation.Token);
-            var call = client.Get<IInterceptorTestService>()
-                .DescribeNumberAsync(41)
-                .AsTask();
+            var service = await client.PrepareTestServiceAsync<IInterceptorTestService>();
+            var call = service.DescribeNumberAsync(41).AsTask();
 
             await first.Entered.WaitAsync(TimeSpan.FromSeconds(3));
             var failure = await CaptureSharpLinkException(call);

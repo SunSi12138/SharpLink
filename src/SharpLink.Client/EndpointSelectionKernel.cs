@@ -45,32 +45,43 @@ internal static class EndpointSelectionKernel
         return -1;
     }
 
-    public static ClientConnection? SelectConnection(ClientConnection[] connections)
+    public static ClientConnection? SelectConnection(ClientConnection[] connections, bool reserveCall = true,
+        SharpLinkClient.NStudyPreparedSite? prepared = null)
     {
         ArgumentNullException.ThrowIfNull(connections);
         if (connections.Length == 0)
             return null;
         if (connections.Length == 1)
-            return connections[0].TryReserveCallAdmission(out var admitted) ? admitted : null;
+            return SelectEligible(connections[0], reserveCall, prepared);
 
         var first = Random.Shared.Next(connections.Length);
         var second = Random.Shared.Next(connections.Length - 1);
         if (second >= first)
             second++;
         var selected = SelectLeastLoaded(connections, first, second);
-        if (selected.TryReserveCallAdmission(out var admittedSelected))
+        if (SelectEligible(selected, reserveCall, prepared) is { } admittedSelected)
             return admittedSelected;
 
         for (var index = 0; index < connections.Length; index++)
         {
             var candidate = connections[index];
             if (!ReferenceEquals(candidate, selected) &&
-                candidate.TryReserveCallAdmission(out var admittedCandidate))
+                SelectEligible(candidate, reserveCall, prepared) is { } admittedCandidate)
             {
                 return admittedCandidate;
             }
         }
         return null;
+    }
+
+    private static ClientConnection? SelectEligible(ClientConnection connection, bool reserveCall,
+        SharpLinkClient.NStudyPreparedSite? prepared)
+    {
+        if (prepared is not null)
+            return prepared.Find(connection) is not null && connection.TryReserveExactCallAdmission() ? connection : null;
+        if (!reserveCall)
+            return connection.CanAcceptCalls ? connection : null;
+        return connection.TryReserveCallAdmission(out var admitted) ? admitted : null;
     }
 
     public static ClientConnection SelectLeastLoaded(

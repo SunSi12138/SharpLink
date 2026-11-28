@@ -2,6 +2,9 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class PreAdmissionStreamDispatcher
 {
+    internal bool IsRetainedInputOf(StreamTerminalOwner terminalOwner)
+        => terminalOwner.IsPresent && terminalOwner == _retainedInputOwner;
+
     // Discard is monotonic for a stable route. Checking it under the route gate never grants
     // a stale business-call decision authority to abandon a newer live consumer.
     internal bool IsDiscarding

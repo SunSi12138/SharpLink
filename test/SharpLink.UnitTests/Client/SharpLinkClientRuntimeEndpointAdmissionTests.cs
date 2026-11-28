@@ -19,7 +19,8 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
             builder => builder.UseEndpointAdmission(first));
         await client.ConnectAsync();
 
-        var firstInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var firstInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var firstRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         Ensure(first.AcquireCount == 1, "the initial policy must acquire the first attempt");
 
@@ -35,7 +36,7 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
         Ensure(second.ReportCount == 0,
             "the replacement policy must not receive the old attempt report");
 
-        var secondInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var secondInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var secondRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         Ensure(second.AcquireCount == 1, "the next attempt must use the replacement policy");
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)secondRequest.RequestId));
@@ -55,7 +56,8 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
             builder => builder.UseEndpointAdmission(policy));
         await client.ConnectAsync();
 
-        var oldInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var oldInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var oldRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         client.DisableEndpointAdmissionPolicy();
         var disabled = client.GetEndpointAdmissionPolicySnapshot();
@@ -67,7 +69,7 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
         Ensure(policy.ReportCount == 1 && policy.LastReportedToken == 31,
             "disable must not discard the old attempt lease");
 
-        var newInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var newInvocation = ClientInvokerTestHelper.InvokeUnaryAsync(client, prepared).AsTask();
         var newRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)newRequest.RequestId));
         Ensure(await newInvocation == 0, "new invocation result");
@@ -97,7 +99,8 @@ public sealed class SharpLinkClientRuntimeEndpointAdmissionTests
             });
         await client.ConnectAsync();
 
-        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var prepared = await ClientInvokerTestHelper.PrepareAsync(client, transport);
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client, prepared).AsTask();
         var firstRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, firstRequest, SharpLinkErrorCode.Unavailable);
         await first.Reported.WaitAsync(TimeSpan.FromSeconds(2));

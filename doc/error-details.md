@@ -21,7 +21,7 @@ catch (SharpLinkException exception) when (
 
 ## ResourceExhausted detail codes
 
-The initial `SharpLinkErrorCode.ResourceExhausted` namespace is:
+The `SharpLinkErrorCode.ResourceExhausted` namespace is:
 
 | Detail | Constant | Meaning |
 | ---: | --- | --- |
@@ -40,12 +40,13 @@ The initial `SharpLinkErrorCode.ResourceExhausted` namespace is:
 | 12 | `ServerDecodedBytes` | Server decoded-bytes budget. |
 | 13 | `ServerDecodeQueue` | Server decode queue capacity. |
 | 14 | `ServerPreAdmissionStreamBytes` | Server pre-admission stream-byte budget. |
+| 15 | `PreparedBindingCapacity` | `PrepareAsync` could not allocate a prepared-binding slot on this physical connection. Existing bindings are unaffected. |
 
 The public constants live under `SharpLinkErrorDetails.ResourceExhausted`.
 
 ## Wire format and compatibility
 
-Protocol v2 minor 4 encodes every binary error payload as:
+SharpLink 3.0 uses Protocol v2 minor 6, with a minimum compatible minor of 6. It retains the binary error payload layout introduced in minor 4:
 
 ```text
 SharpLinkErrorCode : uint16 little-endian
@@ -56,4 +57,4 @@ Message            : MessageLength bytes of UTF-8
 
 Message truncation only changes the UTF-8 message and the frame's `Truncated` flag; it never removes or changes `DetailCode`.
 
-This binary shape is not compatible with the published 1.1.1/minor-3 `(Code, Message)` layout. SharpLink 2.0 increments that released baseline once and sets both `ProtocolV2Constants.MinorVersion` and `MinimumCompatibleMinorVersion` to 4. A minor-3 peer is rejected during handshake instead of allowing either side to misinterpret an error payload. Development-only minor numbers are not released compatibility boundaries.
+The published 1.1.1/minor-3 layout carried only `(Code, Message)`; SharpLink 2.0 introduced `DetailCode` in minor 4. A 3.0 peer rejects both older minors during handshake, even though minor 4 uses the same error layout. See [Protocol v2](protocol-v2.md) for negotiation rules.

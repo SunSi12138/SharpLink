@@ -10,9 +10,10 @@ var client = DemoTcp.CreateClient(port);
 
 try
 {
-    await DemoTcp.EnsureConnectedAsync(client, appCts.Token, "Failed to connect cancel demo client.");
-
-    var service = client.Get<ICancelService>();
+    var proxy = client.CreateProxy<ICancelService>();
+    await client.ConnectAsync(appCts.Token);
+    await proxy.PrepareAsync(TimeSpan.FromSeconds(5), appCts.Token);
+    var service = proxy.Service;
 
     using var requestCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(600));
     try

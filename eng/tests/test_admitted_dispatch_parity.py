@@ -1,8 +1,8 @@
 """Keep the deliberately separate queued dispatch resource skeletons in sync.
 
-Immediate dispatch is kept separate to avoid passing queue-only selection metadata
-through ordinary-call ABIs.  This guard permits exactly the identity selection,
-missing-registration response, and omitted already-completed admission stage.
+Immediate dispatch retains its own preparation/admission guards. Both paths
+must perform identical resource work after reserving the server call, except
+that the immediate path records early input at pre-decode state creation.
 """
 from pathlib import Path
 import re
@@ -20,47 +20,51 @@ def method(source: str, name: str) -> str:
     return source[start:end]
 
 
-def expected_admitted(source: str, name: str) -> str:
+def resource_skeleton(source: str, name: str) -> str:
     body = method(source, name)
-    body = body.replace(name + '(', name.replace('Dispatch', 'DispatchAdmitted', 1)
-                        + '(\n        QueuedServiceSelection serviceSelection,', 1)
-    start = body.index('            if (admissionProgram is not null && !admissionGranted)')
-    end = body.index('            var admission = TryReserveCall', start)
-    body = body[:start] + body[end:]
-    body = body.replace(
-        'Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo)',
-        'serviceSelection.TryGetService(out var serviceInfo)', 1)
-    if name == 'DispatchRpcAsync':
-        body = body.replace(
-            'SharpLinkErrorCode.Unimplemented,\n                            $"Service {request.InterfaceHash} is not implemented."',
-            'SharpLinkErrorCode.Unavailable,\n                            "RPC module is draining"', 1)
-    return body
+    return body[body.index('            var admission = TryReserveCall'):]
 
 
 class AdmittedDispatchParityTests(unittest.TestCase):
-    def test_selected_payload_copy_resource_skeleton(self):
-        source = (SERVER / 'SharpLinkServer.PreAdmissionStreams.cs').read_text()
-        expected = method(source, 'TryCopyAdmissionPayload').replace(
-            'TryCopyAdmissionPayload(', 'TryCopySelectedAdmissionPayload(', 1).replace(
-            '        ProtocolV2FrameFlags flags,\n',
-            '        ProtocolV2FrameFlags flags,\n        ServiceRegistration service,\n', 1).replace(
-            '            owner = null;',
-            '            retainedPayload.CaptureSelectedService(service);\n            owner = null;', 1)
-        self.assertEqual(expected, method(source, 'TryCopySelectedAdmissionPayload'))
-        self.assertIn('[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]\n'
-                      '    private bool TryCopySelectedAdmissionPayload(', source)
+    def test_queued_and_decode_preparation_share_the_byte_owner(self):
+        for suffix, dispatch in (
+            ('AdmissionDispatch', 'DispatchOneWayRpc'),
+            ('InvocationDispatch', 'DispatchRpcAsync'),
+            ('PersistentDecodeDispatch', 'DispatchRpcWithPersistentDecodeAsync'),
+        ):
+            with self.subTest(dispatch=dispatch):
+                source = (SERVER / f'SharpLinkServer.{suffix}.cs').read_text()
+                self.assertIn('TryCopyAdmissionPayload(payload, flags, out ', method(source, dispatch))
 
     def test_one_way_resource_skeleton(self):
         self.assert_pair('AdmissionDispatch', 'AdmittedOneWayDispatch', 'DispatchOneWayRpc')
 
     def test_rpc_resource_skeleton(self):
-        self.assert_pair('InvocationDispatch', 'AdmittedRpcDispatch', 'DispatchRpcAsync')
+        immediate = (SERVER / 'SharpLinkServer.InvocationDispatch.cs').read_text()
+        admitted = (SERVER / 'SharpLinkServer.AdmittedRpcDispatch.cs').read_text()
+        entry = method(immediate, 'DispatchRpcAsync')
+        inline = resource_skeleton(immediate, 'DispatchRpcAsync')
+        queued = resource_skeleton(admitted, 'DispatchAdmittedRpcAsync')
+        early_input = ('                    if (facts.Descriptor.HasClientStreams)\n'
+                       '                        admittedCallState.SetEarlyInputStreamCount(facts.Descriptor.ClientStreamCount);\n')
+        pre_decode = '                    if (!TryPrepareCompressedRequestDecode('
+        queue_handoff = ('                if (descriptor.HasClientStreams)\n'
+                         '                    admittedCallState.SetEarlyInputStreamCount(descriptor.ClientStreamCount);\n')
+
+        # The shared queued dispatcher already receives the tracked count from admission.
+        # Record it there before the controller can defer the request, and inline just
+        # before compressed decode preparation, which can end the request.
+        self.assertEqual(entry.count('SetEarlyInputStreamCount('), 2)
+        self.assertIn(queue_handoff, entry[:entry.index('admissionTask = admissionProgram.Controller.AcquireAsync(')])
+        self.assertEqual(inline.count(early_input + pre_decode), 1)
+        self.assertNotIn('SetEarlyInputStreamCount(', queued)
+        self.assertEqual(inline.replace(early_input + pre_decode, pre_decode, 1), queued)
 
     def assert_pair(self, immediate_file, admitted_file, name):
         immediate = (SERVER / f'SharpLinkServer.{immediate_file}.cs').read_text()
         admitted = (SERVER / f'SharpLinkServer.{admitted_file}.cs').read_text()
-        self.assertEqual(expected_admitted(immediate, name),
-                         method(admitted, name.replace('Dispatch', 'DispatchAdmitted', 1)))
+        self.assertEqual(resource_skeleton(immediate, name),
+                         resource_skeleton(admitted, name.replace('Dispatch', 'DispatchAdmitted', 1)))
 
 
 if __name__ == '__main__':

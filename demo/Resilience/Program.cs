@@ -47,8 +47,11 @@ var client = SharpClientBuilder.Create()
 
 try
 {
+    var proxy = client.CreateProxy<IResilienceService>(new RpcProxyOptions { BalancePreparedEndpoints = true });
     await client.ConnectAsync(app.Token);
-    var service = client.Get<IResilienceService>();
+    await client.WaitForReadinessAsync(2, app.Token);
+    await proxy.PrepareAsync(TimeSpan.FromSeconds(5), app.Token);
+    var service = proxy.Service;
     var nodes = new HashSet<string>(StringComparer.Ordinal);
     for (var request = 0; request < 12; request++)
         nodes.Add(await service.GetNodeAsync(request, app.Token));

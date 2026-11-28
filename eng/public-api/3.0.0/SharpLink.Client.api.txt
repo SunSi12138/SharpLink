@@ -121,6 +121,21 @@ namespace SharpLink.Client
         public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateLoadBalancing(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Client.SharpLinkLoadBalancingStrategy strategy) { }
         public static SharpLink.SharpLinkRuntimeConfigurationUpdateResult TryUpdateTelemetryDetailPolicy(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Abstractions.SharpLinkTelemetryDetailMode mode) { }
     }
+    public static class SharpLinkClientVersionCoordinationExtensions
+    {
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionDeclarationResult> DeclareVersionTargetAsync(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Abstractions.RpcLocalContract localContract, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionDeclarationResult> DeclareVersionTargetAsync(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Abstractions.RpcLocalContract localContract, SharpLink.Client.SharpLinkVersionConnection connection, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkClientVersionChangeResult> JoinVersionChangeAsync(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Abstractions.RpcLocalContract localContract, SharpLink.Abstractions.SharpLinkVersionParticipant participant, System.Func<SharpLink.Abstractions.SharpLinkVersionChange, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionDecision>>? approveLocally = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public static void ObserveVersionChanges(this SharpLink.Abstractions.ISharpLinkClient client, System.Func<SharpLink.Abstractions.SharpLinkVersionChangeNotice, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> observer) { }
+        public static void SetVersionCoordinationMode(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Abstractions.SharpLinkVersionCoordinationMode mode) { }
+    }
+    public static class SharpLinkClientVersionInventoryExtensions
+    {
+        public static SharpLink.Abstractions.SharpLinkVersionInventory GetLocalVersionInventory(this SharpLink.Abstractions.ISharpLinkClient client) { }
+        public static System.Collections.Generic.IReadOnlyList<SharpLink.Client.SharpLinkVersionConnection> GetVersionConnections(this SharpLink.Abstractions.ISharpLinkClient client) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionInventory> QueryPeerVersionInventoryAsync(this SharpLink.Abstractions.ISharpLinkClient client, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkVersionInventory> QueryPeerVersionInventoryAsync(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Client.SharpLinkVersionConnection connection, System.Threading.CancellationToken cancellationToken = default) { }
+    }
     public readonly struct SharpLinkClusterAddResult : System.IEquatable<SharpLink.Client.SharpLinkClusterAddResult>
     {
         public SharpLink.Client.SharpLinkClusterMutationFailureCode FailureCode { get; init; }
@@ -466,6 +481,11 @@ namespace SharpLink.Client
         public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory SharedMemory(System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>? configure = null) { }
         public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory Sockets(SharpLink.Runtime.SocketTransportOptions? options = null) { }
         public static SharpLink.Abstractions.SharpLinkEndpointTransportFactory Sockets(System.Net.Security.SslClientAuthenticationOptions tlsOptions, SharpLink.Runtime.SocketTransportOptions? options = null, System.TimeSpan? tlsHandshakeTimeout = default) { }
+    }
+    public sealed class SharpLinkVersionConnection
+    {
+        public string? EndpointId { get; }
+        public SharpLink.Abstractions.SharpLinkVersionSession? ObservedSession { get; }
     }
     public static class TransportExtensions
     {

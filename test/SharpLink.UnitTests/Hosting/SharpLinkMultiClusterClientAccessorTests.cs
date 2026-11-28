@@ -105,11 +105,6 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
-        public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
-
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService => throw new NotSupportedException();
-
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Ready;
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
@@ -170,10 +165,6 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
             return new ValueTask(_release.Task);
         }
 
-        public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
-
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService => throw new NotSupportedException();
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Stopped;
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             SharpLinkClusterKey cluster,

@@ -16,9 +16,10 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         try
         {
-            _ = await client.Get<IConnectionBehaviorService>().PingAsync(1);
+            _ = await service.PingAsync(1);
             throw new Exception("invalid selector should fail the current call");
         }
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.FailedPrecondition)
@@ -29,35 +30,74 @@ public sealed partial class StaticEndpointIntegrationTests
     [Test]
     public async Task ThrowingCustomSelectorShouldLeaveTheClusterHealthyForLaterCalls()
     {
-        await using var first = await TcpServerScope.StartAsync();
-        await using var second = await TcpServerScope.StartAsync();
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var gatedFirst = new GatedConnectFactory(sockets(Endpoint("first", first.Port)));
+        var selector = new ThrowOnceSelector();
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
-
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
-                SharpLinkTransportFactories.Sockets())
-            .UseEndpointSelector(new ThrowOnceSelector())
+                endpoint => endpoint.Id == "first" ? gatedFirst : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .UseEndpointSelector(selector)
             .Build();
 
-        await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
-        var exception = await EnsureThrowsSharpLink(service.PingAsync(1).AsTask(), "throwing custom selector");
-        Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition, "throwing selector error code");
-        Ensure(await service.PingAsync(1) == 2, "later RPC should remain healthy");
-        Ensure(client.State == SharpLinkConnectionState.Ready, "selector failure must not change client state");
+        try
+        {
+            var connecting = client.ConnectAsync().AsTask();
+            await gatedFirst.Entered.WaitAsync(TimeSpan.FromSeconds(4));
+            await connecting.WaitAsync(TimeSpan.FromSeconds(4));
+            var service = (await PrepareBalancedProxyAsync(client)).Service;
+            Ensure(first.OpenBindings == 0 && second.OpenBindings == 1,
+                "only the initially Ready endpoint is prepared");
+
+            gatedFirst.Release();
+            await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+            var exception = await EnsureThrowsSharpLink(service.PingAsync(1).AsTask(), "throwing custom selector");
+            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition &&
+                   ReferenceEquals(exception.InnerException, selector.Failure), "the first RPC fails with the actual selector exception");
+            Ensure(await service.PingAsync(1) == 2 && await service.GetEndpointIdAsync() == "second" &&
+                   first.OpenBindings == 0 && second.OpenBindings == 1,
+                "later RPC uses the original prepared endpoint without implicitly binding the newly Ready endpoint");
+            Ensure(client.State == SharpLinkConnectionState.Ready, "selector failure must not change client state");
+        }
+        finally
+        {
+            gatedFirst.Release();
+        }
     }
 
     [Test]
-    public async Task StaticClusterShouldExpandWithinGlobalAndPerEndpointBudgets()
-    {
-        await using var first = await TcpServerScope.StartAsync();
-        await using var second = await TcpServerScope.StartAsync();
-        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+    public Task StaticClusterShouldExpandWithinGlobalAndPerEndpointBudgets()
+        => VerifyClusterExpansionAsync(useResolver: false);
 
-            .UseEndpoints(
-                [Endpoint("first", first.Port), Endpoint("second", second.Port)],
-                SharpLinkTransportFactories.Sockets())
-            .UseCluster(options =>
+    [Test]
+    public Task ResolverClusterShouldExpandWithinGlobalAndPerEndpointBudgets()
+        => VerifyClusterExpansionAsync(useResolver: true);
+
+    private static async Task VerifyClusterExpansionAsync(bool useResolver)
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var endpoints = new[] { Endpoint("first", first.Port), Endpoint("second", second.Port) };
+        var builder = SharpClientBuilder.Create().DisableRequestTimeout();
+        if (useResolver)
+        {
+            var snapshot = new SharpLinkEndpointSnapshot(1, endpoints);
+            builder.UseEndpointResolver(new DelegateSharpLinkEndpointResolver(_ => ValueTask.FromResult(snapshot)),
+                SharpLinkTransportFactories.Sockets());
+        }
+        else
+        {
+            builder.UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets());
+        }
+        await using var client = builder.UseCluster(options =>
             {
                 options.MinReadyEndpoints = 2;
                 options.MaxConnections = 4;
@@ -75,11 +115,15 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "initial two-endpoint pool readiness");
-        var service = client.Get<IConnectionBehaviorService>();
+        var proxy = await PrepareBalancedProxyAsync(client);
+        Ensure(first.OpenBindings == 1 && second.OpenBindings == 1,
+            "initial readiness and preparation give exactly one prepared Session per endpoint");
+        var service = proxy.Service;
         var calls = new Task<int>[32];
         for (var index = 0; index < calls.Length; index++)
             calls[index] = service.SlowAsync(100, CancellationToken.None).AsTask();
-        await Task.WhenAll(calls);
+        Ensure((await Task.WhenAll(calls)).All(static result => result == 100),
+            "overlapping calls finish on the prepared Sessions");
 
         var implementation = (SharpLinkClient)client;
         await WaitUntilAsync(
@@ -96,6 +140,11 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "expanded connection pool readiness");
+        Ensure(await service.PingAsync(23) == 24 && first.OpenBindings == 1 && second.OpenBindings == 1,
+            "the additional Ready Sessions carry no business until explicitly prepared");
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(4));
+        Ensure(first.OpenBindings == 2 && second.OpenBindings == 2 && await service.PingAsync(29) == 30,
+            "one explicit Prepare includes both newly Ready Sessions within the configured budgets");
     }
 
     [Test]
@@ -123,8 +172,9 @@ public sealed partial class StaticEndpointIntegrationTests
         await west.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(2));
 
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         var exception = await EnsureThrowsSharpLink(
-            client.Get<IConnectionBehaviorService>().PingAsync(1).AsTask(),
+            service.PingAsync(1).AsTask(),
             "selector must reject the only non-matching static endpoint");
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
             "a strict static selector must not be bypassed for one candidate");
@@ -150,7 +200,7 @@ public sealed partial class StaticEndpointIntegrationTests
             await roundRobin.ConnectAsync();
             await WaitUntilAsync(() => ((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
             Ensure(((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, "round robin endpoints must both be ready");
-            var service = roundRobin.Get<IConnectionBehaviorService>();
+            var service = (await PrepareBalancedProxyAsync(roundRobin)).Service;
             var ids = new[]
             {
                 await service.GetEndpointIdAsync(),
@@ -169,7 +219,8 @@ public sealed partial class StaticEndpointIntegrationTests
         await custom.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)custom).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)custom).ReadyConnectionCount == 2, "custom selector endpoints must both be ready");
-        Ensure(await custom.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "west", "custom selector attributes");
+        var customService = (await PrepareBalancedProxyAsync(custom)).Service;
+        Ensure(await customService.GetEndpointIdAsync() == "west", "custom selector attributes");
     }
 
     [Test]
@@ -194,7 +245,7 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         var slow = service.SlowAsync(200, CancellationToken.None).AsTask();
         var completed = await Task.WhenAny(first.Service.SlowCallStarted!.Task, second.Service.SlowCallStarted!.Task);
         var busyId = await ((Task<string>)completed);
@@ -225,7 +276,7 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var service = (await PrepareBalancedProxyAsync(client)).Service;
         var ids = new[]
         {
             await service.GetEndpointIdAsync(),

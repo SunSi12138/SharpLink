@@ -70,19 +70,19 @@ internal static class SharpLinkGeneratedManifestCompatibility
                 }
 
                 locatorFound = true;
-                var actualIdentity = attribute.ConstructorArguments.Count >= 5
-                    ? attribute.ConstructorArguments[4].Value as string
-                    : null;
-                if (!string.Equals(
-                        actualIdentity,
-                        SharpLinkGeneratedManifestVersions.AbiIdentity,
-                        StringComparison.Ordinal))
+                var arguments = attribute.ConstructorArguments;
+                var locatorApi = arguments.Count >= 2 && arguments[1].Value is int declaredApi ? declaredApi : 0;
+                var locatorProtocol = arguments.Count >= 3 && arguments[2].Value is int declaredProtocol ? declaredProtocol : 0;
+                var actualIdentity = arguments.Count == 5 ? arguments[4].Value as string : null;
+                if (locatorApi != SharpLinkGeneratedManifestVersions.Api ||
+                    locatorProtocol != SharpLinkGeneratedManifestVersions.Protocol ||
+                    !string.Equals(actualIdentity, SharpLinkGeneratedManifestVersions.AbiIdentity, StringComparison.Ordinal))
                 {
                     return Error(
                         SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
                         FormatVersionMismatch(
-                            apiVersion,
-                            protocolVersion,
+                            locatorApi,
+                            locatorProtocol,
                             TryGetGeneratorVersion(manifest),
                             actualIdentity ?? "<missing: pre-current ABI locator>"),
                         owner,
@@ -93,7 +93,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
 
             // Loader validation supplies expectedOwner only after it has already parsed and
             // validated the locator. Catalog/static registration has no such preflight, so the
-            // exact ABI identity must be present here rather than falling back to API integer 4.
+            // exact ABI identity must be present here rather than falling back to an API number.
             if (expectedOwner is null && !locatorFound)
             {
                 return Error(
@@ -189,7 +189,11 @@ internal static class SharpLinkGeneratedManifestCompatibility
                 if (method is null || string.IsNullOrWhiteSpace(method.Name) ||
                     method.RequestSchema is null || method.ResponseSchema is null ||
                     !IsFingerprint(method.Fingerprint) ||
-                    method.Kind is < RpcMethodKind.Unary or > RpcMethodKind.DuplexStreaming)
+                    method.Kind is < RpcMethodKind.Unary or > RpcMethodKind.DuplexStreaming ||
+                    method.Invocation.ContractId != contract.ContractId ||
+                    method.Invocation.MethodId != method.MethodId ||
+                    method.Invocation.Kind != method.Kind ||
+                    method.Invocation.SupportsCancellation != method.SupportsCancellation)
                 {
                     return Error(
                         SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
