@@ -87,8 +87,11 @@ internal static class SharpLinkModuleRpcChannel
         var control = inner.ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors) with
         { PreparedSite = prepared };
-        return EnumerateServerStream(inner, module,
-            method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+        return module is null
+            ? new StaticServerStreamingInvocation<TRequest, TResponse>(inner, method, request, requestCodec,
+                responseCodec, interceptors, control, cancellationToken)
+            : EnumerateModuleServerStream(inner, module, method, request, requestCodec, responseCodec,
+                interceptors, control, cancellationToken);
     }
 
     internal static IAsyncEnumerable<TResponse> InvokeDuplexStreamingDeferred<TRequest, TResponse, TStreams>(
@@ -101,8 +104,9 @@ internal static class SharpLinkModuleRpcChannel
         var control = inner.ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors) with
         { PreparedSite = prepared };
-        return new DuplexInvocation<TRequest, TResponse, TStreams>(inner, module,
-            method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken).EnumerateAsync();
+        var invocation = new DuplexInvocation<TRequest, TResponse, TStreams>(inner, module,
+            method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
+        return module is null ? invocation : invocation.EnumerateAsync();
     }
 
     private static async ValueTask<T> AwaitAsync<T>(ValueTask<T> call, SharpLinkDynamicModuleLease lease,
@@ -129,8 +133,39 @@ internal static class SharpLinkModuleRpcChannel
         finally { lease.Dispose(); combined.Dispose(); }
     }
 
-    private static async IAsyncEnumerable<TResponse> EnumerateServerStream<TRequest, TResponse>(
-        SharpLinkClient inner, SharpLinkDynamicModule? module, RpcMethodDescriptor method,
+    private static void ClaimStaticOutputEnumeration(ref int enumerated)
+    {
+        if (Interlocked.Exchange(ref enumerated, 1) != 0)
+            throw new InvalidOperationException("A logical RPC stream can only be enumerated once.");
+    }
+
+    private sealed class StaticServerStreamingInvocation<TRequest, TResponse>(
+        SharpLinkClient inner, RpcMethodDescriptor method, TRequest request,
+        IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+        SharpLinkClient.ClientInterceptorGeneration interceptors,
+        SharpLinkClient.ResolvedCallControl control,
+        CancellationToken callCancellation) : IAsyncEnumerable<TResponse>
+    {
+        private int _enumerated;
+
+        public IAsyncEnumerator<TResponse> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            ClaimStaticOutputEnumeration(ref _enumerated);
+            return EnumerateAsync(cancellationToken);
+        }
+
+        private async IAsyncEnumerator<TResponse> EnumerateAsync(CancellationToken enumerationCancellation)
+        {
+            SharpLinkClient.EnsureLogicalCallProgress(control);
+            var stream = inner.InvokeServerStreamingResolved(method, request, requestCodec, responseCodec,
+                interceptors, control, callCancellation);
+            await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
+                yield return item;
+        }
+    }
+
+    private static async IAsyncEnumerable<TResponse> EnumerateModuleServerStream<TRequest, TResponse>(
+        SharpLinkClient inner, SharpLinkDynamicModule module, RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
@@ -140,17 +175,13 @@ internal static class SharpLinkModuleRpcChannel
         [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
     {
         SharpLinkClient.EnsureLogicalCallProgress(control);
-        SharpLinkDynamicModuleLease lease = default;
-        if (module is not null && !module.TryAcquire(true, out lease))
+        if (!module.TryAcquire(true, out var lease))
         {
             SharpLinkClient.EnsureLogicalCallProgress(control);
             throw Draining();
         }
-        var combined = module is null ? new CombinedCancellation(callCancellation, null) :
-            Combine(callCancellation, module.ForcedCancellation);
-        var lifetime = module is not null
-            ? new NStudyServerOutputLifetime(lease, combined.Source)
-            : null;
+        var combined = Combine(callCancellation, module.ForcedCancellation);
+        var lifetime = new NStudyServerOutputLifetime(lease, combined.Source);
         try
         {
             SharpLinkClient.EnsureLogicalCallProgress(control);
@@ -160,16 +191,7 @@ internal static class SharpLinkModuleRpcChannel
             await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
                 yield return item;
         }
-        finally
-        {
-            if (lifetime is not null)
-                lifetime.CloseConsumer();
-            else
-            {
-                lease.Dispose();
-                combined.Dispose();
-            }
-        }
+        finally { lifetime.CloseConsumer(); }
     }
 
     // Capture call-time arguments once instead of copying them into the
@@ -184,9 +206,17 @@ internal static class SharpLinkModuleRpcChannel
         TStreams streams,
         SharpLinkClient.ClientInterceptorGeneration interceptors,
         SharpLinkClient.ResolvedCallControl control,
-        CancellationToken callCancellation)
+        CancellationToken callCancellation) : IAsyncEnumerable<TResponse>
         where TStreams : struct, IRpcClientStreamWriter
     {
+        private int _enumerated;
+
+        public IAsyncEnumerator<TResponse> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            ClaimStaticOutputEnumeration(ref _enumerated);
+            return EnumerateAsync().GetAsyncEnumerator(cancellationToken);
+        }
+
         internal async IAsyncEnumerable<TResponse> EnumerateAsync(
             [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
         {

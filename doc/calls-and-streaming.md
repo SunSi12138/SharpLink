@@ -32,6 +32,8 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 提前停止消费时必须释放异步枚举器。Client 会发送 `ConsumerAbandoned` Cancel，关闭本地 stream、归还已消费 credit，并抑制迟到响应。不要把返回的 `IAsyncEnumerable<T>` 交给多个并发消费者；框架只支持单消费者。
 
+静态代理的每个 ServerStreaming 或 Duplex 调用结果只能取得一次枚举器，即使第一次没有开始读取。要重新发起 RPC，请再次调用代理方法，而不是重新枚举旧结果。获取枚举器本身不会发送请求；第一次读取才启动调用。
+
 ## ClientStreaming 与 Duplex
 
 发送初始 Request 后，ClientStreaming 和 Duplex 可以在流控额度内开始发送输入，不等服务端确认。服务端仍然独立执行准入；如果拒绝调用，客户端会停止生产，服务端会丢弃未交付的输入并归还额度。
